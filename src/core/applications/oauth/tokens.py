@@ -2,9 +2,55 @@
 OAuth2 tokens - Token generation and verification.
 """
 
+import re
 import secrets
 import hashlib
-from typing import Tuple, Optional
+from typing import Any, Tuple, Optional
+
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    parse_id,
+    reject_control_characters,
+)
+
+MAX_TOKEN_LENGTH = 512
+MAX_SECRET_LENGTH = 256
+MIN_SECRET_LENGTH = 16
+SECRET_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+TOKEN_TYPES = frozenset({"auth", "access", "refresh", "int"})
+
+
+def _bounded_length(length: int, field: str) -> int:
+    """Keep generator entropy configurable but never absurd."""
+    return bounded_int(
+        length, field, minimum=MIN_SECRET_LENGTH, maximum=MAX_SECRET_LENGTH // 2
+    )
+
+
+def validate_client_secret(value: Any, *, field: str = "client_secret") -> str:
+    """Validate a presented client secret before it reaches a hash comparison."""
+    text = reject_control_characters(value, field).strip()
+    if not SECRET_PATTERN.fullmatch(text):
+        raise HardeningViolation(f"{field} has an invalid format or length")
+    return text
+
+
+def validate_token_string(value: Any, *, field: str = "token") -> str:
+    """Bound an opaque token string before parsing or hashing it."""
+    text = reject_control_characters(value, field).strip()
+    if not text or len(text) > MAX_TOKEN_LENGTH:
+        raise HardeningViolation(f"{field} has an invalid length")
+    return text
+
+
+def validate_token_hash(value: Any, *, field: str = "token_hash") -> str:
+    """Require a SHA-256 hex digest in the stored hash fields."""
+    text = str(value or "")
+    if not HASH_PATTERN.fullmatch(text):
+        raise HardeningViolation(f"{field} is not a SHA-256 hex digest")
+    return text
 
 
 def generate_authorization_code(code_id: int, length: int = 32) -> Tuple[str, str]:
@@ -18,7 +64,7 @@ def generate_authorization_code(code_id: int, length: int = 32) -> Tuple[str, st
     Returns:
         Tuple of (full_code, code_hash)
     """
-    random_bytes = secrets.token_urlsafe(length)
+    random_bytes = secrets.token_urlsafe(_bounded_length(length, "length"))
     full_code = f"auth.{code_id}.{random_bytes}"
     code_hash = hash_token(random_bytes)
     return full_code, code_hash
@@ -35,7 +81,7 @@ def generate_access_token(token_id: int, length: int = 32) -> Tuple[str, str]:
     Returns:
         Tuple of (full_token, token_hash)
     """
-    random_bytes = secrets.token_urlsafe(length)
+    random_bytes = secrets.token_urlsafe(_bounded_length(length, "length"))
     full_token = f"access.{token_id}.{random_bytes}"
     token_hash = hash_token(random_bytes)
     return full_token, token_hash
@@ -52,7 +98,7 @@ def generate_refresh_token(token_id: int, length: int = 48) -> Tuple[str, str]:
     Returns:
         Tuple of (full_token, token_hash)
     """
-    random_bytes = secrets.token_urlsafe(length)
+    random_bytes = secrets.token_urlsafe(_bounded_length(length, "length"))
     full_token = f"refresh.{token_id}.{random_bytes}"
     token_hash = hash_token(random_bytes)
     return full_token, token_hash
@@ -71,7 +117,7 @@ def generate_interaction_token(
     Returns:
         Tuple of (full_token, token_hash)
     """
-    random_bytes = secrets.token_urlsafe(length)
+    random_bytes = secrets.token_urlsafe(_bounded_length(length, "length"))
     full_token = f"int.{interaction_id}.{random_bytes}"
     token_hash = hash_token(random_bytes)
     return full_token, token_hash
@@ -87,7 +133,7 @@ def generate_client_secret(length: int = 32) -> Tuple[str, str]:
     Returns:
         Tuple of (secret, secret_hash)
     """
-    secret = secrets.token_urlsafe(length)
+    secret = secrets.token_urlsafe(_bounded_length(length, "length"))
     secret_hash = hash_token(secret)
     return secret, secret_hash
 
@@ -116,8 +162,13 @@ def verify_token_hash(token: str, expected_hash: str) -> bool:
     Returns:
         True if token matches hash
     """
-    actual_hash = hash_token(token)
-    return secrets.compare_digest(actual_hash, expected_hash)
+    try:
+        candidate = validate_token_string(token)
+        expected = validate_token_hash(expected_hash)
+    except HardeningViolation:
+        return False
+    actual_hash = hash_token(candidate)
+    return secrets.compare_digest(actual_hash, expected)
 
 
 def parse_oauth_token(token: str) -> Optional[dict]:
@@ -130,25 +181,27 @@ def parse_oauth_token(token: str) -> Optional[dict]:
     Returns:
         Dict with token_type, id, and secret, or None if invalid
     """
-    if not token:
+    try:
+        candidate = validate_token_string(token)
+    except HardeningViolation:
         return None
 
-    parts = token.split(".", 2)
+    parts = candidate.split(".", 2)
     if len(parts) != 3:
         return None
 
     token_type, token_id, secret = parts
 
-    if token_type not in ("auth", "access", "refresh", "int"):
+    if token_type not in TOKEN_TYPES or not SECRET_PATTERN.fullmatch(secret):
         return None
 
     try:
-        token_id = int(token_id)
-    except ValueError:
+        parsed_id = parse_id(token_id, "token_id")
+    except HardeningViolation:
         return None
 
     return {
         "token_type": token_type,
-        "id": token_id,
+        "id": parsed_id,
         "secret": secret,
     }

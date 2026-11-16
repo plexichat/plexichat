@@ -28,6 +28,8 @@ from .tokens import (
     generate_authorization_code,
     generate_access_token,
     generate_refresh_token,
+    validate_client_secret,
+    validate_token_string,
     verify_token_hash,
     parse_oauth_token,
 )
@@ -58,6 +60,20 @@ class OAuth2Flow:
             return require_valid_scopes(scopes)
         except HardeningViolation as exc:
             raise InvalidScopeError(str(exc)) from exc
+
+    @staticmethod
+    def _require_client_secret(secret: str) -> str:
+        try:
+            return validate_client_secret(secret)
+        except HardeningViolation as exc:
+            raise InvalidClientError(str(exc)) from exc
+
+    @staticmethod
+    def _require_token(token: str, field: str = "token") -> str:
+        try:
+            return validate_token_string(token, field=field)
+        except HardeningViolation as exc:
+            raise InvalidGrantError(str(exc)) from exc
 
     @staticmethod
     def _require_permissions(permissions: Optional[str]) -> Optional[str]:
@@ -246,6 +262,13 @@ class OAuth2Flow:
             InvalidClientError: Invalid client credentials
             InvalidGrantError: Invalid or expired code
         """
+        client_secret = self._require_client_secret(client_secret)
+        code = self._require_token(code, "authorization code")
+        try:
+            redirect_uri = require_oauth_redirect_url(redirect_uri)
+        except HardeningViolation as exc:
+            raise InvalidGrantError(str(exc)) from exc
+
         app = self._db.fetch_one(
             "SELECT id, client_secret_hash FROM app_applications WHERE id = ?",
             (application_id,),
@@ -338,6 +361,9 @@ class OAuth2Flow:
         if not self._config.get("refresh_enabled", True):
             raise InvalidGrantError("Token refresh is disabled")
 
+        client_secret = self._require_client_secret(client_secret)
+        refresh_token = self._require_token(refresh_token, "refresh token")
+
         app = self._db.fetch_one(
             "SELECT id, client_secret_hash FROM app_applications WHERE id = ?",
             (application_id,),
@@ -406,6 +432,7 @@ class OAuth2Flow:
             TokenExpiredError: Token expired
             TokenRevokedError: Token revoked
         """
+        access_token = self._require_token(access_token, "access token")
         parsed = parse_oauth_token(access_token)
         if not parsed or parsed["token_type"] != "access":
             raise InvalidGrantError("Invalid access token format")
