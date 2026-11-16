@@ -7,8 +7,17 @@ Detects excessive user mentions, role mentions, and @everyone/@here abuse.
 import re
 from typing import Dict, Any, Optional
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
 from .base import BaseRule
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+
+
+def _bounded(value, field, default):
+    try:
+        return bounded_int(value, field, minimum=0, maximum=10_000, default=default)
+    except HardeningViolation:
+        return default
 
 
 class MentionSpamRule(BaseRule):
@@ -22,9 +31,15 @@ class MentionSpamRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._max_user_mentions: int = self.config.get("max_user_mentions", 5)
-        self._max_role_mentions: int = self.config.get("max_role_mentions", 3)
-        self._max_total_mentions: int = self.config.get("max_total_mentions", 10)
+        self._max_user_mentions: int = _bounded(
+            self.config.get("max_user_mentions"), "max_user_mentions", 5
+        )
+        self._max_role_mentions: int = _bounded(
+            self.config.get("max_role_mentions"), "max_role_mentions", 3
+        )
+        self._max_total_mentions: int = _bounded(
+            self.config.get("max_total_mentions"), "max_total_mentions", 10
+        )
         self._block_everyone: bool = self.config.get("block_everyone", False)
         self._count_unique_only: bool = self.config.get("count_unique_only", False)
 
@@ -107,8 +122,10 @@ class MentionSpamRule(BaseRule):
         for field in limit_fields:
             value = config.get(field)
             if value is not None:
-                if not isinstance(value, int) or value < 0:
-                    issues.append(f"{field} must be a non-negative integer")
+                try:
+                    bounded_int(value, field, minimum=0, maximum=10_000)
+                except HardeningViolation:
+                    issues.append(f"{field} must be an integer between 0 and 10000")
 
         if "block_everyone" in config and not isinstance(
             config["block_everyone"], bool

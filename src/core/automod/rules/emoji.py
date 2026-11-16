@@ -7,8 +7,19 @@ Detects messages with excessive emoji usage.
 import re
 from typing import Dict, Any, Optional
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
 from .base import BaseRule
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+
+
+def _bounded(value, field, minimum, maximum, default):
+    try:
+        return bounded_int(
+            value, field, minimum=minimum, maximum=maximum, default=default
+        )
+    except HardeningViolation:
+        return default
 
 
 class MassEmojiRule(BaseRule):
@@ -31,7 +42,9 @@ class MassEmojiRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._max_emoji: int = self.config.get("max_emoji", 10)
+        self._max_emoji: int = _bounded(
+            self.config.get("max_emoji"), "max_emoji", 1, 1_000, 10
+        )
         self._max_percentage: float = self.config.get("max_percentage", 50.0)
         self._count_custom: bool = self.config.get("count_custom", True)
         self._count_unicode: bool = self.config.get("count_unicode", True)
@@ -109,9 +122,12 @@ class MassEmojiRule(BaseRule):
         """Validate mass emoji rule configuration."""
         issues = []
 
-        max_emoji = config.get("max_emoji", 10)
-        if not isinstance(max_emoji, int) or max_emoji < 1:
-            issues.append("max_emoji must be a positive integer")
+        try:
+            bounded_int(
+                config.get("max_emoji", 10), "max_emoji", minimum=1, maximum=1_000
+            )
+        except HardeningViolation:
+            issues.append("max_emoji must be an integer between 1 and 1000")
 
         max_pct = config.get("max_percentage", 50.0)
         if not isinstance(max_pct, (int, float)) or not 0 <= max_pct <= 100:
