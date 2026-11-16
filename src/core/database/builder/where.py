@@ -1,24 +1,22 @@
 """WHERE clause helper for query builder.
 
 Provides shared WHERE logic used by Select, Update, and Delete queries.
+All SQL text is assembled by ``sql_safety``; this module only supplies the
+validated column list and the bound value parameters.
 """
 
 from typing import Any, List, Optional
 
+from src.core.security.hardening import HardeningViolation
+
 from .base import Parameter, SQLInjectionError
+from .sql_safety import (
+    VALID_OPERATORS,
+    VALID_OPERATORS_UNARY,
+    sql_condition,
+    sql_identifier,
+)
 
-
-VALID_OPERATORS = {
-    "=",
-    "<>",
-    "<",
-    ">",
-    "<=",
-    ">=",
-    "LIKE",
-    "IN",
-}
-VALID_OPERATORS_UNARY = {"IS NULL", "IS NOT NULL"}
 ALL_VALID_OPERATORS = VALID_OPERATORS | VALID_OPERATORS_UNARY
 
 
@@ -42,25 +40,25 @@ def build_where_clause(
     where_columns = []
 
     for column, operator, value in conditions:
-        # Validate identifier
-        if (
-            not isinstance(column, str)
-            or not column.replace("_", "").replace(".", "").isalnum()
-        ):
-            raise SQLInjectionError(f"Invalid column name: {column}")
+        # Identifier validation is centralized in require_identifier; keep the
+        # builder's public exception type for callers that catch it.
+        try:
+            safe_column = sql_identifier(column, "column")
+        except HardeningViolation as exc:
+            raise SQLInjectionError(f"Invalid column name: {column}") from exc
 
-        where_columns.append(column)
+        where_columns.append(safe_column)
+        op = operator.upper() if isinstance(operator, str) else ""
 
-        if operator.upper() in VALID_OPERATORS_UNARY:
-            where_parts.append(f"{column} {operator}")
-        elif operator.upper() == "IN":
+        if op in VALID_OPERATORS_UNARY:
+            where_parts.append(sql_condition(safe_column, op))
+        elif op == "IN":
             if not isinstance(value, (list, tuple)):
                 raise ValueError(f"IN operator requires list/tuple, got {type(value)}")
-            placeholders = ", ".join(["?" for _ in value])
-            where_parts.append(f"{column} IN ({placeholders})")
+            where_parts.append(sql_condition(safe_column, op, len(value)))
             params.extend(Parameter(v) for v in value)
-        elif operator.upper() in VALID_OPERATORS:
-            where_parts.append(f"{column} {operator} ?")
+        elif op in VALID_OPERATORS:
+            where_parts.append(sql_condition(safe_column, op))
             params.append(Parameter(value))
         else:
             raise ValueError(

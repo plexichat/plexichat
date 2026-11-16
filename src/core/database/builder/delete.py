@@ -3,6 +3,7 @@
 from typing import Any, List, Optional
 
 from .base import TableQuery, Parameter
+from .sql_safety import sql_identifier
 from .where import build_where_clause
 
 _DELETE_FROM = "DELETE FROM {table}"
@@ -33,9 +34,9 @@ class DeleteQuery(TableQuery):
                 "DELETE requires at least one WHERE condition (safety feature)"
             )
 
-        # TableQuery validates ``table_name`` as a bare identifier; the
-        # template keeps the statement out of the f-string form.
-        sql = _DELETE_FROM.format(table=self.table_name)
+        # The statement template keeps the SQL out of an f-string; the name is
+        # still funnelled through the shared identifier rule before it lands.
+        sql = _DELETE_FROM.format(table=sql_identifier(self.table_name, "table name"))
         params: List[Parameter] = []
 
         # Add WHERE conditions using shared builder

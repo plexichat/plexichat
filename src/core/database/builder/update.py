@@ -7,6 +7,7 @@ from pydantic import BaseModel, ValidationError
 import utils.logger as logger
 
 from .base import TableQuery, Parameter, ValidationModelError
+from .sql_safety import sql_assignments, sql_identifier
 from .where import build_where_clause
 
 T = TypeVar("T", bound=BaseModel)
@@ -57,8 +58,10 @@ class UpdateQuery(TableQuery):
         if self.schema_registry:
             self.schema_registry.validate_columns(self.table_name, validated_columns)
 
-        set_parts = [f"{col} = ?" for col in validated_columns]
-        sql = f"UPDATE {self.table_name} SET {', '.join(set_parts)}"
+        assignments = sql_assignments(validated_columns)
+        sql = (
+            f"UPDATE {sql_identifier(self.table_name, 'table name')} SET {assignments}"
+        )
         params: List[Parameter] = [Parameter(self.data[col]) for col in columns]
 
         # Add WHERE conditions using shared builder

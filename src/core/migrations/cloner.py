@@ -14,7 +14,11 @@ from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 from src.core.database import Database
-from src.core.security.hardening import bounded_int, require_identifier
+from src.core.database.builder.sql_safety import (
+    sql_identifier,
+    sql_placeholders,
+)
+from src.core.security.hardening import bounded_int
 
 
 def _db_identity(db: Database) -> tuple:
@@ -156,17 +160,20 @@ class DataCloner:
             Stats for the cloning operation
         """
         # The table name is interpolated into PRAGMA/COUNT/DELETE/INSERT below,
-        # none of which accept placeholders; refuse anything that is not a
-        # plain identifier before it reaches the first statement.
-        require_identifier(table_name, "table name")
+        # none of which accept placeholders; the shared require_identifier rule
+        # (via sql_identifier) refuses anything that is not a plain identifier
+        # before it reaches the first statement.
+        table_name = sql_identifier(table_name, "table name")
         start_time = time.time()
         logger.info(f"Cloning table: {table_name}")
 
         # 1. Get column information from source
         if self.source.type == "sqlite":
-            # Sanitize table name for PRAGMA (not parameterized)
-            safe_table = f"`{table_name}`"
-            columns_info = self.source.fetch_all(f"PRAGMA table_info({safe_table})")
+            # PRAGMA cannot take a placeholder; the name is validated and
+            # backtick-quoted by the shared SQL helper.
+            columns_info = self.source.fetch_all(
+                f"PRAGMA table_info({sql_identifier(table_name, 'table name', quote='`')})"
+            )
             column_names = [row["name"] for row in columns_info]
         else:
             # Postgres info_schema
@@ -179,7 +186,7 @@ class DataCloner:
         # Column names are quoted (not parameterized) in cols_str/order_col
         # below. A source schema carrying a backtick or quote in a column name
         # could otherwise break out of the quoting, so constrain them too.
-        column_names = [require_identifier(c, "column name") for c in column_names]
+        column_names = [sql_identifier(c, "column name") for c in column_names]
 
         if not column_names:
             logger.warning(f"No columns found for table {table_name}, skipping.")
@@ -193,7 +200,9 @@ class DataCloner:
         # nondeterministic, so rows can be skipped or duplicated across
         # pages when the source changes mid-clone. Prefer ``id`` (present
         # on virtually every app table), falling back to the first column.
-        order_col = self._quote_ident("id" if "id" in column_names else column_names[0])
+        order_key = "id" if "id" in column_names else column_names[0]
+        order_quote = '"' if self.target.type == "postgres" else "`"
+        order_col = sql_identifier(order_key, "order column", quote=order_quote)
 
         if total_rows == 0:
             logger.info(f"Table {table_name} is empty, skipping data copy.")
@@ -211,12 +220,10 @@ class DataCloner:
             self.target.execute(f"DELETE FROM {table_name}")
 
             rows_copied = 0
-            placeholders = ", ".join(["?"] * len(column_names))
+            placeholders = sql_placeholders(len(column_names))
+            quote = '"' if self.target.type == "postgres" else "`"
             cols_str = ", ".join(
-                [
-                    f'"{c}"' if self.target.type == "postgres" else f"`{c}`"
-                    for c in column_names
-                ]
+                sql_identifier(c, "column name", quote=quote) for c in column_names
             )
             insert_sql = (
                 f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})"
@@ -365,8 +372,14 @@ class DataCloner:
         # Any other modules that have custom initialization logic should go here
 
     def _quote_ident(self, ident: str) -> str:
-        """Quote an identifier for the target dialect."""
-        return f'"{ident}"' if self.target.type == "postgres" else f"`{ident}`"
+        """Quote a validated identifier for the target dialect.
+
+        Retained for callers outside this module; internally SQL construction
+        uses ``sql_identifier`` directly so the validation is visible at the
+        point of interpolation.
+        """
+        quote = '"' if self.target.type == "postgres" else "`"
+        return sql_identifier(ident, "identifier", quote=quote)
 
     def _content_signature(self, db, table: str, limit: int = 50_000) -> Optional[str]:
         """Deterministic digest of up to ``limit`` rows in key order.
@@ -379,15 +392,14 @@ class DataCloner:
         Returns None when the table is empty (an empty table matches any
         empty table).
         """
-        require_identifier(table, "table name")
+        table = sql_identifier(table, "table name")
         first = db.fetch_one(f"SELECT * FROM {table} LIMIT 1")
         if not first:
             return None
         column_names = list(first.keys())
         order_key = "id" if "id" in column_names else column_names[0]
-        require_identifier(order_key, "order column")
         quote = '"' if db.type == "postgres" else "`"
-        order_col = f"{quote}{order_key}{quote}"
+        order_col = sql_identifier(order_key, "order column", quote=quote)
         digest = hashlib.sha256()
         seen = 0
         offset = 0
@@ -424,7 +436,7 @@ class DataCloner:
         verified_count = 0
 
         for table in self._stats.keys():
-            require_identifier(table, "table name")
+            table = sql_identifier(table, "table name")
             s_count = self.source.fetch_one(f"SELECT COUNT(*) as count FROM {table}")[
                 "count"
             ]

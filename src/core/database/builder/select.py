@@ -1,10 +1,9 @@
 """SELECT query builder."""
 
-from src.core.security.hardening import require_identifier
-
 from typing import Any, List, Optional
 
 from .base import TableQuery
+from .sql_safety import sql_identifier, sql_identifier_list, sql_limit, sql_offset
 from .where import build_where_clause
 
 
@@ -31,25 +30,22 @@ class SelectQuery(TableQuery):
         return self
 
     def limit(self, count: int) -> "SelectQuery":
-        """Set LIMIT clause."""
-        if not isinstance(count, int) or count < 0:
-            raise ValueError(f"Limit must be non-negative integer, got {count}")
-        self._limit_value = count
+        """Set LIMIT clause, rejecting negative, non-finite and huge values."""
+        self._limit_value = sql_limit(count, "limit")
         return self
 
     def offset(self, count: int) -> "SelectQuery":
-        """Set OFFSET clause."""
-        if not isinstance(count, int) or count < 0:
-            raise ValueError(f"Offset must be non-negative integer, got {count}")
-        self._offset_value = count
+        """Set OFFSET clause, rejecting negative, non-finite and huge values."""
+        self._offset_value = sql_offset(count, "offset")
         return self
 
     def build(self) -> tuple[str, list]:
         """Build the SELECT query."""
-        # Build column list
+        # Build column list; every column is validated through the shared rule
+        # (mapped to SQLInjectionError by _validate_identifiers_list).
         if self.columns:
             validated_columns = self._validate_identifiers_list(self.columns, "column")
-            columns_str = ", ".join(validated_columns)
+            columns_str = sql_identifier_list(validated_columns, "column")
             if self.schema_registry:
                 self.schema_registry.validate_columns(
                     self.table_name, validated_columns
@@ -57,7 +53,9 @@ class SelectQuery(TableQuery):
         else:
             columns_str = "*"
 
-        sql = f"SELECT {columns_str} FROM {require_identifier(self.table_name, 'table name')}"
+        sql = (
+            f"SELECT {columns_str} FROM {sql_identifier(self.table_name, 'table name')}"
+        )
 
         # Add WHERE conditions using shared builder
         where_clause, params = build_where_clause(
@@ -65,10 +63,12 @@ class SelectQuery(TableQuery):
         )
         sql += where_clause
 
-        # Add LIMIT and OFFSET
+        # Add LIMIT and OFFSET (already bounded/validated by the setters)
         if self._limit_value is not None:
-            sql += f" LIMIT {self._limit_value}"
+            limit_value = sql_limit(self._limit_value, "limit")
+            sql += f" LIMIT {limit_value}"
         if self._offset_value is not None:
-            sql += f" OFFSET {self._offset_value}"
+            offset_value = sql_offset(self._offset_value, "offset")
+            sql += f" OFFSET {offset_value}"
 
         return sql, params

@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 
-from src.core.security.hardening import require_identifier
+from src.core.database.builder.sql_safety import sql_identifier
 
 from .base import BaseIndexer, IndexerConfig
 from ..models import (
@@ -593,10 +593,11 @@ class SQLiteFTS5Indexer(BaseIndexer):
         """Return the first FTS5 table whose live columns don't match the
         expected schema, or None when every table lines up."""
         for table, expected in _FTS_EXPECTED_COLUMNS.items():
+            # Validate before the try: a HardeningViolation is a programming
+            # error, not a probe failure to be swallowed as "schema mismatch".
+            safe_table = sql_identifier(table, "table name")
             try:
-                rows = self._db.fetch_all(
-                    f"PRAGMA table_info({require_identifier(table, 'table name')})"
-                )
+                rows = self._db.fetch_all(f"PRAGMA table_info({safe_table})")
             except Exception:
                 return table
             live = []

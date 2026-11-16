@@ -4,7 +4,6 @@ Base query classes for the type-safe SQL query builder.
 Provides the foundational Query ABC and TableQuery intermediate class.
 """
 
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, TypeVar
@@ -13,8 +12,10 @@ from pydantic import BaseModel
 
 import utils.logger as logger
 from utils.logger import sanitize_data
+from src.core.security.hardening import HardeningViolation
 
 from .protocol import QueryBuilderProtocol
+from .sql_safety import sql_identifier
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -114,15 +115,19 @@ class Query(ABC, QueryBuilderProtocol):
     def _validate_identifier(
         self, identifier: str, identifier_type: str = "column"
     ) -> str:
-        """Validate and sanitize an identifier (table or column name)."""
-        if not re.match(
-            r"^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?$", identifier
-        ):
+        """Validate and sanitize an identifier (table or column name).
+
+        Delegates to the shared :func:`require_identifier` rule (via
+        ``sql_identifier``) so the builder cannot drift from the rule every
+        other SQL call site uses.  ``SQLInjectionError`` is kept as the public
+        exception type so existing callers/handlers are unaffected.
+        """
+        try:
+            return sql_identifier(identifier, identifier_type)
+        except HardeningViolation as exc:
             raise SQLInjectionError(
-                f"Invalid {identifier_type} name: {identifier}. "
-                f"Must start with letter/underscore and contain only alphanumeric/underscore characters."
-            )
-        return identifier
+                f"Invalid {identifier_type} name: {identifier}"
+            ) from exc
 
     def _validate_identifiers_list(
         self, identifiers: List[str], identifier_type: str = "column"
