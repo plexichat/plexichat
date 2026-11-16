@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
+from src.core.security.hardening import HardeningViolation, bounded_int
 from src.core.database.valkey_client import (
     get_client,
     is_available,
@@ -42,6 +43,28 @@ _LOCAL_WINDOWS: Dict[str, List[float]] = {}
 _LOCAL_WINDOWS_LOCK = threading.Lock()
 _LOCAL_WINDOW_MAX_KEYS = 50_000
 _VALKEY_DOWN_WARNED = False
+
+# Recipient-configured burst parameters come from a JSON/store row and were
+# previously coerced with bare int(): a threshold of 10**9 with a 10**9-second
+# window makes the local counter grow without bound, and a multi-megabyte
+# content string is canonicalised/scanned on every message. Bound all of them.
+MAX_DM_CONTENT_LENGTH = 10_000
+MAX_FILTER_THRESHOLD = 10_000
+MAX_FILTER_WINDOW_SECONDS = 604_800  # 7 days
+MAX_FILTER_PATTERN_LENGTH = 512
+DM_FILTER_TYPES = frozenset({"rate", "duplicate", "pattern"})
+DM_FILTER_ACTIONS = frozenset({"warn", "block"})
+
+
+def _bounded_filter_int(value, field, minimum, maximum, default):
+    """Return a bounded config integer, falling back to ``default``."""
+    try:
+        return bounded_int(
+            value, field, minimum=minimum, maximum=maximum, default=default
+        )
+    except HardeningViolation:
+        return default
+
 
 # H6: canonicalization for all user-controlled matching/hashing/counting.
 # Strict ``==``/exact-byte comparisons let trivial variants (trailing space,
@@ -374,6 +397,10 @@ class DMSpamDetector:
             content = ""
         elif not isinstance(content, str):
             content = str(content)
+        # Truncate before canonicalisation, hashing and pattern matching so a
+        # hostile multi-megabyte message cannot make every check expensive.
+        if len(content) > MAX_DM_CONTENT_LENGTH:
+            content = content[:MAX_DM_CONTENT_LENGTH]
         canonical = _canonical_text(content)
 
         filters = self._get_user_filters(recipient_id, sender_id)
@@ -385,9 +412,19 @@ class DMSpamDetector:
         rate_limit = self.DEFAULT_RATE_LIMIT
         rate_window = self.DEFAULT_RATE_WINDOW
         if rate_filter:
-            rate_limit = int(rate_filter.get("threshold", self.DEFAULT_RATE_LIMIT))
-            rate_window = int(
-                rate_filter.get("window_seconds", self.DEFAULT_RATE_WINDOW)
+            rate_limit = _bounded_filter_int(
+                rate_filter.get("threshold"),
+                "rate threshold",
+                1,
+                MAX_FILTER_THRESHOLD,
+                self.DEFAULT_RATE_LIMIT,
+            )
+            rate_window = _bounded_filter_int(
+                rate_filter.get("window_seconds"),
+                "rate window",
+                1,
+                MAX_FILTER_WINDOW_SECONDS,
+                self.DEFAULT_RATE_WINDOW,
             )
 
         # New users get stricter limits
@@ -415,11 +452,19 @@ class DMSpamDetector:
         dup_threshold = self.DEFAULT_DUPLICATE_THRESHOLD
         dup_window = self.DEFAULT_DUPLICATE_WINDOW
         if duplicate_filter:
-            dup_threshold = int(
-                duplicate_filter.get("threshold", self.DEFAULT_DUPLICATE_THRESHOLD)
+            dup_threshold = _bounded_filter_int(
+                duplicate_filter.get("threshold"),
+                "duplicate threshold",
+                1,
+                MAX_FILTER_THRESHOLD,
+                self.DEFAULT_DUPLICATE_THRESHOLD,
             )
-            dup_window = int(
-                duplicate_filter.get("window_seconds", self.DEFAULT_DUPLICATE_WINDOW)
+            dup_window = _bounded_filter_int(
+                duplicate_filter.get("window_seconds"),
+                "duplicate window",
+                1,
+                MAX_FILTER_WINDOW_SECONDS,
+                self.DEFAULT_DUPLICATE_WINDOW,
             )
 
         dup_ok = _COUNTER.record_and_count(
@@ -669,12 +714,30 @@ class DMSpamDetector:
         # H6: canonicalize the scope key before matching.
         filter_type = str(filter_type or "rate").strip().casefold() or "rate"
         action = str(action or "warn").strip().casefold() or "warn"
-        threshold = int(threshold)
-        window_seconds = int(window_seconds)
+        if filter_type not in DM_FILTER_TYPES:
+            raise ValueError(f"invalid DM spam filter type: {filter_type!r}")
+        if action not in DM_FILTER_ACTIONS:
+            raise ValueError(f"invalid DM spam filter action: {action!r}")
+        # These are caller-supplied; reject values outside the bounds instead
+        # of silently storing a burst limit that can never trip or one that
+        # grows the local window list forever.
+        threshold = bounded_int(
+            threshold, "threshold", minimum=1, maximum=MAX_FILTER_THRESHOLD
+        )
+        window_seconds = bounded_int(
+            window_seconds,
+            "window_seconds",
+            minimum=1,
+            maximum=MAX_FILTER_WINDOW_SECONDS,
+        )
         if target_user_id is not None:
             target_user_id = int(target_user_id)
         if pattern is not None:
             pattern = str(pattern)
+            if len(pattern) > MAX_FILTER_PATTERN_LENGTH:
+                raise ValueError(
+                    f"pattern exceeds {MAX_FILTER_PATTERN_LENGTH} characters"
+                )
         now = self._get_timestamp()
 
         self._ensure_filter_scope_uniqueness()
