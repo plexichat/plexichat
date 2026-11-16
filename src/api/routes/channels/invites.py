@@ -1,4 +1,3 @@
-from src.core.security.hardening import parse_id
 import asyncio
 from typing import Dict
 
@@ -19,6 +18,7 @@ from src.api.schemas.common import ErrorResponse, SnowflakeID
 import utils.logger as logger
 
 from .base import ChannelBase
+from .helpers import require_channel_snowflake
 from ..exception_mapping import raise_mapped, map_invite_join_error
 
 
@@ -105,13 +105,10 @@ class ChannelInvitesMixin(ChannelBase):
 
         try:
             try:
-                cid = parse_id(channel_id, "channel_id")
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid channel ID format for invite: {channel_id}")
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid channel ID"}},
-                )
+                cid = require_channel_snowflake(channel_id)
+            except HTTPException:
+                logger.warning(f"Invalid channel ID format: {channel_id}")
+                raise
 
             try:
                 # SELFTEST FIX: pre-check channel visibility so we

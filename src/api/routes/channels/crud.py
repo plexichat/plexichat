@@ -1,4 +1,3 @@
-from src.core.security.hardening import parse_id
 import asyncio
 from typing import Dict
 
@@ -14,6 +13,7 @@ from src.core.database import cached
 import utils.logger as logger
 
 from .base import ChannelBase
+from .helpers import require_channel_snowflake
 from ..exception_mapping import raise_mapped
 
 
@@ -84,13 +84,10 @@ class ChannelCRUDMixin(ChannelBase):
 
         try:
             try:
-                cid = parse_id(channel_id, "channel_id")
-            except (ValueError, TypeError):
+                cid = require_channel_snowflake(channel_id)
+            except HTTPException:
                 logger.warning(f"Invalid channel ID format: {channel_id}")
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid channel ID"}},
-                )
+                raise
 
             try:
 
@@ -199,13 +196,10 @@ class ChannelCRUDMixin(ChannelBase):
 
         try:
             try:
-                cid = parse_id(channel_id, "channel_id")
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid channel ID format for update: {channel_id}")
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid channel ID"}},
-                )
+                cid = require_channel_snowflake(channel_id)
+            except HTTPException:
+                logger.warning(f"Invalid channel ID format: {channel_id}")
+                raise
 
             try:
                 update_data = body.model_dump(exclude_unset=True)
@@ -337,13 +331,10 @@ class ChannelCRUDMixin(ChannelBase):
 
         try:
             try:
-                cid = parse_id(channel_id, "channel_id")
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid channel ID format for deletion: {channel_id}")
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid channel ID"}},
-                )
+                cid = require_channel_snowflake(channel_id)
+            except HTTPException:
+                logger.warning(f"Invalid channel ID format: {channel_id}")
+                raise
 
             try:
                 # SELFTEST FIX: pre-check channel existence before
