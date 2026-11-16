@@ -5,7 +5,6 @@ Provides endpoints for viewing, running, and rolling back migrations
 with special handling for irreversible migrations and emergency overrides.
 """
 
-import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, status as http_status, Request
@@ -19,11 +18,9 @@ from .utils import (
     get_admin_from_token,
     require_admin_permission,
     require_approved_request,
+    validate_migration_version,
 )
 from src.api.schemas.common import ErrorResponse
-
-# Valid migration version pattern (3 digits)
-VERSION_PATTERN = re.compile(r"^\d{3}$")
 
 router = APIRouter()
 
@@ -132,12 +129,12 @@ def get_admin_user(request: Request) -> int:
 
 
 def validate_version(version: str) -> None:
-    """Validate migration version format to prevent path traversal."""
-    if not VERSION_PATTERN.match(version):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail="Invalid migration version format. Expected 3 digits (e.g., '001', '025')",
-        )
+    """Validate migration version format to prevent path traversal.
+
+    Delegates to the shared strict validator so every version that reaches a
+    migration module-loading sink is confined to exactly three ASCII digits.
+    """
+    validate_migration_version(version)
 
 
 @router.get(

@@ -7,6 +7,7 @@ from .utils import (
     check_host_restriction,
     require_admin_permission,
     require_approved_request,
+    validate_migration_version,
 )
 from src.api.schemas.common import ErrorResponse
 import src.api as api
@@ -165,6 +166,9 @@ async def apply_migration(request: Request, version: str, dry_run: bool = False)
     check_host_restriction(request)
     require_admin_permission(request, "admin.migrations.execute")
     require_approved_request("migrations.run")
+    # The version flows into the migration manager, which loads a Python
+    # module by file path. Confine it to three digits before that sink.
+    validate_migration_version(version)
     db = api.get_db()
     if not db:
         raise HTTPException(
@@ -201,6 +205,7 @@ async def rollback_migration(request: Request, version: str):
     check_host_restriction(request)
     require_admin_permission(request, "admin.migrations.execute")
     require_approved_request("migrations.rollback")
+    validate_migration_version(version)
     db = api.get_db()
     if not db:
         raise HTTPException(

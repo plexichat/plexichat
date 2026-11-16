@@ -5,10 +5,37 @@ Shared utilities for Admin API routes.
 from fastapi import HTTPException, Request
 from typing import Optional
 from pathlib import Path
+import html
+import re
 import time
 import utils.config as config
 import utils.logger as logger
 import src.api as api
+
+
+# Migration versions are used to select a Python module on disk in the
+# migration runner (``importlib.util.spec_from_file_location``). Treat the
+# version as a strict token, never as a path fragment: ``re.match`` with a
+# trailing ``$`` still accepted a newline suffix (``"001\n"``), and anything
+# other than exactly three ASCII digits must be rejected before it can reach
+# module loading.
+_MIGRATION_VERSION_RE = re.compile(r"[0-9]{3}")
+_SAFE_CSP_NONCE_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_MAX_ADMIN_TEMPLATE_BYTES = 2 * 1024 * 1024
+
+
+def validate_migration_version(version: object) -> str:
+    """Return a validated migration version or raise a 400.
+
+    Shared by every admin route that accepts a migration version so the
+    module-loading sink below the route always sees a confined value.
+    """
+    if not isinstance(version, str) or not _MIGRATION_VERSION_RE.fullmatch(version):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid migration version format. Expected 3 digits (e.g., '001', '025')",
+        )
+    return version
 
 
 def is_authenticated_self_test(request: Request) -> bool:
@@ -232,30 +259,50 @@ def require_approved_request(action_type: str) -> Optional[int]:
 
     admin_config = config.get("admin_ui", {})
     approval_config = admin_config.get("approval_workflows", {})
+    single_admin_bypass = approval_config.get("single_admin_bypass", True)
+
+    now_ms = int(time.time() * 1000)
+
+    # The admin count is only needed to decide whether the single-admin
+    # bypass applies. Read it together with the candidate approval id in a
+    # single round trip: two scalar subqueries always return exactly one row,
+    # so this keeps the exact same decisions while saving a DB query on every
+    # gated request (the approval consume below is still its own atomic step).
+    try:
+        gate_row = db.fetch_one(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM admin_users) AS admin_count,
+              (SELECT id FROM admin_approvals
+                WHERE action_type = ? AND status = 'approved' AND expires_at > ?
+                ORDER BY updated_at DESC LIMIT 1) AS approval_id
+            """,
+            (action_type, now_ms),
+        )
+    except Exception as e:
+        logger.error(f"Approval gate could not read approval state: {e}")
+        gate_row = None
+
+    admin_count = None
+    approval_id = None
+    if gate_row is not None:
+        if isinstance(gate_row, dict):
+            admin_count = gate_row.get("admin_count")
+            approval_id = gate_row.get("approval_id")
+        else:
+            admin_count = gate_row[0] if len(gate_row) > 0 else None
+            approval_id = gate_row[1] if len(gate_row) > 1 else None
+        try:
+            admin_count = int(admin_count)
+        except (TypeError, ValueError):
+            admin_count = None
 
     # Single-admin bypass (existing approvals-system semantics): one admin
     # cannot self-approve, so allow direct execution when configured.
-    try:
-        count_row = db.fetch_one("SELECT COUNT(*) AS c FROM admin_users")
-        admin_count = (
-            count_row.get("c", 0) if isinstance(count_row, dict) else int(count_row[0])
-        )
-    except Exception as e:
-        logger.error(f"Approval gate could not count admins: {e}")
-        admin_count = None
-    if admin_count == 1 and approval_config.get("single_admin_bypass", True):
+    if single_admin_bypass and admin_count == 1:
         return None
 
-    now_ms = int(time.time() * 1000)
-    row = db.fetch_one(
-        """
-        SELECT id FROM admin_approvals
-        WHERE action_type = ? AND status = 'approved' AND expires_at > ?
-        ORDER BY updated_at DESC LIMIT 1
-        """,
-        (action_type, now_ms),
-    )
-    if row is None:
+    if approval_id is None:
         logger.warning(
             f"Blocked '{action_type}': no approved request in admin_approvals"
         )
@@ -271,7 +318,7 @@ def require_approved_request(action_type: str) -> Optional[int]:
                 }
             },
         )
-    approval_id = int(row["id"] if isinstance(row, dict) else row[0])
+    approval_id = int(approval_id)
 
     # SECURITY: single-use — atomically transition the approval to
     # 'consumed' so a second gated execution (even by another admin holding
@@ -307,23 +354,43 @@ def require_approved_request(action_type: str) -> Optional[int]:
 
 
 def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> str:
-    """Load an admin UI template."""
+    """Load an admin UI template.
+
+    The template name is confined to an explicit allowlist (no filesystem
+    component of a request can select a file), and every value interpolated
+    into the HTML is escaped before use. A template is a code-like sink: an
+    unescaped nonce can break out of its attribute and inject markup/script
+    into the admin origin.
+    """
     # ``migrations.html`` is served by ``admin_migrations_page``; without it in
     # this list the route answered every request with "Access Denied".
-    allowed_templates = ["login.html", "dashboard.html", "migrations.html"]
-    if template_name not in allowed_templates:
+    allowed_templates = frozenset(
+        {"login.html", "dashboard.html", "migrations.html"}
+    )
+    if not isinstance(template_name, str) or template_name not in allowed_templates:
         return "<h1>Access Denied</h1>"
+
+    # Only a safe nonce shape may be stamped. Anything else (including a value
+    # with quotes, angle brackets or newlines) is treated as absent so the CSP
+    # fails closed instead of becoming an attribute-injection vector.
+    if not isinstance(csp_nonce, str) or not _SAFE_CSP_NONCE_RE.fullmatch(csp_nonce):
+        csp_nonce = None
 
     template_dir = Path(__file__).parent.parent.parent / "templates" / "admin"
     template_path = (template_dir / template_name).resolve()
 
     if (
         not str(template_path).startswith(str(template_dir.resolve()))
-        or not template_path.exists()
+        or not template_path.is_file()
     ):
         return "<h1>Template Error</h1>"
 
     try:
+        # Bound the read so a corrupt/tampered checkout cannot turn one page
+        # load into an unbounded allocation.
+        if template_path.stat().st_size > _MAX_ADMIN_TEMPLATE_BYTES:
+            logger.error(f"Admin template too large: {template_name}")
+            return "<h1>Template Error</h1>"
         content = template_path.read_text(encoding="utf-8")
         # Stamp the running build's version into the page so the sidebar never
         # shows a stale hardcoded placeholder when dashboard.js is slow to load
@@ -333,10 +400,12 @@ def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> 
 
             content = content.replace("{{ version }}", VERSION)
         if csp_nonce:
-            import re
-
-            content = content.replace("{{ csp_nonce }}", csp_nonce).replace(
-                "{{ nonce }}", csp_nonce
+            # Escape even a validated nonce: it is interpolated into an HTML
+            # attribute, and escaping makes the safe-by-construction property
+            # explicit for future maintainers.
+            safe_nonce = html.escape(csp_nonce, quote=True)
+            content = content.replace("{{ csp_nonce }}", safe_nonce).replace(
+                "{{ nonce }}", safe_nonce
             )
 
             def script_repl(match):
@@ -344,7 +413,7 @@ def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> 
                 return (
                     tag
                     if "nonce=" in tag
-                    else tag.replace("<script", f'<script nonce="{csp_nonce}"')
+                    else tag.replace("<script", f'<script nonce="{safe_nonce}"')
                 )
 
             content = re.sub(r"<script[^>]*>", script_repl, content)
