@@ -48,6 +48,9 @@ _UNLIMITED_MB = -1
 #: be an arbitrary-precision integer that overflows byte arithmetic downstream.
 MAX_OVERRIDE_NOTE_LENGTH = 500
 MAX_OVERRIDE_LIMIT_BYTES = 100 * 1024**4  # 100 TiB
+#: Largest quota (in MiB) any config/tier source may declare. Anything above
+#: this is a misconfiguration, not a real tier, and is rejected as overflow.
+MAX_CONFIG_QUOTA_MB = MAX_OVERRIDE_LIMIT_BYTES // MIB
 
 
 def _bounded_override_note(note: Any) -> Optional[str]:
@@ -101,7 +104,16 @@ class StorageQuotaManager:
 
     def _default_limit_bytes(self) -> int:
         value = self._storage_config().get("default_quota_mb", DEFAULT_QUOTA_MB)
-        mb = _as_int(value, DEFAULT_QUOTA_MB)
+        # Config integers reach byte arithmetic and LIMIT clauses: validate the
+        # type and cap the magnitude instead of silently accepting a huge value
+        # (which used to overflow downstream computations).
+        mb = bounded_int(
+            value,
+            "storage.default_quota_mb",
+            minimum=-1,
+            maximum=MAX_CONFIG_QUOTA_MB,
+            default=DEFAULT_QUOTA_MB,
+        )
         if mb < 0:
             return -1
         return mb * MIB
@@ -110,7 +122,13 @@ class StorageQuotaManager:
         value = self._storage_config().get(
             "reservation_ttl_seconds", DEFAULT_RESERVATION_TTL_SECONDS
         )
-        return max(60, min(3600, _as_int(value, DEFAULT_RESERVATION_TTL_SECONDS)))
+        return bounded_int(
+            value,
+            "storage.reservation_ttl_seconds",
+            minimum=60,
+            maximum=3600,
+            default=DEFAULT_RESERVATION_TTL_SECONDS,
+        )
 
     def _user_tier(self, user_id: int) -> str:
         try:
@@ -132,7 +150,13 @@ class StorageQuotaManager:
             from src.core import features
 
             limits = features.get_tier_limits(tier)
-            mb = _as_int(getattr(limits, "max_storage_mb", None), 0)
+            mb = bounded_int(
+                getattr(limits, "max_storage_mb", None),
+                "tier.max_storage_mb",
+                minimum=-1,
+                maximum=MAX_CONFIG_QUOTA_MB,
+                default=0,
+            )
             if mb == _UNLIMITED_MB:
                 return -1
             if mb > 0:
