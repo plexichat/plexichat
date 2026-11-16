@@ -98,6 +98,16 @@ def _bounded_image_quality(value: object) -> int:
     return bounded_int(value, "compression image quality", minimum=1, maximum=100)
 
 
+# Quality presets are module constants. Bound them once here instead of
+# re-validating the same literals on every compress() call.
+_BOUNDED_IMAGE_QUALITY_PRESETS = {
+    preset: {
+        target: _bounded_image_quality(value) for target, value in targets.items()
+    }
+    for preset, targets in IMAGE_QUALITY_PRESETS.items()
+}
+
+
 class ImageCompressor:
     """Handles image compression and format conversion."""
 
@@ -105,6 +115,17 @@ class ImageCompressor:
         """Initialize image compressor."""
         self._config = self._load_config()
         self._available = self._check_availability()
+        # Snapshot the bounded parameters once. Validating config on every
+        # upload did the same str/regex work N times and reopened the door to
+        # a value changing mid-batch; bad config now fails fast at init.
+        self._quality = _bounded_image_quality(self._config["quality"])
+        self._max_dimension = bounded_int(
+            self._config["max_dimension"],
+            "compression max_dimension",
+            minimum=1,
+            maximum=16384,
+        )
+        self._format = str(self._config["format"]).strip().lower()
 
     def _load_config(self) -> dict:
         """Load compression configuration."""
@@ -174,26 +195,21 @@ class ImageCompressor:
 
             # Determine output format
             if output_format is None or output_format == ImageFormat.ORIGINAL:
-                fmt = self._config["format"]
+                fmt = self._format
             else:
                 fmt = output_format.value
 
-            # Determine quality
+            # Determine quality from the pre-bounded defaults/presets.
             if quality is None or quality == CompressionQuality.ORIGINAL:
-                q = _bounded_image_quality(self._config["quality"])
+                q = self._quality
             else:
-                presets = IMAGE_QUALITY_PRESETS.get(
-                    quality, IMAGE_QUALITY_PRESETS[CompressionQuality.MEDIUM]
+                presets = _BOUNDED_IMAGE_QUALITY_PRESETS.get(
+                    quality, _BOUNDED_IMAGE_QUALITY_PRESETS[CompressionQuality.MEDIUM]
                 )
-                q = _bounded_image_quality(presets.get(fmt, 80))
+                q = presets.get(fmt, 80)
 
-            # Resize if too large
-            max_dim = bounded_int(
-                self._config["max_dimension"],
-                "compression max_dimension",
-                minimum=1,
-                maximum=16384,
-            )
+            # Resize if too large -- max_dimension was bounded at init.
+            max_dim = self._max_dimension
             if img.width > max_dim or img.height > max_dim:
                 img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
@@ -303,6 +319,15 @@ class VideoCompressor:
         """Initialize video compressor."""
         self._config = self._load_config()
         self._ffmpeg_path = self._find_ffmpeg()
+        # Validate every config-sourced ffmpeg argument once, at construction.
+        # The bounded values (especially audio_bitrate) are what the command
+        # builder below must use -- never the raw config strings.
+        self._preset = _bounded_ffmpeg_preset(self._config["preset"])
+        self._audio_bitrate = _bounded_audio_bitrate(self._config["audio_bitrate"])
+        self._crf = bounded_int(
+            self._config["crf"], "compression crf", minimum=0, maximum=63
+        )
+        self._codec = str(self._config["codec"]).strip().lower()
         # Transcoding is deterministic for a given payload + settings. Reuse a
         # bounded result set keyed by content hash so repeated uploads of the
         # same video do not spawn another ffmpeg subprocess.
@@ -433,21 +458,20 @@ class VideoCompressor:
 
         original_size = len(video_data)
 
-        # Config-sourced ffmpeg arguments are validated here rather than being
-        # handed to ffmpeg unchecked: an arbitrary preset/bitrate makes the
-        # transcode fail (or behave unexpectedly) deep inside the subprocess.
-        preset = _bounded_ffmpeg_preset(self._config["preset"])
-        audio_bitrate = _bounded_audio_bitrate(self._config["audio_bitrate"])
+        # These were validated once at init; use the bounded snapshots so an
+        # arbitrary preset/bitrate can never reach the ffmpeg command line.
+        preset = self._preset
+        audio_bitrate = self._audio_bitrate
 
         # Determine codec
         if codec is None or codec == VideoCodec.ORIGINAL:
-            codec_name = self._config["codec"]
+            codec_name = self._codec
         else:
             codec_name = codec.value
 
-        # Determine CRF
+        # Determine CRF (bounded at init)
         if quality is None or quality == CompressionQuality.ORIGINAL:
-            crf = bounded_int(self._config["crf"], "crf", minimum=0, maximum=63)
+            crf = self._crf
         else:
             presets = VIDEO_CRF_PRESETS.get(
                 quality, VIDEO_CRF_PRESETS[CompressionQuality.MEDIUM]
@@ -572,6 +596,7 @@ class CompressionManager:
         self._image_compressor = ImageCompressor()
         self._video_compressor = VideoCompressor()
         self._config = self._load_config()
+        self._enabled = bool(self._config.get("enabled", True))
         # Keep this probe consistent with ``VideoProcessor``: deployments may
         # provide ffprobe outside PATH through media.video_processing.ffprobe_path.
         # Resolve it once at manager construction so status requests remain cheap.
@@ -588,8 +613,8 @@ class CompressionManager:
         return media_config.get("compression", {"enabled": True})
 
     def is_enabled(self) -> bool:
-        """Check if compression is enabled."""
-        return self._config.get("enabled", True)
+        """Check if compression is enabled (snapshotted at construction)."""
+        return self._enabled
 
     def compress(
         self,
