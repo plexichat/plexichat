@@ -228,25 +228,29 @@ class VotingMixin(PollManagerBase):
         if not poll:
             raise PollNotFoundError("Poll not found")
 
-        # Get user's own votes
-        user_votes = self._db.fetch_all(
-            "SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?",
-            (poll_id, user_id),
+        # One conditional-aggregation pass over poll_votes yields both the
+        # caller's own option ids and the per-option totals. This used to be
+        # three queries (user votes, GROUP BY counts, and a separate voter
+        # count); the last one is redundant because get_poll() above already
+        # reconciled ``poll.total_votes`` under the same visibility rule.
+        rows = self._db.fetch_all(
+            """SELECT option_id,
+                      COUNT(*) AS count,
+                      SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine
+               FROM poll_votes WHERE poll_id = ? GROUP BY option_id""",
+            (user_id, poll_id),
         )
-        user_voted = len(user_votes) > 0
-        user_vote_ids = [v["option_id"] for v in user_votes]
+        user_vote_ids = [row["option_id"] for row in rows if row["mine"]]
+        user_voted = bool(user_vote_ids)
 
         # Check visibility
         can_see_results = self._can_view_results(poll, user_voted)
 
-        # Fetch all vote counts in a single query (optimized)
-        vote_counts = {}
-        if can_see_results:
-            rows = self._db.fetch_all(
-                "SELECT option_id, COUNT(*) as count FROM poll_votes WHERE poll_id = ? GROUP BY option_id",
-                (poll_id,),
-            )
-            vote_counts = {row["option_id"]: row["count"] for row in rows}
+        # Counts are only exposed to entitled viewers; the query above
+        # computed them regardless, but they stay private here.
+        vote_counts = (
+            {row["option_id"]: row["count"] for row in rows} if can_see_results else {}
+        )
 
         options_with_counts = []
         for option in poll.options:
@@ -262,10 +266,10 @@ class VotingMixin(PollManagerBase):
                 )
             )
 
-        # Total votes = number of unique participants.  This aggregate is
-        # just as privacy-sensitive as the per-option counts, so it is only
-        # reported when the caller is entitled to see the results.
-        total_voters = self._voter_count(poll_id) if can_see_results else None
+        # Total votes = number of unique participants.  Reuse the value
+        # get_poll() already computed under the same visibility rule rather
+        # than issuing a duplicate COUNT query.
+        total_voters = poll.total_votes if can_see_results else None
 
         return PollResults(
             poll=poll,
