@@ -13,6 +13,8 @@ import re
 import utils.config as config
 import zstandard
 
+from src.core.telemetry.scrubbing import redact_secrets
+
 _COMPRESSED_LOG_SUFFIXES = (".log.zst", ".log.zip")
 
 
@@ -116,8 +118,17 @@ def read_log_lines(
             return
 
         total_count += 1
+        # A log line is untrusted free text: a token pasted into a message must
+        # not reach the admin log viewer. Search still runs on the raw line so
+        # operators can find entries by the (redacted) secret's surrounding
+        # context, but neither the rendered message nor the raw view leaks it.
         processed_lines.append(
-            {"timestamp": timestamp, "level": level, "message": message, "raw": line}
+            {
+                "timestamp": timestamp,
+                "level": level,
+                "message": redact_secrets(message),
+                "raw": redact_secrets(line),
+            }
         )
 
     if filename.endswith(".zip"):

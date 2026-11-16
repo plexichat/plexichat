@@ -13,6 +13,7 @@ from pydantic import BeforeValidator
 from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.common import ErrorResponse, NullableSnowflakeIDParam
 from src.core.security.hardening import content_disposition
+from src.core.telemetry.scrubbing import redact_secrets
 import utils.logger as logger
 
 router = APIRouter()
@@ -157,9 +158,9 @@ async def get_audit_logs(
                     "target_id": str(log["target_id"])
                     if log.get("target_id") is not None
                     else None,
-                    "details": log.get("details"),
-                    "ip_address": log.get("ip_address"),
-                    "user_agent": log.get("user_agent"),
+                    "details": redact_secrets(log.get("details")),
+                    "ip_address": redact_secrets(log.get("ip_address")),
+                    "user_agent": redact_secrets(log.get("user_agent")),
                     "status": log["status"],
                     "created_at": log["created_at"],
                     # created_at is UTC millis; render UTC so the list, the
@@ -343,7 +344,11 @@ async def export_audit_logs(
                 for key in ("admin_id", "target_id", "target_user_id"):
                     if row.get(key) is not None:
                         row[key] = str(row[key])
-                export_rows.append(row)
+                # Every exported column is untrusted free text; scrub the whole
+                # row so a token in details/UA cannot leave via the JSON export.
+                export_rows.append(
+                    {key: redact_secrets(value) for key, value in row.items()}
+                )
 
             return JSONResponse(
                 content={"logs": export_rows},
@@ -377,15 +382,15 @@ async def export_audit_logs(
             )
             writer.writerow(
                 [
-                    log["id"],
-                    log["admin_id"],
-                    log["action"],
-                    log.get("target_type", ""),
-                    log.get("target_id", ""),
-                    log.get("details", ""),
-                    log.get("ip_address", ""),
-                    log.get("user_agent", ""),
-                    log["status"],
+                    redact_secrets(log["id"]),
+                    redact_secrets(log["admin_id"]),
+                    redact_secrets(log["action"]),
+                    redact_secrets(log.get("target_type", "")),
+                    redact_secrets(log.get("target_id", "")),
+                    redact_secrets(log.get("details", "")),
+                    redact_secrets(log.get("ip_address", "")),
+                    redact_secrets(log.get("user_agent", "")),
+                    redact_secrets(log["status"]),
                     timestamp,
                 ]
             )

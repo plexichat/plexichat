@@ -137,3 +137,14 @@ chain.append("user.ban", admin_id, target_id=user_id, details={"reason": "spam"}
 valid, count, error = chain.verify_chain()
 ```
 
+### Secret redaction
+
+`src/core/telemetry/scrubbing.py` provides `redact_secrets()` (and the string
+helper `scrub_text()`). It recurses through nested dicts/lists, replaces values
+under sensitive keys (password, token, secret, api_key, authorization, cookie,
+session, credentials, ...) with `[REDACTED]`, and strips secret-looking
+substrings from free text (Bearer/Basic headers, JWTs, `key=value` pairs,
+PEM private keys, named API-key prefixes). Depth, item count and string length
+are bounded. The audit store scrubs before persisting and again on read; the
+admin audit routes and the admin log viewer scrub everything they serve.
+

@@ -45,6 +45,8 @@ from src.core.security.hardening import (
     reject_control_characters,
 )
 
+from .scrubbing import redact_secrets
+
 GENESIS_HASH = "0" * 64
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -218,12 +220,16 @@ class AuditChain:
             if timestamp_ms is not None
             else int(time.time() * 1000)
         )
-        payload: Dict[str, Any] = {
-            "target_type": target_type or None,
-            "target_id": target_id or None,
-            "details": details,
-            "extra": extra,
-        }
+        # Scrub *before* hashing/persisting: a secret must never reach the
+        # audit file in the first place, not merely be hidden on read.
+        payload: Dict[str, Any] = redact_secrets(
+            {
+                "target_type": target_type or None,
+                "target_id": target_id or None,
+                "details": details,
+                "extra": extra,
+            }
+        )
         if len(_canonical(payload)) > MAX_PAYLOAD_CHARS:
             raise HardeningViolation("audit payload exceeds the size limit")
 
@@ -271,7 +277,11 @@ class AuditChain:
         entry = dict(record.get("entry") or {})
         payload = dict(entry.get("payload") or {})
         payload.pop("extra", None)
-        entry["payload"] = payload
+        # Defense in depth: records written by an older (unpatched) version may
+        # still contain a secret, so scrub on the way out as well.
+        entry["payload"] = redact_secrets(payload)
+        entry["action"] = redact_secrets(entry.get("action"))
+        entry["actor"] = redact_secrets(entry.get("actor"))
         return {
             "seq": entry.get("seq"),
             "checksum": record.get("checksum"),

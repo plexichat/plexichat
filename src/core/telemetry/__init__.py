@@ -22,6 +22,7 @@ from .audit import (
     AuditChainError,
     verify_audit_chain,
 )
+from .scrubbing import REDACTED, redact_secrets, scrub_text
 
 logger = logging.getLogger(__name__)
 
@@ -774,4 +775,7 @@ __all__ = [
     "AuditChain",
     "AuditChainError",
     "verify_audit_chain",
+    "REDACTED",
+    "redact_secrets",
+    "scrub_text",
 ]
