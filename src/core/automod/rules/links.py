@@ -5,7 +5,7 @@ Handles server invite links and external link whitelist/blacklist.
 """
 
 import re
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, List
 
 import utils.logger as logger
 
@@ -242,12 +242,25 @@ class ExternalLinkRule(BaseRule):
         super().__init__(rule)
         self._mode: str = self.config.get("mode", "blacklist")
         self._whitelist: Set[str] = set(
-            _normalize_listed_domain(d) for d in self.config.get("whitelist", [])
+            _normalize_listed_domain(d)
+            for d in self._bounded_domains(self.config.get("whitelist", []))
         )
         self._blacklist: Set[str] = set(
-            _normalize_listed_domain(d) for d in self.config.get("blacklist", [])
+            _normalize_listed_domain(d)
+            for d in self._bounded_domains(self.config.get("blacklist", []))
         )
         self._block_all: bool = self.config.get("block_all", False)
+
+    @staticmethod
+    def _bounded_domains(value: Any) -> List[str]:
+        """Trim a stored domain list to a finite, length-bounded set."""
+        from ..limits import MAX_DOMAIN_LENGTH, MAX_LISTED_DOMAINS
+
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [
+            d[:MAX_DOMAIN_LENGTH] for d in value if isinstance(d, str) and d.strip()
+        ][:MAX_LISTED_DOMAINS]
 
     def check(
         self,
@@ -416,6 +429,15 @@ class ExternalLinkRule(BaseRule):
                     issues.append(f"{field} must be a list")
                 elif not all(isinstance(v, str) for v in value):
                     issues.append(f"{field} must contain only strings")
+                else:
+                    from ..limits import MAX_DOMAIN_LENGTH, MAX_LISTED_DOMAINS
+
+                    if len(value) > MAX_LISTED_DOMAINS:
+                        issues.append(f"{field} exceeds {MAX_LISTED_DOMAINS} entries")
+                    elif any(len(v) > MAX_DOMAIN_LENGTH for v in value):
+                        issues.append(
+                            f"{field} entries exceed {MAX_DOMAIN_LENGTH} characters"
+                        )
 
         if "block_all" in config and not isinstance(config["block_all"], bool):
             issues.append("block_all must be a boolean")

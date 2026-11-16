@@ -7,6 +7,11 @@ Checks messages for blocked keywords with optional word boundary matching.
 from typing import Dict, Any, Optional, List
 
 from .base import BaseRule
+from ..limits import (
+    MAX_KEYWORD_LENGTH,
+    MAX_KEYWORDS,
+    MAX_SEVERITY_MAP_ENTRIES,
+)
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity, coerce_severity
 
 
@@ -17,10 +22,29 @@ class KeywordRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._keywords: List[str] = self.config.get("keywords", [])
+        # Stored configs bypass validate_config(). Bound the list size and
+        # each entry so one rule cannot load thousands of keywords into every
+        # worker or scan with a megabyte-sized keyword.
+        raw_keywords = self.config.get("keywords", [])
+        if not isinstance(raw_keywords, list):
+            raw_keywords = []
+        self._keywords: List[str] = [
+            k.strip()
+            for k in raw_keywords
+            if isinstance(k, str) and k.strip() and len(k) <= MAX_KEYWORD_LENGTH
+        ][:MAX_KEYWORDS]
         self._case_sensitive: bool = self.config.get("case_sensitive", False)
         self._whole_word: bool = self.config.get("whole_word", True)
-        self._severity_map: Dict[str, str] = self.config.get("severity_map", {})
+        raw_map = self.config.get("severity_map", {})
+        if not isinstance(raw_map, dict):
+            raw_map = {}
+        self._severity_map: Dict[str, str] = {
+            str(k)[:MAX_KEYWORD_LENGTH]: str(v)[:32] for k, v in raw_map.items()
+        }
+        if len(self._severity_map) > MAX_SEVERITY_MAP_ENTRIES:
+            self._severity_map = dict(
+                list(self._severity_map.items())[:MAX_SEVERITY_MAP_ENTRIES]
+            )
 
         if not self._case_sensitive:
             self._keywords = [k.lower() for k in self._keywords]
@@ -116,6 +140,29 @@ class KeywordRule(BaseRule):
             issues.append("keywords must be a list")
         elif not all(isinstance(k, str) for k in keywords):
             issues.append("all keywords must be strings")
+        elif len(keywords) > MAX_KEYWORDS:
+            issues.append(f"keywords list exceeds {MAX_KEYWORDS} entries")
+        elif any(not k.strip() or len(k) > MAX_KEYWORD_LENGTH for k in keywords):
+            issues.append(
+                f"each keyword must be non-empty and at most {MAX_KEYWORD_LENGTH} characters"
+            )
+
+        severity_map = config.get("severity_map", {})
+        if severity_map is not None:
+            if not isinstance(severity_map, dict):
+                issues.append("severity_map must be an object")
+            elif len(severity_map) > MAX_SEVERITY_MAP_ENTRIES:
+                issues.append(
+                    f"severity_map exceeds {MAX_SEVERITY_MAP_ENTRIES} entries"
+                )
+            elif any(
+                not isinstance(k, str)
+                or len(k) > MAX_KEYWORD_LENGTH
+                or not isinstance(v, str)
+                or len(v) > 32
+                for k, v in severity_map.items()
+            ):
+                issues.append("severity_map keys/values are too long")
 
         if "case_sensitive" in config and not isinstance(
             config["case_sensitive"], bool
