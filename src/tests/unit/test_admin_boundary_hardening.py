@@ -11,6 +11,7 @@ import inspect
 from fastapi.params import Query as QueryParam
 
 import src.api.routes.admin.audit as audit_routes
+import src.api.routes.admin.security as security_routes
 import src.api.routes.admin.moderation as moderation_routes
 import src.api.routes.admin.tickets as tickets_routes
 import src.api.routes.admin.dashboard as dashboard_routes
@@ -122,6 +123,22 @@ class TestModerationFilterBounds:
             moderation_routes.get_user_reports,
         ):
             assert _constraint(handler, "status_filter", "MaxLen").max_length == 32
+
+
+class TestAccessTokenDetailBounds:
+    def test_recent_event_window_bounded(self):
+        assert (
+            _constraint(
+                security_routes.get_access_token_detail, "recent_limit", "Le"
+            ).le
+            == 1000
+        )
+        assert (
+            _constraint(
+                security_routes.get_access_token_detail, "recent_limit", "Ge"
+            ).ge
+            == 1
+        )
 
 
 class TestAuditExportBounds:

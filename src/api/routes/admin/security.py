@@ -2,7 +2,7 @@
 Admin security routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from typing import List
 import secrets
 
@@ -208,7 +208,7 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
 async def get_access_token_detail(
     request: Request,
     token_id: SnowflakeIDParam,
-    recent_limit: int = 100,
+    recent_limit: int = Query(100, ge=1, le=1000),
 ):
     """Get detailed usage and policy information for a specific API access token."""
     check_host_restriction(request)
