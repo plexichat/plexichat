@@ -26,6 +26,18 @@ def _is_pool_exhausted(exc: BaseException, err_str: str) -> bool:
     return "pool" in err_str and ("exhaust" in err_str or "no available" in err_str)
 
 
+def _wire_pool_wait_observer(pool: Any, monitor: Any) -> None:
+    """Route the pool's FIFO wait durations into the existing monitor stats.
+
+    Both engines share ``ConnectionPool``; wiring here keeps ``record_pool_wait``
+    (previously defined but never called) fed for either backend.
+    """
+    observer = getattr(pool, "set_wait_observer", None)
+    record = getattr(monitor, "record_pool_wait", None)
+    if callable(observer) and callable(record):
+        observer(record)
+
+
 class _DatabaseConnectionProtocol(Protocol):
     engine: Any
     _pool: Any
@@ -263,6 +275,7 @@ class DatabaseConnectionMixin:
                     self._pool = self.engine.create_pool(
                         min_conn, pool_config.get("max_connections", 300)
                     )
+                    _wire_pool_wait_observer(self._pool, self.monitor)
                 pool_config = self.config.get("connection_pool", {})
                 connect_timeout = pool_config.get("connect_timeout", 10)
                 try:
@@ -290,6 +303,7 @@ class DatabaseConnectionMixin:
                     default_max = max(2, os.cpu_count() or 4) + 1
                     max_conn = pool_config.get("max_connections", default_max)
                     self._pool = self.engine.create_pool(min_conn, max_conn)
+                    _wire_pool_wait_observer(self._pool, self.monitor)
                 pool_config = self.config.get("connection_pool", {})
                 connect_timeout = pool_config.get("connect_timeout", 10)
                 try:

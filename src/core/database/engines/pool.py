@@ -8,7 +8,8 @@ idle/transaction/in-flight reclaim logic. The pool only ever calls
 
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from collections import deque
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.core.security.hardening import bounded_int
 
@@ -94,9 +95,44 @@ class ConnectionPool:
         self._total_created = 0
         self._closed = False
 
+        # FIFO queue of waiters. ``Condition.notify()`` wakes an arbitrary
+        # waiter, which under sustained contention lets later arrivals bypass
+        # threads that have been parked longer (and can starve them). Only the
+        # head of this queue may consume a newly returned connection.
+        self._wait_queue: "deque[Any]" = deque()
+
+        # Instrumented wait cost: every caller that had to queue records how
+        # long it blocked, with an optional observer wired to the monitor.
+        self._wait_count = 0
+        self._wait_total = 0.0
+        self._wait_max = 0.0
+        self._on_wait: Optional[Callable[[float], None]] = None
+
         for _ in range(min_size):
             self._available.append(self._create_conn())
             self._total_created += 1
+
+    def set_wait_observer(self, callback: Optional[Callable[[float], None]]) -> None:
+        """Set the sink for observed FIFO wait durations (in seconds).
+
+        Metrics are a side channel: a failing observer must never abort a
+        connection acquisition, so the callback is invoked defensively.
+        """
+        with self._condition:
+            self._on_wait = callback
+
+    def _record_wait(self, duration: float) -> None:
+        """Record one completed wait. Caller holds ``self._condition``."""
+        self._wait_count += 1
+        self._wait_total += duration
+        self._wait_max = max(self._wait_max, duration)
+        observer = self._on_wait
+        if observer is not None:
+            try:
+                observer(duration)
+            except Exception:
+                # A broken metrics sink must not break pool acquisitions.
+                pass
 
     def get_connection(self, timeout: float = 30.0) -> Any:
         deadline = time.monotonic() + _bounded_acquire_timeout(timeout)
@@ -106,20 +142,54 @@ class ConnectionPool:
                 # checked-out connections that have gone idle (the thread-local
                 # leak case) so capacity is restored promptly.
                 self._reap_idle_unlocked()
-            while not self._available and self._total_created >= self._max_size:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        f"{self._label} connection pool exhausted: "
-                        "no available connections"
-                    )
-                self._condition.wait(remaining)
 
-            if self._available:
-                conn = self._available.pop()
-            else:
-                conn = self._create_conn()
-                self._total_created += 1
+            # Register before blocking so a return that happens between the
+            # capacity check and the first wait() cannot be missed.
+            token: Any = None
+            wait_started: Optional[float] = None
+            if not self._available and self._total_created >= self._max_size:
+                token = object()
+                self._wait_queue.append(token)
+                wait_started = time.monotonic()
+
+            try:
+                while True:
+                    has_capacity = (
+                        bool(self._available) or self._total_created < self._max_size
+                    )
+                    is_head = token is None or (
+                        bool(self._wait_queue) and self._wait_queue[0] is token
+                    )
+                    if has_capacity and is_head:
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"{self._label} connection pool exhausted: "
+                            "no available connections"
+                        )
+                    self._condition.wait(remaining)
+
+                if self._available:
+                    conn = self._available.pop()
+                else:
+                    conn = self._create_conn()
+                    self._total_created += 1
+
+                # A newly created connection may leave free slots for the
+                # waiters still queued behind this one; let them re-check.
+                if self._wait_queue and self._total_created < self._max_size:
+                    self._condition.notify_all()
+            finally:
+                if token is not None:
+                    try:
+                        self._wait_queue.remove(token)
+                    except ValueError:  # already removed (defensive)
+                        pass
+                    if wait_started is not None:
+                        self._record_wait(time.monotonic() - wait_started)
+                    # Hand the turn to the next waiter in FIFO order.
+                    self._condition.notify_all()
 
             conn_id = id(conn)
             self._in_use.add(conn_id)
@@ -260,7 +330,7 @@ class ConnectionPool:
             if not tracked:
                 # Already reclaimed (closed) by ``_reap_idle_unlocked`` —
                 # nothing left to return or account for.
-                self._condition.notify()
+                self._condition.notify_all()
                 return
             if force_close:
                 try:
@@ -270,12 +340,13 @@ class ConnectionPool:
 
                     logger.debug(f"pool: forced connection close failed: {close_error}")
                 self._total_created -= 1
-                self._condition.notify()
+                self._condition.notify_all()
                 return
 
             if len(self._available) < self._max_size:
                 self._available.append(conn)
-                self._condition.notify()
+                # Wake every waiter: the FIFO head check decides who proceeds.
+                self._condition.notify_all()
             else:
                 try:
                     conn.close()
@@ -330,4 +401,10 @@ class ConnectionPool:
                 "utilization_percent": (active / self._max_size * 100)
                 if self._max_size > 0
                 else 0.0,
+                "wait_count": self._wait_count,
+                "avg_wait_time": (self._wait_total / self._wait_count)
+                if self._wait_count
+                else 0.0,
+                "max_wait_time": self._wait_max,
+                "wait_queue_depth": len(self._wait_queue),
             }
