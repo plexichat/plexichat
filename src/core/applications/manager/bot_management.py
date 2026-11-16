@@ -114,11 +114,16 @@ class BotManagementMixin(ApplicationManagerProtocol):
         approved_by: SnowflakeID,
         permissions: str = "{}",
         bot_name: Optional[str] = None,
+        *,
+        _permission_checked: bool = False,
     ) -> ApprovedBot:
         # SECURITY: authorize before licensing so a user without
         # ``server.manage`` gets PermissionDeniedError rather than a
-        # license error (which would leak feature availability).
-        self._require_server_manage_permission(approved_by, server_id)
+        # license error (which would leak feature availability). Internal
+        # callers that already performed this exact check for the same
+        # user/server (review_bot_request) may skip the duplicate lookup.
+        if not _permission_checked:
+            self._require_server_manage_permission(approved_by, server_id)
         self._check_bot_license()
 
         existing = self._db.fetch_one(
@@ -380,6 +385,9 @@ class BotManagementMixin(ApplicationManagerProtocol):
                     server_id=row["server_id"],
                     application_id=row["application_id"],
                     approved_by=reviewer_id,
+                    # review_bot_request already verified server.manage for
+                    # this reviewer/server pair above; don't repeat it.
+                    _permission_checked=True,
                 )
             except BotAlreadyApprovedError:
                 pass

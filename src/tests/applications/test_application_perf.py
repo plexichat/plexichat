@@ -118,3 +118,48 @@ class TestApprovedBotListing:
         assert bots[0].bot_name == "Approved"
         assert "LEFT JOIN" not in queries[0]
         assert "app_applications" not in queries[0]
+
+
+@pytest.mark.applications
+class TestBotPermissionLookups:
+    def test_review_does_not_repeat_permission_check(
+        self, app_manager, server_manager, user_pool
+    ):
+        """Reviewing a request checks server.manage once, not twice.
+
+        ``review_bot_request`` authorizes the reviewer and then auto-approves;
+        the auto-approval must reuse that decision instead of resolving the
+        same permission again.
+        """
+        reviewer = user_pool.get_user()
+        requester = user_pool.get_user()
+        server = server_manager.create_server(reviewer.id, "Bot Server")
+        app_manager._servers = server_manager
+        app = app_manager.create_application(reviewer.id, "Bot App")
+        request = app_manager.request_bot(server.id, app.id, requester.id)
+
+        real_check = app_manager._require_server_manage_permission
+        with patch(
+            "utils.licensing.has_feature", return_value=True
+        ), patch.object(
+            app_manager,
+            "_require_server_manage_permission",
+            side_effect=real_check,
+        ) as permission_check:
+            app_manager.review_bot_request(
+                server_id=server.id,
+                request_id=request.id,
+                reviewer_id=reviewer.id,
+                approve=True,
+            )
+
+        assert permission_check.call_count == 1
+
+    def test_direct_approval_still_checks_permission(self, app_manager, user_pool):
+        """Skipping the duplicate check must not weaken direct approvals."""
+        from src.core.applications.exceptions import PermissionDeniedError
+
+        user = user_pool.get_user()
+        app = app_manager.create_application(user.id, "Bot App")
+        with pytest.raises(PermissionDeniedError):
+            app_manager.approve_bot(server_id=7002, application_id=app.id, approved_by=user.id)
