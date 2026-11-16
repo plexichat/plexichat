@@ -10,6 +10,7 @@ handlers, and no voice-specific call logic (those are introduced by later
 groups). Permission/visibility checks are performed by the route layer.
 """
 
+import threading
 from typing import Any, Dict, List, Optional, Union
 
 import utils.config as config
@@ -24,11 +25,23 @@ from .models import (
 from .repository import (
     create_artifact,
     get_artifact,
+    get_artifacts_by_ids,
     update_artifact,
     delete_artifact,
     list_artifacts,
     count_artifacts,
 )
+
+# Upload conversion starts lifecycle work (notifications, participant lookups)
+# and writes rows. Cap how many conversions may be in flight process-wide so a
+# burst of retroactive-convert requests cannot fan out into unbounded work.
+_MAX_INFLIGHT_CONVERSIONS = 8
+_MAX_CONVERSION_BATCH = 100
+_CONVERSION_SLOTS = threading.BoundedSemaphore(_MAX_INFLIGHT_CONVERSIONS)
+
+# Sentinel distinguishing "caller did not supply a value" from an explicit
+# ``None`` (which is a legitimate retention/participant-list value).
+_UNSET = object()
 
 
 class ArtifactManager(BaseManager):
@@ -195,10 +208,20 @@ class ArtifactManager(BaseManager):
         retention_policy: Any = None,
         license_feature: Optional[str] = None,
         emit_event: bool = True,
+        _resolved_retention_days: Any = _UNSET,
     ) -> Artifact:
-        """Create and persist a new artifact with a fresh Snowflake id."""
+        """Create and persist a new artifact with a fresh Snowflake id.
+
+        ``_resolved_retention_days`` is an internal batching hook: a bulk
+        conversion resolves retention once for the whole batch and passes the
+        result here instead of repeating the per-server DB lookup per row.
+        """
         created_at = self._get_timestamp()
-        retention_days = self._resolve_retention_days(retention_policy, server_id)
+        retention_days = (
+            self._resolve_retention_days(retention_policy, server_id)
+            if _resolved_retention_days is _UNSET
+            else _resolved_retention_days
+        )
         expires_at = self.compute_expires_at(retention_days, created_at)
 
         artifact = Artifact(
@@ -324,8 +347,45 @@ class ArtifactManager(BaseManager):
                 self._emit_lifecycle_event("delete", artifact)
         return deleted
 
-    def _emit_lifecycle_event(self, action: str, artifact: Artifact) -> None:
-        """Best-effort dispatch of a typed artifact lifecycle event."""
+    @staticmethod
+    def _events_enabled() -> bool:
+        """Whether lifecycle events are wired up in this process."""
+        try:
+            from src.core import events
+
+            return bool(events.is_setup())
+        except Exception:  # pragma: no cover - defensive
+            return False
+
+    @staticmethod
+    def _event_user_ids(conversation_id: Optional[SnowflakeID]) -> Optional[List[int]]:
+        """Resolve the participant list for a conversation's lifecycle events."""
+        if conversation_id is None:
+            return None
+        try:
+            import src.api as api_mod
+
+            messaging = api_mod.get_messaging()
+            if messaging is not None:
+                return [
+                    int(uid)
+                    for uid in messaging.get_participant_ids(conversation_id)
+                ]
+        except Exception as exc:  # pragma: no cover - best-effort
+            logger.debug("Artifact event participant lookup failed: %s", exc)
+        return None
+
+    def _emit_lifecycle_event(
+        self,
+        action: str,
+        artifact: Artifact,
+        user_ids: Any = _UNSET,
+    ) -> None:
+        """Best-effort dispatch of a typed artifact lifecycle event.
+
+        ``user_ids`` can be supplied by a batch caller that already resolved
+        the participants once; otherwise it is looked up here as before.
+        """
         try:
             from src.core import events
             from src.core.events.models import Event
@@ -349,18 +409,8 @@ class ArtifactManager(BaseManager):
                 server_id=artifact.server_id,
                 channel_id=artifact.channel_id,
             )
-            user_ids = None
-            if artifact.conversation_id is not None:
-                import src.api as api_mod
-
-                messaging = api_mod.get_messaging()
-                if messaging is not None:
-                    user_ids = [
-                        int(uid)
-                        for uid in messaging.get_participant_ids(
-                            artifact.conversation_id
-                        )
-                    ]
+            if user_ids is _UNSET:
+                user_ids = self._event_user_ids(artifact.conversation_id)
             events.dispatch(
                 event,
                 user_ids=user_ids,
@@ -550,10 +600,22 @@ class ArtifactManager(BaseManager):
             ValueError: when the attachment size is unparseable ("invalid
                 size") or exceeds the configured ``max_artifact_size_mb``.
         """
-        attachment_id = attachment.get("attachment_id") or attachment.get("id")
-        if attachment_id is None:
-            raise ValueError("attachment must include an 'attachment_id' or 'id'")
+        with _CONVERSION_SLOTS:
+            max_size_mb, max_size_bytes = self._bounded_size_from_config()
+            return self._convert_one(
+                attachment,
+                conversation_id=conversation_id,
+                author_id=author_id,
+                title=title,
+                artifact_type=artifact_type,
+                server_id=server_id,
+                channel_id=channel_id,
+                max_size_mb=max_size_mb,
+                max_size_bytes=max_size_bytes,
+            )
 
+    def _bounded_size_from_config(self) -> tuple:
+        """Bound the configured cap, preferring the manager's explicit config."""
         max_size_mb = bounded_int(
             (self._artifacts_config or config.get("artifacts", {}) or {}).get(
                 "max_artifact_size_mb", 200
@@ -562,7 +624,28 @@ class ArtifactManager(BaseManager):
             minimum=1,
             maximum=10240,
         )
-        max_size_bytes = max_size_mb * 1024 * 1024
+        return max_size_mb, max_size_mb * 1024 * 1024
+
+    def _convert_one(
+        self,
+        attachment: Dict[str, Any],
+        *,
+        conversation_id: Optional[SnowflakeID],
+        author_id: SnowflakeID,
+        title: Optional[str],
+        artifact_type: ArtifactType,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
+        max_size_mb: int,
+        max_size_bytes: int,
+        retention_days: Any = _UNSET,
+        emit_event: bool = True,
+    ) -> Artifact:
+        """Validate and persist one conversion with pre-resolved limits."""
+        attachment_id = attachment.get("attachment_id") or attachment.get("id")
+        if attachment_id is None:
+            raise ValueError("attachment must include an 'attachment_id' or 'id'")
+
         # L4: ``size`` may arrive as a string (form/JSON coercion); a raw
         # comparison would raise TypeError and surface as a 500. Coerce via
         # int() fail-closed: numeric strings are accepted, unparseable
@@ -575,10 +658,6 @@ class ArtifactManager(BaseManager):
                 declared_size = int(raw_size)
             except (TypeError, ValueError):
                 raise ValueError("invalid size")
-        if declared_size < 0:
-            raise ValueError("invalid size")
-        if declared_size < 0:
-            raise ValueError("invalid size")
         if declared_size < 0:
             raise ValueError("invalid size")
         if declared_size > max_size_bytes:
@@ -607,7 +686,70 @@ class ArtifactManager(BaseManager):
             recorded=False,
             has_transcript=False,
             payload=payload,
+            emit_event=emit_event,
+            _resolved_retention_days=retention_days,
         )
+
+    def convert_uploads_to_artifacts(
+        self,
+        attachments: List[Dict[str, Any]],
+        conversation_id: Optional[SnowflakeID],
+        author_id: SnowflakeID,
+        title: Optional[str] = None,
+        artifact_type: ArtifactType = ArtifactType.UPLOAD,
+        server_id: Optional[SnowflakeID] = None,
+        channel_id: Optional[SnowflakeID] = None,
+    ) -> List[Artifact]:
+        """Convert a batch of uploads with shared, batched DB reads.
+
+        Before, converting N attachments repeated the size/config lookup,
+        per-server retention lookup, participant lookup for the lifecycle
+        event, and a SELECT per created row. Here those reads are resolved
+        once for the whole batch, the created ids are hydrated in a single
+        ``IN (...)`` query, and the process-wide conversion semaphore bounds
+        the work done by concurrent callers.
+        """
+        items = list(attachments)
+        if len(items) > _MAX_CONVERSION_BATCH:
+            raise ValueError(
+                f"Cannot convert more than {_MAX_CONVERSION_BATCH} attachments at once"
+            )
+        if not items:
+            return []
+
+        with _CONVERSION_SLOTS:
+            max_size_mb, max_size_bytes = self._bounded_size_from_config()
+            retention_days = self._resolve_retention_days(None, server_id)
+            event_user_ids = (
+                self._event_user_ids(conversation_id)
+                if self._events_enabled()
+                else None
+            )
+            created_ids = []
+            for attachment in items:
+                artifact = self._convert_one(
+                    attachment,
+                    conversation_id=conversation_id,
+                    author_id=author_id,
+                    title=title,
+                    artifact_type=artifact_type,
+                    server_id=server_id,
+                    channel_id=channel_id,
+                    max_size_mb=max_size_mb,
+                    max_size_bytes=max_size_bytes,
+                    retention_days=retention_days,
+                    emit_event=False,
+                )
+                created_ids.append(artifact.id)
+
+        # One batched read resolves every created row instead of N selects.
+        by_id = get_artifacts_by_ids(self._db, created_ids)
+        converted = [by_id[int(artifact_id)] for artifact_id in created_ids]
+        for artifact in converted:
+            self._emit_lifecycle_event(
+                "create", artifact, user_ids=event_user_ids
+            )
+        return converted
 
     def get_feature_settings(
         self, server_id: SnowflakeID, feature: str

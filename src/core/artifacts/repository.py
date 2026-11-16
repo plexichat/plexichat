@@ -176,6 +176,44 @@ def get_artifact(db, artifact_id: SnowflakeID) -> Optional[Artifact]:
     return row_to_artifact(row)
 
 
+# Maximum number of ids a single batched hydration query may carry. Conversion
+# batches are capped well below this, but the repository is also called by
+# other domains and must never build an unbounded ``IN (...)`` clause.
+_MAX_ID_BATCH = 256
+
+
+def get_artifacts_by_ids(db, ids) -> Dict[SnowflakeID, Artifact]:
+    """Fetch many artifacts in one bounded query, keyed by numeric id.
+
+    Conversion used to resolve every newly created row with its own SELECT.
+    Callers that already hold a set of ids can now hydrate them in a single
+    round trip instead.
+    """
+    unique: List[SnowflakeID] = []
+    seen = set()
+    for value in ids:
+        try:
+            artifact_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if artifact_id not in seen:
+            seen.add(artifact_id)
+            unique.append(artifact_id)
+    if not unique:
+        return {}
+    if len(unique) > _MAX_ID_BATCH:
+        raise ValueError(f"Cannot fetch more than {_MAX_ID_BATCH} artifacts at once")
+    placeholders = ", ".join("?" for _ in unique)
+    rows = db.fetch_all(
+        f"SELECT * FROM artifacts WHERE id IN ({placeholders})", tuple(unique)
+    )
+    return {
+        int(row["id"]): row_to_artifact(row)
+        for row in rows
+        if row and row.get("id") is not None
+    }
+
+
 # Columns that may never be rewritten directly through ``update_artifact``:
 # ``rev`` is the optimistic-concurrency revision and only moves via the
 # atomic ``expected_rev`` path (or is seeded at insert). A stray ``rev`` in
