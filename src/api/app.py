@@ -220,7 +220,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         # call and 12.9ms on every call after it.
         from .warmup import start_warmup, stop_warmup
 
-        warmup_task = start_warmup()
+        warmup_task = start_warmup(app)
 
         # Register route templates so client-supplied telemetry endpoints are
         # allowlisted against real API routes (cardinality protection).

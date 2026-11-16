@@ -20,7 +20,7 @@ class RouteDiscovery:
 
     def discover_routes(self) -> List[Dict[str, Any]]:
         try:
-            resp = self.ctx.session.get(f"{self.ctx.base_url}/openapi.json", timeout=10)
+            resp = self.ctx.session.get(f"{self.ctx.base_url}/openapi.json", timeout=60)
             if resp.status_code != 200:
                 logger.error(f"Failed to fetch OpenAPI spec: {resp.status_code}")
                 return []

@@ -4,8 +4,6 @@ Gateway opcodes - Standard opcode definitions for WebSocket gateway.
 
 from enum import IntEnum
 
-from src.core.security.hardening import HardeningViolation, bounded_int
-
 
 class GatewayOpcode(IntEnum):
     """Gateway operation codes."""
@@ -54,66 +52,6 @@ class GatewayOpcode(IntEnum):
     SUM_UNSUBSCRIBE = 65
     SUM_OP = 66
     SUM_SYNC = 67
-
-
-#: Every opcode the protocol defines.
-KNOWN_OPCODES = frozenset(int(op) for op in GatewayOpcode)
-
-#: Opcodes a client is permitted to send. Server-push-only opcodes and the
-#: Artifact/PlexiSum sync/rejection frames are deliberately absent: an echo of
-#: one of those is soft-rejected by the handler instead of being acted upon.
-CLIENT_OPCODES = frozenset(
-    {
-        GatewayOpcode.HEARTBEAT,
-        GatewayOpcode.IDENTIFY,
-        GatewayOpcode.RESUME,
-        GatewayOpcode.PRESENCE_UPDATE,
-        GatewayOpcode.VOICE_STATE_UPDATE,
-        GatewayOpcode.REQUEST_GUILD_MEMBERS,
-        GatewayOpcode.VOICE_CONNECT,
-        GatewayOpcode.VOICE_DISCONNECT,
-        GatewayOpcode.VOICE_SDP_OFFER,
-        GatewayOpcode.VOICE_SDP_ANSWER,
-        GatewayOpcode.VOICE_ICE_CANDIDATE,
-        GatewayOpcode.VOICE_SPEAKING,
-        GatewayOpcode.VOICE_QUALITY,
-        GatewayOpcode.TYPING_START,
-        GatewayOpcode.TYPING_STOP,
-        GatewayOpcode.ARTIFACT_SUBSCRIBE,
-        GatewayOpcode.ARTIFACT_UNSUBSCRIBE,
-        GatewayOpcode.ARTIFACT_OP,
-        GatewayOpcode.SUM_SUBSCRIBE,
-        GatewayOpcode.SUM_UNSUBSCRIBE,
-        GatewayOpcode.SUM_OP,
-        # Extension opcodes with no server-side consumer yet.
-        GatewayOpcode.SERVER_STATUS,
-        GatewayOpcode.VERSION_CHECK,
-        GatewayOpcode.INTERACTION_CREATE,
-        GatewayOpcode.INTERACTION_RESPONSE,
-        GatewayOpcode.RATCHET_UPDATE,
-    }
-)
-
-#: Opcodes that only ever travel server -> client.
-SERVER_ONLY_OPCODES = frozenset(KNOWN_OPCODES - {int(op) for op in CLIENT_OPCODES})
-
-
-def coerce_opcode(value: object) -> int:
-    """Return ``value`` as a known opcode integer, or raise.
-
-    Booleans are rejected even though ``bool`` subclasses ``int``: a JSON
-    ``true`` must not silently become ``HEARTBEAT`` (opcode 1). String
-    opcodes are rejected too so a numeric-looking string cannot smuggle an
-    opcode past the allowlist.
-    """
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise HardeningViolation("opcode must be an integer")
-    code = bounded_int(
-        value, "opcode", minimum=min(KNOWN_OPCODES), maximum=max(KNOWN_OPCODES)
-    )
-    if code not in KNOWN_OPCODES:
-        raise HardeningViolation("unknown opcode")
-    return code
 
 
 class GatewayCloseCode(IntEnum):

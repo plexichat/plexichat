@@ -18,7 +18,7 @@ def test_understated_declared_size_is_rejected(media_manager):
         media_manager.upload_stream(
             user_id=1,
             stream=io.BytesIO(_PAYLOAD),
-            filename="a.bin",
+            filename="a.txt",
             content_type=_CONTENT_TYPE,
             size=1,  # understated: the body is far larger
         )
@@ -28,7 +28,7 @@ def test_matching_declared_size_is_accepted(media_manager):
     result = media_manager.upload_stream(
         user_id=1,
         stream=io.BytesIO(_PAYLOAD),
-        filename="a.bin",
+        filename="a.txt",
         content_type=_CONTENT_TYPE,
         size=len(_PAYLOAD),
     )

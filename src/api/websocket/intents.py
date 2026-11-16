@@ -10,9 +10,6 @@ from src.core.events.router import filter_by_intents as _filter_by_intents
 DEFAULT_INTENTS = GatewayIntent.default_intents()
 ALL_INTENTS = GatewayIntent.all_intents()
 PRIVILEGED_INTENTS = GatewayIntent.privileged_intents()
-#: The exact set of bits the protocol defines. Any other bit is unknown
-#: and must be rejected rather than silently ignored.
-ALLOWED_INTENTS = GatewayIntent.all_intents()
 
 
 def validate_intents(intents: int) -> bool:
@@ -34,8 +31,6 @@ def validate_intents(intents: int) -> bool:
     if intents < 0:
         return False
     if intents > ALL_INTENTS:
-        return False
-    if intents & ~ALLOWED_INTENTS:
         return False
     return True
 

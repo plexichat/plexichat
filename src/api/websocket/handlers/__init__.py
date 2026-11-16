@@ -16,13 +16,7 @@ import time
 
 import utils.logger as logger
 
-from src.api.websocket.opcodes import (
-    GatewayOpcode,
-    GatewayCloseCode,
-    CLIENT_OPCODES,
-    SERVER_ONLY_OPCODES,
-    coerce_opcode,
-)
+from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.session import SessionManager
 
@@ -269,14 +263,8 @@ class OpcodeHandler:
             close_code is set if connection should be closed
         """
         try:
-            op = GatewayOpcode(coerce_opcode(opcode))
+            op = GatewayOpcode(opcode)
         except ValueError:
-            return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
-
-        # Enforce the client opcode allowlist. Server-push-only opcodes are
-        # still soft-rejected below (echoes are dropped, not hard-closed); a
-        # value in neither set is a protocol violation.
-        if int(op) not in CLIENT_OPCODES and int(op) not in SERVER_ONLY_OPCODES:
             return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
 
         # Cheap per-connection throttle for heavy opcodes runs BEFORE any

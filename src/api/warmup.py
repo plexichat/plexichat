@@ -94,7 +94,17 @@ def _warm_profile_path(api_mod: Any) -> None:
     ProfileManager(db).get_profile(0)
 
 
-def warm_once() -> float:
+def _warm_openapi(app: Any) -> None:
+    """Generate and cache the OpenAPI schema off the request path."""
+    if app is None:
+        return
+    try:
+        app.openapi()
+    except Exception as e:
+        logger.debug(f"Startup warm-up OpenAPI generation failed: {e}")
+
+
+def warm_once(app: Any = None) -> float:
     """Initialise the hot modules once and return the elapsed milliseconds.
 
     Never raises: warm-up is an optimisation, and a failure here must not
@@ -123,16 +133,18 @@ def warm_once() -> float:
     except Exception as e:
         logger.debug(f"Startup warm-up DB probe failed: {e}")
 
+    _warm_openapi(app)
+
     return (time.perf_counter() - started) * 1000.0
 
 
-async def warmup_loop() -> None:
+async def warmup_loop(app: Any = None) -> None:
     if not _warmup_enabled():
         logger.debug("Startup warm-up disabled by config")
         return
     try:
         await asyncio.sleep(_warmup_delay())
-        elapsed = await asyncio.get_running_loop().run_in_executor(None, warm_once)
+        elapsed = await asyncio.get_running_loop().run_in_executor(None, warm_once, app)
         logger.info(f"Startup warm-up completed in {elapsed:.0f}ms")
     except asyncio.CancelledError:
         raise
@@ -140,9 +152,9 @@ async def warmup_loop() -> None:
         logger.warning(f"Startup warm-up failed: {e}")
 
 
-def start_warmup() -> asyncio.Task:
+def start_warmup(app: Any = None) -> asyncio.Task:
     """Start the warm-up task; call from the running event loop (lifespan)."""
-    return asyncio.create_task(warmup_loop())
+    return asyncio.create_task(warmup_loop(app))
 
 
 async def stop_warmup(task: Optional[asyncio.Task]) -> None:

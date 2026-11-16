@@ -384,7 +384,7 @@ class VideoCompressor:
         # handed to ffmpeg unchecked: an arbitrary preset/bitrate makes the
         # transcode fail (or behave unexpectedly) deep inside the subprocess.
         preset = _bounded_ffmpeg_preset(self._config["preset"])
-        audio_bitrate = _bounded_audio_bitrate(audio_bitrate)
+        audio_bitrate = _bounded_audio_bitrate(self._config["audio_bitrate"])
 
         # Determine codec
         if codec is None or codec == VideoCodec.ORIGINAL:
@@ -446,7 +446,7 @@ class VideoCompressor:
                 cmd.extend(["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0"])
 
             # Audio settings
-            cmd.extend(["-c:a", "aac", "-b:a", self._config["audio_bitrate"]])
+            cmd.extend(["-c:a", "aac", "-b:a", audio_bitrate])
 
             # Output
             cmd.append(output_path)
