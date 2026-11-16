@@ -15,8 +15,9 @@ small launcher endpoint into an unbounded JSON document, and the optional
 filters accept only declared enum values and bounded strings.
 """
 
+import time
 from enum import Enum
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
 
@@ -52,6 +53,46 @@ MAX_DETAIL_KEYS = 20
 MAX_DETAIL_VALUE_LENGTH = 512
 
 _ALLOWED_STATES = frozenset(state.value for state in CapabilityStateFilter)
+
+
+# Evaluating the whole catalog re-runs every capability evaluator, and the
+# voice-transcription evaluator imports the provider factory and probes the
+# backend. That work is identical for every caller and only changes when the
+# license/config changes (the core already memoizes single-feature lookups for
+# 5s). Cache the fully serialized, scrubbed map for the same short TTL so a
+# burst of launcher polls collapses into one evaluation. A short TTL bounds
+# staleness after a license hot-swap; filters are still applied per request.
+_CAPABILITIES_PAYLOAD_TTL_SECONDS = 5.0
+_capabilities_payload_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+
+
+def _build_capabilities_payload() -> Dict[str, Any]:
+    """Evaluate and serialize the full capability catalog."""
+    capabilities = get_artifact_capabilities()
+    result: Dict[str, Any] = {}
+    for name, info in capabilities.items():
+        payload = capability_to_dict(info)
+        payload["details"] = scrub_details(payload.get("details"))
+        result[name] = payload
+    return result
+
+
+def _get_capabilities_payload() -> Dict[str, Any]:
+    """Return the current serialized catalog, recomputing at most every TTL."""
+    global _capabilities_payload_cache
+    now = time.monotonic()
+    cached = _capabilities_payload_cache
+    if cached is not None and (now - cached[0]) < _CAPABILITIES_PAYLOAD_TTL_SECONDS:
+        return cached[1]
+    payload = _build_capabilities_payload()
+    _capabilities_payload_cache = (now, payload)
+    return payload
+
+
+def clear_capabilities_payload_cache() -> None:
+    """Drop the memoized payload (call after a license/config change)."""
+    global _capabilities_payload_cache
+    _capabilities_payload_cache = None
 
 
 def bound_capabilities(
@@ -147,13 +188,10 @@ async def get_capabilities(
     value is rejected by FastAPI before the handler runs.
     """
     try:
-        capabilities = get_artifact_capabilities()
-        result = {}
-        for name, info in capabilities.items():
-            payload = capability_to_dict(info)
-            payload["details"] = scrub_details(payload.get("details"))
-            result[name] = payload
-        return bound_capabilities(result, feature=feature, state=state)
+        # The catalog is user-independent; ``bound_capabilities`` applies the
+        # per-request filters to copies, so the cached map is never mutated.
+        payload = _get_capabilities_payload()
+        return bound_capabilities(payload, feature=feature, state=state)
     except Exception as e:
         logger.error(f"Failed to compute capabilities: {e}", exc_info=True)
         raise
