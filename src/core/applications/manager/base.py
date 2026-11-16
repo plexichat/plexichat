@@ -46,6 +46,10 @@ class ApplicationManager(
             "refresh_enabled": self._config.get("oauth", {}).get(
                 "refresh_enabled", True
             ),
+            # Deployments can require PKCE for every authorization code.
+            # The default preserves legacy confidential-client flows; once a
+            # challenge is bound to a code it is ALWAYS enforced at exchange.
+            "pkce_enabled": self._config.get("oauth", {}).get("pkce_enabled", False),
             "authorization_endpoint": "/oauth2/authorize",
         }
         self._oauth = OAuth2Flow(db, oauth_config)

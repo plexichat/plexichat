@@ -141,6 +141,13 @@ class InvalidRedirectUriError(OAuth2Error):
         super().__init__("invalid_request", description or "Invalid redirect URI")
 
 
+class InvalidPKCEError(OAuth2Error):
+    """Invalid or missing PKCE challenge/verifier."""
+
+    def __init__(self, description: Optional[str] = None):
+        super().__init__("invalid_grant", description or "PKCE verification failed")
+
+
 class AuthorizationCodeExpiredError(OAuth2Error):
     """Authorization code has expired."""
 

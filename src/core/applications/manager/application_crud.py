@@ -33,6 +33,7 @@ from src.core.security.hardening import (
 )
 from .row_mappers import row_to_application
 from .protocol import ApplicationManagerProtocol
+from .bot_management import invalidate_bot_directory_cache
 
 
 class AppCRUDMixin(ApplicationManagerProtocol):
@@ -275,6 +276,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             )
 
             logger.debug(f"Application updated: {application_id}")
+            # Name/icon are surfaced in bot directory entries.
+            invalidate_bot_directory_cache()
 
         result = self.get_application(application_id)
         if result is None:
@@ -301,6 +304,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         self._db.execute("DELETE FROM app_applications WHERE id = ?", (application_id,))
         logger.info(f"Application deleted: {application_id}")
+        invalidate_bot_directory_cache()
         return True
 
     def _validate_app_name(self, name: str) -> str:
@@ -377,6 +381,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         )
 
         logger.info(f"Bot created for application {application_id}: {bot.id}")
+        # Setting bot_id is what makes an application appear in the directory.
+        invalidate_bot_directory_cache()
 
         return {
             "bot_id": bot.id,
@@ -391,9 +397,17 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         scopes: List[str],
         state: Optional[str] = None,
         permissions: Optional[str] = None,
+        code_challenge: Optional[str] = None,
+        code_challenge_method: Optional[str] = None,
     ) -> str:
         return self._oauth.generate_authorization_url(
-            application_id, redirect_uri, scopes, state, permissions
+            application_id,
+            redirect_uri,
+            scopes,
+            state,
+            permissions,
+            code_challenge=code_challenge,
+            code_challenge_method=code_challenge_method,
         )
 
     def exchange_code(
@@ -402,9 +416,10 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         client_secret: str,
         code: str,
         redirect_uri: str,
+        code_verifier: Optional[str] = None,
     ) -> Dict[str, Any]:
         token = self._oauth.exchange_code(
-            application_id, client_secret, code, redirect_uri
+            application_id, client_secret, code, redirect_uri, code_verifier
         )
 
         return {

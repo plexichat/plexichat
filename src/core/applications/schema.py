@@ -124,6 +124,10 @@ CREATE TABLE IF NOT EXISTS app_oauth_codes (
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     used INTEGER NOT NULL DEFAULT 0,
+    -- PKCE (RFC 7636): when a code is bound to a challenge the verifier is
+    -- mandatory at exchange. NULL marks a legacy, non-PKCE code.
+    code_challenge TEXT,
+    code_challenge_method TEXT,
     FOREIGN KEY (application_id) REFERENCES app_applications(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
@@ -213,6 +217,55 @@ CREATE INDEX IF NOT EXISTS idx_app_webhook_deliveries_interaction ON app_webhook
 """
 
 
+def _column_exists(db, table: str, column: str):
+    """Return True/False/None (None = dialect cannot be probed)."""
+    try:
+        if getattr(db, "type", None) == "postgres":
+            rows = db.fetch_all(
+                "SELECT column_name AS name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = ?",
+                (table,),
+            )
+        else:
+            rows = db.fetch_all(
+                f"PRAGMA table_info({require_identifier(table, 'table name')})"
+            )
+    except Exception:
+        return None
+    try:
+        for row in rows or []:
+            name = row["name"] if not isinstance(row, dict) else row.get("name")
+            if name == column:
+                return True
+    except Exception:
+        return None
+    return False
+
+
+def _ensure_runtime_columns(db) -> None:
+    """Back-fill PKCE columns into pre-existing OAuth code tables.
+
+    ``CREATE TABLE IF NOT EXISTS`` never upgrades an existing database. The
+    guarded ALTER below keeps older installations working without making a
+    code that carries a challenge impossible to store.
+    """
+    for table, column, definition in (
+        ("app_oauth_codes", "code_challenge", "TEXT"),
+        ("app_oauth_codes", "code_challenge_method", "TEXT"),
+    ):
+        if _column_exists(db, table, column):
+            continue
+        try:
+            db.execute(
+                f"ALTER TABLE {require_identifier(table, 'table name')} "
+                f"ADD COLUMN {require_identifier(column, 'column name')} {definition}"
+            )
+        except Exception as exc:
+            logger.warning(f"Runtime ALTER {table}.{column} failed: {exc}")
+        if _column_exists(db, table, column) is False:
+            raise RuntimeError(f"OAuth PKCE column {table}.{column} is unavailable")
+
+
 def create_tables(db):
     """Create all application tables."""
     statements = split_sql_statements(SCHEMA)
@@ -230,6 +283,7 @@ def create_tables(db):
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
 
+    _ensure_runtime_columns(db)
     logger.info("Application tables created successfully")
 
 

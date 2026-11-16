@@ -15,6 +15,10 @@ from .tokens import (
     generate_refresh_token,
     hash_token,
     verify_token_hash,
+    create_s256_challenge,
+    verify_pkce_challenge,
+    validate_pkce_challenge,
+    validate_pkce_verifier,
 )
 from .flows import OAuth2Flow
 
@@ -29,5 +33,9 @@ __all__ = [
     "generate_refresh_token",
     "hash_token",
     "verify_token_hash",
+    "create_s256_challenge",
+    "verify_pkce_challenge",
+    "validate_pkce_challenge",
+    "validate_pkce_verifier",
     "OAuth2Flow",
 ]

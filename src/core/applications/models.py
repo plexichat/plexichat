@@ -331,6 +331,10 @@ class OAuth2AuthorizationCode:
     used: bool = False
 
     code: Optional[str] = field(default=None, repr=False)
+    # RFC 7636 PKCE binding. When ``code_challenge`` is set the exchange must
+    # present a matching ``code_verifier``.
+    code_challenge: Optional[str] = field(default=None, repr=False)
+    code_challenge_method: Optional[str] = None
 
 
 @dataclass

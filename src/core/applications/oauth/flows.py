@@ -19,17 +19,23 @@ from ..exceptions import (
     InvalidGrantError,
     InvalidScopeError,
     InvalidRedirectUriError,
+    InvalidPKCEError,
     AuthorizationCodeExpiredError,
     TokenExpiredError,
     TokenRevokedError,
 )
 from .scopes import require_valid_scopes, validate_permission_string
 from .tokens import (
+    PKCE_METHOD_S256,
     generate_authorization_code,
     generate_access_token,
     generate_refresh_token,
     validate_client_secret,
     validate_token_string,
+    validate_pkce_challenge,
+    validate_pkce_method,
+    validate_pkce_verifier,
+    verify_pkce_challenge,
     verify_token_hash,
     parse_oauth_token,
 )
@@ -85,6 +91,51 @@ class OAuth2Flow:
         except HardeningViolation as exc:
             raise InvalidScopeError(str(exc)) from exc
 
+    def _pkce_required(self) -> bool:
+        """Whether deployments mandate PKCE for every authorization code."""
+        return bool(self._config.get("pkce_enabled", False))
+
+    @staticmethod
+    def _require_pkce_challenge(challenge: Optional[str]) -> str:
+        if challenge is None:
+            raise InvalidPKCEError("PKCE code_challenge is required")
+        try:
+            return validate_pkce_challenge(challenge)
+        except HardeningViolation as exc:
+            raise InvalidPKCEError(str(exc)) from exc
+
+    @staticmethod
+    def _require_pkce_method(method: Optional[str]) -> str:
+        try:
+            return validate_pkce_method(method)
+        except HardeningViolation as exc:
+            raise InvalidPKCEError(str(exc)) from exc
+
+    @staticmethod
+    def _require_pkce_verifier(verifier: Optional[str]) -> str:
+        if verifier is None:
+            raise InvalidGrantError("PKCE code_verifier is required")
+        try:
+            return validate_pkce_verifier(verifier)
+        except HardeningViolation as exc:
+            raise InvalidGrantError(str(exc)) from exc
+
+    def _bind_pkce(
+        self,
+        code_challenge: Optional[str],
+        code_challenge_method: Optional[str],
+    ) -> Optional[str]:
+        """Validate PKCE parameters and return the challenge to persist.
+
+        PKCE is enforced whenever the deployment requires it or the client
+        supplied a challenge. A challenge, once bound to a code, is never
+        optional at exchange time (no downgrade path).
+        """
+        if not self._pkce_required() and code_challenge is None:
+            return None
+        self._require_pkce_method(code_challenge_method)
+        return self._require_pkce_challenge(code_challenge)
+
     def generate_authorization_url(
         self,
         application_id: int,
@@ -92,6 +143,8 @@ class OAuth2Flow:
         scopes: List[str],
         state: Optional[str] = None,
         permissions: Optional[str] = None,
+        code_challenge: Optional[str] = None,
+        code_challenge_method: Optional[str] = None,
     ) -> str:
         """
         Generate an OAuth2 authorization URL.
@@ -102,6 +155,8 @@ class OAuth2Flow:
             scopes: List of scopes
             state: Optional state parameter
             permissions: Optional bot permissions
+            code_challenge: RFC 7636 S256 challenge (required when PKCE is on)
+            code_challenge_method: Must be ``S256`` when a challenge is used
 
         Returns:
             Authorization URL
@@ -123,6 +178,11 @@ class OAuth2Flow:
         if permissions and "bot" in scopes:
             params["permissions"] = permissions
 
+        bound_challenge = self._bind_pkce(code_challenge, code_challenge_method)
+        if bound_challenge:
+            params["code_challenge"] = bound_challenge
+            params["code_challenge_method"] = PKCE_METHOD_S256
+
         return f"{base_url}?{urlencode(params)}"
 
     def validate_authorization_request(
@@ -130,6 +190,8 @@ class OAuth2Flow:
         application_id: int,
         redirect_uri: str,
         scopes: List[str],
+        code_challenge: Optional[str] = None,
+        code_challenge_method: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Validate an authorization request.
@@ -167,6 +229,7 @@ class OAuth2Flow:
             )
 
         scopes = self._require_scopes(scopes)
+        bound_challenge = self._bind_pkce(code_challenge, code_challenge_method)
 
         return {
             "application_id": app["id"],
@@ -174,6 +237,7 @@ class OAuth2Flow:
             "application_icon": app["icon_url"],
             "redirect_uri": redirect_uri,
             "scopes": scopes,
+            "code_challenge": bound_challenge,
         }
 
     def create_authorization_code(
@@ -182,6 +246,8 @@ class OAuth2Flow:
         user_id: int,
         redirect_uri: str,
         scopes: List[str],
+        code_challenge: Optional[str] = None,
+        code_challenge_method: Optional[str] = None,
     ) -> OAuth2AuthorizationCode:
         """
         Create an authorization code after user consent.
@@ -191,6 +257,8 @@ class OAuth2Flow:
             user_id: User ID
             redirect_uri: Redirect URI
             scopes: Granted scopes
+            code_challenge: RFC 7636 S256 challenge bound to this code
+            code_challenge_method: Must be ``S256`` when a challenge is used
 
         Returns:
             OAuth2AuthorizationCode
@@ -200,6 +268,8 @@ class OAuth2Flow:
         except HardeningViolation as exc:
             raise InvalidRedirectUriError(str(exc)) from exc
         scopes = self._require_scopes(scopes)
+        bound_challenge = self._bind_pkce(code_challenge, code_challenge_method)
+        bound_method = PKCE_METHOD_S256 if bound_challenge else None
 
         code_id = generate_snowflake_id()
         now = self._current_time()
@@ -209,8 +279,9 @@ class OAuth2Flow:
 
         self._db.execute(
             """INSERT INTO app_oauth_codes
-               (id, application_id, user_id, code_hash, redirect_uri, scopes, expires_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, application_id, user_id, code_hash, redirect_uri, scopes,
+                expires_at, created_at, code_challenge, code_challenge_method)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 code_id,
                 application_id,
@@ -220,6 +291,8 @@ class OAuth2Flow:
                 json.dumps(scopes),
                 expires_at,
                 now,
+                bound_challenge,
+                bound_method,
             ),
         )
 
@@ -237,6 +310,8 @@ class OAuth2Flow:
             expires_at=expires_at,
             created_at=now,
             code=full_code,
+            code_challenge=bound_challenge,
+            code_challenge_method=bound_method,
         )
 
     def exchange_code(
@@ -245,6 +320,7 @@ class OAuth2Flow:
         client_secret: str,
         code: str,
         redirect_uri: str,
+        code_verifier: Optional[str] = None,
     ) -> OAuth2Token:
         """
         Exchange an authorization code for tokens.
@@ -254,13 +330,14 @@ class OAuth2Flow:
             client_secret: Client secret
             code: Authorization code
             redirect_uri: Redirect URI (must match original)
+            code_verifier: RFC 7636 verifier, mandatory for PKCE-bound codes
 
         Returns:
             OAuth2Token with access and refresh tokens
 
         Raises:
             InvalidClientError: Invalid client credentials
-            InvalidGrantError: Invalid or expired code
+            InvalidGrantError: Invalid, expired or PKCE-mismatched code
         """
         client_secret = self._require_client_secret(client_secret)
         code = self._require_token(code, "authorization code")
@@ -286,7 +363,7 @@ class OAuth2Flow:
 
         code_record = self._db.fetch_one(
             """SELECT id, application_id, user_id, code_hash, redirect_uri, scopes,
-                      expires_at, used
+                      expires_at, used, code_challenge, code_challenge_method
                FROM app_oauth_codes WHERE id = ?""",
             (parsed["id"],),
         )
@@ -308,6 +385,16 @@ class OAuth2Flow:
 
         if code_record["redirect_uri"] != redirect_uri:
             raise InvalidGrantError("Redirect URI mismatch")
+
+        # RFC 7636: a code bound to a challenge cannot be redeemed without the
+        # matching verifier. The verifier is never stored; we re-derive the
+        # S256 challenge and compare in constant time. There is deliberately
+        # no downgrade path — if a challenge exists, the verifier is mandatory.
+        stored_challenge = code_record["code_challenge"]
+        if stored_challenge:
+            presented = self._require_pkce_verifier(code_verifier)
+            if not verify_pkce_challenge(presented, stored_challenge):
+                raise InvalidGrantError("PKCE verification failed")
 
         cursor = self._db.execute(
             "UPDATE app_oauth_codes SET used = 1 WHERE id = ? AND used = 0",
