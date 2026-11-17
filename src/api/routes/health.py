@@ -54,7 +54,7 @@ class HealthResponse(BaseModel):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def health_check() -> HealthResponse:
+async def health_check(response: Response) -> HealthResponse:
     """Check API health status.
 
     Returns the current health status, API version, and — when
@@ -85,6 +85,8 @@ async def health_check() -> HealthResponse:
         except RuntimeError:
             ver = "unknown"
 
+        # Health is a live probe; never let a proxy or client cache it.
+        response.headers["Cache-Control"] = "no-store"
         events_metrics: Optional[Dict[str, Any]] = None
         recreate_pending: Optional[bool] = None
         try:
