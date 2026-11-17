@@ -44,9 +44,12 @@ class MigrationMixin(AdminMixinBase):
             )
             return
         rb1_start = time.time()
+        # The legacy /database/migrations/rollback/{version} route reads the
+        # confirmation from a query parameter, unlike the newer
+        # /migrations/{version}/rollback route which uses a JSON body.
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
-            json={"confirmation": "ROLLBACK MIGRATION"},
+            params={"confirmation": "ROLLBACK MIGRATION"},
             timeout=10,
         )
         rb1_ok = 200 <= resp.status_code < 300
@@ -125,9 +128,10 @@ class MigrationMixin(AdminMixinBase):
             )
             return
         mig_rollback_start = time.time()
+        # Legacy route expects the confirmation as a query parameter.
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
-            json={"confirmation": "ROLLBACK MIGRATION"},
+            params={"confirmation": "ROLLBACK MIGRATION"},
             timeout=10,
         )
         duration = (time.time() - mig_rollback_start) * 1000

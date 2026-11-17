@@ -310,7 +310,31 @@ class MigrationTracker(MigrationLockingMixin):
             if not re.fullmatch(r"\d{1,6}", raw_version):
                 logger.warning(f"Refusing non-numeric migration version: {version!r}")
                 return {}
-            migration_file = safe_join(migrations_root, f"{raw_version}.py")
+            # Migration sources are named ``{version}_{name}.py`` (e.g.
+            # ``001_selftest_noop.py``), not a bare ``{version}.py``. Guessing
+            # the latter made every lookup miss, so callers saw empty metadata
+            # and the irreversible/dependency gates silently failed open.
+            # Resolve the real filename through the same confined directory
+            # scan the loader uses, then re-confine it with safe_join so a
+            # crafted entry can never escape the migrations directory.
+            migration_file = None
+            for file_version, file_path in validator.get_migration_files(
+                migrations_root
+            ):
+                if file_version == raw_version:
+                    migration_file = safe_join(
+                        migrations_root, os.path.basename(file_path)
+                    )
+                    break
+            if migration_file is None:
+                # Older/standalone layouts (and tooling fixtures) use a bare
+                # ``{version}.py`` filename. Keep that working under the same
+                # safe_join confinement rather than dropping support for it.
+                legacy_file = safe_join(migrations_root, f"{raw_version}.py")
+                if os.path.isfile(legacy_file):
+                    migration_file = legacy_file
+            if migration_file is None:
+                return {}
 
             try:
                 stat = os.stat(migration_file)
