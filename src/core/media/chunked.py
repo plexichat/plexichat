@@ -867,11 +867,17 @@ class ChunkedUploadManager:
             return None
 
         try:
-            self._confine_temp_path(session.temp_path)
+            confined_path = self._confine_temp_path(session.temp_path)
         except (HardeningViolation, RuntimeError) as exc:
             logger.error(f"Refusing unsafe upload session temp path: {exc}")
             return None
 
+        # Callers open ``session.temp_path`` verbatim to hand the assembled file
+        # to the upload pipeline. Return the confined/resolved path rather than
+        # the raw DB value so the confinement check cannot be bypassed by a
+        # caller that trusts the returned session, or by a path swap between
+        # validation and use.
+        session.temp_path = confined_path
         return session
 
     def cancel_session(self, session_id: str, user_id: int) -> bool:

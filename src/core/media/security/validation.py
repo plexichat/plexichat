@@ -609,6 +609,43 @@ class FileValidator:
                                 False,
                                 f"unsafe_uri:{lower_key}={attr_val!r}",
                             )
+
+                # SMIL animation elements (``animate``/``set``/``animateMotion``)
+                # mutate attributes *after* the static allow-list pass above.
+                # A payload such as
+                #   <animate attributeName="xlink:href" to="javascript:alert(1)"/>
+                # or <set attributeName="onload" to="alert(1)"/> therefore slips
+                # past the checks on the literal ``href``/``on*`` attributes and
+                # yields stored XSS once the SVG is rendered. Fail closed: never
+                # let animation target a URI-bearing or event-handler attribute,
+                # and reject any animation value carrying a dangerous URI scheme.
+                if local in ("animate", "animatetransform", "animatemotion", "set"):
+                    raw_target = None
+                    for attr_key in attr_dict:
+                        if attr_key.lower().split("}", 1)[-1] == "attributename":
+                            raw_target = attr_dict[attr_key]
+                            break
+                    if isinstance(raw_target, str):
+                        target = raw_target.strip().lower()
+                        # Normalise both ElementTree ``{ns}local`` and the
+                        # ``xlink:href`` lexical form used in SVG source.
+                        target = target.split("}", 1)[-1].split(":", 1)[-1]
+                        if target.startswith("on") or target in _URI_ATTRS:
+                            return (
+                                False,
+                                f"unsafe_animation_target:{raw_target!r}",
+                            )
+                    for anim_key in ("to", "from", "by", "values"):
+                        for attr_key, attr_val in attr_dict.items():
+                            if (
+                                attr_key.lower().split("}", 1)[-1] == anim_key
+                                and isinstance(attr_val, str)
+                                and not _check_uri(attr_val)
+                            ):
+                                return (
+                                    False,
+                                    f"unsafe_animation_value:{anim_key}={attr_val!r}",
+                                )
                 # Special handling for style elements to sanitize CSS content
                 if local == "style" and elem.text:
                     css_content = elem.text.strip()

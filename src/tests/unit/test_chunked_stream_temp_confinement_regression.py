@@ -79,6 +79,26 @@ def test_stream_chunk_refuses_missing_temp_path(manager):
     assert "unsafe" in (result.error or "").lower()
 
 
+def test_complete_session_stream_returns_confined_temp_path(manager, tmp_path):
+    """The completion route opens ``session.temp_path`` verbatim, so the
+    returned session must carry the confined/resolved path, not the raw DB
+    value that was only checked in passing.
+    """
+    path = os.path.join(manager._temp_dir, "legit-complete.tmp")
+    try:
+        session = _session(path)
+        session.status = UploadSessionStatus.COMPLETED
+        manager.get_session = lambda sid, uid: session
+
+        result = manager.complete_session_stream("sess", 1)
+
+        assert result is session
+        assert result.temp_path == os.path.realpath(path)
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
+
 def test_stream_chunk_still_accepts_confined_temp_path(manager):
     path = os.path.join(manager._temp_dir, "legit-stream.tmp")
     with open(path, "wb") as handle:
