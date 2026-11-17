@@ -26,6 +26,14 @@ _MAX_NONCE_LEN = 128
 _MAX_SIGNATURE_LEN = 512
 _DEFAULT_TTL_SECONDS = 300
 
+# ``/public/license/challenge`` is unauthenticated and mints a fresh random
+# nonce on every call. Without a cap, a single client can pump the challenge
+# endpoint in a tight loop and grow the nonce store without bound (an
+# in-process dict or thousands of Valkey keys), exhausting memory / the shared
+# cache tier. Cap the number of outstanding challenges; issuing beyond the cap
+# fails closed with 503 instead of accepting an unbounded write.
+_MAX_OUTSTANDING_NONCES = 10_000
+
 # Purging expired nonces is pure memory hygiene: ``consume()`` already rejects
 # an expired entry, so correctness never depends on sweeping eagerly. Doing a
 # full dict scan on every issue() made the challenge endpoint O(n) in the
@@ -113,6 +121,15 @@ class NonceStore:
 
     def issue(self) -> Tuple[str, int]:
         """Generate a new nonce, store it, and return ``(nonce, ttl)``."""
+        # Fail closed once the store is saturated. ``len(self)`` reads the
+        # authoritative count from Valkey when it is the active backend and
+        # the in-process count otherwise, so the cap holds in both modes.
+        if len(self) >= _MAX_OUTSTANDING_NONCES:
+            logger.error("License challenge nonce store is at capacity")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="License challenge store is at capacity",
+            )
         raw = secrets.token_bytes(32)
         nonce = base64.b64encode(raw).decode("ascii")
         valkey_client = self._get_valkey()

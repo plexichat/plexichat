@@ -28,6 +28,47 @@ KNOWN_FEEDBACK_CATEGORIES = frozenset(
 )
 MAX_FEEDBACK_CONTENT_LENGTH = 2000
 
+# Feedback is stored verbatim and later rendered in moderator/admin UIs and
+# log lines. The request schema only bounds the *length*, which leaves two
+# injection primitives open to a caller that constructs the model directly:
+#
+#   * C0 control bytes other than newline/tab (NUL, ESC, backspace, ...) can
+#     terminate a log line or break out of a quoted UI attribute;
+#   * Unicode bidi/invisible overrides (e.g. U+202E "right-to-left override")
+#     reorder surrounding text with no visible glyph, letting a submitter
+#     disguise a malicious sentence as a benign one in a moderation queue.
+#
+# The report and enhanced-report routes already reject control characters in
+# their free text; apply the same discipline here (defence in depth) and also
+# strip the invisible/bidi code points used to spoof rendered text. Ordinary
+# line breaks and tabs stay allowed so multi-line feedback remains usable.
+_FEEDBACK_ALLOWED_CONTROLS = frozenset("\n\t")
+_FEEDBACK_INVISIBLE_CODEPOINTS = frozenset(
+    {
+        0x200B, 0x200C, 0x200D, 0x200E, 0x200F,
+        0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+        0x2066, 0x2067, 0x2068, 0x2069,
+        0xFEFF,
+    }
+)
+
+
+def _safe_feedback_content(content) -> str:
+    """Return feedback text free of log-breaking and UI-spoofing characters.
+
+    Raises ``ValueError`` on the first disallowed code point so the caller can
+    map it to the endpoint's uniform 400 response.
+    """
+    if not isinstance(content, str):
+        raise ValueError("feedback content must be a string")
+    for ch in content:
+        code = ord(ch)
+        if (code < 0x20 or code == 0x7F) and ch not in _FEEDBACK_ALLOWED_CONTROLS:
+            raise ValueError("feedback content contains control characters")
+        if code in _FEEDBACK_INVISIBLE_CODEPOINTS:
+            raise ValueError("feedback content contains invisible characters")
+    return content
+
 
 @router.post(
     "",
@@ -62,6 +103,14 @@ async def submit_feedback(
             detail={"error": {"code": 400, "message": "Invalid feedback category"}},
         )
     if len(feedback_data.content) > MAX_FEEDBACK_CONTENT_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid feedback content"}},
+        )
+    try:
+        _safe_feedback_content(feedback_data.content)
+    except ValueError:
+        logger.warning(f"User {user_id} submitted feedback with disallowed characters")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Invalid feedback content"}},
