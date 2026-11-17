@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Type, TypeVar
 from pydantic import BaseModel, ValidationError
 
 import utils.logger as logger
+from utils.logger import sanitize_data
 
 from .base import (
     TableQuery,
@@ -100,7 +101,13 @@ class InsertQuery(TableQuery):
         """
         sql, params = self.build()
 
-        sanitized_params = [p.value if isinstance(p, Parameter) else p for p in params]
+        # INSERT is the most sensitive write path (password hashes, session
+        # tokens, emails and other PII live in these values). Building the log
+        # payload from a bare list of raw values hid which column each value
+        # belonged to, so the shared sanitizer could not apply its sensitive-
+        # key rules and the raw secrets reached the debug log. Log the
+        # column-keyed data instead so sanitize_data() masks them first.
+        sanitized_params = sanitize_data(self.data)
         logger.debug(f"Executing INSERT: {sql} with params: {sanitized_params}")
 
         try:
