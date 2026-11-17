@@ -18,6 +18,7 @@ from src.api.schemas.search import (
 )
 from src.api.schemas.common import ErrorResponse
 from src.core.search.exceptions import SearchError, SearchBackendError
+from src.core.security.hardening import HardeningViolation, parse_id
 
 
 import utils.logger as logger
@@ -27,6 +28,28 @@ router = APIRouter(prefix="/search", tags=["Search"])
 #: Opaque pagination cursors are short signed tokens; never accept an
 #: unbounded blob as a cursor key.
 MAX_SEARCH_CURSOR_LENGTH = 512
+
+#: Snowflake ids are at most 19 decimal digits. Bounding the raw text first
+#: stops a hostile query parameter from making ``int`` churn on a huge blob.
+MAX_SEARCH_ID_LENGTH = 32
+
+
+def _parse_search_id(raw: str, field: str) -> int:
+    """Parse an id filter as a positive snowflake, not an arbitrary integer.
+
+    Bare ``int()`` accepted negatives, zero, values past 2**63-1 and exotic
+    forms (``1_2``, ``+12``). Those then flowed into backend lookup queries as
+    though they were real conversation/user/channel ids. Route every id through
+    the shared snowflake guard and surface a ValueError so the endpoint's
+    existing 400 contract applies before any search backend access.
+    """
+    if len(raw) > MAX_SEARCH_ID_LENGTH or not raw.isdigit():
+        raise ValueError(f"{field} is not a valid snowflake")
+    try:
+        return parse_id(raw, field)
+    except HardeningViolation as exc:
+        raise ValueError(str(exc)) from exc
+
 
 # Autocomplete fires on every keystroke, so the same (user, prefix) is asked
 # repeatedly within seconds. Each miss runs a filter scan plus a GROUP BY over
@@ -40,6 +63,32 @@ _suggestion_cache: Dict[Tuple[int, str, int], Tuple[float, List[str]]] = {}
 def _clear_suggestion_cache() -> None:
     """Drop memoized suggestions (tests / explicit invalidation)."""
     _suggestion_cache.clear()
+
+
+#: Autocomplete fires on every keystroke, but the memoization above only
+#: collapses *identical* prefixes. A caller can cycle through distinct
+#: prefixes so every request misses and runs a GROUP BY over their whole
+#: search history — an unbounded read amplifier. Bound requests per user in
+#: the shared cache tier (300/min tolerates even very fast typing).
+SUGGESTION_RATE_LIMIT = 300
+
+
+def _check_suggestion_rate_limit(user_id: int) -> None:
+    """Throttle autocomplete; fail open if the cache tier is unavailable."""
+    try:
+        from src.core.database import check_rate_limit
+
+        allowed, _remaining = check_rate_limit(
+            f"search:suggestions:{user_id}", SUGGESTION_RATE_LIMIT, 60
+        )
+    except Exception as exc:
+        logger.debug(f"Suggestion rate-limit unavailable: {exc}")
+        return
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": {"code": 429, "message": "Too many requests"}},
+        )
 
 
 def _suggestions(search_mod, user_id: int, q: str, limit: int) -> List[str]:
@@ -92,11 +141,15 @@ async def search_messages(
         raise HTTPException(status_code=500, detail="Search module not available")
 
     try:
-        # Convert IDs to int
-        conv_id = int(conversation_id) if conversation_id else None
-        srv_id = int(server_id) if server_id else None
-        chan_id = int(channel_id) if channel_id else None
-        auth_id = int(author_id) if author_id else None
+        # Convert IDs to validated snowflakes before any lookup
+        conv_id = (
+            _parse_search_id(conversation_id, "conversation_id")
+            if conversation_id
+            else None
+        )
+        srv_id = _parse_search_id(server_id, "server_id") if server_id else None
+        chan_id = _parse_search_id(channel_id, "channel_id") if channel_id else None
+        auth_id = _parse_search_id(author_id, "author_id") if author_id else None
 
         page = search_mod.search_messages_page(
             user_id=current_user.user_id,
@@ -167,7 +220,7 @@ async def search_users(
         raise HTTPException(status_code=500, detail="Search module not available")
 
     try:
-        srv_id = int(server_id) if server_id else None
+        srv_id = _parse_search_id(server_id, "server_id") if server_id else None
 
         page = search_mod.search_users_page(
             user_id=current_user.user_id,
@@ -208,6 +261,11 @@ async def search_users(
             total=len(items),
             results=items,
             next_cursor=page.next_cursor,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except SearchBackendError as e:
         logger.error(f"Search backend unavailable (users): {e}")
@@ -373,6 +431,7 @@ async def search_health(
     summary="Get search suggestions",
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
+        429: {"model": ErrorResponse, "description": "Too many requests"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -385,6 +444,8 @@ async def get_search_suggestions(
     search_mod = api.get_search()
     if not search_mod:
         raise HTTPException(status_code=500, detail="Search module not available")
+    # Outside the try below: a throttle 429 must never be rewrapped as a 500.
+    _check_suggestion_rate_limit(current_user.user_id)
     try:
         suggestions = _suggestions(search_mod, current_user.user_id, q, limit)
         return {"suggestions": suggestions}

@@ -15,8 +15,29 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.notifications import NotificationsResponse, NotificationInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from src.core.notifications.exceptions import NotificationNotFoundError
+from src.core.security.hardening import HardeningViolation, parse_id
 
 router = APIRouter(tags=["Notifications"])
+
+#: Snowflake ids are at most 19 decimal digits; bound the raw path
+#: segment before parsing so an oversized value cannot reach storage.
+MAX_NOTIFICATION_ID_LENGTH = 32
+
+
+def _parse_notification_id(raw: str) -> int:
+    """Parse a notification id as a positive snowflake.
+
+    Bare ``int()`` accepted negatives, zero, values past 2**63-1 and
+    forms such as ``1_2``; those reached the notification manager as
+    though they were real row ids. Raise ValueError so both routes
+    keep their existing 400 contract.
+    """
+    if len(raw) > MAX_NOTIFICATION_ID_LENGTH or not raw.isdigit():
+        raise ValueError("notification id is not a valid snowflake")
+    try:
+        return parse_id(raw, "notification_id")
+    except HardeningViolation as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _notif_to_response(notif) -> NotificationInfo:
@@ -147,7 +168,7 @@ async def mark_read(
 
     try:
         try:
-            nid = int(notification_id)
+            nid = _parse_notification_id(notification_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid notification ID")
 
@@ -194,7 +215,7 @@ async def delete_notification(
 
     try:
         try:
-            nid = int(notification_id)
+            nid = _parse_notification_id(notification_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid notification ID")
 

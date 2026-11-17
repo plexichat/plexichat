@@ -18,9 +18,32 @@ from src.api.schemas.webhooks import (
 )
 from src.core.embeds.exceptions import EmbedError
 from src.core.webhooks.exceptions import InvalidWebhookTokenError
+from src.core.security.hardening import HardeningViolation, parse_id
 from .exception_mapping import raise_mapped
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+
+#: Snowflake ids are at most 19 decimal digits. Bound raw path/query/body
+#: ids before integer conversion so oversized values cannot reach token
+#: formatting, signature verification or storage lookups.
+MAX_WEBHOOK_ID_LENGTH = 32
+
+
+def _parse_webhook_id(raw, field: str = "webhook_id") -> int:
+    """Parse a webhook/channel/thread id as a positive snowflake.
+
+    Bare ``int()`` accepted negatives, zero, values past 2**63-1 and
+    forms such as ``1_2``; those flowed into token formatting, signature
+    verification and SQL lookups as though real identifiers. Raise
+    ValueError so every caller keeps its existing 400 contract.
+    """
+    text = str(raw).strip()
+    if len(text) > MAX_WEBHOOK_ID_LENGTH or not text.isdigit():
+        raise ValueError(f"{field} is not a valid snowflake")
+    try:
+        return parse_id(text, field)
+    except HardeningViolation as exc:
+        raise ValueError(str(exc)) from exc
 
 # NOTE: the webhook write routes used to call ``invalidate_pattern("webhooks:*")``
 # after every create/update/delete/regenerate. Nothing in the codebase ever
@@ -92,7 +115,7 @@ async def regenerate_webhook_token(
 
     try:
         try:
-            wid = int(webhook_id)
+            wid = _parse_webhook_id(webhook_id)
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid webhook ID for token regeneration: {webhook_id}"
@@ -161,7 +184,7 @@ async def create_webhook(
 
     try:
         try:
-            cid = int(body.channel_id)
+            cid = _parse_webhook_id(body.channel_id, "channel_id")
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid channel ID for webhook creation: {body.channel_id}"
@@ -241,7 +264,7 @@ async def get_webhook(
 
     try:
         try:
-            wid = int(webhook_id)
+            wid = _parse_webhook_id(webhook_id)
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid webhook ID: {webhook_id}"
@@ -321,7 +344,14 @@ async def update_webhook(
 
     try:
         try:
-            wid = int(webhook_id)
+            wid = _parse_webhook_id(webhook_id)
+            # Validate an optional channel move under the same 400 contract as
+            # the webhook id, before the manager call's broad exception map.
+            channel_id = (
+                _parse_webhook_id(body.channel_id, "channel_id")
+                if body.channel_id
+                else None
+            )
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid webhook ID for update: {webhook_id}"
@@ -337,7 +367,7 @@ async def update_webhook(
                 webhook_id=wid,
                 name=body.name,
                 avatar_url=body.avatar_url,
-                channel_id=int(body.channel_id) if body.channel_id else None,
+                channel_id=channel_id,
                 require_signed_deliveries=body.require_signed_deliveries,
             )
             logger.info(f"User {current_user.user_id} updated webhook {wid}")
@@ -399,7 +429,7 @@ async def delete_webhook(
 
     try:
         try:
-            wid = int(webhook_id)
+            wid = _parse_webhook_id(webhook_id)
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid webhook ID for deletion: {webhook_id}"
@@ -492,7 +522,7 @@ async def execute_webhook(
 
     try:
         try:
-            wid = int(webhook_id)
+            wid = _parse_webhook_id(webhook_id)
         except ValueError:
             logger.warning(
                 f"Invalid webhook ID format in execute_webhook: {webhook_id}"
@@ -505,7 +535,7 @@ async def execute_webhook(
         tid = None
         if thread_id and thread_id.strip().lower() != "null":
             try:
-                tid = int(thread_id)
+                tid = _parse_webhook_id(thread_id, "thread_id")
             except (ValueError, TypeError):
                 logger.warning(
                     f"Invalid thread ID format in execute_webhook: {thread_id}"
@@ -520,7 +550,7 @@ async def execute_webhook(
             and str(body.thread_id).strip().lower() != "null"
         ):
             try:
-                tid = int(body.thread_id)
+                tid = _parse_webhook_id(body.thread_id, "thread_id")
             except (ValueError, TypeError):
                 logger.warning(
                     f"Invalid thread ID format in execute_webhook: {body.thread_id}"
@@ -578,7 +608,9 @@ async def execute_webhook(
                 if tid is not None:
                     thread_str: Optional[str] = str(tid)
                 elif body.thread_id and str(body.thread_id).strip().lower() != "null":
-                    thread_str = str(int(str(body.thread_id).strip()))
+                    thread_str = str(
+                        _parse_webhook_id(str(body.thread_id).strip(), "thread_id")
+                    )
                 else:
                     thread_str = None
                 payload = {
