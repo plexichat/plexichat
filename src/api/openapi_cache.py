@@ -47,6 +47,18 @@ def load_cached_openapi(app: Any) -> bool:
         if not isinstance(schema, dict) or "paths" not in schema:
             return False
         app.openapi_schema = schema
+        # FastAPI (>= 0.140) rebuilds the schema whenever the router's
+        # route-version counter differs from ``app._openapi_routes_version``.
+        # The cache key already folds in the app version and every registered
+        # route path, so a hit means the document on disk matches these routes.
+        # Record the current counter too, otherwise the first ``app.openapi()``
+        # sees the default ``None`` and regenerates the whole schema, making
+        # the disk cache pointless. Guarded so older/newer FastAPI releases
+        # that don't track route versions still load normally.
+        router = getattr(app, "router", None)
+        get_version = getattr(router, "_get_routes_version", None)
+        if callable(get_version):
+            app._openapi_routes_version = get_version()
         logger.info(f"OpenAPI cache hit: {path}")
         return True
     except Exception as e:
