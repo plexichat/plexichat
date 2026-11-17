@@ -50,14 +50,26 @@ _SENSITIVE_TOKENS = frozenset(
         "pin",
         "signature",
         "auth",
+        "csrf",
+        "xsrf",
+        "passcode",
     }
 )
 _KEY_TOKENS = re.compile(r"[^a-z0-9]+")
+# JSON/JS style keys are frequently camelCase or PascalCase. Tokenising only on
+# non-alphanumerics turns ``clientSecret`` into one opaque token that slips
+# past the sensitive-token set even though ``client_secret`` is caught. Split
+# lower/digit->upper transitions (and acronym boundaries) first so both spellings
+# are treated identically.
+_CAMEL_LOWER_UPPER_RE = re.compile(r"([a-z0-9])([A-Z])")
+_CAMEL_ACRONYM_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
 
 _INLINE_SECRET_RE = re.compile(
-    r"\b(password|passwd|pwd|secret|token|api[_-]?key|apikey|authorization|"
-    r"cookie|session|credential|private[_-]?key|passphrase|client_secret|"
-    r"access_token|refresh_token)\b\s*[:=]\s*(?!\[REDACTED\])"
+    r"\b(password(?:[_-]?hash)?|passwd|pwd|secret(?:[_-]?key)?|token|"
+    r"api[_-]?key|apikey|authorization|cookie|session(?:[_-]?id)?|"
+    r"credential|private[_-]?key|passphrase|client[_-]?secret|"
+    r"access[_-]?token|refresh[_-]?token|auth[_-]?token|id[_-]?token|"
+    r"encryption[_-]?key|signing[_-]?key)\b[\"']?\s*[:=]\s*(?!\[REDACTED\])"
     r"(\"[^\"]*\"|'[^']*'|[^\s,;}&)\]]+)",
     re.IGNORECASE,
 )
@@ -76,10 +88,16 @@ _PEM_RE = re.compile(
 # repaint, clear or forge entries in any terminal or browser log viewer. Strip
 # escape sequences and render the remaining controls as visible ``\xNN`` so the
 # information is preserved for forensics but is never executable.
+#
+# The C1 range (U+0080-U+009F) matters too: it contains its own CSI (U+009B),
+# OSC (U+009D), ST (U+009C) and NEL (U+0085). Filters that only look for an ESC
+# (0x1B) introducer let those through, and terminals / browser viewers that
+# decode UTF-8 treat C1 controls like their ESC-based equivalents. Escaping the
+# whole C1 range here closes that bypass.
 _ESCAPE_SEQUENCE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))"
 )
-_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def scrub_control_characters(value: Any) -> str:
@@ -88,7 +106,7 @@ def scrub_control_characters(value: Any) -> str:
     Unlike :func:`scrub_text` (which redacts *secrets*), this is a presentation
     guard: it is applied to already-redacted free text just before it is handed
     to a log viewer or a logger, so an embedded newline, carriage return,
-    backspace or ANSI escape cannot alter the surrounding display.
+    backspace, C1 control or ANSI escape cannot alter the surrounding display.
     """
     text = "" if value is None else str(value)
     text = _ESCAPE_SEQUENCE_RE.sub("", text)
@@ -96,7 +114,13 @@ def scrub_control_characters(value: Any) -> str:
 
 
 def _is_sensitive_key(key: Any) -> bool:
-    tokens = [token for token in _KEY_TOKENS.split(str(key).lower()) if token]
+    name = str(key)
+    # Normalise camelCase/PascalCase/acronym keys before tokenising, otherwise
+    # ``clientSecret`` / ``accessToken`` are single tokens that evade the set
+    # while their snake_case equivalents are redacted.
+    name = _CAMEL_ACRONYM_RE.sub(r"\1_\2", name)
+    name = _CAMEL_LOWER_UPPER_RE.sub(r"\1_\2", name)
+    tokens = [token for token in _KEY_TOKENS.split(name.lower()) if token]
     return any(token in _SENSITIVE_TOKENS for token in tokens)
 
 
