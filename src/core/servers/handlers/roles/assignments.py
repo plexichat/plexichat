@@ -15,6 +15,7 @@ from ...exceptions import (
 )
 from ...permission_utils import (
     can_manage_role,
+    has_permission,
     validate_permission_dict,
     check_permissions_grantable,
 )
@@ -168,8 +169,10 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         Assigns the given roles to ``user_id``, but only those present in
         ``allowed_role_ids`` - the admin-defined whitelist captured in the
         onboarding step's options. Refuses the default role and any role that
-        grants the ``administrator`` permission to prevent privilege
-        escalation through self-service flows.
+        grants ``administrator`` -- including roles carrying a ``*`` wildcard
+        that expands to every permission on lookup -- to prevent privilege
+        escalation through self-service flows. Legacy/imported roles whose
+        permission blob fails the normal validation are refused as well.
 
         Returns the list of role IDs actually assigned.
         """
@@ -195,8 +198,26 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
 
             permissions = row["permissions"]
             if isinstance(permissions, str):
-                permissions = json.loads(permissions) if permissions else {}
-            if permissions.get("administrator"):
+                try:
+                    permissions = json.loads(permissions) if permissions else {}
+                except (TypeError, ValueError):
+                    # A corrupt/legacy permission blob must never be treated as
+                    # a harmless empty grant on a self-service path.
+                    continue
+            if not isinstance(permissions, dict):
+                continue
+            try:
+                # Wildcards ("*", "namespace.*") expand to full grants in
+                # has_permission(). They are forbidden in freshly-written
+                # roles, but a legacy/imported row could still carry one; such
+                # a role is never safe to hand out through self-service.
+                validate_permission_dict(permissions)
+            except ValueError:
+                continue
+            # Checking the literal ``administrator`` key alone missed a role
+            # whose permissions contain a truthy ``*`` wildcard, which grants
+            # every permission (including roles.manage) on lookup.
+            if has_permission(permissions, "administrator"):
                 continue
 
             existing = self.db.fetch_one(

@@ -10,10 +10,31 @@ import utils.logger as logger
 from src.core.database import (
     cache_set,
 )
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    reject_control_characters,
+    require_http_url,
+)
 
 from .base import PresenceManagerBase
 from ..models import Presence, Activity, ActivityType
 from ..exceptions import InvalidActivityError
+
+#: Field ceilings for activity payloads, which are broadcast to other users.
+_MAX_ACTIVITY_ASSET_LENGTH = 256
+_MAX_TIMESTAMP = 2**63 - 1
+
+
+def _activity_text(value: object, field: str, maximum: int) -> str:
+    """Return a trimmed, control-safe, length-capped activity string.
+
+    Activity text is rendered to every viewer of a presence, so a CR/LF could
+    forge a log line or a WebSocket frame in a downstream client. Unlike the
+    legacy ``value[:n]`` truncation this refuses control characters outright.
+    """
+    text = reject_control_characters(str(value or "").strip(), field)
+    return text[:maximum]
 
 
 class ActivityMixin(PresenceManagerBase):
@@ -60,24 +81,60 @@ class ActivityMixin(PresenceManagerBase):
         if not name or not name.strip():
             raise InvalidActivityError("Activity name cannot be empty")
 
-        name = name[:128]
-        if details:
-            details = details[:1024]
-        if state:
-            state = state[:1024]
-        if url:
-            if not (url.startswith("http://") or url.startswith("https://")):
-                raise InvalidActivityError("Invalid activity URL")
-            url = url[:1024]
+        try:
+            # Every field below is broadcast to other users as part of the
+            # presence payload. Refuse control characters so a hostile name /
+            # detail / asset cannot forge a log line or a downstream frame.
+            name = _activity_text(name, "activity name", 128)
+            if not name:
+                raise InvalidActivityError("Activity name cannot be empty")
+            if details is not None:
+                details = _activity_text(details, "activity details", 1024)
+            if state is not None:
+                state = _activity_text(state, "activity state", 1024)
+            if url:
+                # The old startswith() check let embedded credentials through
+                # (https://user:pass@host) and only looked at the scheme
+                # prefix. Use the shared absolute-http(s) contract instead.
+                url = require_http_url(
+                    reject_control_characters(str(url), "activity url"),
+                    "activity url",
+                )[:1024]
+
+            def _timestamp(value: object, field: str) -> Optional[int]:
+                if value is None:
+                    return None
+                return bounded_int(value, field, minimum=0, maximum=_MAX_TIMESTAMP)
+
+            def _asset(value: object, field: str) -> Optional[str]:
+                if value is None:
+                    return None
+                return _activity_text(value, field, _MAX_ACTIVITY_ASSET_LENGTH) or None
+
+            start_ts = _timestamp(
+                timestamps.get("start") if timestamps else None,
+                "activity start timestamp",
+            )
+            end_ts = _timestamp(
+                timestamps.get("end") if timestamps else None,
+                "activity end timestamp",
+            )
+            large_image = _asset(
+                assets.get("large_image") if assets else None, "activity large_image"
+            )
+            large_text = _asset(
+                assets.get("large_text") if assets else None, "activity large_text"
+            )
+            small_image = _asset(
+                assets.get("small_image") if assets else None, "activity small_image"
+            )
+            small_text = _asset(
+                assets.get("small_text") if assets else None, "activity small_text"
+            )
+        except HardeningViolation as exc:
+            raise InvalidActivityError(f"Invalid activity field: {exc}") from exc
 
         now = self._get_timestamp()
-
-        start_ts = timestamps.get("start") if timestamps else None
-        end_ts = timestamps.get("end") if timestamps else None
-        large_image = assets.get("large_image") if assets else None
-        large_text = assets.get("large_text") if assets else None
-        small_image = assets.get("small_image") if assets else None
-        small_text = assets.get("small_text") if assets else None
 
         self._db.upsert(
             "pres_activity",

@@ -4,6 +4,7 @@ Handles presence visibility rules including invisible mode,
 block relationships, and efficient bulk visibility checks.
 """
 
+from dataclasses import replace
 from typing import Dict, List
 
 from .base import PresenceManagerBase
@@ -12,6 +13,34 @@ from ..models import Presence, UserStatus
 
 class VisibilityMixin(PresenceManagerBase):
     """Mixin providing presence visibility operations."""
+
+    @staticmethod
+    def _scrub_private_fields(presence: Presence) -> Presence:
+        """Return ``presence`` with private focus state removed.
+
+        ``current_channel_id`` / ``current_server_id`` are transient
+        "focused channel" markers kept in Valkey purely so the notification
+        pipeline can suppress a ping when the recipient is already looking at
+        the channel (see ``NotificationCreator._should_notify_user_optimized``,
+        which reads ``get_presence`` directly). They are NOT part of the public
+        presence contract and must never cross the viewer boundary: leaking
+        them reveals the exact channel and server another user is currently
+        viewing, even to a viewer who is merely a shared-server member (the
+        core visibility layer has no friends gate of its own).
+
+        The notification path is unaffected because it never goes through the
+        ``get_visible_*`` methods.
+        """
+        if (
+            presence.current_channel_id is None
+            and presence.current_server_id is None
+        ):
+            return presence
+        return replace(
+            presence,
+            current_channel_id=None,
+            current_server_id=None,
+        )
 
     def get_visible_presence(self, viewer_id: int, target_id: int) -> Presence:
         """
@@ -62,7 +91,11 @@ class VisibilityMixin(PresenceManagerBase):
                 updated_at=0,
             )
 
-        return presence
+        # Any non-self viewer gets the public projection only. The branch
+        # above already returned a freshly-built offline presence for an
+        # invisible target (whose focus fields default to None); for a
+        # normally-visible target we must strip the focus fields explicitly.
+        return self._scrub_private_fields(presence)
 
     def get_visible_presences_bulk(
         self, viewer_id: int, target_ids: List[int]
@@ -144,7 +177,9 @@ class VisibilityMixin(PresenceManagerBase):
                     updated_at=0,
                 )
             else:
-                result[target_id_raw] = p
+                # Same privacy rule as the single-target path: a viewer never
+                # receives another user's focused-channel/server markers.
+                result[target_id_raw] = self._scrub_private_fields(p)
 
         return result
 
