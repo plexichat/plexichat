@@ -39,7 +39,8 @@ DEFAULT_MAX_BATCH = 128
 
 
 Frame = Dict[str, object]
-FrameWriter = Callable[[List[Frame]], Awaitable[None]]
+# Writers may report a status (e.g. bool success); the batcher ignores it.
+FrameWriter = Callable[[List[Frame]], Awaitable[object]]
 
 
 class OutboundFrameBatcher:

@@ -19,7 +19,7 @@ only decide whether a value is a well-formed URL at all.
 
 from __future__ import annotations
 
-from typing import Annotated, Iterable
+from typing import Annotated, Iterable, cast
 
 from pydantic import AfterValidator
 
@@ -44,7 +44,7 @@ def validate_http_url(
     ``Field(min_length=1)`` is used on required fields to reject an empty value.
     """
     if value is None or value == "":
-        return value
+        return cast(str, value)
     text = str(value).strip()
     if len(text) > MAX_URL_LENGTH:
         raise OutboundUrlRejected(

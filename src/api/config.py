@@ -5,7 +5,7 @@ API configuration - Settings for the REST API.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 import os
 
 from src.core.config.snapshot import VersionedConfigSnapshot, file_version
@@ -190,13 +190,13 @@ def _build_api_config() -> APIConfig:
 # for up to five minutes; the snapshot reuses the value until the source
 # actually changes and observes edits on the next access.
 _api_config_snapshot = VersionedConfigSnapshot(
-    _build_api_config, version_fn=_config_state
+    cast(Callable[[], Dict[str, Any]], _build_api_config), version_fn=_config_state
 )
 
 
 def get_api_config() -> APIConfig:
     """Return the current API config from the versioned snapshot."""
-    return _api_config_snapshot.snapshot()
+    return cast(APIConfig, _api_config_snapshot.snapshot())
 
 
 def clear_api_config_cache() -> None:

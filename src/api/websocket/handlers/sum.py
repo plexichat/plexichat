@@ -80,14 +80,15 @@ class SumHandler:
         relay path additionally re-checks recipients. Fails closed: when the
         capability or manager is unavailable, stale subscriptions are removed.
         """
-        if not getattr(connection, "is_authenticated", False) or not connection.user_id:
+        user_id = connection.user_id
+        if not getattr(connection, "is_authenticated", False) or not user_id:
             return []
 
         def _authorized(workbook_id: int) -> bool:
             if not _capability_allows_sum():
                 return False
             try:
-                self._manager().get_workbook(int(connection.user_id), int(workbook_id))
+                self._manager().get_workbook(int(user_id), int(workbook_id))
                 return True
             except Exception:
                 return False
@@ -96,7 +97,7 @@ class SumHandler:
             revoked = prune_unauthorized_subscriptions(
                 self._registry,
                 connection.connection_id,
-                connection.user_id,
+                user_id,
                 _authorized,
             )
         except Exception as exc:  # pragma: no cover - defensive

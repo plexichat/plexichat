@@ -41,7 +41,9 @@ def _log_response_failure(exc: Exception) -> None:
     try:
         import utils.logger as logger
 
-        logger.exception("unhandled error in security-headers middleware: %s", exc)
+        logger.error(
+            "unhandled error in security-headers middleware: %s", exc, exc_info=exc
+        )
     except Exception:
         pass
 

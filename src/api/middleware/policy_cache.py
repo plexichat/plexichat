@@ -16,7 +16,7 @@ the cache immediately instead of leaking a stale policy into a later test.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import FrozenSet, Optional
+from typing import Any, Callable, Dict, FrozenSet, Optional, cast
 
 from src.core.config.snapshot import VersionedConfigSnapshot, file_version
 
@@ -117,12 +117,14 @@ def _build_policy() -> StaticPolicy:
     )
 
 
-_policy_snapshot = VersionedConfigSnapshot(_build_policy, version_fn=_config_version)
+_policy_snapshot = VersionedConfigSnapshot(
+    cast(Callable[[], Dict[str, Any]], _build_policy), version_fn=_config_version
+)
 
 
 def get_static_policy() -> StaticPolicy:
     """Return the current derived policy, rebuilding only when inputs change."""
-    return _policy_snapshot.snapshot()
+    return cast(StaticPolicy, _policy_snapshot.snapshot())
 
 
 def clear_static_policy_cache() -> None:
