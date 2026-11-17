@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import time
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from .schema import (
     PLEXISUM_FORMAT_VERSION,
@@ -38,12 +38,15 @@ class SumManagerWorkbooks(SumManagerProtocol):
         template: bool = False,
     ) -> Dict[str, Any]:
         """Create an empty workbook (or a reusable template when ``template``)."""
-        title = bound_workspace_text(
-            title,
-            "title",
-            max_length=MAX_WORKSPACE_TITLE_LENGTH,
-            required=True,
-            error_cls=SumValidationError,
+        title = cast(
+            str,
+            bound_workspace_text(
+                title,
+                "title",
+                max_length=MAX_WORKSPACE_TITLE_LENGTH,
+                required=True,
+                error_cls=SumValidationError,
+            ),
         )
         scope = str(scope or "personal").strip().lower()
         if scope not in ("personal", "server"):
@@ -127,12 +130,15 @@ class SumManagerWorkbooks(SumManagerProtocol):
         template = self._workbook(user_id, template_id)
         if not int(template.get("is_template") or 0):
             raise SumValidationError("Source workbook is not a template")
-        title = bound_workspace_text(
-            title,
-            "title",
-            max_length=MAX_WORKSPACE_TITLE_LENGTH,
-            required=True,
-            error_cls=SumValidationError,
+        title = cast(
+            str,
+            bound_workspace_text(
+                title,
+                "title",
+                max_length=MAX_WORKSPACE_TITLE_LENGTH,
+                required=True,
+                error_cls=SumValidationError,
+            ),
         )
         scope = str(scope or "personal").strip().lower()
         if scope not in ("personal", "server"):

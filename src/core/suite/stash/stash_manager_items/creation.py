@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from ...boundaries import (
     MAX_WORKSPACE_DESCRIPTION_LENGTH,
@@ -38,12 +38,15 @@ class ItemCreationMixin(StashManagerProtocol):
         item_type = str(item_type).strip().lower()
         if item_type not in STASH_ITEM_TYPES:
             raise StashValidationError("Unsupported Stash item type")
-        title = bound_workspace_text(
-            title,
-            "title",
-            max_length=MAX_WORKSPACE_TITLE_LENGTH,
-            required=True,
-            error_cls=StashValidationError,
+        title = cast(
+            str,
+            bound_workspace_text(
+                title,
+                "title",
+                max_length=MAX_WORKSPACE_TITLE_LENGTH,
+                required=True,
+                error_cls=StashValidationError,
+            ),
         )
         description = bound_workspace_text(
             description,

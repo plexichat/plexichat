@@ -14,6 +14,7 @@ cannot inject arbitrary SQL or absurd ids into the range predicate.
 """
 
 import base64
+import binascii
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
@@ -60,5 +61,5 @@ class MessageCursor:
             if message_id < 0 or message_id >= 1 << 64:
                 return None, None
             return direction, message_id
-        except (ValueError, UnicodeDecodeError, base64.binascii.Error):
+        except (ValueError, UnicodeDecodeError, binascii.Error):
             return None, None

@@ -11,7 +11,7 @@ envelope.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from src.core.security.hardening import (
     HardeningViolation,
@@ -195,7 +195,7 @@ def validate_room_payload(payload: Any) -> Dict[str, Any]:
         )
         if pid in seen:
             continue
-        seen.add(pid)
+        seen.add(cast(str, pid))
         cleaned.append(
             {
                 "id": pid,

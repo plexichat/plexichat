@@ -384,12 +384,12 @@ class SumManagerBase(SumManagerProtocol):
                     and server_id is not None
                     and self._is_member(uid, int(server_id))
                 )
-            return member
+            return bool(member)
 
         if not can_edit and is_server_member():
             try:
                 if self._servers and self._servers.has_permission(
-                    uid, int(server_id), "server.manage"
+                    uid, int(server_id) if server_id is not None else 0, "server.manage"
                 ):
                     can_edit = True
             except Exception as grant_error:

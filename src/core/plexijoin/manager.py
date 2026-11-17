@@ -8,7 +8,7 @@ import json
 import logging
 import secrets
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from src.core.admin.logging import AdminLogEntry
 
@@ -281,10 +281,13 @@ class PlexiJoinManager:
         user_agent: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a new outbound federation connection."""
-        remote_instance_id = bound_text(
-            remote_instance_id, "remote_instance_id", 128, required=True
+        remote_instance_id = cast(
+            str,
+            bound_text(remote_instance_id, "remote_instance_id", 128, required=True),
         )
-        remote_url = bound_text(remote_url, "remote_url", 2048, required=True)
+        remote_url = cast(
+            str, bound_text(remote_url, "remote_url", 2048, required=True)
+        )
         shared_key = validate_shared_key(shared_key)
         note = bound_text(note, "note", 500)
         admin_id = bound_id(admin_id, "admin_id")
@@ -484,10 +487,13 @@ class PlexiJoinManager:
         key. This is the ONLY production path that inserts into
         ``plexijoin_inbound_requests``.
         """
-        remote_instance_id = bound_text(
-            remote_instance_id, "remote_instance_id", 128, required=True
+        remote_instance_id = cast(
+            str,
+            bound_text(remote_instance_id, "remote_instance_id", 128, required=True),
         )
-        remote_url = bound_text(remote_url, "remote_url", 2048, required=True)
+        remote_url = cast(
+            str, bound_text(remote_url, "remote_url", 2048, required=True)
+        )
         requested_by = bound_text(requested_by, "requested_by", 128)
         note = bound_text(note, "note", 500)
         now_ms = int(time.time() * 1000)
