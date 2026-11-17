@@ -82,29 +82,6 @@ class LifecycleMixin(AuthManagerProtocol):
         ua_index = self._ua_index(ua)
         ua_encrypted = self._encrypt_ua(ua, str(sid))
 
-        max_sessions = sessions_config.get("max_per_user", 10)
-        # Counting is sufficient in the common (under-cap) case. Previously
-        # this fetched EVERY active session and decrypted its stored IP/UA on
-        # every login, registration and 2FA completion just to learn the
-        # count. Only materialise the full session objects when a row actually
-        # needs evicting; the eviction logic below stays identical.
-        count_row = self._db.fetch_one(
-            "SELECT COUNT(*) AS c FROM auth_sessions WHERE user_id = ? AND revoked = 0",
-            (user_id,),
-        )
-        active_count = int(count_row["c"]) if count_row else 0
-        if active_count >= max_sessions:
-            sessions = self.get_sessions(user_id)
-            sessions.sort(key=lambda x: x.last_activity)
-            to_revoke = len(sessions) - max_sessions + 1
-            for i in range(to_revoke):
-                self._db.execute(
-                    "UPDATE auth_sessions SET revoked = 1 WHERE id = ?",
-                    (sessions[i].id,),
-                )
-            # Evicted sessions must not remain verifiable via the verify cache.
-            invalidate_pattern("token_verify:*")
-
         self._db.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, device_id, ip_index, ip_encrypted, ua_index, ua_encrypted, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -121,6 +98,40 @@ class LifecycleMixin(AuthManagerProtocol):
                 now,
             ),
         )
+
+        # Enforce max_per_user AFTER writing our own row. A pre-insert
+        # COUNT-then-evict is a check/use race: two concurrent logins both see
+        # a free slot and both insert, leaving cap+1 live sessions (and, with
+        # more racers, an unbounded number). Re-counting after our insert and
+        # revoking exactly the excess in ONE guarded statement makes every
+        # concurrent creator converge on the cap: a racer that already evicted
+        # leaves nothing to evict for the next one, and the ``revoked = 0``
+        # predicate stops two racers double-revoking the same rows. The
+        # just-created session is excluded so it can never be evicted by a
+        # stale last_activity value. This also avoids the old full
+        # get_sessions() fetch that decrypted every stored IP/UA just to sort
+        # by last_activity.
+        max_sessions = sessions_config.get("max_per_user", 10)
+        try:
+            max_sessions = max(1, int(max_sessions))
+        except (TypeError, ValueError):
+            max_sessions = 10
+        count_row = self._db.fetch_one(
+            "SELECT COUNT(*) AS c FROM auth_sessions WHERE user_id = ? AND revoked = 0",
+            (user_id,),
+        )
+        active_count = int(count_row["c"]) if count_row else 0
+        excess = active_count - max_sessions
+        if excess > 0:
+            self._db.execute(
+                "UPDATE auth_sessions SET revoked = 1 WHERE id IN ("
+                "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 0 "
+                "AND id != ? ORDER BY last_activity ASC, id ASC LIMIT ?)",
+                (user_id, sid, excess),
+            )
+            # Evicted sessions must not remain verifiable via the verify cache.
+            invalidate_pattern("token_verify:*")
+
         return Session(
             id=sid,
             user_id=user_id,
@@ -441,6 +452,23 @@ class LifecycleMixin(AuthManagerProtocol):
             deletion_status=srow.get("deletion_status", "active"),
         )
 
+    def _revoke_for_refresh_replay(self, session_id: int, row) -> None:
+        """Kill a session whose pre-rotation bearer was presented twice."""
+        logger.warning(
+            f"Refresh token replay detected for session {session_id}; revoking"
+        )
+        self._db.execute(
+            "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (session_id,)
+        )
+        invalidate_pattern("token_verify:*")
+        if row:
+            self._log_audit(
+                AuditEventType.LOGOUT,
+                row["user_id"],
+                False,
+                details={"reason": "refresh_token_replay"},
+            )
+
     def refresh_session(self, token: str) -> Optional[str]:
         parsed = parse_token(token)
         if not parsed or parsed["token_type"] != "session":
@@ -453,20 +481,7 @@ class LifecycleMixin(AuthManagerProtocol):
         # so revoke the whole session instead of silently returning None.
         rotated_key = f"refresh:{parsed['id']}:{hash_token(parsed['secret'])}"
         if refresh_replay_guard.contains(rotated_key):
-            logger.warning(
-                f"Refresh token replay detected for session {parsed['id']}; revoking"
-            )
-            self._db.execute(
-                "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
-            )
-            invalidate_pattern("token_verify:*")
-            if row:
-                self._log_audit(
-                    AuditEventType.LOGOUT,
-                    row["user_id"],
-                    False,
-                    details={"reason": "refresh_token_replay"},
-                )
+            self._revoke_for_refresh_replay(parsed["id"], row)
             return None
         # The session secret must be verified, not just the (enumerable) ID,
         # otherwise anyone who learns a session ID can extend it forever.
@@ -477,6 +492,15 @@ class LifecycleMixin(AuthManagerProtocol):
         ):
             return None
         if is_expired(row["expires_at"], self._get_timestamp()):
+            return None
+        # Atomically claim the still-current token. ``contains`` above detects
+        # already-rotated tokens whose hash no longer matches the live row;
+        # this consume closes the check-then-add race where two concurrent
+        # refreshes present the SAME valid token and both rotate it. Without
+        # it both pass the replay check and both hand out a usable new
+        # credential, and neither is flagged as a replay.
+        if not refresh_replay_guard.consume(rotated_key):
+            self._revoke_for_refresh_replay(parsed["id"], row)
             return None
         now = self._get_timestamp()
         # Trusted-device sessions must keep their longer TTL across a refresh:
@@ -497,9 +521,9 @@ class LifecycleMixin(AuthManagerProtocol):
             "UPDATE auth_sessions SET token_hash = ?, expires_at = ?, last_activity = ? WHERE id = ?",
             (new_hash, new_expires, now, parsed["id"]),
         )
-        # Remember the consumed token so a later replay is detectable even
-        # though its hash no longer matches the live session row.
-        refresh_replay_guard.add(rotated_key)
+        # The atomic consume() above already recorded the pre-rotation token,
+        # so a later replay is detectable even though its hash no longer
+        # matches the live session row.
         invalidate_pattern("token_verify:*")
         return new_token
 
