@@ -3,7 +3,7 @@ Admin log management routes.
 """
 
 import os
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from typing import List, Optional
 from src.api.schemas.admin import LogFileInfo, LogViewResponse
 from src.api.schemas.common import ErrorResponse
@@ -46,10 +46,10 @@ async def list_admin_logs(request: Request):
 async def read_admin_log(
     request: Request,
     filename: str,
-    limit: int = 1000,
-    offset: int = 0,
-    search: Optional[str] = None,
-    level: Optional[str] = None,
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0, le=1_000_000),
+    search: Optional[str] = Query(None, max_length=200),
+    level: Optional[str] = Query(None, max_length=20),
 ):
     """
     Read the contents of a specific log file.
