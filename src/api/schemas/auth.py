@@ -10,10 +10,20 @@ from .url_types import HttpUrl
 from .common import SnowflakeID
 
 
+#: Structural ceiling for a password carried in a request body. The configurable
+#: policy (12..128 characters by default) is the real acceptance rule and is
+#: enforced in ``core.auth.passwords``; this bound only prevents an arbitrarily
+#: large value (the API accepts bodies up to 10 MB) from reaching a password
+#: hasher or verifier before the policy check runs.
+MAX_PASSWORD_INPUT_LENGTH = 1024
+
+
 class RegisterRequest(BaseModel):
     username: UIText = Field(..., min_length=3, max_length=32, description="Username")
     email: EmailStr = Field(..., description="Email address")
-    password: str = Field(..., description="Password")
+    password: str = Field(
+        ..., min_length=1, max_length=MAX_PASSWORD_INPUT_LENGTH, description="Password"
+    )
     age: Optional[int] = Field(
         None, description="User age (required if age gate enabled in boolean mode)"
     )
@@ -32,7 +42,9 @@ class LoginRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     username: UIText = Field(..., description="Username or email")
-    password: str = Field(..., description="Password")
+    password: str = Field(
+        ..., min_length=1, max_length=MAX_PASSWORD_INPUT_LENGTH, description="Password"
+    )
     device_fingerprint: Optional[str] = Field(
         None,
         min_length=8,
@@ -157,7 +169,12 @@ class TwoFactorSetupRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    password: str = Field(..., description="Current password for confirmation")
+    password: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PASSWORD_INPUT_LENGTH,
+        description="Current password for confirmation",
+    )
 
 
 class TwoFactorSetupResponse(BaseModel):
@@ -185,7 +202,12 @@ class TwoFactorDisableRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    password: str = Field(..., description="Current password")
+    password: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PASSWORD_INPUT_LENGTH,
+        description="Current password",
+    )
     code: str = Field(
         ..., min_length=6, max_length=8, description="Current TOTP code or backup code"
     )
@@ -270,7 +292,12 @@ class PasswordResetConfirm(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     token: str = Field(..., description="Reset token from email")
-    new_password: str = Field(..., description="New password")
+    new_password: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PASSWORD_INPUT_LENGTH,
+        description="New password",
+    )
 
 
 class OAuthCallbackRequest(BaseModel):

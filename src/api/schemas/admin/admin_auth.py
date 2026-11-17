@@ -63,8 +63,11 @@ class OTPVerifyRequest(BaseModel):
 class AdminChangePasswordRequest(BaseModel):
     """Request to change admin password."""
 
-    current_password: str = Field(...)
-    new_password: str = Field(..., min_length=12)
+    # An admin password can never be longer than the login bound: anything
+    # over it cannot be used to sign in. Leaving these unbounded let a caller
+    # push a multi-megabyte value into the password KDF before any check.
+    current_password: str = Field(..., min_length=1, max_length=200)
+    new_password: str = Field(..., min_length=12, max_length=200)
 
 
 class AdminSecurityStatusResponse(BaseModel):
@@ -86,13 +89,13 @@ class AdminSecurityStatusResponse(BaseModel):
 class AdminOTPSetupBeginRequest(BaseModel):
     """Begin an admin OTP setup/reset flow."""
 
-    current_password: str = Field(...)
+    current_password: str = Field(..., min_length=1, max_length=200)
 
 
 class AdminOTPDisableRequest(BaseModel):
     """Disable admin OTP after verifying password and OTP."""
 
-    current_password: str = Field(...)
+    current_password: str = Field(..., min_length=1, max_length=200)
     code: str = Field(..., min_length=6, max_length=16)
 
 

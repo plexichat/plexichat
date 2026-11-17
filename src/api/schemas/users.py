@@ -4,10 +4,16 @@ User schemas - Request/response models for user endpoints.
 
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from .auth import MAX_PASSWORD_INPUT_LENGTH
 from .policy_types import UIText
 from .url_types import HttpUrl, validate_http_url
 
 from .common import SnowflakeID
+
+#: Must stay in sync with ``ProfileManager.MAX_SOCIAL_LINKS`` and the profile
+#: route's ``MAX_SOCIAL_LINKS``: accepting more here only defers the rejection
+#: to the storage layer and advertises a limit the API cannot honour.
+MAX_SOCIAL_LINKS = 10
 
 
 class UserUpdateRequest(BaseModel):
@@ -32,9 +38,17 @@ class UserUpdateRequest(BaseModel):
             "(/api/v1/avatars/users/{user_id}); arbitrary URLs are rejected."
         ),
     )
-    password: Optional[str] = Field(None, description="New password")
+    # Empty string is the client's "no change" signal in PATCH /users/@me, so
+    # only the upper bound is enforced here.
+    password: Optional[str] = Field(
+        None,
+        max_length=MAX_PASSWORD_INPUT_LENGTH,
+        description="New password",
+    )
     current_password: Optional[str] = Field(
-        None, description="Current password (required for password change)"
+        None,
+        max_length=MAX_PASSWORD_INPUT_LENGTH,
+        description="Current password (required for password change)",
     )
     bio: Optional[str] = Field(
         None, max_length=1000, description="Profile bio (empty string clears)"
@@ -53,7 +67,9 @@ class UserUpdateRequest(BaseModel):
     )
 
     social_links: Optional[List[dict]] = Field(
-        None, max_length=20, description="Social link objects (empty list clears all)"
+        None,
+        max_length=MAX_SOCIAL_LINKS,
+        description="Social link objects (empty list clears all)",
     )
 
     @field_validator("social_links")
@@ -82,7 +98,12 @@ class UserDeletionRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    password: str = Field(..., description="Current password for verification")
+    password: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PASSWORD_INPUT_LENGTH,
+        description="Current password for verification",
+    )
     code: Optional[str] = Field(None, description="2FA code (required if enabled)")
 
 
