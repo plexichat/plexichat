@@ -696,10 +696,29 @@ class ChunkedUploadManager:
         max_len = min(session.chunk_size, session.total_size - offset)
         exceeded = False
 
+        # SECURITY: ``temp_path`` is read back from the sessions table on every
+        # chunk write. Confine it to the managed temp directory exactly as the
+        # buffered ``upload_chunk``, completion and cleanup paths do -- otherwise
+        # a tampered/forged session row could make the server seek-and-write
+        # caller-controlled bytes into any file it can open (arbitrary file
+        # modification, e.g. an SSH key or application source).
         try:
-            if session.temp_path is None:
-                raise RuntimeError("Upload session temp file missing")
-            with open(session.temp_path, "r+b") as f:
+            confined_path = self._confine_temp_path(session.temp_path)
+        except (HardeningViolation, RuntimeError) as exc:
+            logger.error(f"Refusing unsafe upload session temp path: {exc}")
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error="Unsafe session temp path",
+            )
+
+        try:
+            with open(confined_path, "r+b") as f:
                 f.seek(offset)
                 while True:
                     chunk = chunk_stream.read(65536)

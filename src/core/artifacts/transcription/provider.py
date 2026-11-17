@@ -23,6 +23,7 @@ so the provider selection logic lives here and nowhere else.
 
 import asyncio
 import importlib.util
+import ipaddress
 import re
 import threading
 from abc import ABC, abstractmethod
@@ -30,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from src.core.security.hardening import require_https_url
+from src.core.security.hardening import HardeningViolation, require_https_url
 from src.utils.security import URLValidator
 
 
@@ -49,6 +50,21 @@ _ISO_DURATION_RE = re.compile(
     re.IGNORECASE,
 )
 _AZURE_TICKS_PER_SECOND = 10_000_000
+
+# A Cognitive Services region is a single DNS label (e.g. ``eastus``,
+# ``westus2``). It is interpolated directly into the request hostname below,
+# so it must never be able to introduce a path, query, fragment, userinfo,
+# separator or whitespace/control character: ``https://evil.test#.api...``
+# would send the Ocp-Apim-Subscription-Key to an attacker-controlled host.
+_AZURE_REGION_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _validate_azure_region(value: Any) -> str:
+    """Return a safe Azure region label, or fail closed with ``ValueError``."""
+    region = str(value or "").strip().lower()
+    if not _AZURE_REGION_RE.fullmatch(region):
+        raise ValueError("Invalid Azure region in transcription configuration")
+    return region
 
 
 def azure_timespan_to_ms(value: Any) -> int:
@@ -520,7 +536,14 @@ class AzureSpeechProvider(TranscriptionProvider):
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)
         self._key: str = str(self._config.get("azure_key", "") or "")
-        self._region: str = str(self._config.get("azure_region", "eastus"))
+        # Validate once at construction: the region is concatenated into the
+        # request hostname in _transcribe_rest, and also carries the account
+        # key. A malformed value must fail closed (the capability service maps
+        # the ValueError to a ``misconfigured`` state) rather than silently
+        # redirect the key to another host.
+        self._region: str = _validate_azure_region(
+            self._config.get("azure_region", "eastus")
+        )
         self._locale: str = str(self._config.get("language", "en-US"))
         if self._locale in ("auto", ""):
             self._locale = "en-US"
