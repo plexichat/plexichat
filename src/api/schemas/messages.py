@@ -3,12 +3,23 @@ Message schemas - Request/response models for message endpoints.
 """
 
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from .common import SnowflakeID
 from .url_types import HttpUrl
 from .reactions import ReactionResponse
 from .polls import PollInlineCreateRequest, PollResponse, PollResultsResponse
+
+
+def _parse_iso_bound(value: str):
+    """Parse a date bound for ordering, or return ``None`` if it is not ISO."""
+    from datetime import datetime
+
+    try:
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
 
 
 # Defence-in-depth: attachment metadata is attacker-controlled and echoed
@@ -311,6 +322,27 @@ class TranscriptExportRequest(BaseModel):
     from_date: Optional[str] = Field(None, description="Start date (ISO 8601)")
     to_date: Optional[str] = Field(None, description="End date (ISO 8601)")
     timezone: str = Field("UTC", description="Timezone for dates")
+
+    @model_validator(mode="after")
+    def _date_window_is_ordered(self) -> "TranscriptExportRequest":
+        """Reject an end bound that precedes the start bound.
+
+        Each field is a free-form ISO 8601 string (the route applies the
+        timezone), so a request could otherwise ask for ``from=2024-06-01`` and
+        ``to=2024-01-01`` -- a window the export service reads as empty, which
+        silently exports nothing instead of refusing a contradiction.
+        """
+        if self.from_date and self.to_date:
+            start = _parse_iso_bound(self.from_date)
+            end = _parse_iso_bound(self.to_date)
+            if start is not None and end is not None:
+                if start > end:
+                    raise ValueError("to_date must not be earlier than from_date")
+            elif self.from_date > self.to_date:
+                # Unparseable strings: a deterministic lexical check is better
+                # than accepting an obviously inverted ISO window.
+                raise ValueError("to_date must not be earlier than from_date")
+        return self
 
 
 class TranscriptExportResponse(BaseModel):

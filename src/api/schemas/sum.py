@@ -2,10 +2,23 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from .policy_types import UIText
 
 from .common import SnowflakeID
+
+
+def _check_cell_range(row_start: int, row_end: int, column_start: int, column_end: int) -> None:
+    """Reject a range whose upper bound is not strictly above its lower bound.
+
+    A permission, validation or format rule over rows ``5..2`` or columns
+    ``9..3`` is meaningless; the field-level ``ge`` checks cannot see that the
+    two bounds contradict each other.
+    """
+    if row_start >= row_end:
+        raise ValueError("row_end must be greater than row_start")
+    if column_start >= column_end:
+        raise ValueError("column_end must be greater than column_start")
 
 #: Base64 payload ceiling shared by the workbook/XLSX upload routes (70M
 #: encoded characters ~ 50 MiB decoded). Declaring it on the field rejects an
@@ -178,6 +191,12 @@ class SumSortRequest(BaseModel):
     direction: str = Field("asc", pattern="^(asc|desc)$")
     base_revision: int = Field(..., ge=0)
 
+    @model_validator(mode="after")
+    def _row_range_is_ordered(self) -> "SumSortRequest":
+        if self.start_row >= self.end_row:
+            raise ValueError("end_row must be greater than start_row")
+        return self
+
 
 class SumSortResponse(BaseModel):
     operation_id: str
@@ -296,6 +315,11 @@ class SumRangePermissionRequest(BaseModel):
     column_end: int = Field(..., ge=1)
     permission: str = Field(..., pattern="^(read_only|editable)$")
 
+    @model_validator(mode="after")
+    def _ranges_are_ordered(self) -> "SumRangePermissionRequest":
+        _check_cell_range(self.row_start, self.row_end, self.column_start, self.column_end)
+        return self
+
 
 class SumRangePermissionResponse(BaseModel):
     id: SnowflakeID
@@ -360,6 +384,11 @@ class SumValidationRequest(BaseModel):
     allow_blank: bool = True
     message: Optional[str] = Field(None, max_length=300)
 
+    @model_validator(mode="after")
+    def _ranges_are_ordered(self) -> "SumValidationRequest":
+        _check_cell_range(self.row_start, self.row_end, self.column_start, self.column_end)
+        return self
+
 
 class SumValidationResponse(BaseModel):
     id: SnowflakeID
@@ -388,6 +417,11 @@ class SumConditionalFormatRequest(BaseModel):
     column_end: int = Field(..., ge=1)
     criteria: Dict[str, Any] = Field(default_factory=dict)
     style: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _ranges_are_ordered(self) -> "SumConditionalFormatRequest":
+        _check_cell_range(self.row_start, self.row_end, self.column_start, self.column_end)
+        return self
 
 
 class SumConditionalFormatResponse(BaseModel):
