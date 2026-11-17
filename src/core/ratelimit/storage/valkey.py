@@ -191,7 +191,11 @@ class ValkeyStorage(RateLimitStorage):
             return 0
 
         full_key = self._get_key(key)
-        token = client.acquire_lock(full_key)
+        # SECURITY: use the same lock namespace as the async mutators and the
+        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
+        # paths would not serialise and a concurrent write could clobber this
+        # deduction. Data itself stays under full_key.
+        token = client.acquire_lock(f"extlock:{key}")
         if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
@@ -204,7 +208,7 @@ class ValkeyStorage(RateLimitStorage):
                 return 0
             finally:
                 if token:  # Re-check for type narrowing
-                    client.release_lock(full_key, token)
+                    client.release_lock(f"extlock:{key}", token)
         return 0
 
     def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
@@ -214,7 +218,11 @@ class ValkeyStorage(RateLimitStorage):
             return default
 
         full_key = self._get_key(key)
-        token = client.acquire_lock(full_key)
+        # SECURITY: use the same lock namespace as the async mutators and the
+        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
+        # paths would not serialise and a concurrent write could clobber this
+        # deduction. Data itself stays under full_key.
+        token = client.acquire_lock(f"extlock:{key}")
         if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
@@ -226,7 +234,7 @@ class ValkeyStorage(RateLimitStorage):
                 return default
             finally:
                 if token:  # Re-check for type narrowing
-                    client.release_lock(full_key, token)
+                    client.release_lock(f"extlock:{key}", token)
         return default
 
     def add_to_list(
@@ -238,7 +246,11 @@ class ValkeyStorage(RateLimitStorage):
             return 0
 
         full_key = self._get_key(key)
-        token = client.acquire_lock(full_key)
+        # SECURITY: use the same lock namespace as the async mutators and the
+        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
+        # paths would not serialise and a concurrent write could clobber this
+        # deduction. Data itself stays under full_key.
+        token = client.acquire_lock(f"extlock:{key}")
         if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
@@ -255,7 +267,7 @@ class ValkeyStorage(RateLimitStorage):
                 return 0
             finally:
                 if token:  # Re-check for type narrowing
-                    client.release_lock(full_key, token)
+                    client.release_lock(f"extlock:{key}", token)
         return 0
 
     def trim_list(self, key: str, field: str, min_value: Any) -> int:
@@ -265,7 +277,11 @@ class ValkeyStorage(RateLimitStorage):
             return 0
 
         full_key = self._get_key(key)
-        token = client.acquire_lock(full_key)
+        # SECURITY: use the same lock namespace as the async mutators and the
+        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
+        # paths would not serialise and a concurrent write could clobber this
+        # deduction. Data itself stays under full_key.
+        token = client.acquire_lock(f"extlock:{key}")
         if token:
             try:
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
@@ -281,7 +297,7 @@ class ValkeyStorage(RateLimitStorage):
                 return 0
             finally:
                 if token:  # Re-check for type narrowing
-                    client.release_lock(full_key, token)
+                    client.release_lock(f"extlock:{key}", token)
         return 0
 
     def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:

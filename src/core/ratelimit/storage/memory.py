@@ -12,6 +12,10 @@ from .base import RateLimitStorage
 class MemoryStorage(RateLimitStorage):
     """Thread-safe in-memory storage for rate limit buckets."""
 
+    # F8: every bucket write carries a TTL so crafted distinct keys expire
+    # instead of accumulating forever. Keep in sync with ValkeyStorage.
+    DEFAULT_BUCKET_TTL = 86400
+
     def __init__(self, cleanup_interval: float = 60.0, max_buckets: int = 100000):
         """
         Initialize memory storage.
@@ -116,6 +120,21 @@ class MemoryStorage(RateLimitStorage):
             if key not in self._locks:
                 self._locks[key] = threading.Lock()
             return self._locks[key]
+
+    def _commit_bucket_locked(self, key: str, bucket: Dict[str, Any]) -> None:
+        """Install ``bucket`` with a fresh TTL and enforce the bucket cap.
+
+        Caller must hold ``_global_lock`` (and, for read-modify-write paths,
+        the per-key lock). Centralising this makes every mutating write path
+        agree on the F8 bounds: without the TTL the entry can never be reaped
+        by :meth:`_cleanup_expired`, and without the cap a flood of distinct
+        keys can grow ``_buckets`` without bound between cleanup passes.
+        ``increment``/``get_and_set``/``add_to_list``/``trim_list`` used to
+        skip both, unlike their Valkey counterparts.
+        """
+        self._buckets[key] = bucket
+        self._ttls[key] = time.monotonic() + self.DEFAULT_BUCKET_TTL
+        self._enforce_cap_locked()
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
         """Get bucket state by key.
@@ -231,7 +250,7 @@ class MemoryStorage(RateLimitStorage):
             new_value = current + amount
             bucket[field] = new_value
             with self._global_lock:
-                self._buckets[key] = bucket
+                self._commit_bucket_locked(key, bucket)
             return new_value
 
     def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
@@ -242,7 +261,7 @@ class MemoryStorage(RateLimitStorage):
             previous = bucket.get(field, default)
             bucket[field] = value
             with self._global_lock:
-                self._buckets[key] = bucket
+                self._commit_bucket_locked(key, bucket)
             return previous
 
     def add_to_list(
@@ -260,7 +279,7 @@ class MemoryStorage(RateLimitStorage):
                 lst = lst[-max_size:]
             bucket[field] = lst
             with self._global_lock:
-                self._buckets[key] = bucket
+                self._commit_bucket_locked(key, bucket)
             return len(lst)
 
     def trim_list(self, key: str, field: str, min_value: Any) -> int:
@@ -275,7 +294,7 @@ class MemoryStorage(RateLimitStorage):
             lst = [v for v in lst if v >= min_value]
             bucket[field] = lst
             with self._global_lock:
-                self._buckets[key] = bucket
+                self._commit_bucket_locked(key, bucket)
             return original_len - len(lst)
 
     def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
