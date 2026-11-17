@@ -16,12 +16,52 @@ failure, not a pass.
 
 from __future__ import annotations
 
+import re as _re
+from typing import Any, Optional
+
 import utils.config as config
 import utils.logger as logger
 import src.api as api
 
 from ..context import SelfTestContext
 from ..db_guard import sanitize_error
+
+
+# Asset paths discovered from served HTML (``index.html``) and the vite
+# manifest are untrusted: they are fetched over HTTP and can be tampered with
+# by a poisoned release asset or a compromised plain-HTTP static host.  The
+# self-test session carries ``X-Plexichat-Internal-Secret``, so building URLs
+# with a naive ``f"{base_url}{path}"`` is an SSRF / path-traversal sink — a
+# path like ``/assets/../../api/v1/admin/...`` or one carrying an authority
+# (``//evil.tld``, ``/\@evil.tld``) would aim the privileged session at a
+# target the smoke test never intended to probe.  Only accept root-relative,
+# single-slash paths with no dot segments, no authority/scheme characters and
+# no control characters.  Discovered paths are additionally confined to
+# ``/assets/`` so a tampered index/manifest can never redirect the request to
+# an API or admin route.
+_SAFE_PATH_RE = _re.compile(r"^/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*$")
+
+
+def _safe_asset_path(
+    path: Any, *, require_assets_prefix: bool = False
+) -> Optional[str]:
+    """Return *path* when it is safe to append to the self-test base URL.
+
+    ``None`` is returned for anything that could change origin, escape the
+    static asset directory, or smuggle URL metadata (``@``, ``:``, ``\\``,
+    encoded traversal, control characters).  When *require_assets_prefix* is
+    set, only ``/assets/...`` paths are accepted — used for paths scraped from
+    remote HTML/manifest content.
+    """
+    if not isinstance(path, str) or not _SAFE_PATH_RE.fullmatch(path):
+        return None
+    # The regex already forbids empty segments; reject explicit dot segments
+    # defensively (and keep this stable if the regex is ever relaxed).
+    if any(seg in (".", "..", "") for seg in path.split("/")[1:]):
+        return None
+    if require_assets_prefix and not path.startswith("/assets/"):
+        return None
+    return path
 
 
 class StaticClientTester:
@@ -35,13 +75,37 @@ class StaticClientTester:
         internal_secret = api.get_internal_secret()
         if internal_secret:
             session.headers.update({"X-Plexichat-Internal-Secret": internal_secret})
+            # Never log any part of the secret itself: debug logs are routinely
+            # shipped to aggregators, and even an 8-char prefix leaks entropy.
+            # Match docs.py / setup/auth.py and log only that the header was set.
             logger.debug(
-                f"Added X-Plexichat-Internal-Secret header to static_client session: {internal_secret[:8]}..."
+                "Added X-Plexichat-Internal-Secret header to static_client session"
             )
         else:
             logger.warning(
                 "No internal_secret found - static_client may be rate limited"
             )
+
+    def _reject_asset_path(self, path: Any) -> None:
+        """Record a discovered path that failed the safe-path gate.
+
+        A tampered index.html/manifest is a real finding, not something to
+        silently skip: record a failed result so the self-test surfaces it.
+        ``%r`` escapes any control characters the remote content contained.
+        """
+        logger.warning(f"static_client: refusing unsafe discovered asset path {path!r}")
+        self.ctx.results.append(
+            {
+                "method": "GET",
+                "path": str(path)[:200],
+                "status_code": 0,
+                "duration_ms": 0,
+                "success": False,
+                "label": "static_client",
+                "warning": True,
+                "error": "unsafe discovered asset path rejected",
+            }
+        )
 
     def test_static_client(self) -> None:
         sc = config.get("static_client", {}) or {}
@@ -158,7 +222,14 @@ class StaticClientTester:
                 css_matches = re.findall(
                     r'href=["\'](/assets/[^"\']+\.css)["\']', index_resp.text
                 )
-                for asset_path in js_matches[:5] + css_matches[:5]:
+                for raw_path in js_matches[:5] + css_matches[:5]:
+                    # index.html is remote content: validate before it becomes
+                    # a URL, or a poisoned asset reference can traverse out of
+                    # /assets/ and hit an internal endpoint with the secret.
+                    asset_path = _safe_asset_path(raw_path, require_assets_prefix=True)
+                    if asset_path is None:
+                        self._reject_asset_path(raw_path)
+                        continue
                     asset_checks.append(asset_path)
                 # Also check for the vite manifest if present
                 manifest_url = f"{self.ctx.base_url}/.vite/manifest.json"
@@ -169,17 +240,35 @@ class StaticClientTester:
                     try:
                         manifest = manifest_resp.json()
                         for entry in manifest.values():
+                            if not isinstance(entry, dict):
+                                continue
                             if "file" in entry:
                                 # Manifest entries already include 'assets/' prefix
                                 file_path = entry["file"]
-                                if not file_path.startswith("/"):
+                                if isinstance(
+                                    file_path, str
+                                ) and not file_path.startswith("/"):
                                     file_path = "/" + file_path
-                                asset_checks.append(file_path)
+                                safe_path = _safe_asset_path(
+                                    file_path, require_assets_prefix=True
+                                )
+                                if safe_path is None:
+                                    self._reject_asset_path(file_path)
+                                else:
+                                    asset_checks.append(safe_path)
                             if "css" in entry:
                                 for css_file in entry["css"]:
-                                    if not css_file.startswith("/"):
+                                    if isinstance(
+                                        css_file, str
+                                    ) and not css_file.startswith("/"):
                                         css_file = "/" + css_file
-                                    asset_checks.append(css_file)
+                                    safe_path = _safe_asset_path(
+                                        css_file, require_assets_prefix=True
+                                    )
+                                    if safe_path is None:
+                                        self._reject_asset_path(css_file)
+                                    else:
+                                        asset_checks.append(safe_path)
                     except Exception as manifest_error:
                         logger.debug(f"static manifest parse failed: {manifest_error}")
         except Exception as manifest_fetch_error:
@@ -193,6 +282,11 @@ class StaticClientTester:
             if path in seen:
                 continue
             seen.add(path)
+            # Defense in depth: never let an unchecked path become a URL,
+            # even if a future edit feeds this loop from a new source.
+            if _safe_asset_path(path) is None:
+                self._reject_asset_path(path)
+                continue
             url = f"{self.ctx.base_url}{path}"
             try:
                 resp = session.get(url, timeout=3, allow_redirects=False)
