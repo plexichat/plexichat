@@ -699,13 +699,40 @@ def log_admin_action(
         log_to_file = audit_config.get("log_to_file", True)
         log_to_db = audit_config.get("log_to_database", True)
 
-        # For sensitive actions, always log to database regardless of config
-        sensitive_actions = [
+        # Privileged mutations must always reach the database audit table,
+        # even when an operator has disabled DB logging in configuration
+        # (file-only logging is not queryable through the audit UI and can be
+        # rotated away). These are the *action identifiers* the admin routes
+        # actually pass to ``log_admin_action`` -- e.g. ``role.delete`` and
+        # ``admin_user.delete`` -- not permission-scope names. The previous
+        # list mixed scope-style strings that no caller ever sends, so the
+        # override never fired and disabling DB logging silently erased the
+        # audit trail for every destructive admin action.
+        sensitive_actions = {
+            # Legacy/direct callers that still use scope-style identifiers.
             "users.force_purge",
             "users.delete",
             "servers.delete",
             "config.modify",
-        ]
+            "config.security",
+            "config.edit",
+            # Admin-account lifecycle and credential changes.
+            "admin_user.create",
+            "admin_user.update",
+            "admin_user.delete",
+            "admin_user.toggle_status",
+            "force_password_change",
+            # Role/privilege changes.
+            "role.create",
+            "role.update",
+            "role.delete",
+            "role.assign",
+            "role.revoke",
+            # Approval decisions.
+            "approval.approve",
+            "approval.reject",
+            "approval.cancel",
+        }
         if action in sensitive_actions:
             log_to_db = True
 
