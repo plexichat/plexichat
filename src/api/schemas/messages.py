@@ -58,9 +58,11 @@ class MessageCreateRequest(BaseModel):
         None, description="ID of message to reply to"
     )
     attachments: Optional[List[AttachmentRequest]] = Field(
-        None, description="Message attachments"
+        None, max_length=10, description="Message attachments"
     )
-    embeds: Optional[List[Dict[str, Any]]] = Field(None, description="Rich embeds")
+    embeds: Optional[List[Dict[str, Any]]] = Field(
+        None, max_length=10, description="Rich embeds"
+    )
     poll: Optional[PollInlineCreateRequest] = Field(
         None, description="Poll to attach to this message"
     )
