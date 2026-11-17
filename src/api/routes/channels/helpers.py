@@ -15,6 +15,7 @@ from src.core.security.hardening import (
     require_http_url,
 )
 from src.core.security.hardening.text import strip_control_characters
+from src.core.security.policies import RejectUICharacters
 
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
@@ -69,19 +70,58 @@ CHANNEL_TYPE_ALLOWLIST = frozenset(
 MAX_CHANNEL_NAME_LENGTH = 100
 MAX_CHANNEL_TOPIC_LENGTH = 1024
 
+# The schema's ``UIText`` rejects HTML metacharacters as well as C0 controls,
+# but the route-level guard used to reject only C0 controls. A schema edit (or
+# any caller that bypasses Pydantic) could then persist a stored-XSS payload
+# that this layer was supposed to catch. Share the exact policy the schema
+# uses so the two boundaries cannot drift apart.
+_CHANNEL_TEXT_POLICY = RejectUICharacters()
+
+# Only these keys may be forwarded to ``update_channel(**update_data)``. The
+# request model currently exposes a subset of them; an allowlist here stops a
+# widened/``extra='allow'`` schema from turning PATCH into a mass-assignment
+# primitive (``server_id``, ``owner_id``, ``id``, ...).
+_CHANNEL_UPDATE_FIELDS = frozenset(
+    {
+        "name",
+        "topic",
+        "channel_type",
+        "category_id",
+        "position",
+        "nsfw",
+        "slowmode_seconds",
+        "read_receipts_enabled",
+    }
+)
+
 
 def validate_channel_fields(update_data: dict) -> None:
-    """Reject out-of-allowlist types and overlength names/topics.
+    """Reject unknown fields, bad types and unsafe names/topics.
 
     The request schema enforces some of these, but the route must not rely on a
     schema edit elsewhere to keep the boundary: an unexpected field or a
     caller that bypasses normal validation still reaches this check before any
     channel mutation.
     """
+    if not isinstance(update_data, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid channel data"}},
+        )
+    unknown = set(update_data) - _CHANNEL_UPDATE_FIELDS
+    if unknown:
+        logger.warning(f"Rejected unknown channel update fields: {sorted(unknown)}")
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid channel data"}},
+        )
+
     if "channel_type" in update_data:
         value = update_data["channel_type"]
         value = getattr(value, "value", value)
-        if str(value) not in CHANNEL_TYPE_ALLOWLIST:
+        # Require a real string: a dict/list with a ``value`` key used to be
+        # stringified into the allowlist check and could pass as "text".
+        if not isinstance(value, str) or value not in CHANNEL_TYPE_ALLOWLIST:
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid channel type"}},
@@ -96,6 +136,7 @@ def validate_channel_fields(update_data: dict) -> None:
         value = str(value)
         try:
             reject_control_characters(value, field)
+            _CHANNEL_TEXT_POLICY.check(value, field)
         except ValueError as exc:
             raise HTTPException(
                 status_code=400,
@@ -318,12 +359,24 @@ def _channel_to_response(
             else:
                 name = f"Conversation {channel.id}"
 
+        # Defence in depth on the way out: a name/topic that reached storage
+        # through an unvalidated path (legacy row, admin tool, import) must not
+        # become a reflected control-character or unbounded-length payload in
+        # every channel read. Input validation stays the primary defence.
+        safe_name = strip_control_characters(name)[:MAX_CHANNEL_NAME_LENGTH]
+        raw_topic = getattr(channel, "topic", None)
+        safe_topic = (
+            strip_control_characters(raw_topic)[:MAX_CHANNEL_TOPIC_LENGTH]
+            if raw_topic is not None
+            else None
+        )
+
         return ChannelResponse(
             id=SnowflakeID(channel.id),
             server_id=SnowflakeID(server_id),
-            name=name,
+            name=safe_name,
             channel_type=channel_type or "text",
-            topic=getattr(channel, "topic", None),
+            topic=safe_topic,
             position=getattr(channel, "position", 0),
             category_id=SnowflakeID(channel.category_id)
             if getattr(channel, "category_id", None)
