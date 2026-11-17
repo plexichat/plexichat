@@ -73,10 +73,10 @@ def _suggestions(search_mod, user_id: int, q: str, limit: int) -> List[str]:
 )
 async def search_messages(
     query: str = Query(..., max_length=256, description="Search query"),
-    conversation_id: Optional[str] = Query(None, description="Limit to conversation"),
-    server_id: Optional[str] = Query(None, description="Limit to server"),
-    channel_id: Optional[str] = Query(None, description="Limit to channel"),
-    author_id: Optional[str] = Query(None, description="Limit to author"),
+    conversation_id: Optional[str] = Query(None, max_length=32, description="Limit to conversation"),
+    server_id: Optional[str] = Query(None, max_length=32, description="Limit to server"),
+    channel_id: Optional[str] = Query(None, max_length=32, description="Limit to channel"),
+    author_id: Optional[str] = Query(None, max_length=32, description="Limit to author"),
     limit: int = Query(default=25, ge=1, le=100),
     cursor: Optional[str] = Query(
         None, max_length=MAX_SEARCH_CURSOR_LENGTH, description="Cursor for pagination"
@@ -154,7 +154,7 @@ async def search_messages(
 )
 async def search_users(
     query: str = Query(..., max_length=256, description="Username or display name"),
-    server_id: Optional[str] = Query(None, description="Limit to server members"),
+    server_id: Optional[str] = Query(None, max_length=32, description="Limit to server members"),
     limit: int = Query(default=25, ge=1, le=100),
     cursor: Optional[str] = Query(
         None, max_length=MAX_SEARCH_CURSOR_LENGTH, description="Cursor for pagination"
