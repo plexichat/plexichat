@@ -104,7 +104,7 @@ class ArtifactCreateRequest(_PayloadSizeMixin, BaseModel):
     recorded: bool = Field(False, description="Whether the artifact was recorded")
     has_transcript: bool = Field(False, description="Whether a transcript exists")
     license_feature: Optional[str] = Field(
-        None, description="License feature gating the artifact"
+        None, max_length=64, description="License feature gating the artifact"
     )
     retention_policy: Optional[Any] = Field(
         None, description="Per-artifact retention override (days or dict)"
