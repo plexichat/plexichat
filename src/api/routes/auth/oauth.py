@@ -58,10 +58,15 @@ router = APIRouter()
 #      which is only accepted when ``oauth.allow_localhost_redirects``
 #      is explicitly enabled (opt-in; disabled by default so production
 #      deployments do not silently accept dev loopback redirects).
-def _provider_allowed_redirects(provider: str) -> List[str]:
-    if not config_util:
-        return []
-    oauth_cfg = config_util.get("oauth", {}) or {}
+def _provider_allowed_redirects(
+    provider: str, oauth_config: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    if oauth_config is None:
+        if not config_util:
+            return []
+        oauth_cfg = config_util.get("oauth", {}) or {}
+    else:
+        oauth_cfg = oauth_config or {}
     provider_cfg = oauth_cfg.get(provider, {}) or {}
     out = list(provider_cfg.get("allowed_redirect_uris", []) or [])
     if oauth_cfg.get("allow_localhost_redirects", False):
@@ -82,7 +87,9 @@ def _provider_allowed_redirects(provider: str) -> List[str]:
 _REDIRECT_PATTERN_CHARS = frozenset("*[]{}()|\\^$+")
 
 
-def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
+def _redirect_uri_is_allowed(
+    provider: str, redirect_uri: str, oauth_config: Optional[Dict[str, Any]] = None
+) -> bool:
     """Strict, literal exact-string allow-list comparison.
 
     No substring matching, no glob, no ``startswith`` and — critically — no
@@ -94,7 +101,7 @@ def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
         return False
     if any(ch in redirect_uri for ch in _REDIRECT_PATTERN_CHARS):
         return False
-    for candidate in _provider_allowed_redirects(provider):
+    for candidate in _provider_allowed_redirects(provider, oauth_config):
         if not isinstance(candidate, str) or any(
             ch in candidate for ch in _REDIRECT_PATTERN_CHARS
         ):
@@ -378,7 +385,13 @@ async def oauth_login_init(
             },
         )
 
-    if not _redirect_uri_is_allowed(provider, redirect_uri):
+    # Read the OAuth config once per request and thread it through the
+    # allow-list check and the remaining settings below.
+    oauth_config = config_util.get("oauth", {}) if config_util else {}
+    if not isinstance(oauth_config, dict):
+        oauth_config = {}
+
+    if not _redirect_uri_is_allowed(provider, redirect_uri, oauth_config):
         from utils import (
             logger as _oauth_logger,
         )  # local alias to keep import surface small
@@ -397,7 +410,6 @@ async def oauth_login_init(
             },
         )
 
-    oauth_config = config_util.get("oauth", {}) if config_util else {}
     provider_config = oauth_config.get(provider, {})
 
     client_id = provider_config.get("client_id")
@@ -476,14 +488,11 @@ async def oauth_login_init(
         pkce_challenge = client_challenge
 
     state_cookie_required = True
-    if config_util:
-        try:
-            state_cookie_required = bool(
-                (config_util.get("oauth", {}) or {}).get("state_cookie_required", True)
-            )
-        except Exception as config_error:
-            # Secure default already applied above; record the config problem.
-            logger.debug(f"oauth state-cookie config unreadable: {config_error}")
+    try:
+        state_cookie_required = bool(oauth_config.get("state_cookie_required", True))
+    except Exception as config_error:
+        # Secure default already applied above; record the config problem.
+        logger.debug(f"oauth state-cookie config unreadable: {config_error}")
 
     include_nonce = provider_info.get("supports_nonce", False)
     issue_state_cookie = state_cookie_required
@@ -543,8 +552,7 @@ async def oauth_login_init(
     if issue_state_cookie and oauth_state.state_token:
         ttl = 600
         try:
-            oauth_cfg = (config_util.get("oauth", {}) or {}) if config_util else {}
-            ttl = int(oauth_cfg.get("state_ttl_seconds", 600))
+            ttl = int(oauth_config.get("state_ttl_seconds", 600))
         except (AttributeError, TypeError, ValueError) as ttl_error:
             logger.debug(f"oauth state ttl unusable, keeping default: {ttl_error}")
         params_cookie = _oauth_cookie_params(max_age=max(60, ttl))
