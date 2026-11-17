@@ -241,17 +241,31 @@ def _demote_title_heading(text: str) -> str:
 LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
 
+# The routes are fixed once the docs router is imported. ``_rewrite_doc_links``
+# resolves every markdown link on a page, so rebuilding this set (~100 routes
+# plus a router import) per link was the dominant cost of a cold page render.
+# Cache the first non-empty result; an empty result (router not yet importable)
+# is deliberately not cached so a later render can retry.
+_known_routes_cache: Optional[set[str]] = None
+
+
 def _known_doc_routes() -> set[str]:
     """Paths the docs router actually serves, or empty when unavailable."""
+    global _known_routes_cache
+    if _known_routes_cache is not None:
+        return _known_routes_cache
     try:
         from .router import router as docs_router
     except Exception:  # the renderer must stay usable without the router
         return set()
-    return {
+    routes = {
         route.path
         for route in getattr(docs_router, "routes", [])
         if getattr(route, "path", "").startswith("/")
     }
+    if routes:
+        _known_routes_cache = routes
+    return routes
 
 
 _ROUTE_TEMPLATES: dict[str, re.Pattern[str]] = {}
@@ -418,6 +432,26 @@ def _rewrite_doc_links(text: str, conf: DocsConfig, source_dir: str = "") -> str
     return "\n".join(lines)
 
 
+# Building a mistune Markdown instance wires up all the plugins and their
+# regexes on every call. It is safe to reuse one instance for every render, so
+# construct it once lazily instead of per page.
+_markdown_renderer = None
+
+
+def _get_markdown_renderer():
+    """Return the shared mistune renderer, creating it on first use."""
+    global _markdown_renderer
+    if not MISTUNE_AVAILABLE:
+        return None
+    if _markdown_renderer is None:
+        assert mistune is not None
+        _markdown_renderer = mistune.create_markdown(
+            escape=False,  # pages embed generated HTML rows
+            plugins=["strikethrough", "footnotes", "table", "task_lists"],
+        )
+    return _markdown_renderer
+
+
 def markdown_to_html(
     markdown_content: str,
     title: str,
@@ -444,10 +478,7 @@ def markdown_to_html(
         # while looking like a styling problem. create_markdown accepts these
         # string names and raises on an unknown one, so this cannot fail
         # silently again.
-        markdown = mistune.create_markdown(
-            escape=False,  # pages embed generated HTML rows
-            plugins=["strikethrough", "footnotes", "table", "task_lists"],
-        )
+        markdown = _get_markdown_renderer()
         html_content = markdown(markdown_content)
     else:
         # Fallback to basic rendering if mistune is not available
