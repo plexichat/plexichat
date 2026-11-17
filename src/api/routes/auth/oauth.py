@@ -131,6 +131,15 @@ MAX_OAUTH_CODE_LENGTH = 4096
 MAX_OAUTH_STATE_LENGTH = 512
 MAX_OAUTH_VERIFIER_LENGTH = 256
 
+# RFC 7636 code_verifier alphabet: unreserved ASCII characters only. The core
+# ``verify_pkce`` hashes with ``code_verifier.encode("ascii")``; a verifier
+# carrying non-ASCII/control characters or surrounding whitespace raises
+# there and escapes the route as an unhandled 500 instead of the intended 400.
+# Reject anything outside the alphabet at the trust boundary. Length stays
+# governed by ``MAX_OAUTH_VERIFIER_LENGTH`` and ``verify_pkce``'s (configurable)
+# bounds so a deployment that widens the RFC range is not broken here.
+_PKCE_VERIFIER_CHARS_RE = re.compile(r"^[A-Za-z0-9\-._~]+$")
+
 
 def _bounded_oauth_field(value: object, field: str, maximum: int) -> str:
     text = value if isinstance(value, str) else ("" if value is None else str(value))
@@ -139,6 +148,41 @@ def _bounded_oauth_field(value: object, field: str, maximum: int) -> str:
     if len(text) > maximum:
         raise ValueError(f"{field} exceeds maximum length of {maximum}")
     return text
+
+
+# A token endpoint response is attacker-influenced (a stolen authorization
+# code is POSTed straight to it) and can echo access/id/refresh tokens, PII or
+# internal error detail. Never interpolate the raw body/payload into a log
+# line (CWE-532). These helpers emit only structural metadata: response keys
+# and the short, enumerated OAuth ``error`` value.
+_MAX_LOGGED_ERROR_CODE_LENGTH = 64
+
+
+def _safe_error_code(value: object) -> str:
+    if isinstance(value, str) and 0 < len(value) <= _MAX_LOGGED_ERROR_CODE_LENGTH:
+        return value
+    return "unspecified"
+
+
+def _safe_token_result_summary(token_result: object) -> str:
+    """Log-safe summary of an IdP token response (keys + error code only)."""
+    if not isinstance(token_result, dict):
+        return "non-dict response"
+    keys = sorted(str(key) for key in token_result.keys())
+    return f"keys={keys} error={_safe_error_code(token_result.get('error'))}"
+
+
+def _safe_upstream_error_summary(response: object) -> str:
+    """Log-safe summary of an IdP HTTP error (status + error code only)."""
+    status = getattr(response, "status_code", "?")
+    error_code = "unspecified"
+    try:
+        payload = response.json()  # type: ignore[attr-defined]
+        if isinstance(payload, dict):
+            error_code = _safe_error_code(payload.get("error"))
+    except Exception:
+        pass
+    return f"status={status} error={error_code}"
 
 
 # ------------------------------- ID token claims --------------------------------
@@ -604,9 +648,15 @@ async def oauth_callback(
         _bounded_oauth_field(callback_data.code, "code", MAX_OAUTH_CODE_LENGTH)
         _bounded_oauth_field(callback_data.state, "state", MAX_OAUTH_STATE_LENGTH)
         if callback_data.code_verifier is not None:
-            _bounded_oauth_field(
+            verifier = _bounded_oauth_field(
                 callback_data.code_verifier, "code_verifier", MAX_OAUTH_VERIFIER_LENGTH
             )
+            # Fail with a clean 400 rather than letting a non-ASCII/control
+            # verifier reach ``verify_pkce``'s ASCII-only hashing and surface
+            # as an unhandled 500. This also rejects the leading/trailing
+            # whitespace that a confused client might otherwise smuggle in.
+            if not _PKCE_VERIFIER_CHARS_RE.fullmatch(verifier):
+                raise ValueError("code_verifier has an invalid format")
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -737,8 +787,12 @@ async def oauth_callback(
             token_result = token_resp.json()
             access_token = token_result.get("access_token")
             if not access_token:
+                # Never log the raw token response: it can carry id/refresh
+                # tokens, PII or provider-internal detail even when the
+                # access_token itself is absent. Keys + OAuth error only.
                 logger.error(
-                    f"Failed to get access token from {provider}: {token_result}"
+                    f"Failed to get access token from {provider}: "
+                    f"{_safe_token_result_summary(token_result)}"
                 )
                 raise HTTPException(
                     status_code=401,
@@ -748,8 +802,11 @@ async def oauth_callback(
                 )
 
         except httpx.HTTPStatusError as e:
+            # The upstream error body is untrusted and may echo credentials or
+            # PII. Log only the HTTP status and the enumerated OAuth error code.
             logger.error(
-                f"Token exchange failed with {provider}: {e.response.status_code} - {e.response.text}"
+                f"Token exchange failed with {provider}: "
+                f"{_safe_upstream_error_summary(e.response)}"
             )
             raise HTTPException(
                 status_code=401,
