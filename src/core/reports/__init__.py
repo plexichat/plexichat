@@ -165,6 +165,71 @@ USER_REPORT_COLUMNS = (
 MAX_PAGE_SIZE = 200
 
 
+# ``ReportCategory`` is a closed set, but the core submission helpers are also
+# called directly (see the module README and internal callers), not just via
+# the HTTP route. Enforce the enum at the store boundary so a direct caller
+# cannot persist arbitrary strings -- markup, control characters, or junk --
+# into ``category``, which is later rendered in moderator/admin UIs.
+_VALID_REPORT_CATEGORIES = frozenset(c.value for c in ReportCategory)
+
+# Snowflake identifiers are positive signed 64-bit integers.
+MAX_SNOWFLAKE_ID = 2**63 - 1
+
+# Keep the core evidence cap at least as strict as the HTTP boundary so a
+# direct caller cannot attach an unbounded list of ids to a single report.
+MAX_EVIDENCE_IDS = 20
+
+
+def _validated_category(category: str) -> str:
+    """Return a canonical report category, or raise ``ValueError``.
+
+    The value must be one of the :class:`ReportCategory` values (lower-case
+    enum names, e.g. ``"harassment"``). Anything else is rejected before it
+    reaches the database.
+    """
+    if not isinstance(category, str) or category not in _VALID_REPORT_CATEGORIES:
+        raise ValueError("invalid report category")
+    return category
+
+
+def _validated_evidence_ids(evidence_message_ids):
+    """Normalise evidence message ids, rejecting injected/oversized values.
+
+    Evidence ids are persisted as a comma-separated string and parsed back
+    with ``int()`` on read (``_row_to_user_report``). Joining arbitrary caller
+    input therefore lets a submitter inject extra ids (``"1,2"``), smuggle
+    control characters/markup into a moderator field, or store values that
+    crash the reader. Only ASCII decimal snowflakes in range are accepted.
+
+    Returns a list of canonical ``int`` ids, or ``None`` when nothing was
+    supplied.
+    """
+    if evidence_message_ids is None:
+        return None
+    if isinstance(evidence_message_ids, (str, bytes)) or not isinstance(
+        evidence_message_ids, (list, tuple)
+    ):
+        raise ValueError("evidence_message_ids must be a list of ids")
+    if len(evidence_message_ids) > MAX_EVIDENCE_IDS:
+        raise ValueError("too many evidence message ids")
+
+    normalised = []
+    for raw in evidence_message_ids:
+        # bool is an int subclass but is never a valid snowflake id.
+        if isinstance(raw, bool) or not isinstance(raw, (int, str)):
+            raise ValueError("invalid evidence message id")
+        if isinstance(raw, str):
+            # ASCII digits only: reject commas, control chars, whitespace and
+            # non-ASCII digit look-alikes that ``int()`` would otherwise parse.
+            if not raw or not all("0" <= ch <= "9" for ch in raw):
+                raise ValueError("invalid evidence message id")
+            raw = int(raw)
+        if not 1 <= raw <= MAX_SNOWFLAKE_ID:
+            raise ValueError("evidence message id out of range")
+        normalised.append(raw)
+    return normalised
+
+
 def setup(db, messaging_module=None) -> None:
     """Initialize the reports module."""
     global _db, _messaging, _setup_complete
@@ -225,6 +290,8 @@ def report_message(
     Report a message for content moderation.
     Automatically captures attachment hashes if present.
     """
+    # Validate the closed category enum before any storage side effect.
+    category = _validated_category(category)
     db = _get_db()
 
     report_id = generate_snowflake_id()
@@ -510,14 +577,19 @@ def report_user(
     Returns:
         UserReport object
     """
+    # Validate the closed category enum and normalise evidence ids before any
+    # storage side effect. Arbitrary evidence strings would corrupt the
+    # comma-separated column and crash the reader's ``int()`` conversion.
+    category = _validated_category(category)
+    validated_evidence = _validated_evidence_ids(evidence_message_ids)
     db = _get_db()
 
     report_id = generate_snowflake_id()
     now = int(time.time() * 1000)
 
     evidence_str = None
-    if evidence_message_ids:
-        evidence_str = ",".join(str(mid) for mid in evidence_message_ids)
+    if validated_evidence:
+        evidence_str = ",".join(str(mid) for mid in validated_evidence)
 
     db.execute(
         """INSERT INTO user_reports 
@@ -545,7 +617,7 @@ def report_user(
         reason=reason,
         category=category,
         details=details,
-        evidence_message_ids=evidence_message_ids,
+        evidence_message_ids=validated_evidence,
         evidence_urls=None,
         priority="medium",
         status=ReportStatus.PENDING,
