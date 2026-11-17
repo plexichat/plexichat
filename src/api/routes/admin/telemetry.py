@@ -17,12 +17,43 @@ from src.api.schemas.admin import (
 )
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
     require_admin_permission,
 )
 from src.api.schemas.common import ErrorResponse
 from src.core.security.hardening import content_disposition
 import utils.logger as logger
+
+# Telemetry aggregates contain system-wide endpoint paths, latencies, query
+# counts and error rates. Authentication alone used to be enough to read them:
+# every read endpoint called ``get_admin_from_token`` (which only validates the
+# session) while only the destructive reset checked a permission scope. A
+# low-privilege admin with a valid session could therefore exfiltrate all
+# telemetry. Reads now require the documented "metrics.read" scope, matching
+# the dashboard's other metrics surface.
+_TELEMETRY_READ_SCOPE = "metrics.read"
+
+# Cells in a downloaded CSV are opened in spreadsheets, where a value starting
+# with one of these characters is evaluated as a formula. Stored endpoint
+# strings are untrusted ingest data, so neutralise them before writing them out.
+_CSV_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value) -> str:
+    """Render a value as a literal spreadsheet cell, never as a formula."""
+    if value is None:
+        return ""
+    text = "" if isinstance(value, bool) else str(value)
+    if not text:
+        return text
+    probe = text.lstrip(" \t\r\n")
+    # Quote when either the raw cell or its first non-whitespace character
+    # begins with a spreadsheet formula trigger. Leading tab/CR are unsafe
+    # because spreadsheets strip them before evaluating the remainder.
+    if text[0] in _CSV_FORMULA_LEADS or (
+        probe and probe[0] in _CSV_FORMULA_LEADS
+    ):
+        return "'" + text
+    return text
 
 router = APIRouter()
 
@@ -48,7 +79,7 @@ async def get_telemetry_stats(
     Provides latency percentiles, error rates, and database query metrics.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, _TELEMETRY_READ_SCOPE)
     try:
         from src.core import telemetry
 
@@ -121,7 +152,7 @@ async def get_telemetry_history(
     Returns data points grouped into time buckets for trend analysis.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, _TELEMETRY_READ_SCOPE)
     try:
         from src.core import telemetry
 
@@ -192,7 +223,7 @@ async def export_telemetry_stats(
     Requires header-based admin authentication.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, _TELEMETRY_READ_SCOPE)
 
     try:
         from src.core import telemetry
@@ -269,8 +300,8 @@ async def export_telemetry_stats(
             for s in stats:
                 writer.writerow(
                     [
-                        s.endpoint,
-                        s.method,
+                        _csv_cell(s.endpoint),
+                        _csv_cell(s.method),
                         s.count,
                         round(s.avg_response_time_ms, 2),
                         round(s.p95_response_time_ms, 2),

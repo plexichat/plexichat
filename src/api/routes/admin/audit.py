@@ -33,6 +33,32 @@ _MAX_AUDIT_PAGE = 10_000
 _MAX_AUDIT_SCAN_DAYS = 366
 _MAX_AUDIT_DATE_RANGE_MS = _MAX_AUDIT_SCAN_DAYS * 24 * 60 * 60 * 1000
 
+# Audit rows are untrusted free text: details, actions and user agents can be
+# influenced by users whose names/values were recorded in an entry. When an
+# exported CSV is opened in Excel/Sheets a cell beginning with one of these
+# characters is evaluated as a formula (``=HYPERLINK(...)``, ``=cmd|...``).
+# Redaction scrubs secrets but leaves these characters intact, so every text
+# cell is rendered as a literal before being written.
+_CSV_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value) -> str:
+    """Render a value as a literal spreadsheet cell, never as a formula."""
+    if value is None:
+        return ""
+    text = "" if isinstance(value, bool) else str(value)
+    if not text:
+        return text
+    probe = text.lstrip(" \t\r\n")
+    # Quote when either the raw cell or its first non-whitespace character
+    # begins with a spreadsheet formula trigger. Leading tab/CR are unsafe
+    # because spreadsheets strip them before evaluating the remainder.
+    if text[0] in _CSV_FORMULA_LEADS or (
+        probe and probe[0] in _CSV_FORMULA_LEADS
+    ):
+        return "'" + text
+    return text
+
 
 def _audit_config() -> dict:
     """Admin-audit query settings from config (best effort)."""
@@ -456,16 +482,16 @@ async def export_audit_logs(
             )
             writer.writerow(
                 [
-                    redact_secrets(log["id"]),
-                    redact_secrets(log["admin_id"]),
-                    redact_secrets(log["action"]),
-                    redact_secrets(log.get("target_type", "")),
-                    redact_secrets(log.get("target_id", "")),
-                    redact_secrets(log.get("details", "")),
-                    redact_secrets(log.get("ip_address", "")),
-                    redact_secrets(log.get("user_agent", "")),
-                    redact_secrets(log["status"]),
-                    timestamp,
+                    _csv_cell(redact_secrets(log["id"])),
+                    _csv_cell(redact_secrets(log["admin_id"])),
+                    _csv_cell(redact_secrets(log["action"])),
+                    _csv_cell(redact_secrets(log.get("target_type", ""))),
+                    _csv_cell(redact_secrets(log.get("target_id", ""))),
+                    _csv_cell(redact_secrets(log.get("details", ""))),
+                    _csv_cell(redact_secrets(log.get("ip_address", ""))),
+                    _csv_cell(redact_secrets(log.get("user_agent", ""))),
+                    _csv_cell(redact_secrets(log["status"])),
+                    _csv_cell(timestamp),
                 ]
             )
 

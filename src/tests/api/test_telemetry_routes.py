@@ -166,7 +166,9 @@ def _admin_telemetry_client(is_setup: bool):
     client = TestClient(app)
     patchers = (
         patch.object(admin_telemetry_routes, "check_host_restriction"),
-        patch.object(admin_telemetry_routes, "get_admin_from_token", return_value=1),
+        patch.object(
+            admin_telemetry_routes, "require_admin_permission", return_value=1
+        ),
         patch.object(telemetry_core, "is_setup", return_value=is_setup),
     )
     for patcher in patchers:
