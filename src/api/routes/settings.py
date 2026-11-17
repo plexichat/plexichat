@@ -4,7 +4,7 @@ User Settings routes - Cloud-synced key-value store for user preferences.
 
 import json
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, Path
 
 import src.api as api
 from src.core.database.cache.decorators import cached
@@ -365,7 +365,11 @@ def get_setting(
     },
 )
 async def set_setting(
-    key: str, body: SettingValue, current_user: TokenInfo = Depends(get_current_user)
+    key: str = Path(
+        ..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$"
+    ),
+    body: SettingValue = Body(...),
+    current_user: TokenInfo = Depends(get_current_user)
 ) -> SettingResponse:
     """
     Set a setting value.
