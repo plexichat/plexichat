@@ -80,22 +80,31 @@ class VisibilityMixin(PresenceManagerBase):
         presences = self.get_presences(target_ids)
         result: Dict[int, Presence] = {}
 
+        # A single two-way lookup is enough: get_all_blocked_ids() is the
+        # UNION of "users the viewer blocked" and "users who blocked the
+        # viewer", i.e. exactly the set that must render offline. The old
+        # code also fetched get_blocked_user_ids() (a strict subset) only to
+        # subtract a "blocked-by" set that was then re-joined with the same
+        # membership test — a redundant cache/DB round trip on every bulk
+        # presence read (relationship listing, DM hydration, gateway fan-out).
         blocked_ids: set[int] = set()
-        blocked_by_ids: set[int] = set()
         if self._relationships:
             try:
-                blocked_ids = set(
+                blocked_ids = {
                     int(uid)
-                    for uid in self._relationships.get_blocked_user_ids(viewer_id)
-                )
-                blocked_by_ids = (
-                    set(
-                        int(uid)
-                        for uid in self._relationships.get_all_blocked_ids(viewer_id)
-                    )
-                    - blocked_ids
-                )
+                    for uid in self._relationships.get_all_blocked_ids(viewer_id)
+                }
             except Exception as visibility_error:
+                # Fail closed: without the union, fall back to the viewer's
+                # own block list so a failing lookup cannot expose a blocked
+                # user's real presence.
+                try:
+                    blocked_ids = {
+                        int(uid)
+                        for uid in self._relationships.get_blocked_user_ids(viewer_id)
+                    }
+                except Exception:
+                    pass
                 import utils.logger as logger
 
                 logger.debug(
@@ -110,7 +119,7 @@ class VisibilityMixin(PresenceManagerBase):
                 result[target_id_raw] = p
                 continue
 
-            is_blocked = (target_id in blocked_ids) or (target_id in blocked_by_ids)
+            is_blocked = target_id in blocked_ids
             if is_blocked:
                 result[target_id_raw] = Presence(
                     user_id=target_id_raw,
