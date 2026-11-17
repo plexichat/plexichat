@@ -71,6 +71,15 @@ async def upload_server_icon(
                 },
             )
 
+        # Refuse non-image parts before reading any bytes. The avatars manager
+        # also validates MIME/magic bytes after the read, but rejecting early
+        # avoids spending memory and decoding work on an unusable payload.
+        if not file.content_type or not file.content_type.lower().startswith("image/"):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid image file"}},
+            )
+
         # Cap the read at the configured icon limit *before* materialising the
         # part. ``UploadFile.read()`` with no argument allocates the whole body
         # in memory, so a large upload could exhaust worker memory long before

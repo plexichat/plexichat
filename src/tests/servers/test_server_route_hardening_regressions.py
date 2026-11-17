@@ -45,6 +45,25 @@ def _icon_route_modules():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content_type", [None, "text/html", "application/svg+xml", ""])
+async def test_icon_upload_rejects_non_image_parts_before_reading(content_type):
+    upload = _FakeUpload(b"payload", declared_size=None)
+    upload.content_type = content_type
+    with (
+        patch.object(
+            icon_upload.api, "get_servers", return_value=_icon_route_modules()
+        ),
+        patch.object(icon_upload.api, "get_media", return_value=MagicMock()),
+        patch.object(icon_upload.api, "get_avatars", return_value=MagicMock()),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await icon_upload.upload_server_icon("1", upload, _Token())
+
+    assert exc.value.status_code == 400
+    assert upload.reads == [], "non-image part must be refused without reading"
+
+
+@pytest.mark.asyncio
 async def test_icon_upload_read_is_bounded_by_configured_limit():
     """A huge multipart body must never be materialised with an unbounded read."""
     limit = _get_icon_size_limit()
