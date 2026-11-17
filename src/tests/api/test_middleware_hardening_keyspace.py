@@ -144,6 +144,7 @@ class TestNoSelfTestSibling:
         # the context was fully bound. This is the exact sibling of the
         # cached_is_self_test poisoning bug.
         ctx = get_request_context(request)
+        assert ctx is not None
         ctx.is_self_test = False
 
         with patch("src.api.is_self_test_request", return_value=True):

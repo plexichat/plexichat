@@ -8,6 +8,7 @@ unrelated modules are being edited.
 """
 
 import inspect
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -125,7 +126,12 @@ def test_dm_spam_burst_and_content_bounds():
             pass
 
     detector = DMSpamDetector(FakeDB())
-    for kwargs in ({"threshold": -1}, {"window_seconds": 10**9}, {"action": "x"}):
+    bad_kwargs: list[dict[str, Any]] = [
+        {"threshold": -1},
+        {"window_seconds": 10**9},
+        {"action": "x"},
+    ]
+    for kwargs in bad_kwargs:
         with pytest.raises(ValueError):
             detector.set_filter(1, **kwargs)
     assert MAX_DM_CONTENT_LENGTH > 0

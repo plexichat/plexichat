@@ -254,6 +254,7 @@ async def test_last_chat_routes_stringify_ids(monkeypatch):
         current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG))
     )
     assert current is not None
+    assert current["last_chat"] is not None
     assert current["last_chat"]["conversation_id"] == str(BIG)
     assert isinstance(current["last_chat"]["conversation_id"], str)
 

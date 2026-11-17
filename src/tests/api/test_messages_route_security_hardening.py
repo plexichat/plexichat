@@ -184,6 +184,7 @@ def test_suppressed_embeds_are_stripped_from_metadata(monkeypatch):
     resp = _message_to_response(msg, viewer_user_id=None, suppress_embeds=True)
 
     assert resp.embeds == []
+    assert resp.metadata is not None
     assert resp.metadata["embeds_suppressed"] is True
     assert "embeds" not in resp.metadata
     assert resp.metadata["keep"] == "value"
@@ -198,4 +199,5 @@ def test_unsuppressed_embeds_remain_in_metadata(monkeypatch):
     resp = _message_to_response(msg, viewer_user_id=None, suppress_embeds=False)
 
     assert resp.embeds == embeds
+    assert resp.metadata is not None
     assert resp.metadata["embeds"] == embeds

@@ -1,9 +1,18 @@
 """Rule-side enum values are validated against the shared allowlists."""
 
+from typing import cast
+
 import pytest
 
 from src.core.automod.actions.base import BaseAction
-from src.core.automod.models import ActionType, Rule, RuleType, ViolationSeverity
+from src.core.automod.models import (
+    ActionType,
+    Rule,
+    RuleAction,
+    RuleType,
+    Violation,
+    ViolationSeverity,
+)
 from src.core.automod.rules.ai import AIModerationRule
 from src.core.automod.rules.keyword import KeywordRule
 from src.core.automod.rules.regex import RegexRule
@@ -64,9 +73,13 @@ def test_base_action_refuses_unknown_action_type():
     class FakeAction:
         action_type = "not-a-real-action"
 
-    assert Dummy(None).can_execute(FakeAction(), None) == (False, "unknown action type")
+    assert Dummy(None).can_execute(
+        cast(RuleAction, FakeAction()), cast(Violation, None)
+    ) == (False, "unknown action type")
 
     class GoodAction:
         action_type = ActionType.DELETE_MESSAGE
 
-    assert Dummy(None).can_execute(GoodAction(), None) == (True, None)
+    assert Dummy(None).can_execute(
+        cast(RuleAction, GoodAction()), cast(Violation, None)
+    ) == (True, None)

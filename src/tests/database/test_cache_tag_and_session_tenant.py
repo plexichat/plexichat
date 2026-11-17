@@ -11,6 +11,8 @@
   leaking a ``ValueError`` instead of rejecting the unsafe id.
 """
 
+from typing import cast
+
 import pytest
 
 from src.core.database.cache import operations, session
@@ -78,6 +80,7 @@ def test_session_payload_cannot_override_authenticated_user_id():
         "sess-tenant", user_id=7, data={"user_id": 8, "ip": "1.2.3.4"}
     )
     cached = session.get_cached_session("sess-tenant")
+    assert cached is not None
     assert cached["user_id"] == 7
     assert cached["ip"] == "1.2.3.4"
 
@@ -91,7 +94,9 @@ def test_session_payload_cannot_override_authenticated_user_id():
 
 def test_session_payload_cannot_override_created_at():
     session.cache_session("sess-clock", user_id=1, data={"created_at": 0.0})
-    assert session.get_cached_session("sess-clock")["created_at"] > 0.0
+    cached = session.get_cached_session("sess-clock")
+    assert cached is not None
+    assert cached["created_at"] > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +107,8 @@ def test_session_payload_cannot_override_created_at():
 def test_glob_safe_id_rejects_unicode_digits_int_cannot_parse():
     # "²".isdigit() is True but int("²") raises -- the guard must return None.
     assert session._glob_safe_id("²") is None
-    assert session.invalidate_server_channels("²") == 0
-    assert session.invalidate_user_servers("²") == 0
+    assert session.invalidate_server_channels(cast(int, "²")) == 0
+    assert session.invalidate_user_servers(cast(int, "²")) == 0
 
 
 def test_glob_safe_id_still_normalizes_valid_ids():

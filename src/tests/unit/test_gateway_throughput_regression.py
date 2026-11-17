@@ -167,7 +167,8 @@ async def test_one_saturated_connection_does_not_block_other_recipients():
     assert sent == 1
     assert saturated.outbound_batcher is None
     healthy_frames = [
-        call.args[0] for call in healthy.websocket.send_json.await_args_list
+        call.args[0]
+        for call in cast(AsyncMock, healthy.websocket.send_json).await_args_list
     ]
     assert len(healthy_frames) == 1
     assert healthy_frames[0]["d"]["user_id"] == "5"

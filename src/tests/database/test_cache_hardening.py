@@ -11,6 +11,8 @@ Three classes of weakness are pinned here:
   fresh, so a flood of distinct keys cannot exhaust process memory.
 """
 
+from typing import cast
+
 import pytest
 
 from src.core.database.cache import operations, rate_limit, session
@@ -89,7 +91,7 @@ def test_invalidate_user_servers_rejects_glob_metacharacters():
     mem_cache_set(other, ["v"], 60)
 
     # Pre-fix this built "user_servers:int:42:*:*", evicting every user.
-    assert session.invalidate_user_servers("42:*") == 0
+    assert session.invalidate_user_servers(cast(int, "42:*")) == 0
     assert mem_cache_get(victim) is not None
     assert mem_cache_get(other) is not None
 
@@ -100,7 +102,7 @@ def test_invalidate_server_channels_rejects_glob_metacharacters():
     mem_cache_set(victim, ["v"], 60)
     mem_cache_set(other, ["v"], 60)
 
-    assert session.invalidate_server_channels("1,*") == 0
+    assert session.invalidate_server_channels(cast(int, "1,*")) == 0
     assert mem_cache_get(victim) is not None
     assert mem_cache_get(other) is not None
 

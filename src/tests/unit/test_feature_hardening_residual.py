@@ -89,8 +89,8 @@ class TestHasFeatureRequiresBoolean:
     def test_genuine_boolean_flag_still_grants(self, db, monkeypatch):
         features.setup(db)
         row = UserFeatures(id=1, user_id=1)
-        row.can_voice = True
+        setattr(row, "can_voice", True)
         monkeypatch.setattr(features, "get_user_features", lambda user_id: row)
         assert features.has_feature(1, "can_voice") is True
-        row.can_voice = False
+        setattr(row, "can_voice", False)
         assert features.has_feature(1, "can_voice") is False

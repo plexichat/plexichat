@@ -11,6 +11,7 @@ These tests pin the strengthened guards and the response-side defence in depth.
 """
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -75,7 +76,7 @@ class TestMassAssignmentGuard:
 
     def test_non_mapping_payload_is_rejected(self):
         with pytest.raises(HTTPException) as exc:
-            validate_channel_fields(["name", "general"])
+            validate_channel_fields(cast(Any, ["name", "general"]))
         assert exc.value.status_code == 400
 
 
@@ -120,6 +121,8 @@ class TestResponseSideSanitization:
         response = _channel_to_response(
             self._channel("general\x00\x1f", "topic\r\nforged")
         )
+        assert response.name is not None
+        assert response.topic is not None
         assert "general" in response.name
         assert "\x00" not in response.name and "\x1f" not in response.name
         assert "\r" not in response.topic and "\n" not in response.topic
@@ -128,6 +131,8 @@ class TestResponseSideSanitization:
         response = _channel_to_response(
             self._channel("x" * 5000, "y" * 5000)
         )
+        assert response.name is not None
+        assert response.topic is not None
         assert len(response.name) <= MAX_CHANNEL_NAME_LENGTH
         assert len(response.topic) <= MAX_CHANNEL_TOPIC_LENGTH
 

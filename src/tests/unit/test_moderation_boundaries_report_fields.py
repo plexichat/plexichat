@@ -27,6 +27,7 @@ def test_message_content_is_truncated():
     result = routes._bounded_report_field(
         "x" * 5000, "message_content", 500, truncate=True
     )
+    assert result is not None
     assert len(result) == routes.MAX_REPORT_MESSAGE_CONTENT
 
 

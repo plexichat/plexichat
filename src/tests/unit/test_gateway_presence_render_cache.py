@@ -103,7 +103,9 @@ async def test_dispatcher_fanout_renders_presence_payload_once(monkeypatch):
     assert len(calls) == 1  # rendered once for all four recipients
     assert dispatcher.get_render_cache_stats()["misses"] == 1
     for conn in conns:
-        frame = cast(AsyncMock, conn.websocket.send_json).await_args.args[0]
+        send = cast(AsyncMock, conn.websocket.send_json)
+        assert send.await_args is not None
+        frame = send.await_args.args[0]
         assert frame["d"]["user_id"] == "999"
         assert frame["d"]["status"] == "online"
 

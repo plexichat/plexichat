@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+from typing import cast
 
 import pytest
+
+from src.core.database.core import Database
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +122,8 @@ def test_cloner_rejects_symlinked_alias_of_source(tmp_path):
     alias = tmp_path / "alias.db"
     alias.symlink_to(real_db)
 
-    source = _FakeDB(str(real_db))
-    target = _FakeDB(str(alias))
+    source = cast(Database, _FakeDB(str(real_db)))
+    target = cast(Database, _FakeDB(str(alias)))
 
     # abspath saw two different paths and allowed cloning; clone_table() would
     # then DELETE FROM every source table via the alias. realpath collapses the
@@ -132,8 +135,8 @@ def test_cloner_rejects_symlinked_alias_of_source(tmp_path):
 def test_cloner_still_allows_distinct_databases(tmp_path):
     from src.core.migrations.cloner import DataCloner
 
-    source = _FakeDB(str(tmp_path / "source.db"))
-    target = _FakeDB(str(tmp_path / "target.db"))
+    source = cast(Database, _FakeDB(str(tmp_path / "source.db")))
+    target = cast(Database, _FakeDB(str(tmp_path / "target.db")))
     cloner = DataCloner(source, target)
     assert cloner.source is source
     assert cloner.target is target

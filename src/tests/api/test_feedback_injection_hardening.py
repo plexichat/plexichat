@@ -8,8 +8,12 @@ spoofing) into stored feedback. The route now rejects those code points
 before any rate-limit check or core write.
 """
 
-import pytest
+from typing import cast
 
+import pytest
+from fastapi import Request
+
+from src.core.auth.models import TokenInfo
 from src.api.routes import feedback as feedback_routes
 from src.api.routes.feedback import _safe_feedback_content
 
@@ -39,7 +43,7 @@ def test_safe_feedback_content_rejects_non_string():
 def _model(content):
     from src.api.schemas.feedback import FeedbackCreate
 
-    return FeedbackCreate(content=content)
+    return FeedbackCreate(content=content, category=None, rating=None)
 
 
 @pytest.mark.asyncio
@@ -63,6 +67,8 @@ async def test_submit_feedback_rejects_control_characters_before_core(monkeypatc
     request = type("Request", (), {"state": type("State", (), {"is_internal": False})()})()
 
     with pytest.raises(HTTPException) as exc:
-        await feedback_routes.submit_feedback(_model("bad\x00content"), request, user)
+        await feedback_routes.submit_feedback(
+            _model("bad\x00content"), cast(Request, request), cast(TokenInfo, user)
+        )
     assert exc.value.status_code == 400
     assert called["core"] is False
