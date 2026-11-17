@@ -78,10 +78,13 @@ BLOCKED_MIMES = frozenset(
 
 _UNSPECIFIED_MIMES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
 
-# How much of the payload to inspect. The upload ceilings everywhere in the
-# app are far below this (512 KiB - 5 MiB), so a 4 MiB scan covers the whole
-# body while still bounding work if a caller ever hands us a larger buffer.
-_SCAN_LIMIT = 4 * 1024 * 1024
+# How much of the payload to inspect. The largest upload this module guards is
+# 5 MiB (avatar/emoji ``max_file_size``), so the old 4 MiB head left a 1 MiB
+# blind spot in which active markup or a second container could be smuggled
+# past every check. Scan a little more than the largest accepted body so the
+# whole upload is always inspected, and fail closed in the enforcement
+# functions when a payload is bigger than this (see ``_too_large_to_inspect``).
+_SCAN_LIMIT = 8 * 1024 * 1024
 
 # A leading markup prefix anywhere in the scanned head means the payload is
 # a document, never an opaque image/audio container.
@@ -103,16 +106,6 @@ _ACTIVE_TOKENS = (
     b"javascript:",
     b"vbscript:",
     b"data:text/html",
-    b"onload=",
-    b"onerror=",
-    b"onclick=",
-    b"onmouseover=",
-    b"onmouseenter=",
-    b"onfocus=",
-    b"onblur=",
-    b"onbegin=",
-    b"onend=",
-    b"onanimationstart=",
     b"<foreignobject",
     b"<iframe",
     b"<embed",
@@ -120,6 +113,80 @@ _ACTIVE_TOKENS = (
     b"<link",
     b"<meta",
     b"<base",
+)
+
+# HTML/SVG attribute syntax permits arbitrary whitespace around ``=`` (e.g.
+# ``<img src=x onerror ="...">`` or ``onload\t=``). Matching the literal
+# ``onerror=`` let those textbook XSS payloads through. Match the handler name
+# followed by optional whitespace and ``=`` instead. The name list is explicit
+# so random binary data cannot trip the check the way a broad ``on\w+=`` would.
+_EVENT_HANDLER_NAMES = (
+    "onload",
+    "onerror",
+    "onclick",
+    "onmouseover",
+    "onmouseenter",
+    "onmouseleave",
+    "onmousedown",
+    "onmouseup",
+    "ondblclick",
+    "onfocus",
+    "onblur",
+    "onchange",
+    "oninput",
+    "onsubmit",
+    "onkeydown",
+    "onkeyup",
+    "onkeypress",
+    "oncontextmenu",
+    "ondrag",
+    "ondrop",
+    "onwheel",
+    "onscroll",
+    "ontoggle",
+    "onplay",
+    "onplaying",
+    "onpause",
+    "onbegin",
+    "onend",
+    "onanimationstart",
+    "onanimationend",
+    "onanimationiteration",
+    "ontransitionend",
+    "onmessage",
+    "onstorage",
+    "onhashchange",
+    "onpageshow",
+    "onpagehide",
+    "onbeforeunload",
+    "onreset",
+    "oninvalid",
+    "onselect",
+    "onabort",
+    "oncanplay",
+    "onloadeddata",
+    "onloadedmetadata",
+    "onprogress",
+    "onratechange",
+    "onseeked",
+    "onseeking",
+    "onstalled",
+    "onsuspend",
+    "ontimeupdate",
+    "onvolumechange",
+    "onwaiting",
+    "oncopy",
+    "onpaste",
+    "oncut",
+    "onpointerdown",
+    "onpointerup",
+    "onpointerover",
+    "onpointerenter",
+    "onpointermove",
+)
+_ACTIVE_EVENT_RE = re.compile(
+    rb"\b(?:" + b"|".join(name.encode() for name in _EVENT_HANDLER_NAMES) + rb")\s*=",
+    re.IGNORECASE,
 )
 
 # HTML numeric-entity obfuscation of the colon in "javascript:" etc.
@@ -146,13 +213,19 @@ _MIME_TO_CONTAINERS: dict[str, frozenset[str]] = {
 }
 
 # Long, low-collision signatures that can be searched for anywhere in the
-# scanned head. Short patterns (e.g. JPEG's 3-byte marker or the loose
-# ``0xFF 0xEx`` MP3 sync) are intentionally excluded to avoid false positives
-# inside otherwise random compressed data.
+# scanned head. The bare 3-byte JPEG SOI marker (and the loose ``0xFF 0xEx``
+# MP3 sync) are intentionally excluded as too short -- they occur by chance in
+# random compressed data. A JPEG SOI followed by an APPn marker is four bytes
+# with a negligible false-positive rate, so it is safe to search for here.
+# Without it a PNG/GIF + JPEG polyglot (a second JPEG hidden after a valid
+# leading image) was invisible to the polyglot detector.
 _EMBEDDED_SIGNATURES: dict[bytes, str] = {
     b"\x89PNG\r\n\x1a\n": "png",
     b"GIF87a": "gif",
     b"GIF89a": "gif",
+    b"\xff\xd8\xff\xe0": "jpeg",  # JFIF
+    b"\xff\xd8\xff\xe1": "jpeg",  # Exif / XMP
+    b"\xff\xd8\xff\xe8": "jpeg",  # SPIFF
     b"OggS": "ogg",
     b"WAVE": "wav",
     b"WEBP": "webp",
@@ -224,13 +297,26 @@ def _markers_from_head(data: bytes, head: bytes) -> frozenset[str]:
     return frozenset(found)
 
 
+def _too_large_to_inspect(data: bytes) -> bool:
+    """True when a payload is larger than the guard can fully inspect.
+
+    Enforcement callers must fail closed on this: truncating the scan head
+    would otherwise let a payload hide active content or a second container
+    past the cut-off and still be accepted.
+    """
+    try:
+        return len(data) > _SCAN_LIMIT
+    except Exception:
+        return True
+
+
 def _scan_payload(data: bytes) -> tuple[frozenset[str], bytes]:
     """Inspect a payload once: return (container markers, active-check head).
 
     Building the lower-cased scan head is the costly part of every guard (up
-    to 4 MiB is copied and normalised). Sharing it lets the serve path do the
-    whole defense-in-depth check with a single allocation instead of four
-    separate whole-buffer passes.
+    to ``_SCAN_LIMIT`` bytes are copied and normalised). Sharing it lets the
+    serve path do the whole defense-in-depth check with a single allocation
+    instead of four separate whole-buffer passes.
     """
     if not data:
         return frozenset(), b""
@@ -239,7 +325,9 @@ def _scan_payload(data: bytes) -> tuple[frozenset[str], bytes]:
 
 
 def _has_active_content(active_head: bytes) -> bool:
-    return any(token in active_head for token in _ACTIVE_TOKENS)
+    if any(token in active_head for token in _ACTIVE_TOKENS):
+        return True
+    return _ACTIVE_EVENT_RE.search(active_head) is not None
 
 
 def _is_polyglot_markers(markers: frozenset[str]) -> bool:
@@ -318,6 +406,8 @@ def serve_payload_is_safe(content_type: str | None, data: bytes) -> bool:
     if normalize_mime(content_type) in BLOCKED_MIMES:
         return False
     try:
+        if _too_large_to_inspect(data):
+            return False
         markers, active_head = _scan_payload(data)
     except Exception:
         return False
@@ -347,6 +437,8 @@ def assert_safe_media_payload(data: bytes) -> None:
     flowing to the manager's existing Pillow validation (which returns an
     honest generic 400), but an actively malicious payload must be stopped.
     """
+    if _too_large_to_inspect(data):
+        raise UploadContentError("Payload too large to inspect safely")
     markers, active_head = _scan_payload(data)
     if "markup" in markers:
         raise UploadContentError("Markup documents are not allowed")
@@ -374,6 +466,8 @@ def verify_upload_content(
     normalized = normalize_mime(content_type)
     if normalized in BLOCKED_MIMES:
         raise UploadContentError("Active document content types are not allowed")
+    if _too_large_to_inspect(data):
+        raise UploadContentError("Payload too large to inspect safely")
 
     markers, active_head = _scan_payload(data)
     if "markup" in markers:
