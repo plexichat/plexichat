@@ -49,8 +49,12 @@ class DataCollector:
     Maintains the same public API as the original monolithic collector.
     """
 
-    def __init__(self, db):
+    def __init__(self, db, config=None):
+        # ``config`` is an optional resolved DSAR config snapshot (see
+        # get_dsar_config). Generation callers resolve it once and pass it down
+        # so the privacy scrubber does not re-read/re-merge the config tree.
         self._db = db
+        self._config = config
         self._collectors = {
             "identity": IdentityCollector(db),
             "sessions": SessionsCollector(db),
@@ -141,10 +145,15 @@ class DataCollector:
         # Recursively redact third-party identifiers (friend/reporter
         # usernames and emails) introduced by relationship-style collectors.
         # An operator may opt a field back in when disclosure is legally
-        # required; the default is always to scrub.
-        return scrub_third_party_pii(
-            result, legally_required=legally_required_pii_fields()
+        # required; the default is always to scrub. Reuse the caller's config
+        # snapshot when one was supplied; otherwise keep the zero-argument
+        # call (also preserves callers/tests that patch this helper).
+        legally_required = (
+            legally_required_pii_fields(self._config)
+            if self._config is not None
+            else legally_required_pii_fields()
         )
+        return scrub_third_party_pii(result, legally_required=legally_required)
 
     def count_records(self, user_id: int) -> Dict[str, int]:
         """

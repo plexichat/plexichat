@@ -2,10 +2,9 @@ import os
 import time
 from typing import List, Optional, Dict, Any
 
-import utils.config as config
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
-from .config import auto_approve_after_hours, export_quotas
+from .config import auto_approve_after_hours, export_quotas, get_dsar_config
 from .privacy import assert_export_ready
 
 
@@ -409,16 +408,21 @@ class DSARManager:
             )
 
         try:
-            collector = DataCollector(self._db)
+            # Resolve the DSAR config once for this generation and reuse the
+            # snapshot for quotas, privacy scrubbing and retention. Previously
+            # each of those re-read and re-merged the whole config tree on the
+            # (already expensive) generate hot path.
+            effective_config = get_dsar_config()
+            collector = DataCollector(self._db, config=effective_config)
             data = collector.collect_all(user_id)
             # Bound generation and fail closed: an incomplete or oversized
             # collection must leave this request 'failed', never 'ready'.
-            assert_export_ready(data, export_quotas())
+            assert_export_ready(data, export_quotas(effective_config))
 
             generator = ExportFormatGenerator(db=self._db)
 
             retention_days = (
-                config.get("dsar", {}).get("harvester", {}).get("retention_days", 7)
+                effective_config.get("harvester", {}).get("retention_days", 7)
             )
             expires_at = int(time.time()) + (retention_days * 86400)
 

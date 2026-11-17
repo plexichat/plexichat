@@ -134,20 +134,30 @@ def request_rate_limit() -> Dict[str, int]:
     return {"requests": requests, "window_seconds": window_seconds}
 
 
-def privacy_config() -> Dict[str, Any]:
-    """Effective ``dsar.privacy`` configuration block."""
-    cfg = get_dsar_config().get("privacy", {}) or {}
-    return cfg if isinstance(cfg, dict) else {}
+def privacy_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Effective ``dsar.privacy`` configuration block.
+
+    ``cfg`` lets a generation caller reuse the DSAR config snapshot it already
+    resolved, instead of re-reading and re-merging the whole config tree.
+    When omitted the behaviour is unchanged.
+    """
+    resolved = get_dsar_config() if cfg is None else cfg
+    block = resolved.get("privacy", {}) or {}
+    return block if isinstance(block, dict) else {}
 
 
-def legally_required_pii_fields() -> List[str]:
+def legally_required_pii_fields(cfg: Optional[Dict[str, Any]] = None) -> List[str]:
     """Third-party PII fields an operator must disclose by law.
 
     By default nothing is exempt: every third-party identifier is redacted.
     Deployments subject to a disclosure obligation can opt specific fields
     back in by name via ``dsar.privacy.legally_required_pii_fields``.
+
+    ``cfg`` is the optional resolved DSAR config snapshot (see
+    :func:`get_dsar_config`); passing it avoids a second resolution of the
+    config tree on the export-generation hot path.
     """
-    fields = privacy_config().get("legally_required_pii_fields", [])
+    fields = privacy_config(cfg).get("legally_required_pii_fields", [])
     if not isinstance(fields, list):
         return []
     return [f.strip() for f in fields if isinstance(f, str) and f.strip()]

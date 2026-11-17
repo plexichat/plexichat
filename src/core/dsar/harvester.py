@@ -253,21 +253,36 @@ class DSARHarvester:
                 """,
                 (now,),
             )
-            for req in expired:
-                try:
-                    from .manager import DSARManager
-
-                    DSARManager(self._db)._scrub_export_files(dict(req))
-                except Exception as scrub_err:
-                    logger.error(
-                        f"Harvester: failed to delete expired export "
-                        f"file for request {req.get('id')}: {scrub_err}"
-                    )
-                self._db.execute(
-                    "UPDATE dsar_requests SET status = 'expired' WHERE id = ?",
-                    (req["id"],),
-                )
             if expired:
+                from .manager import DSARManager
+
+                # One manager for the whole batch (the audit log and storage
+                # backend are shared), and one status UPDATE per chunk instead
+                # of one per expired row. The old per-row loop was an N+1 that
+                # grew linearly with the number of expired exports.
+                manager = DSARManager(self._db)
+                ids = []
+                for req in expired:
+                    try:
+                        manager._scrub_export_files(dict(req))
+                    except Exception as scrub_err:
+                        logger.error(
+                            f"Harvester: failed to delete expired export "
+                            f"file for request {req.get('id')}: {scrub_err}"
+                        )
+                    ids.append(req["id"])
+
+                # Chunked IN() keeps the statement under SQLite's variable cap
+                # while still collapsing a typical expiry batch to one query.
+                for start in range(0, len(ids), 500):
+                    chunk = ids[start : start + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    self._db.execute(
+                        "UPDATE dsar_requests SET status = 'expired' "
+                        f"WHERE id IN ({placeholders})",
+                        tuple(chunk),
+                    )
+
                 logger.info(
                     f"Harvester: expired and deleted files for "
                     f"{len(expired)} DSAR requests"
@@ -361,11 +376,15 @@ class DSARHarvester:
 
         storage_path = None
         try:
-            collector = DataCollector(self._db)
+            # Resolve the DSAR config once per request and feed the same
+            # snapshot to the quotas gate and the privacy scrubber so the
+            # generation hot path does not re-read/re-merge the config tree.
+            effective_config = get_dsar_config(self._config)
+            collector = DataCollector(self._db, config=effective_config)
             data = collector.collect_all(user_id)
             # Bound generation and fail closed on partial collection. An
             # over-quota or incomplete export leaves the row 'failed'.
-            assert_export_ready(data, export_quotas(get_dsar_config(self._config)))
+            assert_export_ready(data, export_quotas(effective_config))
 
             generator = ExportFormatGenerator(db=self._db)
 
