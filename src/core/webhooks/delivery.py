@@ -396,6 +396,10 @@ class WebhookDeliverer:
         )
         session = self._session()
 
+        # The loop always executes at least once (MAX_REDIRECTS >= 0) and the
+        # final hop returns internally, so this is only a defensive default
+        # for the post-loop return below.
+        status = 0
         for hop in range(MAX_REDIRECTS + 1):
             try:
                 response = self._post(session, request_url, payload, headers, extensions)
