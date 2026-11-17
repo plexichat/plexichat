@@ -29,6 +29,7 @@ from src.core.messaging.render_generation import get as get_render_generation
 from .render_cache import get_render_cache
 from .helpers import (
     _message_to_response,
+    batch_attachment_file_ids,
     batch_embed_suppressed_ids,
     require_snowflake,
 )
@@ -71,12 +72,6 @@ async def get_channel_messages(
             if isinstance(obj, dict):
                 return obj.get(name, default)
             return getattr(obj, name, default)
-
-        def _set_attr(obj: Any, name: str, value: Any) -> None:
-            if isinstance(obj, dict):
-                obj[name] = value
-            else:
-                setattr(obj, name, value)
 
         try:
             cid = parse_id(channel_id, "channel_id")
@@ -204,71 +199,12 @@ async def get_channel_messages(
             except Exception as user_error:
                 logger.debug(f"message list author enrichment failed: {user_error}")
 
-        # OPTIMIZATION: Pre-fetch file IDs for attachments to avoid N+1 in _message_to_response
-        media = api.get_media()
-        if media and messages:
-            filenames_to_fetch = set()
-            for msg in messages:
-                attachments = _get_attr(msg, "attachments") or []
-                if attachments:
-                    for att in attachments:
-                        # Check if file_id is missing in metadata
-                        has_file_id = False
-                        metadata = _get_attr(att, "metadata")
-                        if metadata:
-                            if isinstance(metadata, dict):
-                                has_file_id = "file_id" in metadata
-                            elif isinstance(metadata, str):
-                                import json
-
-                                try:
-                                    m = json.loads(metadata)
-                                    has_file_id = "file_id" in m
-                                except json.JSONDecodeError:
-                                    pass
-
-                        att_url = _get_attr(att, "url")
-                        if not has_file_id and att_url:
-                            # Extract filename from URL
-                            parts = att_url.split("/")
-                            if parts:
-                                filenames_to_fetch.add(parts[-1])
-
-            if filenames_to_fetch:
-                try:
-                    file_map = await run_in_threadpool(
-                        media.get_files_by_filenames, list(filenames_to_fetch)
-                    )
-                    # Update attachment metadata in-memory
-                    for msg in messages:
-                        attachments = _get_attr(msg, "attachments") or []
-                        if attachments:
-                            for att in attachments:
-                                att_url = _get_attr(att, "url")
-                                if att_url:
-                                    fname = att_url.split("/")[-1]
-                                    if fname in file_map:
-                                        metadata = _get_attr(att, "metadata")
-                                        # BEFORE: a JSON *string* metadata value
-                                        # was truthy but not a dict, so the
-                                        # bulk file_id was never written and
-                                        # the serializer fell back to one
-                                        # get_file_by_filename() query per
-                                        # attachment. Normalize it to the dict
-                                        # the serializer would parse anyway.
-                                        if isinstance(metadata, str):
-                                            import json
-
-                                            try:
-                                                metadata = json.loads(metadata)
-                                            except (TypeError, ValueError):
-                                                metadata = None
-                                        if not isinstance(metadata, dict):
-                                            metadata = {}
-                                        _set_attr(att, "metadata", metadata)
-                                        metadata["file_id"] = file_map[fname].id
-                except Exception as e:
-                    logger.debug(f"Failed to bulk fetch media files: {e}")
+        # Resolve attachment file ids in one batched lookup so serialization
+        # never falls back to a per-attachment get_file_by_filename() query.
+        # Shared with the pins/search routes, which had the same N+1.
+        await run_in_threadpool(
+            batch_attachment_file_ids, messages, media_mod=api.get_media()
+        )
 
         # Get media module for URL signing
         media_mod = api.get_media()
@@ -486,6 +422,12 @@ async def get_pinned_messages(
         # Bound the fan-out (author profiles, reactions) and the response to
         # at most ``limit`` pins regardless of what the storage layer returns.
         messages = messages[:limit]
+
+        # One media lookup for every attachment on the page instead of one
+        # get_file_by_filename() query per attachment in the serializer.
+        await run_in_threadpool(
+            batch_attachment_file_ids, messages, media_mod=api.get_media()
+        )
 
         author_cache = {}
         author_ids = {m.author_id for m in messages}

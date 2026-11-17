@@ -1,5 +1,8 @@
 import asyncio
-from typing import Dict
+import time
+from collections import OrderedDict
+from threading import RLock
+from typing import Dict, Optional, Tuple
 
 from fastapi import HTTPException, Depends
 from starlette.concurrency import run_in_threadpool
@@ -26,6 +29,90 @@ from .helpers import (
     require_target_user_id,
 )
 from ..exception_mapping import raise_mapped, map_invite_join_error
+
+
+# ``get_invite`` is a single indexed lookup on srv_invites.code, but resolving
+# the invite's *display* server name used to call ``get_server`` on every GET:
+# that runs a membership check plus a server row with three correlated count
+# subqueries, all to read one string. Cache just that enrichment value (keyed
+# by viewer so membership semantics cannot leak across users) for a short TTL.
+# Live fields such as ``uses`` still come from ``get_invite`` on every request.
+_INVITE_META_TTL_SECONDS = 60.0
+_INVITE_META_MAXSIZE = 256
+
+
+class _InviteMetadataCache:
+    """Small, bounded, thread-safe TTL cache keyed by (user_id, server_id)."""
+
+    def __init__(self, maxsize: int = _INVITE_META_MAXSIZE, ttl: float = _INVITE_META_TTL_SECONDS):
+        self._maxsize = max(1, int(maxsize))
+        self._ttl = max(0.0, float(ttl))
+        self._entries: "OrderedDict[Tuple[int, int], Tuple[float, str]]" = OrderedDict()
+        self._lock = RLock()
+
+    def get(self, key: Tuple[int, int]) -> Optional[str]:
+        now = time.monotonic()
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            expires_at, value = entry
+            if expires_at <= now:
+                del self._entries[key]
+                return None
+            self._entries.move_to_end(key)
+            return value
+
+    def put(self, key: Tuple[int, int], value: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self._entries[key] = (now + self._ttl, value)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._maxsize:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+_INVITE_META_CACHE = _InviteMetadataCache()
+
+
+def get_invite_metadata_cache() -> _InviteMetadataCache:
+    """Expose the process-wide invite metadata cache (tests/ops)."""
+    return _INVITE_META_CACHE
+
+
+def _resolve_invite_server_name(servers_mod, server_id, user_id) -> Optional[str]:
+    """Resolve an invite's server name with a bounded per-viewer cache.
+
+    The membership check still runs through ``servers_mod.get_server`` on a
+    miss, so a user who cannot see the server still gets ``None`` exactly as
+    before. Only a successful name is cached; failures are never memoized.
+    """
+    cache_key = None
+    try:
+        cache_key = (int(user_id), int(server_id))
+    except (TypeError, ValueError):
+        # Unusual id types: skip caching rather than changing the lookup.
+        pass
+
+    if cache_key is not None:
+        cached = _INVITE_META_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+    try:
+        server = servers_mod.get_server(server_id, user_id)
+    except Exception as server_error:
+        logger.debug(f"invite server name lookup failed: {server_error}")
+        return None
+
+    name = getattr(server, "name", None) if server else None
+    if name and cache_key is not None:
+        _INVITE_META_CACHE.put(cache_key, name)
+    return name
 
 
 class ChannelInvitesMixin(ChannelBase):
@@ -252,16 +339,9 @@ class ChannelInvitesMixin(ChannelBase):
 
                 server_name = getattr(invite, "server_name", None)
                 if not server_name and hasattr(invite, "server_id"):
-                    try:
-                        server = servers_mod.get_server(
-                            invite.server_id, current_user.user_id
-                        )
-                        if server:
-                            server_name = server.name
-                    except Exception as server_error:
-                        logger.debug(
-                            f"invite server name lookup failed: {server_error}"
-                        )
+                    server_name = _resolve_invite_server_name(
+                        servers_mod, invite.server_id, current_user.user_id
+                    )
 
                 raw_inviter_id = getattr(invite, "inviter_id", None)
                 safe_inviter_id = (

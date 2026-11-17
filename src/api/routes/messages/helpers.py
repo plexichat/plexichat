@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List, Dict, Any
 
 from fastapi import HTTPException
@@ -52,10 +53,11 @@ def batch_embed_suppressed_ids(message_ids, embeds_mod=None) -> set:
         embeds_mod = api.get_embeds()
 
     db = None
-    try:
-        db = getattr(embeds_mod._get_manager(), "_db", None)
-    except Exception:
-        db = None
+    if embeds_mod is not None:
+        try:
+            db = getattr(embeds_mod._get_manager(), "_db", None)
+        except Exception:
+            db = None
 
     suppressed: set = set()
     if db is not None and hasattr(db, "fetch_all"):
@@ -88,6 +90,81 @@ def batch_embed_suppressed_ids(message_ids, embeds_mod=None) -> set:
         except Exception as e:
             logger.debug(f"embed suppression lookup failed for {mid}: {e}")
     return suppressed
+
+
+def _get_attr(obj, name, default=None):
+    """Read an attribute from an object or a dict (storage rows are both)."""
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _set_attr(obj, name, value) -> None:
+    if isinstance(obj, dict):
+        obj[name] = value
+    else:
+        setattr(obj, name, value)
+
+
+def batch_attachment_file_ids(messages, media_mod=None) -> None:
+    """Resolve missing attachment file ids in ONE batched media lookup.
+
+    ``_message_to_response`` falls back to ``get_file_by_filename`` for any
+    attachment whose URL points at the media API but whose metadata carries no
+    ``file_id``. On a search/pins page that is one SQL query per attachment.
+    Hydrating the metadata in bulk before serialization keeps the serializer on
+    its zero-query path. Any lookup failure degrades to the original per-item
+    behaviour, so a missing media module can never drop attachments.
+    """
+    if media_mod is None:
+        media_mod = api.get_media()
+    if not media_mod or not messages:
+        return
+
+    filenames = set()
+    for msg in messages:
+        for att in _get_attr(msg, "attachments") or ():
+            metadata = _get_attr(att, "metadata")
+            has_file_id = False
+            if isinstance(metadata, dict):
+                has_file_id = "file_id" in metadata
+            elif isinstance(metadata, str):
+                try:
+                    has_file_id = "file_id" in json.loads(metadata)
+                except (TypeError, ValueError):
+                    pass
+            url = _get_attr(att, "url")
+            if not has_file_id and isinstance(url, str) and url:
+                filenames.add(url.split("/")[-1])
+
+    if not filenames:
+        return
+    try:
+        file_map = media_mod.get_files_by_filenames(list(filenames)) or {}
+    except Exception as e:
+        logger.debug(f"batch attachment file id lookup failed: {e}")
+        return
+    if not file_map:
+        return
+
+    for msg in messages:
+        for att in _get_attr(msg, "attachments") or ():
+            url = _get_attr(att, "url")
+            if not isinstance(url, str) or not url:
+                continue
+            fname = url.split("/")[-1]
+            if fname not in file_map:
+                continue
+            metadata = _get_attr(att, "metadata")
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (TypeError, ValueError):
+                    metadata = None
+            if not isinstance(metadata, dict):
+                metadata = {}
+            _set_attr(att, "metadata", metadata)
+            metadata["file_id"] = file_map[fname].id
 
 
 def _poll_to_response(poll) -> PollResponse:

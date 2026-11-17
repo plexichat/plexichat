@@ -38,22 +38,6 @@ def _webhook_to_response(w) -> WebhookResponse:
     )
 
 
-def _webhook_to_response(w) -> WebhookResponse:
-    """Build a webhook response with bounded, scheme-checked fields."""
-    name, avatar_url = sanitize_webhook_fields(w.name, w.avatar_url)
-    return WebhookResponse(
-        id=SnowflakeID(w.id),
-        channel_id=SnowflakeID(w.channel_id),
-        server_id=SnowflakeID(w.server_id),
-        creator_id=SnowflakeID(getattr(w, "creator_id", 0))
-        if getattr(w, "creator_id", 0)
-        else None,
-        name=name,
-        avatar_url=avatar_url,
-        created_at=w.created_at,
-    )
-
-
 class ChannelWebhooksMixin(ChannelBase):
     def _register_routes(self) -> None:
         self.router.add_api_route(

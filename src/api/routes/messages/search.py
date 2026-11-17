@@ -14,7 +14,11 @@ from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.messages import MessageResponse
 from src.api.schemas.common import ErrorResponse
-from .helpers import _message_to_response
+from .helpers import (
+    _message_to_response,
+    batch_attachment_file_ids,
+    batch_embed_suppressed_ids,
+)
 
 router = APIRouter(tags=["Messages"])
 
@@ -118,6 +122,17 @@ async def search_messages(
 
         media_mod = api.get_media()
 
+        # BEFORE: ``_message_to_response`` resolved embed suppression with one
+        # are_embeds_suppressed() query per hit, and each media attachment
+        # without a file_id triggered its own get_file_by_filename() query.
+        # Both are now resolved for the whole result set in one query each.
+        await run_in_threadpool(batch_attachment_file_ids, messages, media_mod=media_mod)
+        suppressed_ids = await run_in_threadpool(
+            batch_embed_suppressed_ids,
+            [mid for mid in (getattr(m, "id", None) for m in messages) if mid is not None],
+            embeds_mod=api.get_embeds(),
+        )
+
         result = []
         for m in messages:
             author_id = m.author_id
@@ -130,6 +145,7 @@ async def search_messages(
                     author_badges=author_info.get("badges"),
                     media_mod=media_mod,
                     viewer_user_id=current_user.user_id,
+                    suppress_embeds=getattr(m, "id", None) in suppressed_ids,
                 )
             )
 
