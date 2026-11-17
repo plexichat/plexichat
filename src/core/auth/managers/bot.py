@@ -1,6 +1,7 @@
 from typing import Optional, Dict, List
 
 import utils.logger as logger
+from src.core.database import invalidate_pattern
 
 from ..exceptions import (
     UserNotFoundError,
@@ -166,6 +167,10 @@ class BotMixin(AuthManagerProtocol):
         )
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
+        # The rotated-away token stays usable while its old ``TokenInfo``
+        # lingers in the verify cache. Drop it AFTER the write so a concurrent
+        # verification cannot re-cache the pre-rotation bot row.
+        invalidate_pattern("token_verify:*")
         return token
 
     def update_bot_permissions(
@@ -187,6 +192,9 @@ class BotMixin(AuthManagerProtocol):
         )
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
+        # A permission revocation must take effect on the very next request:
+        # the cached ``TokenInfo`` carries the bot's whole permission map.
+        invalidate_pattern("token_verify:*")
         bot = self.get_bot(bot_id)
         if not bot:
             raise PermissionDeniedError("Bot not found or not owned by you")
@@ -199,6 +207,9 @@ class BotMixin(AuthManagerProtocol):
         )
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
+        # _verify_bot_token rejects disabled bots at the DB layer, but a cached
+        # TokenInfo would keep the disabled bot authenticating until TTL expiry.
+        invalidate_pattern("token_verify:*")
         return True
 
     def enable_bot(self, owner_id: int, bot_id: int) -> bool:
@@ -208,6 +219,7 @@ class BotMixin(AuthManagerProtocol):
         )
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
+        invalidate_pattern("token_verify:*")
         return True
 
     def delete_bot(self, owner_id: int, bot_id: int) -> bool:
@@ -223,6 +235,9 @@ class BotMixin(AuthManagerProtocol):
         )
         if cursor.rowcount == 0:
             raise PermissionDeniedError("Bot not found or not owned by you")
+        # A deleted bot must stop authenticating immediately, not when the
+        # stale cached TokenInfo finally expires.
+        invalidate_pattern("token_verify:*")
         return True
 
     def _read_bot_display_name(self, row: Dict) -> str:

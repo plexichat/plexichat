@@ -407,6 +407,15 @@ class LoginMixin(AuthManagerProtocol):
                 self._log_audit(
                     AuditEventType.ACCOUNT_LOCKED, user_id, True, ip_address
                 )
+                # The lock flips account state that is embedded in the cached
+                # TokenInfo (account_locked). The admin status-toggle path drops
+                # these caches via invalidate_privilege_caches(); a lock reached
+                # through failed logins must do the same, otherwise a live
+                # session keeps answering "unlocked" until the verify TTL and
+                # the auth middleware never suspends the account.
+                from src.core.auth.privilege_cache import invalidate_privilege_caches
+
+                invalidate_privilege_caches()
                 try:
                     from src.core.events.gateway_emit import emit_security_alert
 
