@@ -209,12 +209,14 @@ class TestChannelOverridePermission:
         )
         channel = self._make_channel(server, owner, servers)
 
-        # admin_user has channels.manage.
+        # admin_user has channels.manage. The target must be an actual member
+        # of the server: setting an override on an arbitrary non-member id was
+        # the member-target IDOR this now refuses.
         override = servers.set_channel_override(
             admin_user.id,
             channel.id,
             "member",
-            outsider.id,
+            member_user.id,
             allow={"messages.send": True},
         )
         assert override is not None
