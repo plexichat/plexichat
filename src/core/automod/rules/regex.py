@@ -64,25 +64,56 @@ def _match_quantifier(pattern_str: str, i: int) -> Optional[int]:
     return None
 
 
+_UNBOUNDED = float("inf")
+
+
+def _quantifier_bounds(pattern_str: str, i: int) -> Optional[tuple]:
+    """Return ``(min, max)`` for the quantifier at ``i`` (``inf`` = unbounded).
+
+    ``min != max`` marks a VARIABLE repetition count. That is what lets nested
+    quantifiers explore exponentially many ways to split the same input — e.g.
+    ``(a{1,2}){50}`` has as many splits as there are ways to write ``n`` as a
+    sum of 1s and 2s. A fixed count (``{3}``) cannot create that ambiguity on
+    its own.
+    """
+    if i >= len(pattern_str):
+        return None
+    ch = pattern_str[i]
+    if ch == "*":
+        return (0, _UNBOUNDED)
+    if ch == "+":
+        return (1, _UNBOUNDED)
+    if ch == "?":
+        return (0, 1)
+    if ch == "{":
+        match = re.match(r"\{(\d*)(,)?(\d*)\}", pattern_str[i:])
+        if not match:
+            return None
+        low_s, comma, high_s = match.group(1), match.group(2), match.group(3)
+        low = int(low_s) if low_s else 0
+        if not comma:
+            return (low, low)
+        if not high_s:
+            return (low, _UNBOUNDED)
+        return (low, int(high_s))
+    return None
+
+
 def _is_unbounded_quantifier(pattern_str: str, i: int) -> bool:
     """True when the quantifier at ``i`` is unbounded (*, +, {n,}, {,}).
 
     Bounded forms ``{n}``, ``{n,m}`` and ``{,m}`` are NOT unbounded.
     """
-    if i >= len(pattern_str):
-        return False
-    ch = pattern_str[i]
-    if ch in "*+":
-        return True
-    if ch == "?":
-        return False
-    if ch == "{":
-        match = re.match(r"\{(\d*)(,)?(\d*)\}", pattern_str[i:])
-        if match:
-            # Unbounded only when the upper bound is omitted ("{n,}").
-            return bool(match.group(2)) and match.group(3) == ""
-        return False
-    return False
+    bounds = _quantifier_bounds(pattern_str, i)
+    return bounds is not None and bounds[1] == _UNBOUNDED
+
+
+# A bounded OUTER repetition over a variable-length / alternating inner atom
+# can still be catastrophic even though both bounds are finite:
+# ``(a{1,2}){100}`` and ``(a?){50}`` both blow up on a few dozen characters.
+# Small fixed outer counts (e.g. the ``{3}`` in an IPv4 matcher) keep the
+# number of ambiguous splits constant-bounded and stay allowed.
+MAX_SAFE_NESTED_REPEAT = 8
 
 
 def _has_redos_risk(pattern_str: str) -> bool:
@@ -93,15 +124,19 @@ def _has_redos_risk(pattern_str: str) -> bool:
         quantified with an UNBOUNDED repetition, or where the outer group
         quantifier is unbounded, e.g. ``(a+)+``, ``(a*)*``, ``(\\d{1,3})*`` —
         classic catastrophic backtracking shapes;
-      - unbounded repetition over alternation groups, e.g. ``(a|aa)*`` where
-        branches can consume overlapping input.
+      - repetition over alternation groups, e.g. ``(a|aa)*`` where branches
+        can consume overlapping input;
+      - large BOUNDED repetition over a variable-count or alternating atom,
+        e.g. ``(a{1,2}){100}`` or ``(a?){50}`` — finite bounds are not a
+        guarantee of safety when the inner atom can match a variable number
+        of the same characters.
 
-    BOUNDED repetition of a bounded atom is safe and accepted: ``(a|b){2}``
+    BOUNDED repetition of a FIXED atom is safe and accepted: ``(a|b){2}``
     and the IPv4 shape ``(\\d{1,3}\\.){3}\\d{1,3}`` do not blow up because the
     number of ambiguous splits stays constant-bounded.
     """
-    # Stack frames: [atom_quantified, atom_unbounded, saw_alternation]
-    stack: List[List[bool]] = [[False, False, False]]
+    # Stack frames: [quantified, unbounded, variable_count, saw_alternation]
+    stack: List[List[bool]] = [[False, False, False, False]]
     i = 0
     n = len(pattern_str)
 
@@ -127,38 +162,72 @@ def _has_redos_risk(pattern_str: str) -> bool:
             continue
 
         if ch == "(":
-            stack.append([False, False, False])
+            stack.append([False, False, False, False])
             i += 1
             continue
 
         if ch == ")":
             if len(stack) > 1:
-                inner_quantified, inner_unbounded, inner_alternation = stack.pop()
+                (
+                    inner_quantified,
+                    inner_unbounded,
+                    inner_variable,
+                    inner_alternation,
+                ) = stack.pop()
                 q_len = _match_quantifier(pattern_str, i + 1) or 0
                 if q_len:
-                    unbounded = _is_unbounded_quantifier(pattern_str, i + 1)
-                    if inner_quantified and (inner_unbounded or unbounded):
+                    bounds = _quantifier_bounds(pattern_str, i + 1)
+                    low, high = bounds if bounds is not None else (0, 0)
+                    outer_unbounded = high == _UNBOUNDED
+                    if inner_quantified and (inner_unbounded or outer_unbounded):
                         # Quantified atom inside a quantified group where at
                         # least one of the two repetitions is unbounded.
                         return True
-                    if unbounded and inner_alternation:
+                    if outer_unbounded and inner_alternation:
                         return True
-                    # The group itself becomes a bounded-safe atom upstream;
-                    # propagate its own boundedness for nesting detection.
+                    # A large bounded outer repetition over a variable or
+                    # alternating inner atom is exponential in disguise:
+                    # (a{1,2}){100} has exponentially many ways to split its
+                    # input. Fixed small counts stay constant-bounded.
+                    if (
+                        not outer_unbounded
+                        and high > MAX_SAFE_NESTED_REPEAT
+                        and (inner_variable or inner_alternation)
+                    ):
+                        return True
+                    # The group plus its quantifier is a quantified atom from
+                    # the parent's point of view. Propagate ambiguity upward
+                    # (OR, not assignment) so deeper nesting is still caught.
                     stack[-1][0] = True
-                    stack[-1][1] = unbounded
-            i += 1 + (_match_quantifier(pattern_str, i + 1) or 0)
-            continue
+                    stack[-1][1] = (
+                        stack[-1][1] or outer_unbounded or inner_unbounded
+                    )
+                    stack[-1][2] = (
+                        stack[-1][2] or inner_variable or (low != high)
+                    )
+                    stack[-1][3] = stack[-1][3] or inner_alternation
+                else:
+                    # No outer quantifier: still carry the inner ambiguity up
+                    # so an enclosing quantified group cannot hide it.
+                    stack[-1][0] = stack[-1][0] or inner_quantified
+                    stack[-1][1] = stack[-1][1] or inner_unbounded
+                    stack[-1][2] = stack[-1][2] or inner_variable
+                    stack[-1][3] = stack[-1][3] or inner_alternation
+                i += 1 + q_len
+                continue
 
         if ch == "|":
-            stack[-1][2] = True
+            stack[-1][3] = True
             i += 1
             continue
 
         q_len = _match_quantifier(pattern_str, i)
         if q_len:
+            bounds = _quantifier_bounds(pattern_str, i)
+            low, high = bounds if bounds is not None else (0, 0)
             stack[-1][0] = True
-            stack[-1][1] = _is_unbounded_quantifier(pattern_str, i)
+            stack[-1][1] = high == _UNBOUNDED
+            stack[-1][2] = low != high
             i += q_len
             continue
 

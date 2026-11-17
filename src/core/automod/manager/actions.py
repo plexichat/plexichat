@@ -292,6 +292,12 @@ class ActionMixin(AutoModProtocol):
             # for the ban/kick/delete executors' raw-SQL fallback.
             if context is None:
                 context = {}
+            # A manual action is NOT the same as an automated rule firing: it
+            # runs on behalf of a named moderator. Keep that distinction so
+            # executors that relax owner/hierarchy protections for automated
+            # rules (e.g. TimeoutUserAction) can still refuse it here. Set
+            # unconditionally so a caller cannot smuggle in a False value.
+            context["__automod_manual__"] = True
             context.setdefault("__system_context__", True)
             success = self._execute_action(action, violation, context)
 

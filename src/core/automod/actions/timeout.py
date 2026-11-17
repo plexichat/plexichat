@@ -81,8 +81,17 @@ class TimeoutUserAction(BaseAction):
 
         # SECURITY: normally we don't allow moderating the owner,
         # but for AutoMod (system) we allow it if it's an automated action.
-        is_system = context and context.get("__system_context__")
-        if not is_system and server and server["owner_id"] == violation.user_id:
+        # A MANUAL action (trigger_action) also asserts the system-context flag
+        # for the other executors' raw-SQL fallbacks, so the flag alone cannot
+        # distinguish "automod rule fired" from "moderator timed out the owner":
+        # use the explicit manual marker to keep that escalation closed.
+        is_system = bool(context and context.get("__system_context__"))
+        is_manual = bool(context and context.get("__automod_manual__"))
+        if (
+            (not is_system or is_manual)
+            and server
+            and server["owner_id"] == violation.user_id
+        ):
             return False, "Cannot timeout server owner"
 
         return True, None
