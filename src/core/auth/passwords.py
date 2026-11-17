@@ -5,6 +5,7 @@ This module handles password changes, reset requests, resets, and validation.
 """
 
 import re
+import unicodedata
 from pathlib import Path
 from typing import List, Tuple, Set
 
@@ -13,6 +14,39 @@ from src.core.security.errors import TextRejected
 from src.core.security.policies import RejectUICharacters
 from .models import PasswordValidation
 from ._lazy import _get_auth_manager
+
+
+# Hard ceiling independent of configuration. Every credential-setting path
+# (registration, change, reset) validates before hashing, so this guarantees an
+# unbounded string can never be handed to the password hasher even if an
+# operator misconfigures ``password.max_length`` or an internal caller skips
+# the API schema. This matches the request-schema cap of 1024 characters.
+_ABSOLUTE_MAX_PASSWORD_LENGTH = 1024
+
+
+def _password_policy_forms(value: str) -> Set[str]:
+    """Return the string forms used for password policy comparisons.
+
+    ``casefold()`` alone does not fold Unicode compatibility characters:
+    fullwidth letters (``U+FF21``..), the Kelvin sign, ligatures, etc. survive
+    casefolding and therefore bypass a blacklist built from plain ASCII
+    entries. NFKC canonicalizes those confusables back to their ASCII
+    equivalents, so ``Password123!`` and its lookalike ``Pａssword123!`` are
+    recognized as the same password. Both the raw casefolded form and the
+    NFKC+casefolded form are returned so the check can never become *less*
+    strict than the original exact casefold match.
+    """
+    forms = {value.casefold()}
+    try:
+        normalized = unicodedata.normalize("NFKC", value)
+        # Casefolding can itself introduce characters that need a second
+        # normalization pass (NFKC_casefold).
+        forms.add(unicodedata.normalize("NFKC", normalized.casefold()))
+    except TypeError:
+        # Non-string input is rejected by the callers' type checks; never let
+        # a malformed value turn a policy check into a 500.
+        pass
+    return forms
 
 
 def validate_username(username: str) -> Tuple[bool, List[str]]:
@@ -136,7 +170,9 @@ def validate_password(password: str) -> PasswordValidation:
     score = 0
 
     min_length = pwd_config.get("min_length", 12)
-    max_length = pwd_config.get("max_length", 128)
+    max_length = min(
+        pwd_config.get("max_length", 128), _ABSOLUTE_MAX_PASSWORD_LENGTH
+    )
 
     if len(password) < min_length:
         issues.append(f"Password must be at least {min_length} characters")
@@ -149,6 +185,10 @@ def validate_password(password: str) -> PasswordValidation:
     # Reject common/breached passwords before composition checks. Keep the
     # list lazy-loaded and process-local so startup does not do file I/O, while
     # ensuring the bundled list is actually enforced for every password path.
+    # Both the list entries and the candidate are reduced to NFKC+casefold
+    # forms: casefolding by itself lets Unicode compatibility characters
+    # (fullwidth letters, ligatures, the Kelvin sign, ...) stand in for ASCII
+    # and evade what is otherwise an exact-match blacklist.
     common_passwords_enabled = pwd_config.get("reject_common_passwords", True)
     if common_passwords_enabled:
         common_path = Path(__file__).parent / "data" / "common-passwords.txt"
@@ -157,13 +197,13 @@ def validate_password(password: str) -> PasswordValidation:
                 validate_password, "_common_passwords", set()
             )
             if not common_passwords:
-                common_passwords = {
-                    line.strip().casefold()
-                    for line in common_path.read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                }
+                common_passwords = set()
+                for line in common_path.read_text(encoding="utf-8").splitlines():
+                    entry = line.strip()
+                    if entry:
+                        common_passwords |= _password_policy_forms(entry)
                 setattr(validate_password, "_common_passwords", common_passwords)
-            if password.casefold() in common_passwords:
+            if _password_policy_forms(password) & common_passwords:
                 issues.append(
                     "Password is too common; choose a less predictable password"
                 )
