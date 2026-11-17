@@ -133,3 +133,25 @@ class TestSdpDuplicateAttributesValidated:
         )
         with pytest.raises(SDPValidationError):
             validate_sdp(hostile, SDPType.OFFER)
+
+
+class TestRealClientCredentialsStillAccepted:
+    """Stricter validation must not reject legitimate WebRTC credentials.
+
+    aiortc emits sha-384/sha-512 fingerprints at media level and base64url
+    (``-``/``_``) ICE tokens; these must keep validating after hardening.
+    """
+
+    def test_media_level_sha384_sha512_fingerprints_accepted(self):
+        sdp = _BASE_SDP.replace(
+            "a=rtpmap:111 opus/48000/2\r\n",
+            "a=fingerprint:sha-384 " + "AA:" * 47 + "AA\r\n"
+            "a=fingerprint:sha-512 " + "BB:" * 63 + "BB\r\n"
+            "a=rtpmap:111 opus/48000/2\r\n",
+        )
+        validate_sdp(sdp, SDPType.OFFER)
+
+    def test_base64url_ice_credentials_accepted(self):
+        sdp = _BASE_SDP.replace("clientufrag", "u-frag_9A")
+        sdp = sdp.replace("clientpasswordclientpassword", "a-b_C" * 5)
+        validate_sdp(sdp, SDPType.OFFER)
