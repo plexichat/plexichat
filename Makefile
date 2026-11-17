@@ -1,4 +1,4 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear check
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear client-test client-lint check
 
 COMPOSE ?= docker-compose.yml
 REPORTS ?= test-results-*.xml
@@ -30,6 +30,8 @@ help:
 	@echo "  check                lint + typecheck + format + security"
 	@echo "  selftest             Run the API self-test suite and exit"
 	@echo "  openapi-clear        Delete the cached OpenAPI schema (routes changed?)"
+	@echo "  client-test          Run the sibling plexichat-client unit suite"
+	@echo "  client-lint          Run the sibling plexichat-client lint"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -62,6 +64,12 @@ selftest:
 
 openapi-clear:
 	rm -f "$${TMPDIR:-/tmp}/plexichat/openapi-"*.json
+
+client-test:
+	@if [ -d ../plexichat-client ]; then cd ../plexichat-client && npm run test:unit; else echo "plexichat-client not present"; fi
+
+client-lint:
+	@if [ -d ../plexichat-client ]; then cd ../plexichat-client && npm run lint; else echo "plexichat-client not present"; fi
 
 check: lint typecheck format security
 
