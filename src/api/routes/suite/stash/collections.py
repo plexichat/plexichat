@@ -34,7 +34,7 @@ from .serializers import (
     },
 )
 async def list_collections(
-    server_id: Optional[str] = Query(None),
+    server_id: Optional[str] = Query(None, max_length=32),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashCollectionListResponse:
     try:

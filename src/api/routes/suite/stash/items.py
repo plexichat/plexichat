@@ -38,7 +38,7 @@ async def list_items(
     cursor: Optional[str] = Query(None, max_length=32),
     search: Optional[str] = Query(None, max_length=200),
     scope: Optional[str] = Query(None, pattern="^(personal|server)$"),
-    server_id: Optional[str] = Query(None),
+    server_id: Optional[str] = Query(None, max_length=32),
     collection_id: NullableSnowflakeIDParam = None,
     pinned: Optional[bool] = Query(None),
     current_user: TokenInfo = Depends(get_current_user),

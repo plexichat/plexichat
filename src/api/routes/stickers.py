@@ -2,6 +2,8 @@
 Sticker routes - Sticker and pack management endpoints.
 """
 
+from src.api.request_guards import read_upload_capped
+
 from typing import Any, List, NoReturn, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
 
@@ -392,13 +394,13 @@ async def create_sticker(
         description = _reject_ui_text_chars(description, "sticker description")
 
     try:
-        # Cap the request body before reading it fully into memory.
-        declared_size = image.size
-        if declared_size is not None and declared_size > STICKER_MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail="Sticker file is too large",
-            )
+        # Read the file through the capped helper BEFORE any write. A bare
+        # ``image.read()`` materialised the entire multipart part into memory
+        # before this route's size check ran, so a single oversized upload (or
+        # one with a lying/missing Content-Length) could exhaust the worker.
+        # The helper checks the declared size and then reads at most limit+1
+        # bytes; rejecting here also avoids creating an orphaned server pack.
+        content = await read_upload_capped(image, STICKER_MAX_UPLOAD_BYTES)
 
         # Get or create server pack
         packs = stickers_mod.get_server_packs(current_user.user_id, sid)
@@ -411,14 +413,6 @@ async def create_sticker(
                 name="Server Stickers",
                 server_id=sid,
                 pack_type=PackType.SERVER,
-            )
-
-        # Read file
-        content = await image.read()
-        if len(content) > STICKER_MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail="Sticker file is too large",
             )
 
         sticker = stickers_mod.create_sticker_from_file(
@@ -573,7 +567,7 @@ async def send_sticker_usage(
 )
 async def get_sticker_suggestions(
     content: str = Query(..., max_length=MAX_STICKER_SUGGESTION_QUERY),
-    server_id: Optional[str] = Query(None),
+    server_id: Optional[str] = Query(None, max_length=32),
     limit: int = Query(default=5, ge=1, le=20),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[StickerResponse]:

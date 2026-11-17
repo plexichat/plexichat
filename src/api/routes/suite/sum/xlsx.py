@@ -27,7 +27,7 @@ from .router import router
 )
 async def export_xlsx(
     workbook_id: str,
-    sheet_id: Optional[str] = Query(None),
+    sheet_id: Optional[str] = Query(None, max_length=32),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumXlsxExportResponse:
     try:

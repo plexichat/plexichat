@@ -67,7 +67,7 @@ async def grant_item(
 )
 async def create_download_ticket(
     item_id: str,
-    version_id: Optional[str] = Query(None),
+    version_id: Optional[str] = Query(None, max_length=32),
     ttl_seconds: int = Query(300, ge=1, le=300),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashDownloadTicketResponse:
