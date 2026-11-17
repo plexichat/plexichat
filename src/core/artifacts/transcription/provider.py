@@ -25,6 +25,7 @@ import asyncio
 import importlib.util
 import ipaddress
 import re
+import socket
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -65,6 +66,63 @@ def _validate_azure_region(value: Any) -> str:
     if not _AZURE_REGION_RE.fullmatch(region):
         raise ValueError("Invalid Azure region in transcription configuration")
     return region
+
+
+# ``require_https_url`` verifies only the *shape* of an endpoint. A configured
+# (or attacker-influenced) value such as ``https://127.0.0.1:8443/v1`` would
+# still pass and the provider would POST its Bearer token to a loopback service,
+# or to the cloud instance-metadata address at 169.254.169.254. Reject those
+# destinations syntactically at construction time. This is deliberately a
+# no-DNS check: provider endpoints are operator config, not user-supplied URLs,
+# and resolution/pinning belongs to the outbound transport layer.
+_LOCAL_ENDPOINT_HOSTS = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+        "local",
+    }
+)
+_LOCAL_ENDPOINT_SUFFIXES = (".local", ".internal", ".localhost")
+
+
+def _require_public_https_endpoint(value: Any, field: str) -> str:
+    """Validate a provider endpoint and forbid local/private destinations.
+
+    Builds on :func:`require_https_url` (absolute HTTPS, no embedded
+    credentials) and additionally rejects loopback, private, link-local and
+    otherwise non-global IP literals plus the usual internal hostname forms.
+    """
+    url = require_https_url(value, field)
+    hostname = (urlparse(url).hostname or "").lower().rstrip(".")
+    if not hostname:
+        raise HardeningViolation(f"{field} must include a hostname")
+    if hostname in _LOCAL_ENDPOINT_HOSTS or hostname.endswith(
+        _LOCAL_ENDPOINT_SUFFIXES
+    ):
+        raise HardeningViolation(f"{field} must not target a local/internal host")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        # The OS resolver also accepts legacy numeric forms (0x7f000001,
+        # 2130706433, 0177.0.0.1) that ``ipaddress`` rejects but that still
+        # reach loopback. Check those without performing DNS.
+        if re.fullmatch(r"[0-9a-fA-FxX.]+", hostname):
+            try:
+                packed = socket.inet_aton(hostname)
+            except OSError:
+                return url
+            if not ipaddress.ip_address(packed).is_global:
+                raise HardeningViolation(
+                    f"{field} must not target a private IP address"
+                )
+        # A DNS name: allowed through here; the outbound transport is
+        # responsible for resolving and pinning the address it connects to.
+        return url
+    if not address.is_global:
+        raise HardeningViolation(f"{field} must not target a private IP address")
+    return url
 
 
 def azure_timespan_to_ms(value: Any) -> int:
@@ -408,8 +466,9 @@ class OpenAIWhisperProvider(TranscriptionProvider):
         self._api_key: str = str(self._config.get("openai_api_key", "") or "")
         self._model: str = str(self._config.get("openai_model", "whisper-1"))
         # The API key is sent to this endpoint as a Bearer token. Never let a
-        # misconfigured plain-HTTP or credential-bearing URL exfiltrate it.
-        self._api_url: str = require_https_url(
+        # misconfigured plain-HTTP, credential-bearing or local/private URL
+        # exfiltrate it to a loopback service or a cloud metadata endpoint.
+        self._api_url: str = _require_public_https_endpoint(
             self._config.get(
                 "openai_api_base", "https://api.openai.com/v1/audio/transcriptions"
             ),
