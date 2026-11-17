@@ -67,6 +67,8 @@ class TicketMixin(AuthManagerProtocol):
         ip_address: Optional[str],
         user_agent: Optional[str] = None,
     ) -> TokenInfo:
+        if parsed.get("token_type") != "wst":
+            raise TokenInvalidError("Token type mismatch")
         row = self._db.fetch_one(
             "SELECT * FROM auth_ws_tickets WHERE id = ?", (parsed["id"],)
         )

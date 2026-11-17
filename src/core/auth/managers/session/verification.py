@@ -89,6 +89,10 @@ class VerificationMixin(AuthManagerProtocol):
     def _verify_session_token(
         self, parsed: Dict, ip_address: Optional[str], user_agent: Optional[str] = None
     ) -> TokenInfo:
+        # Defense in depth: never let a differently-prefixed credential be
+        # interpreted as a session token if this verifier is called directly.
+        if parsed.get("token_type") != "session":
+            raise TokenInvalidError("Token type mismatch")
         row = self._db.fetch_one(
             "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, u.force_username_change, u.deletion_status FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
             (parsed["id"],),
@@ -203,6 +207,8 @@ class VerificationMixin(AuthManagerProtocol):
         )
 
     def _verify_bot_token(self, parsed: Dict, ip_address: Optional[str]) -> TokenInfo:
+        if parsed.get("token_type") != "bot":
+            raise TokenInvalidError("Token type mismatch")
         row = self._db.fetch_one(
             "SELECT * FROM auth_bots WHERE id = ?", (parsed["id"],)
         )

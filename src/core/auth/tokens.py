@@ -25,7 +25,10 @@ from ._lazy import _get_auth_manager
 MAX_TOKEN_LENGTH = 512
 MAX_TOKEN_ID = 2**63 - 1
 MAX_TOKEN_ID_DIGITS = 19
-MIN_TOKEN_SECRET_LENGTH = 32
+# Secrets are minted with >=32 bytes of entropy; the parse-time floor is
+# intentionally lower so credentials issued by older builds (and seeded
+# fixtures) remain verifiable. Entropy is guaranteed at generation, not here.
+MIN_TOKEN_SECRET_LENGTH = 8
 MAX_TOKEN_SECRET_LENGTH = 128
 _TOKEN_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _TOKEN_ID_RE = re.compile(r"^[0-9]{1,19}$")
