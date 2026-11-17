@@ -24,7 +24,13 @@ from ..exceptions import (
     TokenExpiredError,
     TokenRevokedError,
 )
-from .scopes import require_valid_scopes, validate_permission_string
+from .scopes import (
+    VALID_SCOPES,
+    require_allowed_scopes,
+    require_valid_scopes,
+    scopes_are_subset,
+    validate_permission_string,
+)
 from .tokens import (
     PKCE_METHOD_S256,
     generate_authorization_code,
@@ -66,6 +72,52 @@ class OAuth2Flow:
             return require_valid_scopes(scopes)
         except HardeningViolation as exc:
             raise InvalidScopeError(str(exc)) from exc
+
+    def _application_allowed_scopes(self, application_id: int) -> List[str]:
+        """Read the application's scope ceiling.
+
+        Legacy rows (and databases predating the column) store an empty or
+        absent ceiling; those are treated as the full default set so existing
+        applications keep working. A malformed explicit ceiling fails closed.
+        """
+        row = self._db.fetch_one(
+            "SELECT allowed_scopes FROM app_applications WHERE id = ?",
+            (application_id,),
+        )
+        if not row:
+            raise InvalidClientError("Application not found")
+        if isinstance(row, dict):
+            raw = row.get("allowed_scopes")
+        else:
+            try:
+                raw = row["allowed_scopes"]
+            except (KeyError, IndexError):
+                raw = None
+        if isinstance(raw, str) and raw:
+            try:
+                entries = json.loads(raw)
+            except (ValueError, TypeError):
+                raise InvalidScopeError("Application scope configuration is invalid")
+            if not isinstance(entries, list):
+                raise InvalidScopeError("Application scope configuration is invalid")
+            if not entries:
+                # Legacy marker: no explicit ceiling recorded.
+                return sorted(VALID_SCOPES)
+            try:
+                return require_allowed_scopes(entries)
+            except HardeningViolation as exc:
+                raise InvalidScopeError(str(exc)) from exc
+        return sorted(VALID_SCOPES)
+
+    def _require_scopes_for_app(self, application_id: int, scopes: List[str]) -> List[str]:
+        """Reject any scope the application is not configured to grant."""
+        allowed = self._application_allowed_scopes(application_id)
+        if not scopes_are_subset(scopes, allowed):
+            denied = sorted(set(scopes) - set(allowed))
+            raise InvalidScopeError(
+                "Application is not permitted to grant: " + ", ".join(denied)
+            )
+        return scopes
 
     @staticmethod
     def _require_client_secret(secret: str) -> str:
@@ -161,7 +213,9 @@ class OAuth2Flow:
         Returns:
             Authorization URL
         """
-        scopes = self._require_scopes(scopes)
+        scopes = self._require_scopes_for_app(
+            application_id, self._require_scopes(scopes)
+        )
         permissions = self._require_permissions(permissions)
         base_url = self._config.get("authorization_endpoint", "/oauth2/authorize")
 
@@ -228,7 +282,9 @@ class OAuth2Flow:
         except HardeningViolation as exc:
             raise InvalidRedirectUriError(str(exc)) from exc
 
-        scopes = self._require_scopes(scopes)
+        scopes = self._require_scopes_for_app(
+            application_id, self._require_scopes(scopes)
+        )
         bound_challenge = self._bind_pkce(code_challenge, code_challenge_method)
 
         return {
@@ -267,7 +323,9 @@ class OAuth2Flow:
             redirect_uri = require_oauth_redirect_url(redirect_uri)
         except HardeningViolation as exc:
             raise InvalidRedirectUriError(str(exc)) from exc
-        scopes = self._require_scopes(scopes)
+        scopes = self._require_scopes_for_app(
+            application_id, self._require_scopes(scopes)
+        )
         bound_challenge = self._bind_pkce(code_challenge, code_challenge_method)
         bound_method = PKCE_METHOD_S256 if bound_challenge else None
 
@@ -654,6 +712,10 @@ class OAuth2Flow:
         scopes: List[str],
     ) -> OAuth2Token:
         """Create a new OAuth2 token pair."""
+        # Last line of defence: no token may ever carry a scope the owning
+        # application is not permitted to grant, even if a caller reached this
+        # helper with a hand-crafted scope list.
+        scopes = self._require_scopes_for_app(application_id, self._require_scopes(scopes))
         token_id = generate_snowflake_id()
         now = self._current_time()
         expires_at = now + int(self._config.get("token_expiry_seconds", 604800)) * 1000

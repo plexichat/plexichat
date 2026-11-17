@@ -128,6 +128,8 @@ class Application:
 
     client_secret: Optional[str] = field(default=None, repr=False)
     client_secret_hash: Optional[str] = field(default=None, repr=False)
+    # Scope ceiling for OAuth grants; empty means legacy/unrestricted.
+    allowed_scopes: List[str] = field(default_factory=list)
 
 
 @dataclass

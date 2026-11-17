@@ -6,6 +6,8 @@ from .scopes import (
     VALID_SCOPES,
     SCOPE_DESCRIPTIONS,
     validate_scopes,
+    require_allowed_scopes,
+    scopes_are_subset,
     parse_scopes,
     scopes_to_string,
 )
@@ -26,6 +28,8 @@ __all__ = [
     "VALID_SCOPES",
     "SCOPE_DESCRIPTIONS",
     "validate_scopes",
+    "require_allowed_scopes",
+    "scopes_are_subset",
     "parse_scopes",
     "scopes_to_string",
     "generate_authorization_code",

@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS app_applications (
     terms_of_service_url TEXT,
     privacy_policy_url TEXT,
     redirect_uris TEXT NOT NULL DEFAULT '[]',
+    -- Ceiling of scopes this application may ever grant. '[]' is the legacy
+    -- marker meaning "unrestricted"; new applications store an explicit list.
+    allowed_scopes TEXT NOT NULL DEFAULT '[]',
     interactions_endpoint_url TEXT,
     client_secret_hash TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -252,6 +255,7 @@ def _ensure_runtime_columns(db) -> None:
     for table, column, definition in (
         ("app_oauth_codes", "code_challenge", "TEXT"),
         ("app_oauth_codes", "code_challenge_method", "TEXT"),
+        ("app_applications", "allowed_scopes", "TEXT NOT NULL DEFAULT '[]'"),
     ):
         if _column_exists(db, table, column):
             continue

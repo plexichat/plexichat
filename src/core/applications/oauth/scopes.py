@@ -120,6 +120,28 @@ def require_valid_scopes(value: Any, *, field: str = "scopes") -> List[str]:
     return validated
 
 
+def require_allowed_scopes(value: Any, *, field: str = "allowed_scopes") -> List[str]:
+    """Validate an application's granted-scope ceiling.
+
+    Applications may only ever request/record a subset of the globally valid
+    scopes. An empty or legacy value is treated as "the full default set" by
+    the caller (see ``OAuth2Flow._application_allowed_scopes``); an explicit
+    allow-list is validated with the same strict rules as a request.
+    """
+    validated = require_valid_scopes(value, field=field)
+    if len(validated) > MAX_SCOPES_PER_REQUEST:
+        raise HardeningViolation(
+            f"{field} may contain at most {MAX_SCOPES_PER_REQUEST} entries"
+        )
+    return validated
+
+
+def scopes_are_subset(requested: List[str], allowed: List[str]) -> bool:
+    """Return True when every requested scope is present in ``allowed``."""
+    allowed_set = set(allowed)
+    return all(scope in allowed_set for scope in requested)
+
+
 def validate_permission_string(value: Any, *, field: str = "permissions") -> str:
     """Return a canonical decimal permission bitfield of bounded size."""
     if value is None:
