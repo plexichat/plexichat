@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -24,7 +24,7 @@ router = APIRouter()
     },
 )
 async def get_audit_log(
-    server_id: str, limit: int = 50, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str, limit: int = Query(50, ge=1, le=100), current_user: TokenInfo = Depends(get_current_user)
 ) -> List[AuditLogEntryResponse]:
     servers_mod = api.get_servers()
     auth_mod = api.get_auth()
