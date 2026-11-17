@@ -54,7 +54,13 @@ _REPLAY_MARKER = "1"
 # critical section for every delivery thread in this process. Multi-process
 # deployments still rely on the shared cache tier for cross-process exclusion;
 # this closes the in-process race that the default in-memory fallback exposes.
-_replay_check_lock = threading.Lock()
+#
+# The same lock serializes rotate_signing_key()'s key swap against the public
+# key fetch + Ed25519 verification below. The atomic two-column UPDATE alone is
+# not enough: a rotation committing between the fetch and the verify would let
+# a signature made with the RETIRED key be accepted after the key had already
+# changed. Holding the lock from fetch through verification closes that TOCTOU.
+_signature_lock = threading.RLock()
 
 
 def _signature_length_is_valid(signature: bytes) -> bool:
@@ -68,6 +74,25 @@ def _signature_length_is_valid(signature: bytes) -> bool:
         len(signature).to_bytes(4, "big"),
         ED25519_SIGNATURE_LENGTH.to_bytes(4, "big"),
     )
+
+
+def _is_canonical_timestamp_header(value: str) -> bool:
+    """True only for the canonical decimal millisecond form ``sign_payload`` emits.
+
+    ``int()`` additionally accepts leading ``+`` signs, leading zeros,
+    underscores, surrounding whitespace and non-ASCII unicode decimal digits.
+    Those spellings are never produced by the signer, yet they parse to the
+    same integer -- a parser differential that lets one effective timestamp
+    have many accepted header spellings. Requiring the exact canonical form
+    before parsing keeps the header text and the value bound into the signed
+    bytes impossible to diverge (and avoids audit-log confusion).
+    """
+    if not value or not value.isascii() or not value.isdecimal():
+        return False
+    # No leading zeros: "0001700..." must not be an alias for "1700...".
+    if len(value) > 1 and value[0] == "0":
+        return False
+    return True
 
 
 def _replay_cache_key(webhook_id: SnowflakeID, signature: bytes) -> str:
@@ -181,13 +206,19 @@ class SignatureMixin(WebhookManagerTrait):
         )
         now = self._get_timestamp()
 
-        self._db.execute(
-            """UPDATE webhook_webhooks
-               SET signing_key_public = ?, signing_key_private_encrypted = ?,
-                   updated_at = ?
-               WHERE id = ?""",
-            (public_key, private_key_encrypted, now, webhook_id),
-        )
+        # Serialize the key swap with verify_payload()'s fetch + verify. The
+        # single atomic UPDATE prevents a mixed-key row, but without this lock
+        # a verification that fetched the old key just before the UPDATE could
+        # still accept a retired-key signature afterwards. Under the shared
+        # lock a delivery observes either the old key in full or the new one.
+        with _signature_lock:
+            self._db.execute(
+                """UPDATE webhook_webhooks
+                   SET signing_key_public = ?, signing_key_private_encrypted = ?,
+                       updated_at = ?
+                   WHERE id = ?""",
+                (public_key, private_key_encrypted, now, webhook_id),
+            )
         logger.info(f"Rotated signing key for webhook {webhook_id}")
         return public_key
 
@@ -229,10 +260,14 @@ class SignatureMixin(WebhookManagerTrait):
         ):
             return False
 
-        try:
-            timestamp = int(timestamp_header)
-        except (TypeError, ValueError):
+        # Reject non-canonical spellings BEFORE int() parses them, so the
+        # timestamp bound into the signed bytes is exactly what the header
+        # says (no '+', leading zeros, whitespace or unicode digit aliases).
+        if not isinstance(timestamp_header, str) or not _is_canonical_timestamp_header(
+            timestamp_header
+        ):
             return False
+        timestamp = int(timestamp_header)
 
         current = int(now_ms if now_ms is not None else time.time() * 1000)
         skew_ms = abs(current - timestamp)
@@ -242,38 +277,6 @@ class SignatureMixin(WebhookManagerTrait):
                 f"{WEBHOOK_REPLAY_WINDOW_SECONDS}s window): "
                 f"webhook={webhook_id}, skew_ms={skew_ms}"
             )
-            return False
-
-        row = self._db.fetch_one(
-            "SELECT signing_key_public FROM webhook_webhooks WHERE id = ?",
-            (webhook_id,),
-        )
-        if not row:
-            return False
-
-        public_key_bytes = dict(row).get("signing_key_public")
-        if not public_key_bytes:
-            return False
-
-        # The schema stores the raw 32-byte public key (BLOB/BYTEA). Some
-        # rows may carry a base64 text form instead; normalize both so a
-        # key written by any version verifies.
-        if isinstance(public_key_bytes, str):
-            try:
-                public_key_bytes = base64.b64decode(public_key_bytes.encode("ascii"))
-            except Exception as e:
-                logger.error(
-                    f"Failed to decode signing-key for inbound webhook "
-                    f"{webhook_id}: {e}"
-                )
-                return False
-        # Enforce the 32-byte Ed25519 public-key length for *both* storage
-        # forms (raw BLOB and base64 TEXT). The TEXT branch previously skipped
-        # this check and leaned on the crypto library to reject malformed
-        # keys; failing here keeps verification explicitly fail-closed, which
-        # matters when a key is rotated between the BLOB and TEXT encodings.
-        if len(public_key_bytes) != 32:
-            logger.error(f"Signing public key for webhook {webhook_id} is not 32 bytes")
             return False
 
         # Decode the signature (URL-safe or standard base64).
@@ -313,10 +316,47 @@ class SignatureMixin(WebhookManagerTrait):
             f"{SIGNATURE_VERSION}.{timestamp}.".encode("utf-8") + payload_bytes
         )
 
-        # The lookup, the signature verification and the "consumed" write must
-        # be one atomic step: otherwise two concurrent deliveries carrying the
-        # same captured signature can both see a miss and both be accepted.
-        with _replay_check_lock:
+        # The key fetch, replay lookup, signature verification and "consumed"
+        # write must be one atomic step: otherwise two concurrent deliveries of
+        # one captured signature can both see a miss and both be accepted, and
+        # a rotation committing mid-verification could swap in a new key after
+        # the old one was fetched. Holding the lock for all of them makes a
+        # delivery observe a single consistent key + replay state.
+        with _signature_lock:
+            row = self._db.fetch_one(
+                "SELECT signing_key_public FROM webhook_webhooks WHERE id = ?",
+                (webhook_id,),
+            )
+            if not row:
+                return False
+
+            public_key_bytes = dict(row).get("signing_key_public")
+            if not public_key_bytes:
+                return False
+
+            # The schema stores the raw 32-byte public key (BLOB/BYTEA). Some
+            # rows may carry a base64 text form instead; normalize both so a
+            # key written by any version verifies.
+            if isinstance(public_key_bytes, str):
+                try:
+                    public_key_bytes = base64.b64decode(public_key_bytes.encode("ascii"))
+                except Exception as e:
+                    logger.error(
+                        f"Failed to decode signing-key for inbound webhook "
+                        f"{webhook_id}: {e}"
+                    )
+                    return False
+            # Enforce the 32-byte Ed25519 public-key length for *both* storage
+            # forms (raw BLOB and base64 TEXT). The TEXT branch previously
+            # skipped this check and leaned on the crypto library to reject
+            # malformed keys; failing here keeps verification fail-closed when
+            # a key is rotated between the BLOB and TEXT encodings.
+            if len(public_key_bytes) != 32:
+                logger.error(
+                    f"Signing public key for webhook {webhook_id} is not 32 bytes"
+                )
+                return False
+
             try:
                 consumed = cache_get(replay_key)
                 if consumed is not None:
