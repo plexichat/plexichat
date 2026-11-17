@@ -555,9 +555,22 @@ class OAuth2Flow:
         if not verify_token_hash(parsed["secret"], token_record["refresh_token_hash"]):
             raise InvalidGrantError("Invalid refresh token")
 
-        self._db.execute(
-            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ?", (parsed["id"],)
+        # SECURITY: consume the refresh token atomically. The ``revoked``
+        # check above is only a fast-fail — two concurrent refreshes can both
+        # read ``revoked = 0`` before either writes. The conditional UPDATE
+        # plus rowcount guard (mirroring authorization-code exchange) makes
+        # the refresh single-use: exactly one caller can flip revoked from 0
+        # to 1, and everyone else fails. Fail closed when the driver does not
+        # expose rowcount so the single-use guarantee can never be bypassed.
+        cursor = self._db.execute(
+            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ? AND revoked = 0",
+            (parsed["id"],),
         )
+        rowcount = getattr(cursor, "rowcount", None)
+        if rowcount is None:
+            raise InvalidGrantError("Refresh token could not be atomically consumed")
+        if rowcount == 0:
+            raise InvalidGrantError("Refresh token already used")
 
         scopes = json.loads(token_record["scopes"])
         new_token = self._create_token(
