@@ -7,11 +7,9 @@ checks, dimension coercion and total character accounting.
 
 from typing import Any, Dict, List, Optional
 
-from .active_content import deny_active_content
 from .bounds import enforce_embed_budget
 from .field_policy import validate_color_field, validate_provider_fields
 from .ssrf_gate import validate_embed_url
-from .color import validate_color
 from .content import sanitize_content
 from .constants import (
     AUTHOR_NAME_MAX_LENGTH,
@@ -26,7 +24,6 @@ from .constants import (
 from .length import validate_string_length
 from .models import ValidationResult
 from .timestamp import validate_timestamp
-from .url_validation import validate_url
 from ..exceptions import (
     EmbedSanitizationError,
     EmbedValidationError,

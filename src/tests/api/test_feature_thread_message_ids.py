@@ -8,8 +8,11 @@ neighbouring routes already serve.
 """
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+
+from src.core.auth.models import TokenInfo
 
 BIG = 9007199254740993  # past 2^53: a JSON number would lose precision
 
@@ -40,10 +43,10 @@ async def test_add_bookmark_stringifies_ids(monkeypatch):
     monkeypatch.setattr(bookmarks_module.api, "get_messaging", lambda: _Messaging())
 
     body = bookmarks_module.BookmarkRequest(
-        message_id=str(BIG), conversation_id=str(BIG), label="keep"
+        message_id=str(BIG), conversation_id=str(BIG), label="keep", url=None
     )
     result = await bookmarks_module.add_bookmark(
-        body, current_user=SimpleNamespace(user_id=BIG)
+        body, current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG))
     )
 
     bookmark = result["bookmark"]
@@ -87,7 +90,7 @@ async def test_list_bookmarks_stringifies_ids(monkeypatch):
     result = await bookmarks_module.list_bookmarks(
         conversation_id=None,
         limit=50,
-        current_user=SimpleNamespace(user_id=BIG),
+        current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG)),
     )
 
     row = result["bookmarks"][0]
@@ -129,7 +132,7 @@ async def test_forward_message_stringifies_ids(monkeypatch):
         message_id=str(BIG), target_conversation_id=str(BIG)
     )
     result = await forwarding_module.forward_message(
-        body, current_user=SimpleNamespace(user_id=BIG)
+        body, current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG))
     )
 
     forward = result["forward"]
@@ -181,7 +184,7 @@ async def test_scheduled_message_routes_stringify_ids(monkeypatch):
         conversation_id=str(BIG), content="later", scheduled_at=1700000000003
     )
     created = await scheduled_module.create_scheduled_message(
-        body, current_user=SimpleNamespace(user_id=BIG)
+        body, current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG))
     )
     assert created["scheduled_message"]["id"] == str(BIG)
     assert isinstance(created["scheduled_message"]["id"], str)
@@ -195,7 +198,7 @@ async def test_scheduled_message_routes_stringify_ids(monkeypatch):
         conversation_id=None,
         status=None,
         limit=50,
-        current_user=SimpleNamespace(user_id=BIG),
+        current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG)),
     )
     first = listed["scheduled_messages"][0]
     assert first["id"] == str(BIG)
@@ -239,7 +242,7 @@ async def test_last_chat_routes_stringify_ids(monkeypatch):
         conversation_id=str(BIG), last_message_id=str(BIG), scroll_position=0
     )
     saved = await last_chat_module.save_last_chat(
-        body, current_user=SimpleNamespace(user_id=BIG)
+        body, current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG))
     )
     assert saved["last_chat"]["conversation_id"] == str(BIG)
     assert isinstance(saved["last_chat"]["conversation_id"], str)
@@ -248,13 +251,14 @@ async def test_last_chat_routes_stringify_ids(monkeypatch):
     assert saved["last_chat"]["updated_at"] == 1700000000005
 
     current = await last_chat_module.get_last_chat(
-        current_user=SimpleNamespace(user_id=BIG)
+        current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG))
     )
+    assert current is not None
     assert current["last_chat"]["conversation_id"] == str(BIG)
     assert isinstance(current["last_chat"]["conversation_id"], str)
 
     recent = await last_chat_module.get_recent_chats(
-        limit=10, current_user=SimpleNamespace(user_id=BIG)
+        limit=10, current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG))
     )
     assert recent["recent_chats"][0]["conversation_id"] == str(BIG)
     assert isinstance(recent["recent_chats"][0]["conversation_id"], str)
@@ -294,7 +298,7 @@ async def test_thread_message_routes_stringify_ids(monkeypatch):
         limit=50,
         before_id=None,
         after_id=None,
-        current_user=SimpleNamespace(user_id=BIG),
+        current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG)),
     )
     assert listed[0]["id"] == str(BIG)
     assert isinstance(listed[0]["id"], str)
@@ -310,7 +314,7 @@ async def test_thread_message_routes_stringify_ids(monkeypatch):
     sent = await threads_module.send_thread_message(
         str(BIG),
         threads_module.ThreadMessageRequest(content="hello"),
-        current_user=SimpleNamespace(user_id=BIG),
+        current_user=cast(TokenInfo, SimpleNamespace(user_id=BIG)),
     )
     assert sent["id"] == str(BIG)
     assert isinstance(sent["id"], str)

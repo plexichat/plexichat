@@ -70,8 +70,14 @@ class NotificationProtocol:
             user_ids, channel_id
         )
 
-    def get_notification(self, notification_id: SnowflakeID) -> Optional[Notification]:
-        return cast(NotificationProtocol, super()).get_notification(notification_id)
+    def get_notification(
+        self,
+        notification_id: SnowflakeID,
+        user_id: Optional[SnowflakeID] = None,
+    ) -> Optional[Notification]:
+        return cast(NotificationProtocol, super()).get_notification(
+            notification_id, user_id
+        )
 
     def get_unread_count(
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None

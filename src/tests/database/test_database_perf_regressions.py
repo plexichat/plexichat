@@ -40,9 +40,11 @@ def perf_db(tmp_path):
     Database.reset()
     db = Database()
     db.connect()
-    db.execute("CREATE TABLE perf_items (id INTEGER PRIMARY KEY, value TEXT)")
+    getattr(db, "execute")("CREATE TABLE perf_items (id INTEGER PRIMARY KEY, value TEXT)")
     rows = [(item_id, f"v{item_id}") for item_id in range(1, 301)]
-    db.execute_many("INSERT INTO perf_items (id, value) VALUES (?, ?)", rows)
+    getattr(db, "execute_many")(
+        "INSERT INTO perf_items (id, value) VALUES (?, ?)", rows
+    )
     with db._query_cache_lock:
         db._query_cache.clear()
     db.reset_request_metrics()
@@ -110,6 +112,7 @@ def _load_migration_007():
 
     path = Path(pkg.__file__).parent / "007_hot_lookup_composite_indexes.py"
     spec = importlib.util.spec_from_file_location("migration_007_perf", path)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

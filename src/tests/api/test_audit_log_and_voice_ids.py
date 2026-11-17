@@ -9,8 +9,12 @@ client and subsequent lookups would miss.
 """
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+
+from src.api.schemas.common import SnowflakeID
+from src.core.auth.models import TokenInfo
 
 
 @pytest.mark.asyncio
@@ -51,7 +55,7 @@ async def test_user_audit_logs_stringifies_ids(monkeypatch):
         server_id=None,
         action=None,
         limit=25,
-        current_user=SimpleNamespace(user_id=big),
+        current_user=cast(TokenInfo, SimpleNamespace(user_id=big)),
     )
 
     assert len(result["entries"]) == 2
@@ -82,7 +86,7 @@ def test_voice_channel_info_response_stringifies_channel_id():
 
     big = 9007199254740993
     model = VoiceChannelInfoResponse(
-        channel_id=big, session_id="sess", ice_servers=[], bitrate=64000
+        channel_id=SnowflakeID(big), session_id="sess", ice_servers=[], bitrate=64000
     )
 
     assert model.channel_id == str(big)

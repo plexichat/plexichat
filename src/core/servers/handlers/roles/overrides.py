@@ -7,7 +7,17 @@ from src.core.base import SnowflakeID
 
 from ...models import ChannelOverride, AuditLogAction
 from ...manager.converters import _row_to_override
-from ...exceptions import ChannelNotFoundError, RoleHierarchyError
+from ...exceptions import (
+    ChannelNotFoundError,
+    MemberNotFoundError,
+    RoleHierarchyError,
+    RoleNotFoundError,
+)
+from ...permission_utils import (
+    can_manage_member,
+    check_permissions_grantable,
+    validate_permission_dict,
+)
 from .authz import override_target_decision
 from .protocol import RoleHandlerProtocol
 
@@ -34,32 +44,63 @@ class RoleOverrideMixin(RoleHandlerProtocol):
         target_type: str,
         target_id: SnowflakeID,
     ) -> None:
-        """Refuse an override on a role at or above the actor's own rank.
+        """Refuse overrides on targets the actor cannot safely control.
 
-        ``channels.manage`` alone used to be enough to change what a
-        higher-ranked role can see -- a member could deny ``view_channel`` on
-        an administrator's role. The bar is now the same as editing the role
-        itself, and the refusal carries a Decision code.
+        Two independent gaps used to sit behind ``channels.manage``:
+
+        * Role targets: the actor could deny ``view_channel`` on a role above
+          their own. That path now carries a Decision-coded hierarchy check.
+          A role from another server (or one that no longer exists) is never a
+          valid target either -- it used to be accepted unchecked (IDOR).
+        * Member targets: no check at all was applied, so any channels.manage
+          holder could deny a higher-ranked member's access, and an arbitrary
+          ``target_id`` (including a user who is not a member of this server)
+          was written into the override table. Membership and the usual
+          ``can_manage_member`` hierarchy now both apply; self-overrides stay
+          allowed for onboarding/self-service flows.
         """
-        if target_type != "role":
-            return
-        row = self.db.fetch_one(
-            "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",
-            (target_id,),
-        )
-        if not row:
-            return
         server = self.manager.get_server(server_id, user_id)
         is_owner = server is not None and server.owner_id == user_id
-        decision = override_target_decision(
-            user_id=user_id,
-            user_roles=self.manager._get_member_role_rows(server_id, user_id),
-            target_position=row["position"],
-            permissions=self.get_permissions(user_id, server_id),
-            is_owner=is_owner,
-        )
-        if not decision:
-            raise RoleHierarchyError("Cannot override a role at or above your own")
+
+        if target_type == "role":
+            row = self.db.fetch_one(
+                "SELECT position, server_id FROM srv_roles WHERE id = ? AND deleted = 0",
+                (target_id,),
+            )
+            if not row or row["server_id"] != server_id:
+                raise RoleNotFoundError("Override target role not found")
+            decision = override_target_decision(
+                user_id=user_id,
+                user_roles=self.manager._get_member_role_rows(server_id, user_id),
+                target_position=row["position"],
+                permissions=self.get_permissions(user_id, server_id),
+                is_owner=is_owner,
+            )
+            if not decision:
+                raise RoleHierarchyError(
+                    "Cannot override a role at or above your own"
+                )
+            return
+
+        if target_type == "member":
+            # Self-service overrides (e.g. a member allowing themselves into a
+            # channel) are legitimate. Grantability of the permissions they
+            # carry is enforced separately in set_channel_override.
+            if target_id == user_id:
+                return
+            member = self.manager.get_member(server_id, target_id)
+            if not member:
+                raise MemberNotFoundError(
+                    "Override target is not a member of this server"
+                )
+            if server is not None and server.owner_id == target_id:
+                raise RoleHierarchyError("Cannot override the server owner")
+            user_roles = self.manager._get_member_role_rows(server_id, user_id)
+            target_roles = self.manager._get_member_role_rows(server_id, target_id)
+            if not can_manage_member(user_roles, target_roles, is_owner, False):
+                raise RoleHierarchyError(
+                    "Cannot override a member at or above your own rank"
+                )
 
     def set_channel_override(
         self,
@@ -78,6 +119,18 @@ class RoleOverrideMixin(RoleHandlerProtocol):
             user_id, channel.server_id, "channels.manage", channel_id
         )
         self._guard_override_target(user_id, channel.server_id, target_type, target_id)
+
+        # Override allow/deny dicts carry the same power as role permissions:
+        # apply_channel_overrides() folds an ``allow`` entry into the resolved
+        # set, and ``administrator`` there unlocks every permission. Role CRUD
+        # validates the vocabulary and the editor's own grants, but this path
+        # persisted raw caller dicts, letting a channels.manage holder escalate
+        # to administrator (or grant permissions they do not possess).
+        validate_permission_dict(allow)
+        validate_permission_dict(deny)
+        check_permissions_grantable(
+            self.get_permissions(user_id, channel.server_id), allow
+        )
 
         now = self.manager._get_timestamp()
         existing = self.db.fetch_one(

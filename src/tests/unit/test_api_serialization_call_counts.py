@@ -8,6 +8,8 @@ through ``validated_json_response`` skips FastAPI's second validation/serialize
 pass entirely — without changing the emitted bytes.
 """
 
+import json as json_module
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -85,7 +87,7 @@ def test_model_response_uses_pydantic_core_not_json_dumps(monkeypatch):
     import starlette.responses as starlette_responses
 
     calls = []
-    real_dumps = starlette_responses.json.dumps
+    real_dumps = json_module.dumps
 
     def counting(*args, **kwargs):
         calls.append(1)
@@ -98,7 +100,7 @@ def test_model_response_uses_pydantic_core_not_json_dumps(monkeypatch):
         return _Payload(ok=True, count=3)
 
     client = TestClient(app)
-    monkeypatch.setattr(starlette_responses.json, "dumps", counting)
+    monkeypatch.setattr(json_module, "dumps", counting)
 
     response = client.get("/m")
     assert response.status_code == 200

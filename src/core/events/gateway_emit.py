@@ -95,6 +95,50 @@ def _coerce_routing_id(value: Any) -> Optional[int]:
         return None
 
 
+def _is_private_thread_type(value: Any) -> bool:
+    """True only when a thread_type explicitly marks the thread private.
+
+    ThreadType is a str-valued enum ("public"/"private"/"announcement").
+    Enum members, their ``.value`` and the raw string are all accepted.
+    Unknown values are treated as *not private* so legacy callers that omit
+    the field keep their previous routing; that preserves behaviour without
+    ever treating a private thread as public when its type is actually known.
+    """
+    if isinstance(value, bool):
+        return False
+    if hasattr(value, "value"):
+        value = value.value
+    if isinstance(value, str):
+        return value.strip().lower() == "private"
+    return False
+
+
+def _private_thread_recipients(thread_id: Optional[int], is_private: bool):
+    """Resolve the exact audience for a private-thread gateway event.
+
+    Returns an explicit recipient list for private threads so the event
+    router never expands the event to "all members of the server" (which
+    would leak a private thread's name/owner/existence to non-members), and
+    ``None`` for public/unknown threads so the caller keeps normal routing.
+
+    Fail closed: when the threads module is unavailable or member lookup
+    fails, return an empty list so the event reaches nobody rather than
+    falling back to the unsafe server-wide audience.
+    """
+    if not is_private:
+        return None
+    if thread_id is None:
+        return []
+    try:
+        from src.core import threads as _threads
+
+        if not _threads.is_setup():
+            return []
+        return list(_threads.get_thread_member_user_ids(thread_id))
+    except Exception:
+        return []
+
+
 # --------------------------------------------------------------------------
 # User / profile
 # --------------------------------------------------------------------------
@@ -375,6 +419,17 @@ def emit_webhooks_update(server_id: int, channel_id: Optional[int] = None) -> No
 # --------------------------------------------------------------------------
 @_non_raising
 def emit_thread_create(thread: Dict[str, Any]) -> None:
+    # A private thread's payload (name, owner, existence) must never be
+    # broadcast to every member of the server. Scope it to the thread's
+    # exact member set; public threads keep the normal server routing.
+    tid = _coerce_routing_id(thread.get("id"))
+    recipients = _private_thread_recipients(
+        tid, _is_private_thread_type(thread.get("thread_type"))
+    )
+    if recipients is not None:
+        _emit(EventType.THREAD_CREATE, stringify_snowflake_ids(thread),
+              user_ids=recipients)
+        return
     _emit(
         EventType.THREAD_CREATE,
         stringify_snowflake_ids(thread),
@@ -385,6 +440,14 @@ def emit_thread_create(thread: Dict[str, Any]) -> None:
 
 @_non_raising
 def emit_thread_update(thread: Dict[str, Any]) -> None:
+    tid = _coerce_routing_id(thread.get("id"))
+    recipients = _private_thread_recipients(
+        tid, _is_private_thread_type(thread.get("thread_type"))
+    )
+    if recipients is not None:
+        _emit(EventType.THREAD_UPDATE, stringify_snowflake_ids(thread),
+              user_ids=recipients)
+        return
     _emit(
         EventType.THREAD_UPDATE,
         stringify_snowflake_ids(thread),
@@ -398,14 +461,34 @@ def emit_thread_delete(
     thread_id: int,
     guild_id: Optional[int] = None,
     parent_id: Optional[int] = None,
+    thread_type: Optional[Any] = None,
 ) -> None:
+    # Resolve the type from the argument when supplied, otherwise from the
+    # still-present tombstone row (delete events fire after the soft delete).
+    is_private = _is_private_thread_type(thread_type)
+    if not is_private and thread_type is None:
+        try:
+            from src.core import threads as _threads
+
+            if _threads.is_setup():
+                is_private = _is_private_thread_type(
+                    _threads.get_thread_type_value(thread_id)
+                )
+        except Exception:
+            is_private = False
+
+    payload = {
+        "id": str(thread_id),
+        "guild_id": str(guild_id) if guild_id is not None else None,
+        "parent_id": str(parent_id) if parent_id is not None else None,
+    }
+    recipients = _private_thread_recipients(_coerce_routing_id(thread_id), is_private)
+    if recipients is not None:
+        _emit(EventType.THREAD_DELETE, payload, user_ids=recipients)
+        return
     _emit(
         EventType.THREAD_DELETE,
-        {
-            "id": str(thread_id),
-            "guild_id": str(guild_id) if guild_id is not None else None,
-            "parent_id": str(parent_id) if parent_id is not None else None,
-        },
+        payload,
         channel_id=parent_id,
         server_id=guild_id,
     )

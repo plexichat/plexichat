@@ -11,6 +11,7 @@ from .schema import (
     SUM_VALUE_TYPES,
 )
 from .segments import SegmentEncoder
+from ..boundaries import bound_formula_text
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
     INDEX_PROMOTION_THRESHOLD,
@@ -280,13 +281,24 @@ class SumManagerOperations(SumManagerProtocol):
             value_type = str(cell.get("value_type", "blank"))
             if value_type not in SUM_VALUE_TYPES:
                 raise SumValidationError("Unknown cell value type")
+            formula = cell.get("formula")
+            if value_type == "formula":
+                # SECURITY (formula injection): formula text is copied into the
+                # stored cell, audit payloads and (on export) a real .xlsx /
+                # CSV, so it must pass the same shared boundary the XLSX import
+                # path uses. The direct operation path previously accepted any
+                # string here: a multi-megabyte or control-character formula
+                # could bloat the workbook blob, survive reloads and be echoed
+                # into an exported spreadsheet as an attacker-chosen formula.
+                # This is the single normalization choke point for writes.
+                formula = bound_formula_text(formula, error_cls=SumValidationError)
             normalized.append(
                 {
                     "row": row_index,
                     "column": column_index,
                     "value_type": value_type,
                     "value": cell.get("value"),
-                    "formula": cell.get("formula"),
+                    "formula": formula,
                     "style": cell.get("style"),
                 }
             )

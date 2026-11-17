@@ -37,7 +37,7 @@ def _manager(row):
         def __init__(self, db):
             self._db = db
 
-        def create_session(self, admin_id):
+        def create_session(self, admin_id, expires_hours=8):
             return "session-token"
 
         def check_password_change_required(self, admin_id):

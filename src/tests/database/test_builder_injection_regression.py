@@ -8,9 +8,11 @@ for the same identifier classes.
 """
 
 import sqlite3
+from typing import cast
 
 import pytest
 
+from src.core.database.core import Database
 from src.core.database.builder import QueryBuilder, SQLInjectionError
 from src.core.migrations.cloner import DataCloner
 from src.core.security.hardening import HardeningViolation
@@ -139,6 +141,8 @@ class _FakeDB:
 
 @pytest.mark.parametrize("payload", INJECTION_PAYLOADS)
 def test_cloner_rejects_hostile_table_names(payload):
-    cloner = DataCloner(_FakeDB("/tmp/a.db"), _FakeDB("/tmp/b.db"))
+    cloner = DataCloner(
+        cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db"))
+    )
     with pytest.raises(HardeningViolation):
         cloner.clone_table(payload)

@@ -31,7 +31,7 @@ _WRITE_SCRIPT = _PROJECT_ROOT / "ci-tooling" / "write_test_license.py"
 DEFAULT_LICENSE_NAME = Path(".plexichat") / "config" / "license"
 
 
-def _run(home: Path, license_value: str = None) -> subprocess.CompletedProcess:
+def _run(home: Path, license_value: str | None = None) -> subprocess.CompletedProcess:
     """Run the check with a hermetic HOME and ``PLEXICHAT_LICENSE`` value."""
     env = {
         k: v

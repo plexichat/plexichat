@@ -6,6 +6,8 @@ exhaustion never surfaces as a 500 with str(e) leaked in the body.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from fastapi import HTTPException
@@ -30,9 +32,10 @@ def test_invite_max_uses_join_flow_maps_to_400():
         map_invite_join_error(exc)
     assert ei.value.status_code == 410
     # Static message — no internal error text leaked.
-    assert "max_uses" not in str(ei.value.detail)
-    assert "1" not in str(ei.value.detail.get("error", {}).get("message", ""))
-    assert ei.value.detail["error"]["message"] == "Invite is no longer usable"
+    detail = cast(dict[str, Any], ei.value.detail)
+    assert "max_uses" not in str(detail)
+    assert "1" not in str(detail.get("error", {}).get("message", ""))
+    assert detail["error"]["message"] == "Invite is no longer usable"
 
 
 def test_invite_max_uses_generic_mapping_maps_to_permission_family():
@@ -47,7 +50,8 @@ def test_invite_rate_limited_maps_to_429_with_retry_after():
     with pytest.raises(HTTPException) as ei:
         raise_mapped(exc)
     assert ei.value.status_code == 429
-    assert ei.value.headers.get("Retry-After") == "3600"
+    headers = cast(dict[str, str], ei.value.headers)
+    assert headers.get("Retry-After") == "3600"
 
 
 def test_invite_limit_reached_maps_to_400():

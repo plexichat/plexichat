@@ -4,7 +4,11 @@ Gateway intents - Intent validation and filtering.
 
 from src.core.events.types import GatewayIntent
 from src.core.events.models import Event
-from src.core.events.router import filter_by_intents as _filter_by_intents
+from src.core.events.router import (
+    filter_by_intents as _filter_by_intents,
+    get_dm_intent as _get_dm_intent,
+    get_required_intent as _get_required_intent,
+)
 
 
 DEFAULT_INTENTS = GatewayIntent.default_intents()
@@ -84,7 +88,27 @@ def filter_event_by_intents(event: Event, intents: int) -> bool:
     Returns:
         True if event should be sent
     """
-    return _filter_by_intents(event, intents)
+    # Fail closed at the point of use. IDENTIFY validates the mask when a
+    # session is created, but a resumed/persisted session can carry a stale or
+    # corrupted value; a negative, boolean or out-of-range mask must never be
+    # treated as "all intents granted" by the bitwise checks downstream.
+    if not validate_intents(intents):
+        return False
+
+    # The upstream router classifies any event with no ``server_id`` but a
+    # ``channel_id`` as a DM and consults only the DM intent map. Event types
+    # that exist only in the guild map (artifacts, PlexiSum workbooks,
+    # presence, ...) then fall through to "no intent required" and leak to
+    # clients that never requested that intent. Enforce the guild-scope
+    # requirement here as well, but skip event types that have a legitimate
+    # DM counterpart (typing, messages, reactions) — those are correctly
+    # gated by the DM map and must not additionally require a guild intent.
+    if _get_dm_intent(event.event_type) is None:
+        required = _get_required_intent(event.event_type)
+        if required is not None and not (intents & required):
+            return False
+
+    return bool(_filter_by_intents(event, intents))
 
 
 def should_include_message_content(intents: int, is_dm: bool) -> bool:

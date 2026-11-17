@@ -92,9 +92,20 @@ def _automod_rule_to_response(rule) -> AutomodRuleResponse:
 
 
 def _get_icon_size_limit() -> int:
+    """Return the configured maximum server-icon upload size in bytes.
+
+    The value is used as a hard ceiling when reading the upload body, so it
+    must always be a positive int: a misconfigured (string, zero, negative or
+    missing) value must never turn into a negative ``read(n)`` — which would
+    make ``UploadFile.read`` materialise the entire part into memory — or a
+    ``TypeError`` that bypasses the guard. Fail closed to the safe default.
+    """
     try:
-        media_config = config.get("media", {})
-        size_limits = media_config.get("size_limits", {})
-        return size_limits.get("icon", DEFAULT_ICON_SIZE_LIMIT)
+        media_config = config.get("media", {}) or {}
+        size_limits = media_config.get("size_limits", {}) or {}
+        limit = int(size_limits.get("icon", DEFAULT_ICON_SIZE_LIMIT))
+        return limit if limit > 0 else DEFAULT_ICON_SIZE_LIMIT
+    except (TypeError, ValueError, AttributeError):
+        return DEFAULT_ICON_SIZE_LIMIT
     except Exception:
         return DEFAULT_ICON_SIZE_LIMIT

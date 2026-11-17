@@ -84,6 +84,7 @@ def _mint_authorized_token(app_manager, user, app):
         "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
         (secret_hash, app.id),
     )
+    assert code.code is not None
     return flow.exchange_code(
         app.id, client_secret, code.code, "https://example.com/callback"
     )

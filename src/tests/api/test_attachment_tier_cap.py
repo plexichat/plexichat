@@ -7,7 +7,10 @@ The route must apply ``_get_upload_limit(user_id)`` itself and answer 413
 before spooling the body, or low-tier accounts can bypass their quota.
 """
 
+from typing import cast
+
 import pytest
+from fastapi import UploadFile
 
 import src.api as api_module
 from src.api.routes.channels.attachments import ChannelAttachmentsMixin
@@ -61,7 +64,7 @@ class TestAttachmentTierCap:
         assert limit > 0
 
         mixin = ChannelAttachmentsMixin()
-        big_file = _FakeUploadFile(size=limit + 1)
+        big_file = cast(UploadFile, _FakeUploadFile(size=limit + 1))
 
         with pytest.raises(HTTPException) as exc_info:
             await mixin._upload_attachment(
@@ -88,7 +91,7 @@ class TestAttachmentTierCap:
 
         limit = _get_upload_limit(user_id)
         mixin = ChannelAttachmentsMixin()
-        ok_file = _FakeUploadFile(size=limit)
+        ok_file = cast(UploadFile, _FakeUploadFile(size=limit))
 
         with pytest.raises(HTTPException) as exc_info:
             await mixin._upload_attachment(

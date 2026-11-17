@@ -14,8 +14,10 @@ that path (including the empty-offset fallback and row-cache safety).
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from fastapi import Request
 
 import src.api as api
 from src.api.routes.admin import moderation as moderation_routes
@@ -151,7 +153,7 @@ def _patch_report_gate(monkeypatch, db):
 
 
 def _report_request():
-    return SimpleNamespace()
+    return cast(Request, SimpleNamespace())
 
 
 def _report_row(report_id=1, total=5):

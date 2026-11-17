@@ -35,6 +35,7 @@ def attachment_media_dir(tmp_path):
     """Point media storage at a per-test temp dir, before ``test_client`` boots."""
     import utils.config as config
 
+    assert config._config_instance is not None
     upload_dir = tmp_path / "uploads"
     config._config_instance.config["media"] = {
         "storage_backend": "local",
@@ -64,7 +65,7 @@ def attachment_media_dir(tmp_path):
     # without this an earlier cached ``config.get("media")`` would leave
     # ``media.setup`` reading the stale default path and writing the upload
     # outside this temp dir.
-    config._config_instance._invalidate_cache()
+    getattr(config._config_instance, "_invalidate_cache")()
     return upload_dir
 
 

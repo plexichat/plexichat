@@ -7,9 +7,11 @@ in a driver). Values that stay as bound parameters get the same finite check.
 """
 
 import math
+from typing import cast
 
 import pytest
 
+from src.core.database.core import Database
 from src.core.database.builder import QueryBuilder
 from src.core.database.builder.sql_safety import (
     MAX_PLACEHOLDERS,
@@ -104,7 +106,9 @@ def test_builder_rejects_non_finite_and_unbounded_pages(bad):
 
 @pytest.mark.parametrize("bad", [float("inf"), float("nan"), 0, -1, 100_001])
 def test_cloner_batch_size_is_bounded(bad):
-    cloner = DataCloner(_FakeDB("/tmp/a.db"), _FakeDB("/tmp/b.db"))
+    cloner = DataCloner(
+        cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db"))
+    )
     with pytest.raises(HardeningViolation):
         cloner.batch_size = bad
     assert cloner.batch_size == 1000  # unchanged after rejection

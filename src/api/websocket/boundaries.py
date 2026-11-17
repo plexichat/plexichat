@@ -178,6 +178,7 @@ def parse_snowflake(value: object, field: str = "id") -> int:
 MAX_STATUS_LEN = 32
 MAX_CUSTOM_STATUS_LEN = 128
 MAX_EMOJI_LEN = 64
+MAX_ACTIVITY_TYPE_LEN = 64
 MAX_ACTIVITY_NAME_LEN = 128
 MAX_ACTIVITY_TEXT_LEN = 256
 MAX_ACTIVITIES = 5
@@ -225,7 +226,20 @@ def validate_presence_payload(data: object) -> dict:
     for activity in activities:
         if not isinstance(activity, dict):
             raise HardeningViolation("activity must be an object")
-        clean = {"type": activity.get("type", "custom")}
+        # The activity type was the one attacker-controlled string copied
+        # verbatim into the normalized payload. It is later interpolated into
+        # warning logs (on an invalid enum value) and into the presence event
+        # sent to every friend, so it must be a bounded, control-character-free
+        # string just like every other activity field.
+        # Coerce to text first: clients may send a numeric activity type and
+        # the enum conversion happens in the handler, not here. What matters
+        # at the boundary is that the value cannot carry control characters
+        # into logs/broadcasts or grow without limit.
+        clean = {
+            "type": _bounded_text(
+                str(activity.get("type", "custom")), "type", MAX_ACTIVITY_TYPE_LEN
+            )
+        }
         for key, limit in (
             ("name", MAX_ACTIVITY_NAME_LEN),
             ("details", MAX_ACTIVITY_TEXT_LEN),
@@ -286,7 +300,7 @@ def requires_authentication(opcode: int) -> bool:
 #: Tickets are machine tokens, never free-form text: no whitespace, no C0
 #: controls, and a bounded length. The character class covers the URL-safe
 #: alphabet plus the separators used by existing token formats.
-TICKET_PATTERN = re.compile(r"^[A-Za-z0-9._~+/-:=@]+$")
+TICKET_PATTERN = re.compile(r"^[A-Za-z0-9._~+/:=@-]+$")
 MIN_TICKET_LEN = 1
 MAX_TICKET_LEN = 4096
 MAX_SESSION_ID_LEN = 128
@@ -321,6 +335,8 @@ def validate_session_id(value: object) -> str:
 
 def bounded_resume_sequence(value: object) -> int:
     """Bound a client-supplied resume sequence into a sane replay window."""
+    if isinstance(value, bool):
+        raise HardeningViolation("seq must be an integer")
     return bounded_int(
         value,
         "seq",
@@ -332,6 +348,8 @@ def bounded_resume_sequence(value: object) -> int:
 
 def bounded_backoff(value: object, field: str = "backoff") -> int:
     """Bound a reconnect/backoff duration in milliseconds."""
+    if isinstance(value, bool):
+        raise HardeningViolation(f"{field} must be an integer")
     return bounded_int(
         value, field, minimum=MIN_BACKOFF_MS, maximum=MAX_BACKOFF_MS, default=0
     )

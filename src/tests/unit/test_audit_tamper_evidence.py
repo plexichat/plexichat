@@ -51,6 +51,7 @@ def test_modified_payload_fails_verification(tmp_path):
 
     valid, _, error = chain.verify_chain()
     assert valid is False
+    assert error is not None
     assert "checksum" in error
     with pytest.raises(AuditChainError):
         chain.assert_intact()
@@ -63,6 +64,7 @@ def test_deleted_middle_entry_fails_verification(tmp_path):
 
     valid, _, error = chain.verify_chain()
     assert valid is False
+    assert error is not None
     assert "sequence" in error or "prev_hash" in error
     with pytest.raises(AuditChainError):
         chain.assert_intact()
@@ -76,6 +78,7 @@ def test_deleted_tail_entry_fails_verification(tmp_path):
     valid, count, error = chain.verify_chain()
     assert valid is False
     assert count == 2
+    assert error is not None
     assert "head" in error or "count" in error
 
 
@@ -98,4 +101,5 @@ def test_forged_head_fails_verification(tmp_path):
 
     valid, _, error = chain.verify_chain()
     assert valid is False
+    assert error is not None
     assert "head" in error

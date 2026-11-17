@@ -231,6 +231,19 @@ def _parse_permission_payload(raw) -> Optional[Dict[str, bool]]:
     return None
 
 
+def _is_granted(value) -> bool:
+    """Only an explicit JSON boolean ``true`` grants a permission scope.
+
+    Role payloads come from a JSON column and may have been written by a
+    legacy importer, a migration, or a manual DB fix that never went through
+    :func:`validate_delegable_permissions`. Treating any truthy value as a
+    grant lets junk such as ``"false"``, ``1`` or ``[]`` silently escalate a
+    role. Both the cached and the fresh permission paths must fail closed on
+    anything that is not exactly ``True``.
+    """
+    return value is True
+
+
 def _payloads_grant(payloads, required_permission: str) -> bool:
     """Pure form of the wildcard/exact grant check shared by both read paths.
 
@@ -240,13 +253,13 @@ def _payloads_grant(payloads, required_permission: str) -> bool:
     for permissions in payloads:
         if not isinstance(permissions, dict):
             continue
-        if permissions.get("*", False):
+        if _is_granted(permissions.get("*")):
             return True
         if "." in required_permission:
             scope_prefix = required_permission.split(".")[0] + ".*"
-            if permissions.get(scope_prefix, False):
+            if _is_granted(permissions.get(scope_prefix)):
                 return True
-        if permissions.get(required_permission, False):
+        if _is_granted(permissions.get(required_permission)):
             return True
     return False
 
@@ -323,8 +336,11 @@ def get_admin_granted_permissions(db, admin_id: int) -> frozenset:
     """
     granted = set()
     for role in _get_admin_roles(db, admin_id):
-        for permission, allowed in (role.permissions or {}).items():
-            if allowed:
+        permissions = role.permissions
+        if not isinstance(permissions, dict):
+            continue
+        for permission, allowed in permissions.items():
+            if _is_granted(allowed):
                 granted.add(permission)
     return frozenset(granted)
 
@@ -745,8 +761,10 @@ def get_admin_permissions_summary(db, admin_id: int) -> Dict[str, Any]:
         # Collect all permissions from roles
         all_permissions = {}
         for role in roles:
+            if not isinstance(role.permissions, dict):
+                continue
             for perm, granted in role.permissions.items():
-                if granted:
+                if _is_granted(granted):
                     all_permissions[perm] = True
 
         # Check for wildcard

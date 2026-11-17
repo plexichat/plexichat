@@ -3,6 +3,16 @@ from typing import List
 from .base import SearchManagerBase
 from ..models import ParsedQuery
 
+# Core-boundary limits. The HTTP route also clamps these values, but the
+# manager is directly callable from internal/test callers, so it must stay
+# safe on its own (the same defence the FTS indexer applies via
+# ``_bounded_page``). Without the lower clamp a negative limit reaches
+# SQLite's ``LIMIT ?`` verbatim, where -1 means *unlimited* and would turn a
+# single autocomplete request into a full search_history dump. An unbounded
+# upper limit / needle has the same effect with a large enough value.
+_MAX_SUGGESTION_QUERY_CHARS = 128
+_MAX_SUGGESTIONS = 100
+
 
 def _escape_like(text: str) -> str:
     """Escape LIKE metacharacters so user text is matched literally.
@@ -26,6 +36,18 @@ class QueryUtilsMixin(SearchManagerBase):
         limit: int = 10,
     ) -> List[str]:
         suggestions = []
+
+        # Clamp before any SQL is built. ``int()`` guards against non-numeric
+        # callers; bool/None/nan never reach the LIMIT parameter.
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError, OverflowError):
+            limit = 10
+        limit = max(0, min(limit, _MAX_SUGGESTIONS))
+        if limit == 0:
+            return []
+
+        partial_query = str(partial_query or "")[:_MAX_SUGGESTION_QUERY_CHARS]
 
         filter_suggestions = self._query_parser.get_filter_suggestions(partial_query)
         suggestions.extend(filter_suggestions)

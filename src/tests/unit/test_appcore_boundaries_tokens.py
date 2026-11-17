@@ -25,6 +25,7 @@ class TestSecretAndTokenValidation:
         token, _ = generate_access_token(123)
         assert validate_token_string(token) == token
         parsed = parse_oauth_token(token)
+        assert parsed is not None
         assert parsed == {"token_type": "access", "id": 123, "secret": parsed["secret"]}
 
     @pytest.mark.parametrize(

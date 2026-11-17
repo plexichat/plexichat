@@ -7,8 +7,11 @@ This module pins the single shared rule from
 name can take into a statement that cannot be parameterized.
 """
 
+from typing import cast
+
 import pytest
 
+from src.core.database.core import Database
 from src.core.database.builder import QueryBuilder, SQLInjectionError
 from src.core.database.builder import sql_safety
 from src.core.migrations.cloner import DataCloner
@@ -89,7 +92,7 @@ class _FakeDB:
     "name", ["users; DROP TABLE users", "users' --", "users/*x*/", "üsers"]
 )
 def test_cloner_validates_table_name_before_any_statement(name):
-    cloner = DataCloner(_FakeDB("/tmp/a.db"), _FakeDB("/tmp/b.db"))
+    cloner = DataCloner(cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db")))
     with pytest.raises(HardeningViolation):
         cloner.clone_table(name)
 
@@ -97,7 +100,7 @@ def test_cloner_validates_table_name_before_any_statement(name):
 def test_cloner_identifier_paths_share_the_rule(monkeypatch):
     spy = _Spy(sql_safety.require_identifier)
     monkeypatch.setattr(sql_safety, "require_identifier", spy)
-    cloner = DataCloner(_FakeDB("/tmp/a.db"), _FakeDB("/tmp/b.db"))
+    cloner = DataCloner(cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db")))
 
     with pytest.raises(HardeningViolation):
         cloner.clone_table("users; --")
@@ -108,7 +111,7 @@ def test_sqlite_fts_probe_routes_table_names_through_shared_rule(monkeypatch):
     spy = _Spy(sql_safety.require_identifier)
     monkeypatch.setattr(sqlite_fts, "sql_identifier", spy)
 
-    indexer = sqlite_fts.SQLiteFTS5Indexer(_FakeDB("/tmp/a.db"))
+    indexer = sqlite_fts.SQLiteFTS5Indexer(cast(Database, _FakeDB("/tmp/a.db")))
     # The hardcoded table names are valid; inject a hostile one to prove the
     # probe funnels it through require_identifier rather than quoting it itself.
     monkeypatch.setattr(

@@ -6,6 +6,8 @@ a boundary regression here. Each guard was added during the feature/suite
 hardening sweep; if a constant or validator is deleted, these fail.
 """
 
+from typing import Any
+
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -23,7 +25,7 @@ def _invalid(model, **kwargs):
 class TestBookmarkBoundaries:
     def test_label_is_trimmed_and_bounded(self):
         body = bookmarks.BookmarkRequest(
-            message_id="1", conversation_id="2", label="  hello  "
+            message_id="1", conversation_id="2", label="  hello  ", url=None
         )
         assert body.label == "hello"
         _invalid(
@@ -55,6 +57,7 @@ class TestBookmarkBoundaries:
         body = bookmarks.BookmarkRequest(
             message_id="1",
             conversation_id="2",
+            label=None,
             url="https://example.com/message/1",
         )
         assert body.url == "https://example.com/message/1"
@@ -71,12 +74,18 @@ class TestFeatureSettingsBoundaries:
     @pytest.mark.parametrize(
         "body",
         [
-            UpdateFeaturesRequest(rate_limit_tier="x" * 51),
-            UpdateFeaturesRequest(rate_limit_tier="bad tier!"),
-            UpdateFeaturesRequest(notes="a\x00b"),
-            UpdateFeaturesRequest(notes="n" * 2001),
-            UpdateFeaturesRequest(expires_at=-1),
-            UpdateFeaturesRequest(expires_at=10**12),
+            UpdateFeaturesRequest(
+                rate_limit_tier="x" * 51, expires_at=None, notes=None
+            ),
+            UpdateFeaturesRequest(
+                rate_limit_tier="bad tier!", expires_at=None, notes=None
+            ),
+            UpdateFeaturesRequest(rate_limit_tier=None, expires_at=None, notes="a\x00b"),
+            UpdateFeaturesRequest(
+                rate_limit_tier=None, expires_at=None, notes="n" * 2001
+            ),
+            UpdateFeaturesRequest(rate_limit_tier=None, expires_at=-1, notes=None),
+            UpdateFeaturesRequest(rate_limit_tier=None, expires_at=10**12, notes=None),
         ],
     )
     def test_bad_settings_rejected(self, body):
@@ -112,7 +121,7 @@ class TestVoiceBoundaries:
 
 
 class TestReportBoundaries:
-    def _body(self, **kwargs):
+    def _body(self, **kwargs) -> dict[str, Any]:
         base = {"target_type": "user", "target_id": "1", "reason": "why"}
         base.update(kwargs)
         return base
@@ -145,7 +154,13 @@ class TestReportBoundaries:
 class TestProfileBoundaries:
     def test_emoji_and_social_links_validated(self):
         body = profiles.ProfileUpdateRequest(
+            bio=None,
+            status=None,
             status_emoji="🔥",
+            pronouns=None,
+            location=None,
+            timezone=None,
+            banner_url=None,
             social_links=[{"platform": "x", "url": "https://example.com/u"}],
         )
         assert body.status_emoji == "🔥"

@@ -24,7 +24,7 @@ def _source(name):
 
 def _route(method, suffix):
     for route in channels_router.routes:
-        if method in getattr(route, "methods", set()) and route.path.endswith(suffix):
+        if method in getattr(route, "methods", set()) and getattr(route, "path").endswith(suffix):
             return route
     raise AssertionError(f"no {method} route ending in {suffix}")
 
@@ -49,7 +49,7 @@ class TestListEndpointInvariants:
     )
     def test_list_routes_keep_bounded_pages_and_order_allowlists(self, suffix):
         route = _route("GET", suffix)
-        params = inspect.signature(route.endpoint).parameters
+        params = inspect.signature(getattr(route, "endpoint")).parameters
         for name in ("limit", "offset", "sort", "order"):
             assert isinstance(params[name].default, QueryParam), (suffix, name)
         assert any(type(m).__name__ == "Le" for m in params["limit"].default.metadata)
@@ -71,7 +71,7 @@ class TestBoundaryGuardsStayWired:
 
         route = _route("PATCH", "/{channel_id}")
         assert _cap_channel_update_body in [
-            d.call for d in route.dependant.dependencies
+            d.call for d in getattr(route, "dependant").dependencies
         ]
 
     def test_invite_webhook_and_target_guards_are_called(self):

@@ -59,6 +59,7 @@ __all__ = [
     "InvalidThreadTypeError",
     # Setup
     "setup",
+    "is_setup",
     # Thread creation
     "create_thread",
     "create_thread_from_message",
@@ -68,6 +69,8 @@ __all__ = [
     "add_member",
     "remove_member",
     "get_thread_members",
+    "get_thread_member_user_ids",
+    "get_thread_type_value",
     # Thread messages
     "send_message",
     "get_messages",
@@ -123,6 +126,11 @@ def setup(
         db, auth_module, messaging_module, servers_module, notifications_module
     )
     _setup_complete = True
+
+
+def is_setup() -> bool:
+    """Whether the threads module has been initialized."""
+    return _setup_complete and _manager is not None
 
 
 def _get_manager():
@@ -203,6 +211,29 @@ def get_thread_members(
 ) -> List[ThreadMember]:
     """Get members of a thread."""
     return _get_manager().get_thread_members(user_id, thread_id, limit, after_user_id)
+
+
+def get_thread_member_user_ids(thread_id: int) -> List[int]:
+    """Internal-only: exact member ids of a thread, for gateway event scoping.
+
+    Has no caller permission gate by design — gateway emitters use it to keep
+    private-thread events from being broadcast to every member of the server.
+    Must never be wired to a client-facing route.
+    """
+    if not _setup_complete or _manager is None:
+        return []
+    return _manager.get_all_member_user_ids(thread_id)
+
+
+def get_thread_type_value(thread_id: int) -> Optional[int]:
+    """Internal-only: thread_type value for a thread row (incl. tombstones).
+
+    Used by gateway emitters to decide whether a delete event must be scoped
+    to thread members. Must never be wired to a client-facing route.
+    """
+    if not _setup_complete or _manager is None:
+        return None
+    return _manager.get_thread_type_value(thread_id)
 
 
 # === Thread Messages ===

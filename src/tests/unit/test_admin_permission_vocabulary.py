@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from src.api.schemas.common import SnowflakeIDParam
 from src.core.admin.permissions import (
     DELEGABLE_PERMISSIONS,
     PERMISSION_SCOPES,
@@ -77,7 +78,10 @@ class TestRoleRoutesUseClosedVocabulary:
         from src.api.routes.admin.roles import RoleCreate
 
         body = RoleCreate(
-            name="bad-vocab", description="bad", permissions={"evil.scope": True}
+            name="bad-vocab",
+            description="bad",
+            permissions={"evil.scope": True},
+            position=0,
         )
         with (
             patch.object(role_routes, "check_host_restriction"),
@@ -99,7 +103,7 @@ class TestRoleRoutesUseClosedVocabulary:
             "role_pos": 10,
             "role_is_system": False,
         }
-        body = RoleUpdate(permissions={"reports.*": True})
+        body = RoleUpdate(description="test", permissions={"reports.*": True})
         with (
             patch.object(role_routes, "check_host_restriction"),
             patch.object(role_routes, "require_admin_permission", return_value=1),
@@ -107,5 +111,5 @@ class TestRoleRoutesUseClosedVocabulary:
             patch("src.api.get_db"),
         ):
             with pytest.raises(HTTPException) as exc:
-                asyncio.run(role_routes.update_role(_request("PUT"), 1, body))
+                asyncio.run(role_routes.update_role(_request("PUT"), SnowflakeIDParam(1), body))
         assert exc.value.status_code == 400

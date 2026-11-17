@@ -11,11 +11,29 @@ from src.api.schemas.servers import (
     KickMemberRequest,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
-from src.core.database import cached
+from src.core.database import cached, invalidate_pattern
 
 import utils.logger as logger
+from .roles import _invalidate_roles_listing_cache
 
 router = APIRouter()
+
+
+def _invalidate_member_access_caches() -> None:
+    """Drop API-layer caches that would keep serving data to a removed member.
+
+    The manager clears its own membership caches when a user is kicked, banned
+    or leaves, but this router keeps three additional per-viewer response
+    caches (member list ``server_members_api``, joined servers
+    ``user_servers_api`` and channel list ``server_channels_api``). All three
+    are keyed by the authenticated user, so without an explicit invalidation a
+    removed member keeps reading cached rosters/channels through a valid 200
+    response until the 30s TTL expires. Membership revocation must be visible
+    at the HTTP boundary immediately, not just in the core.
+    """
+    invalidate_pattern("server_members_api:*")
+    invalidate_pattern("user_servers_api:*")
+    invalidate_pattern("server_channels_api:*")
 
 
 def _resolve_member_user_id(db, server_id: int, member_or_user_id: int):
@@ -368,6 +386,8 @@ async def kick_member(
         target_user_id = row["user_id"]
         reason = getattr(payload, "reason", None) if payload else None
         servers_mod.kick_member(current_user.user_id, sid, target_user_id, reason)
+        # The kick is committed: the target must lose cached API access now.
+        _invalidate_member_access_caches()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
@@ -443,6 +463,10 @@ async def assign_role_to_member(
         target_user_id = row["user_id"]
 
         servers_mod.assign_role(current_user.user_id, sid, target_user_id, rid)
+        # A role change can grant the target ``roles.manage``; the per-user
+        # cached role listing must not keep returning a stale authorization
+        # decision (or stale role data) for the rest of its 300s TTL.
+        _invalidate_roles_listing_cache()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
@@ -528,6 +552,9 @@ async def remove_role_from_member(
         target_user_id = row["user_id"]
 
         servers_mod.remove_role(current_user.user_id, sid, target_user_id, rid)
+        # Revoking a role can remove ``roles.manage``; drop the cached role
+        # listing so the former holder cannot keep reading it from cache.
+        _invalidate_roles_listing_cache()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise

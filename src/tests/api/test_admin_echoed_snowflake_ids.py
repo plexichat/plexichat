@@ -8,8 +8,13 @@ above 2^53, so the responses now carry decimal strings (project convention).
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 
-BIG = 9007199254740993  # past 2^53: a JSON number would lose precision
+from fastapi import Request
+
+from src.api.schemas.common import SnowflakeIDParam
+
+BIG = SnowflakeIDParam(9007199254740993)  # past 2^53: a JSON number would lose precision
 
 
 def test_reindex_conversation_stringifies_conversation_id(monkeypatch):
@@ -29,7 +34,7 @@ def test_reindex_conversation_stringifies_conversation_id(monkeypatch):
 
     body = asyncio.run(
         reindex_routes.reindex_conversation(
-            request=SimpleNamespace(), conversation_id=BIG, body=None
+            request=cast(Request, SimpleNamespace()), conversation_id=BIG, body=None
         )
     )
 
@@ -59,7 +64,7 @@ def test_get_feature_settings_stringifies_server_id(monkeypatch):
 
     body = asyncio.run(
         artifact_routes.admin_get_feature_settings(
-            feature="voice", server_id=BIG, request=SimpleNamespace()
+            feature="voice", server_id=BIG, request=cast(Request, SimpleNamespace())
         )
     )
 
@@ -81,7 +86,7 @@ def test_set_feature_settings_stringifies_server_id(monkeypatch):
         artifact_routes.admin_set_feature_settings(
             feature="voice",
             body={"server_id": BIG, "settings": {}},
-            request=SimpleNamespace(),
+            request=cast(Request, SimpleNamespace()),
         )
     )
 
@@ -110,7 +115,7 @@ def test_set_feature_settings_accepts_decimal_string_server_id(monkeypatch):
         artifact_routes.admin_set_feature_settings(
             feature="voice",
             body={"server_id": str(BIG), "settings": {}},
-            request=SimpleNamespace(),
+            request=cast(Request, SimpleNamespace()),
         )
     )
 

@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from src.api.schemas.common import SnowflakeIDParam
 from src.api.routes.admin import artifacts as artifacts_routes
 from src.api.routes.admin import data_export as data_export_routes
 from src.api.routes.admin import plexijoin as plexijoin_routes
@@ -163,7 +164,7 @@ class TestDataExportMutationErrors:
         monkeypatch.setattr(data_export_routes, "_get_request_or_404", _no_preflight)
         monkeypatch.setattr(data_export_routes, "approve_request", lambda *a: {})
 
-        result = asyncio.run(data_export_routes.approve_data_export(_request(), 42))
+        result = asyncio.run(data_export_routes.approve_data_export(_request(), SnowflakeIDParam(42)))
         assert result.success is True
 
     def test_not_found_from_core_still_returns_404(self, monkeypatch):
@@ -179,7 +180,7 @@ class TestDataExportMutationErrors:
 
         monkeypatch.setattr(data_export_routes, "approve_request", _missing)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(data_export_routes.approve_data_export(_request(), 42))
+            asyncio.run(data_export_routes.approve_data_export(_request(), SnowflakeIDParam(42)))
         assert exc.value.status_code == 404
 
 

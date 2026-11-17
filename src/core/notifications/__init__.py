@@ -181,9 +181,15 @@ def create_notifications_for_message(
     )
 
 
-def get_notification(notification_id: int) -> Optional[Notification]:
-    """Get a notification by ID."""
-    return _get_manager().get_notification(notification_id)
+def get_notification(
+    notification_id: int, user_id: Optional[int] = None
+) -> Optional[Notification]:
+    """Get a notification by ID, scoped to ``user_id`` when supplied.
+
+    Callers handling a user-provided id should always pass ``user_id`` so the
+    lookup cannot return another user's notification.
+    """
+    return _get_manager().get_notification(notification_id, user_id)
 
 
 def get_notifications(

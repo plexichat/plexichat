@@ -3,6 +3,7 @@
 
 import dataclasses
 import enum
+from typing import Any, cast
 
 import pytest
 
@@ -206,7 +207,7 @@ def test_initvar_field_skipped_and_not_serialized():
     back = reconstruct_object(data)
     assert type(back) is _WithInitVar
     assert back.label == "x"
-    assert back.secret == ""  # InitVar default applied on reconstruction
+    assert cast(Any, back).secret == ""  # InitVar default applied on reconstruction
 
 
 def test_bad_constructor_falls_back_to_params():

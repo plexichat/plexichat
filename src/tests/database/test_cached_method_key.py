@@ -71,7 +71,7 @@ def test_method_cache_key_contains_no_memory_address():
 def test_method_invalidate_clears_shared_entry():
     first, second = _WidgetRoutes(), _WidgetRoutes()
     assert first.get_widget(7) == "widget-7"
-    _WidgetRoutes.get_widget.invalidate(second, 7)
+    getattr(_WidgetRoutes.get_widget, "invalidate")(second, 7)
     assert second.get_widget(7) == "widget-7"
     assert second.calls == 1
 

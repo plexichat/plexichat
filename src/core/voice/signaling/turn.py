@@ -44,8 +44,18 @@ class TURNCredentialGenerator:
         if not secret:
             raise TURNCredentialError("TURN secret is required")
 
+        # SECURITY: the URLs handed to clients are the response boundary for
+        # TURN config. Validate them here (not just in ICEServerBuilder) so
+        # EVERY entry point -- including generate_turn_credentials() -- fails
+        # closed on an injected/malformed URL instead of echoing it verbatim.
+        validated_urls: List[str] = []
+        for url in turn_urls or ():
+            try:
+                validated_urls.append(validate_ice_url(url))
+            except ValueError:
+                continue
         self._secret = secret.encode("utf-8")
-        self._turn_urls = turn_urls
+        self._turn_urls = validated_urls
         self._ttl = ttl
 
     def generate(self, user_id: int) -> TURNCredentials:
@@ -154,11 +164,14 @@ class ICEServerBuilder:
         self._static_username = turn_username
         self._static_credential = turn_credential
 
-        # Use time-limited credentials if secret is provided, otherwise use static
-        if turn_secret and turn_urls:
+        # Use time-limited credentials if secret is provided, otherwise use static.
+        # Gate on the VALIDATED list and hand only those URLs to the generator:
+        # previously raw config URLs were forwarded, so a URL rejected above
+        # was still delivered to clients in the credential response.
+        if turn_secret and self._turn_urls:
             self._turn_generator = TURNCredentialGenerator(
                 secret=turn_secret,
-                turn_urls=turn_urls,
+                turn_urls=self._turn_urls,
                 ttl=turn_ttl,
             )
 

@@ -37,9 +37,15 @@ SDP_ATTRIBUTE_PATTERN = re.compile(r"^([^:]+)(?::(.*))?$")
 SDP_CANDIDATE_PATTERN = re.compile(
     r"^candidate:(\S+)\s+(\d+)\s+(udp|tcp)\s+(\d+)\s+(\S+)\s+(\d+)\s+typ\s+(host|srflx|prflx|relay)"
 )
-SDP_FINGERPRINT_PATTERN = re.compile(r"^(sha-256|sha-1)\s+([A-Fa-f0-9:]+)$")
-SDP_ICE_UFRAG_PATTERN = re.compile(r"^[a-zA-Z0-9+/]{4,256}$")
-SDP_ICE_PWD_PATTERN = re.compile(r"^[a-zA-Z0-9+/]{22,256}$")
+# RFC 4572 fingerprint algorithms. Modern aiortc emits sha-384/sha-512 at
+# media level in addition to sha-256; rejecting those would break real clients.
+SDP_FINGERPRINT_PATTERN = re.compile(
+    r"^(sha-1|sha-224|sha-256|sha-384|sha-512)\s+([A-Fa-f0-9:]+)$"
+)
+# ICE credentials are base64 or base64url tokens (aiortc and other WebRTC
+# stacks emit "-" and "_"); the alphabet stays closed and length-bounded.
+SDP_ICE_UFRAG_PATTERN = re.compile(r"^[a-zA-Z0-9+/_-]{4,256}$")
+SDP_ICE_PWD_PATTERN = re.compile(r"^[a-zA-Z0-9+/_-]{22,256}$")
 
 
 class SDPParser:
@@ -80,6 +86,17 @@ class SDPParser:
             line = line.strip()
             if not line:
                 continue
+
+            # SECURITY (SDP injection): lines are split only on "\n", so a bare
+            # CR (or NUL/other control byte) embedded in a value survives here
+            # and is echoed verbatim into the generated SDP answer. A consumer
+            # that treats bare CR as a line delimiter then sees attacker-chosen
+            # lines (e.g. a forged a=ice-pwd:/a=fingerprint:). SDP is CR/LF
+            # delimited, so no control byte may appear inside a line.
+            if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in line):
+                raise SDPParseError(
+                    "Control character in SDP line", line=line_num, detail=line[:50]
+                )
 
             match = SDP_LINE_PATTERN.match(line)
             if not match:
@@ -276,40 +293,59 @@ class SDPValidator:
                 reason="Origin username contains forbidden characters",
             )
 
+    @staticmethod
+    def _all_attributes(parsed_sdp: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Session and every media section's attribute map."""
+        sources: List[Dict[str, Any]] = [parsed_sdp.get("attributes", {})]
+        sources.extend(
+            media.get("attributes", {}) for media in parsed_sdp.get("media", [])
+        )
+        return sources
+
+    @staticmethod
+    def _attribute_values(attrs: Dict[str, Any], name: str) -> List[Any]:
+        """Every value of ``name``; the parser stores duplicates as a list."""
+        value = attrs.get(name)
+        if value is None:
+            return []
+        return value if isinstance(value, list) else [value]
+
     def _validate_ice_credentials(self, parsed_sdp: Dict[str, Any]) -> None:
-        """Validate ICE credentials."""
-        attrs = parsed_sdp.get("attributes", {})
+        """Validate ICE credentials, including duplicate values and m-lines.
 
-        ice_ufrag = attrs.get("ice-ufrag")
-        if ice_ufrag and isinstance(ice_ufrag, str):
-            if not SDP_ICE_UFRAG_PATTERN.match(ice_ufrag):
-                raise SDPValidationError(
-                    "Invalid ICE ufrag",
-                    field="ice-ufrag",
-                    reason="Must be 4-256 alphanumeric characters",
-                )
-
-        ice_pwd = attrs.get("ice-pwd")
-        if ice_pwd and isinstance(ice_pwd, str):
-            if not SDP_ICE_PWD_PATTERN.match(ice_pwd):
-                raise SDPValidationError(
-                    "Invalid ICE password",
-                    field="ice-pwd",
-                    reason="Must be 22-256 alphanumeric characters",
-                )
+        SECURITY (SDP validation bypass): the old check only inspected a
+        single STRING-valued session attribute. Repeating ``a=ice-ufrag:`` /
+        ``a=ice-pwd:`` made the parser store a list, so validation was skipped
+        entirely; media-level attributes were never checked at all. A client
+        could smuggle malformed credentials past the boundary. Validate every
+        occurrence in every section and fail closed on non-string values.
+        """
+        for attrs in self._all_attributes(parsed_sdp):
+            for value in self._attribute_values(attrs, "ice-ufrag"):
+                if not isinstance(value, str) or not SDP_ICE_UFRAG_PATTERN.match(value):
+                    raise SDPValidationError(
+                        "Invalid ICE ufrag",
+                        field="ice-ufrag",
+                        reason="Must be a 4-256 character base64/base64url token",
+                    )
+            for value in self._attribute_values(attrs, "ice-pwd"):
+                if not isinstance(value, str) or not SDP_ICE_PWD_PATTERN.match(value):
+                    raise SDPValidationError(
+                        "Invalid ICE password",
+                        field="ice-pwd",
+                        reason="Must be a 22-256 character base64/base64url token",
+                    )
 
     def _validate_fingerprint(self, parsed_sdp: Dict[str, Any]) -> None:
-        """Validate DTLS fingerprint."""
-        attrs = parsed_sdp.get("attributes", {})
-        fingerprint = attrs.get("fingerprint")
-
-        if fingerprint and isinstance(fingerprint, str):
-            if not SDP_FINGERPRINT_PATTERN.match(fingerprint):
-                raise SDPValidationError(
-                    "Invalid fingerprint format",
-                    field="fingerprint",
-                    reason="Must be sha-256 or sha-1 with hex digest",
-                )
+        """Validate every DTLS fingerprint (session and media, incl. duplicates)."""
+        for attrs in self._all_attributes(parsed_sdp):
+            for value in self._attribute_values(attrs, "fingerprint"):
+                if not isinstance(value, str) or not SDP_FINGERPRINT_PATTERN.match(value):
+                    raise SDPValidationError(
+                        "Invalid fingerprint format",
+                        field="fingerprint",
+                        reason="Must be a supported sha digest with hex value",
+                    )
 
     def _validate_media(self, parsed_sdp: Dict[str, Any], sdp_type: SDPType) -> None:
         """Validate media sections."""

@@ -55,6 +55,7 @@ def _validate_waveform(value) -> None:
     except HardeningViolation as exc:
         raise_bad_request(str(exc))
 
+
 # M3 FIX: the JSON variant previously trusted client-supplied attachment
 # metadata verbatim (url/filename/content_type/size), unlike the multipart
 # variant which validates server-side. Apply the same class of checks here.
@@ -165,9 +166,7 @@ class VoiceMessageRequest(BaseModel):
     channel_id: Optional[str] = Field(
         None, description="Optional originating channel ID"
     )
-    server_id: Optional[str] = Field(
-        None, description="Optional originating server ID"
-    )
+    server_id: Optional[str] = Field(None, description="Optional originating server ID")
     duration_ms: int = Field(
         ..., gt=0, le=MAX_DURATION_MS, description="Duration in milliseconds"
     )

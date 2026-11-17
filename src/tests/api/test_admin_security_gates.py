@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from unittest.mock import patch
 from starlette.requests import Request
 
+from src.api.schemas.common import SnowflakeIDParam
+
 
 def _build_request(path: str = "/audit/logs", method: str = "GET") -> Request:
     return Request(
@@ -247,7 +249,13 @@ class TestAccessTokenServerSideGeneration:
         from src.api.schemas.admin import AccessTokenCreateRequest
 
         request = _build_request("/security/access-tokens", method="POST")
-        body = AccessTokenCreateRequest(name="t", token="a" * 48)
+        body = AccessTokenCreateRequest(
+            name="t",
+            description="t",
+            token="a" * 48,
+            expires_at=None,
+            scope_mode="none",
+        )
         with (
             patch.object(security_routes, "check_host_restriction"),
             patch.object(security_routes, "require_admin_permission", return_value=1),
@@ -271,7 +279,7 @@ class TestAccessTokenServerSideGeneration:
             with pytest.raises(HTTPException) as exc:
                 __import__("asyncio").run(
                     security_routes.rotate_access_token(
-                        request=request, token_id=1, body=body
+                        request=request, token_id=SnowflakeIDParam(1), body=body
                     )
                 )
         assert exc.value.status_code == 400
@@ -300,6 +308,7 @@ class TestRoleInputValidation:
             name="wild-subscope",
             description="bad",
             permissions={"admin.*": True},
+            position=0,
         )
         with (
             patch.object(role_routes, "check_host_restriction"),
@@ -319,6 +328,7 @@ class TestRoleInputValidation:
             name="wild",
             description="bad",
             permissions={"*": True},
+            position=0,
         )
         with (
             patch.object(role_routes, "check_host_restriction"),
@@ -366,7 +376,9 @@ class TestAdminApprovalExpiry:
             patch("src.api.get_db", return_value=ExpiredDB()),
         ):
             with pytest.raises(HTTPException) as exc:
-                __import__("asyncio").run(approval_routes.approve_request(request, 1))
+                __import__("asyncio").run(
+                    approval_routes.approve_request(request, SnowflakeIDParam(1))
+                )
         assert exc.value.status_code == 400
 
 

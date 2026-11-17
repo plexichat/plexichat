@@ -6,6 +6,7 @@ that drops or loosens a bound fails loudly without booting the whole app.
 """
 
 import inspect
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -22,7 +23,7 @@ class TestChannelSnowflakeBounds:
         with pytest.raises(HTTPException) as exc:
             require_channel_snowflake(bad)
         assert exc.value.status_code == 400
-        assert exc.value.detail["error"]["code"] == 400
+        assert cast(dict[str, Any], exc.value.detail)["error"]["code"] == 400
 
     def test_helpers_accept_real_ids(self):
         assert require_channel_snowflake("123456789") == 123456789
@@ -311,7 +312,7 @@ class TestChannelUpdateBodyCap:
         route = next(
             r for r in channels_router.routes if "PATCH" in getattr(r, "methods", set())
         )
-        calls = [d.call for d in route.dependant.dependencies]
+        calls = [d.call for d in getattr(route, "dependant").dependencies]
         assert _cap_channel_update_body in calls
 
     def test_body_guard_uses_the_shared_capped_reader(self):

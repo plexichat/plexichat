@@ -43,7 +43,7 @@ def test_every_role_route_declares_the_permission_gate():
 def test_mutating_role_routes_are_all_covered():
     """Explicitly pin the mutating route set so a new write route is noticed."""
     mutating = {
-        route.endpoint.__name__
+        getattr(route, "endpoint").__name__
         for route in role_routes.router.routes
         if set(getattr(route, "methods", ())) & {"POST", "PUT", "PATCH", "DELETE"}
     }

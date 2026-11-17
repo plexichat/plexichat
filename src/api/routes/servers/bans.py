@@ -11,6 +11,7 @@ from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 
 import utils.logger as logger
 from src.core.events.gateway_emit import emit_guild_ban_add, emit_guild_ban_remove
+from .members import _invalidate_member_access_caches
 
 router = APIRouter()
 
@@ -148,6 +149,9 @@ async def ban_member(
             delete_message_days=delete_message_days,
         )
         emit_guild_ban_add(sid, uid, reason=reason)
+        # A ban removes the member; drop cached API responses so the banned
+        # user cannot keep reading the roster/channels from a stale 200.
+        _invalidate_member_access_caches()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise

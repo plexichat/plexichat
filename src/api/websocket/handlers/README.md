@@ -99,8 +99,19 @@ The dispatcher filters by intents and channel visibility:
 | `TYPING_START` | 10 per 10 s |
 | `REQUEST_GUILD_MEMBERS` | 2 per 10 s |
 | `HEARTBEAT` | 10 per 10 s |
+| `VOICE_CONNECT` | 5 per 10 s |
+| `VOICE_SDP_OFFER` | 10 per 10 s |
+| `VOICE_SDP_ANSWER` | 10 per 10 s |
+| `VOICE_ICE_CANDIDATE` | 50 per 10 s |
+| `ARTIFACT_SUBSCRIBE` | 20 per 10 s |
+| `ARTIFACT_OP` | 200 per 10 s |
+| `SUM_SUBSCRIBE` | 20 per 10 s |
+| `SUM_OP` | 100 per 10 s |
 
-Over-budget frames are dropped without closing the connection.
+The voice/fabric limits cap SFU room/peer/token allocation and ordered-log
+writes plus fan-out, which an identified socket could otherwise loop to
+exhaust the media plane and the database. Over-budget frames are dropped
+without closing the connection.
 
 ## Error handling
 

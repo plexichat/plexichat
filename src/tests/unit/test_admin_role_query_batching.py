@@ -9,9 +9,12 @@ that the batched decisions still match the canonical permission helpers.
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from fastapi import Request
 
+from src.api.schemas.common import SnowflakeID, SnowflakeIDParam
 import src.api as api
 from src.api.routes.admin import roles as role_routes
 from src.core.admin import permissions as perm_core
@@ -43,7 +46,12 @@ class _CountingDB:
 
 
 def _hierarchy_row(
-    current=100, target=50, exists=1, role_pos=10, system=0, tuple_row=False
+    current=100,
+    target=50,
+    exists=1,
+    role_pos: int | None = 10,
+    system=0,
+    tuple_row=False,
 ):
     permissions = "{}"
     if tuple_row:
@@ -59,7 +67,7 @@ def _hierarchy_row(
 
 
 def _request():
-    return SimpleNamespace(client=None)
+    return cast(Request, SimpleNamespace(client=None))
 
 
 def _patch_gate(monkeypatch, admin_id=1):
@@ -174,7 +182,9 @@ def test_assign_role_hierarchy_is_a_single_lookup(monkeypatch):
     _patch_gate(monkeypatch)
     monkeypatch.setattr(api, "get_db", lambda: db)
 
-    assignment = role_routes.RoleAssignment(admin_id=2, role_id=3)
+    assignment = role_routes.RoleAssignment(
+        admin_id=SnowflakeID(2), role_id=SnowflakeID(3)
+    )
     asyncio.run(role_routes.assign_role(_request(), assignment))
 
     hierarchy_queries = [c for c in db.fetch_calls if "AS current_pos" in c[0]]
@@ -198,7 +208,11 @@ def test_revoke_role_hierarchy_is_a_single_lookup(monkeypatch):
     _patch_gate(monkeypatch)
     monkeypatch.setattr(api, "get_db", lambda: db)
 
-    asyncio.run(role_routes.revoke_role(_request(), 2, 3))
+    asyncio.run(
+        role_routes.revoke_role(
+            _request(), SnowflakeIDParam(2), SnowflakeIDParam(3)
+        )
+    )
 
     hierarchy_queries = [c for c in db.fetch_calls if "AS current_pos" in c[0]]
     assert len(hierarchy_queries) == 1

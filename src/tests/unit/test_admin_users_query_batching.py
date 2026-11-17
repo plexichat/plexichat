@@ -10,8 +10,10 @@ count and verify the hierarchy decision is unchanged.
 import asyncio
 import sqlite3
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from fastapi import Request
 
 import src.api as api
 from src.api.routes.admin.users import admin_users as au
@@ -43,7 +45,7 @@ class _Router(au.AdminUsersMixin, AdminUsersRouterBase):
 
 
 def _request():
-    return SimpleNamespace(client=None)
+    return cast(Request, SimpleNamespace(client=None))
 
 
 def _patch(monkeypatch, admin_id=1):

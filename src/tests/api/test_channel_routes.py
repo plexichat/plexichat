@@ -117,6 +117,9 @@ def test_ratchet_intervals_endpoint_resolves_a_rotated_interval(monkeypatch):
     """
     import asyncio
     from types import SimpleNamespace
+    from typing import cast
+
+    from src.core.auth.models import TokenInfo
 
     from src.api.routes.channels import ratchet as ratchet_module
 
@@ -154,7 +157,7 @@ def test_ratchet_intervals_endpoint_resolves_a_rotated_interval(monkeypatch):
             offset=0,
             sort=None,
             order=None,
-            current_user=SimpleNamespace(user_id=7),
+            current_user=cast(TokenInfo, SimpleNamespace(user_id=7)),
         )
     )
 

@@ -58,6 +58,7 @@ VERIFY_QUERIES = {
 def _load_migration():
     path = Path(pkg.__file__).parent / "007_hot_lookup_composite_indexes.py"
     spec = importlib.util.spec_from_file_location("migration_007", path)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

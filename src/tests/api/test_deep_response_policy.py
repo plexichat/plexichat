@@ -64,7 +64,7 @@ async def _run(
 
     messages: List[Dict[str, Any]] = []
 
-    async def send(message: Dict[str, Any]) -> None:
+    async def send(message: Any) -> None:
         messages.append(message)
 
     await SecurityHeadersMiddleware(downstream)(_scope(path), receive, send)

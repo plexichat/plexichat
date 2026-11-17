@@ -9,6 +9,8 @@ Covers:
   default instead of disabling limiting.
 """
 
+from typing import Any, cast
+
 import pytest
 
 from src.api.middleware.authentication import (
@@ -114,7 +116,7 @@ class TestWebhookRateLimitFailSafe:
         assert resolved is None
         # Mirrors the fixed resolution logic:
         try:
-            resolved_limit = int(resolved)
+            resolved_limit = int(cast(Any, resolved))
         except (TypeError, ValueError):
             resolved_limit = DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
         assert resolved_limit == DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
@@ -123,7 +125,7 @@ class TestWebhookRateLimitFailSafe:
         mixin = self._make_mixin("not-a-number")
         resolved = mixin._config.get("rate_limit_per_minute")
         try:
-            resolved_limit = int(resolved)
+            resolved_limit = int(cast(Any, resolved))
         except (TypeError, ValueError):
             resolved_limit = DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
         assert resolved_limit == DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
@@ -133,8 +135,8 @@ class TestWebhookRateLimitFailSafe:
         the execute path). The fail-safe default is only for absent/garbage
         config, never an override of an explicit choice."""
         mixin = self._make_mixin(0)
-        assert int(mixin._config.get("rate_limit_per_minute")) == 0
+        assert int(cast(Any, mixin._config.get("rate_limit_per_minute"))) == 0
 
     def test_valid_config_honored(self):
         mixin = self._make_mixin(5)
-        assert int(mixin._config.get("rate_limit_per_minute")) == 5
+        assert int(cast(Any, mixin._config.get("rate_limit_per_minute"))) == 5

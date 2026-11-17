@@ -239,10 +239,31 @@ class OnboardingManager:
             max_options = self._config.get("max_step_options", 25)
             if len(role_ids) > max_options:
                 raise OnboardingError(f"Maximum {max_options} role options allowed")
+
+            # A SELECT_ROLES step is a bulk grant: every member who completes it
+            # may assign itself every role on this whitelist without ever going
+            # through members.manage_roles. Whoever defines the whitelist must
+            # therefore be able to manage each offered role. Without this a
+            # low-ranked moderator holding onboarding.manage could whitelist a
+            # role above their own rank and self-assign it through onboarding,
+            # bypassing the role hierarchy entirely.
+            from ..permission_utils import can_manage_role
+
+            server = self._server_manager.get_server(server_id, user_id)
+            is_owner = server is not None and server.owner_id == user_id
+            user_roles = self._server_manager._get_member_role_rows(
+                server_id, user_id
+            )
             for role_id in role_ids:
                 role = self._server_manager.get_role(role_id, user_id)
                 if not role or role.server_id != server_id:
                     raise RoleNotFoundError(f"Role {role_id} not found")
+                if not can_manage_role(
+                    user_roles, {"position": role.position}, is_owner
+                ):
+                    raise OnboardingError(
+                        f"Cannot offer role {role_id} at or above your own rank"
+                    )
 
         elif step_type == OnboardingStepType.VISIT_CHANNEL:
             channel_id = options.get("channel_id")

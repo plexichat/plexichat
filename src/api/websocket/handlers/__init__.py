@@ -40,12 +40,31 @@ if TYPE_CHECKING:
 # frames produces unbounded DB write amplification and event construction.
 # REQUEST_GUILD_MEMBERS fans out one threadpool DB lookup PER MEMBER and
 # HEARTBEAT updates liveness bookkeeping, so both are throttled too.
+#
+# The voice/fabric opcodes below are equally expensive and were previously
+# unthrottled: VOICE_CONNECT / SDP / ICE allocate SFU rooms, peers and signed
+# media tokens, and ARTIFACT_OP / SUM_OP append to an ordered ops log before
+# fan-out (ARTIFACT_SUBSCRIBE additionally rebuilds a 500-op replay per frame).
+# A single identified socket could otherwise loop them to exhaust the media
+# plane and the database. The ceilings are per-connection sliding windows;
+# legitimate clients stay far below them (a tab joins voice a few times per
+# minute, trickle ICE bursts are bounded and OT flushes are well under 20/s).
 # (max events, window seconds)
 INBOUND_RATE_LIMITS: Dict[int, Tuple[int, float]] = {
     int(GatewayOpcode.PRESENCE_UPDATE): (5, 10.0),
     int(GatewayOpcode.TYPING_START): (10, 10.0),
     int(GatewayOpcode.REQUEST_GUILD_MEMBERS): (2, 10.0),
     int(GatewayOpcode.HEARTBEAT): (10, 10.0),
+    # Media-plane resource allocation.
+    int(GatewayOpcode.VOICE_CONNECT): (5, 10.0),
+    int(GatewayOpcode.VOICE_SDP_OFFER): (10, 10.0),
+    int(GatewayOpcode.VOICE_SDP_ANSWER): (10, 10.0),
+    int(GatewayOpcode.VOICE_ICE_CANDIDATE): (50, 10.0),
+    # Ordered-log writes + fan-out / replay snapshot builds.
+    int(GatewayOpcode.ARTIFACT_SUBSCRIBE): (20, 10.0),
+    int(GatewayOpcode.ARTIFACT_OP): (200, 10.0),
+    int(GatewayOpcode.SUM_SUBSCRIBE): (20, 10.0),
+    int(GatewayOpcode.SUM_OP): (100, 10.0),
 }
 
 # Client-sendable extension opcodes that have no server-side consumer yet,
@@ -239,7 +258,17 @@ class OpcodeHandler:
         max_events, window = limit
         now = time.monotonic()
 
-        buckets = connection._inbound_rate_buckets
+        # Defensive: the real Connection always defines the bucket map, but a
+        # test double or an alternate transport may not. Never let a missing
+        # attribute turn a throttle check into an unhandled exception (which
+        # would bypass the gate entirely at the caller).
+        buckets = getattr(connection, "_inbound_rate_buckets", None)
+        if buckets is None:
+            buckets = {}
+            try:
+                connection._inbound_rate_buckets = buckets
+            except Exception:  # pragma: no cover - read-only stub
+                pass
 
         timestamps = buckets.setdefault(int(opcode), [])
         while timestamps and now - timestamps[0] > window:

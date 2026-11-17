@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from .base import SearchManagerBase
+from .message_search import validate_search_query
 from ..exceptions import SearchLimitError
 from ..models import IndexedServer, ServerSearchResult, ServerSearchResultPage
 
@@ -21,6 +22,13 @@ class ServerSearchMixin(SearchManagerBase):
                 max_allowed=max_limit,
                 requested=limit,
             )
+
+        # Bound the query before it reaches the indexer. Server search was
+        # the one search entry point still missing this guard, so an internal
+        # caller (or a route without a max_length constraint) could hand an
+        # unbounded / empty string straight to websearch_to_tsquery / LIKE —
+        # a CPU-exhaustion vector and an inconsistent error contract.
+        validate_search_query(query)
 
         self._check_rate_limit(user_id)
 
@@ -53,6 +61,10 @@ class ServerSearchMixin(SearchManagerBase):
                 max_allowed=max_limit,
                 requested=limit,
             )
+
+        # Mirror the non-paged path: never pass an unchecked query to the
+        # backend (F6/F16 hardening applies to every search endpoint).
+        validate_search_query(query)
 
         self._check_rate_limit(user_id)
 

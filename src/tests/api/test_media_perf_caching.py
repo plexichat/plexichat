@@ -25,12 +25,18 @@ from src.utils import encryption
 ATTACHMENTS_URL = "/api/v1/media/attachments"
 
 
+def _invalidate_config_cache(instance: object) -> None:
+    # The shipped utils/config.pyi stub omits this private ConfigLoader method.
+    getattr(instance, "_invalidate_cache")()
+
+
 # === Proxy request policy ===
 
 
 def test_proxy_policy_is_cached_and_tracks_config_edits():
     """The rate-limit ints are parsed once per version, not on every request."""
     instance = config._config_instance
+    assert instance is not None
     original_media = instance.config.get("media")
     media_routes._proxy_policy_snapshot.invalidate()
     try:
@@ -46,7 +52,7 @@ def test_proxy_policy_is_cached_and_tracks_config_edits():
             "window_seconds": "9",
         }
         instance.config["media"] = media_cfg
-        instance._invalidate_cache()
+        _invalidate_config_cache(instance)
         assert media_routes._proxy_rate_limit_params() == (7, 9)
         assert media_routes._proxy_policy_snapshot.stats()["rebuilds"] == 2
     finally:
@@ -54,7 +60,7 @@ def test_proxy_policy_is_cached_and_tracks_config_edits():
             instance.config.pop("media", None)
         else:
             instance.config["media"] = original_media
-        instance._invalidate_cache()
+        _invalidate_config_cache(instance)
         media_routes._proxy_policy_snapshot.invalidate()
 
 
@@ -183,6 +189,7 @@ def test_default_chunk_size_skips_validation_but_explicit_sizes_are_still_checke
 @pytest.fixture
 def attachment_media_dir(tmp_path):
     instance = config._config_instance
+    assert instance is not None
     original_media = instance.config.get("media")
     media_cfg = dict(original_media or {})
     media_cfg.update(
@@ -198,7 +205,7 @@ def attachment_media_dir(tmp_path):
         }
     )
     instance.config["media"] = media_cfg
-    instance._invalidate_cache()
+    _invalidate_config_cache(instance)
     try:
         yield tmp_path / "uploads"
     finally:
@@ -206,7 +213,7 @@ def attachment_media_dir(tmp_path):
             instance.config.pop("media", None)
         else:
             instance.config["media"] = original_media
-        instance._invalidate_cache()
+        _invalidate_config_cache(instance)
 
 
 def test_attachment_headers_and_range_are_preserved(

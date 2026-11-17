@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Any
 
 import utils.logger as logger
 from ..models import ThreadMember, ThreadType
@@ -21,6 +21,43 @@ class ThreadMembershipMixin(ThreadProtocol):
             (thread_id, user_id),
         )
         return row is not None
+
+    def get_all_member_user_ids(self, thread_id: int) -> List[int]:
+        """Internal-only: every user id that is a member of ``thread_id``.
+
+        This helper deliberately has NO caller permission gate. It exists so
+        trusted internal callers (gateway event routing) can scope a
+        private-thread dispatch to the thread's exact audience instead of
+        falling back to "all members of the server". It returns ids only —
+        never the thread itself or its content. Do not expose through the API.
+        """
+        rows = self._db.fetch_all(
+            "SELECT user_id FROM thread_members WHERE thread_id = ?",
+            (thread_id,),
+        )
+        return [int(row["user_id"]) for row in rows or []]
+
+    def get_thread_type_value(self, thread_id: int) -> Optional[Any]:
+        """Internal-only: the ``thread_type`` value of a thread row.
+
+        Unlike ``_get_thread_internal`` this does NOT filter on ``deleted = 0``:
+        delete events are emitted after the tombstone is written, so routing
+        still needs to know whether the (now deleted) thread was private.
+        Returns ``None`` for an unknown id. Do not expose through the API.
+        """
+        row = self._db.fetch_one(
+            "SELECT thread_type FROM thread_threads WHERE id = ?",
+            (thread_id,),
+        )
+        if not row:
+            return None
+        raw = row["thread_type"]
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            # ThreadType is a str-valued enum in this codebase; the caller
+            # normalizes both int and string forms.
+            return raw
 
     def _update_member_count(self, thread_id: int) -> None:
         row = self._db.fetch_one(

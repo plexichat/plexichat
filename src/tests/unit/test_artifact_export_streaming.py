@@ -2,11 +2,13 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
+from src.core.auth.models import TokenInfo
 import src.api.routes.artifacts.routes.exports as exports
 
 _PAYLOAD = "x" * (200 * 1024)  # > 3 chunks at 64 KiB
@@ -52,7 +54,7 @@ def test_export_yields_bounded_chunks(monkeypatch):
         exports._export_artifact_impl(
             "123",
             export_format="txt",
-            current_user=SimpleNamespace(user_id=1),
+            current_user=cast(TokenInfo, SimpleNamespace(user_id=1)),
         )
     )
 
@@ -76,7 +78,7 @@ def test_export_still_authorizes_before_streaming(monkeypatch):
             exports._export_artifact_impl(
                 "123",
                 export_format="txt",
-                current_user=SimpleNamespace(user_id=1),
+                current_user=cast(TokenInfo, SimpleNamespace(user_id=1)),
             )
         )
     assert exc.value.status_code == 403

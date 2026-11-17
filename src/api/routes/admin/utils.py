@@ -5,6 +5,7 @@ Shared utilities for Admin API routes.
 from fastapi import HTTPException, Request
 from typing import Optional
 from pathlib import Path
+import hashlib
 import html
 import re
 import time
@@ -186,23 +187,61 @@ def check_host_restriction(request: Request, require_admin_ui: bool = True) -> N
 # gates (an action scope plus ``maintenance``) on the same request. The token
 # and its validation cannot change between those calls, so remember the
 # verified admin id on the request and skip the duplicate session lookup.
+#
+# ``request.state`` is a shared ASGI state bag that every middleware and
+# dependency can write to. A bare cached integer there is a privilege boundary
+# by itself: anything that plants ``_pcs_verified_admin_id`` would be trusted
+# as an authenticated admin without ever presenting a valid token. The value
+# is therefore bound to a fingerprint of the credential that produced it, and
+# is only honoured when the current request presents that same credential.
 _ADMIN_ID_CACHE_ATTR = "_pcs_verified_admin_id"
 
 
-def _remember_admin_id(request: Request, admin_id: int) -> None:
+def _credential_binding(request: Request):
+    """Fingerprint the credential that authorises a cached admin id."""
+    if is_authenticated_self_test(request):
+        return ("selftest",)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return (
+            "bearer",
+            hashlib.sha256(auth_header[7:].encode("utf-8")).hexdigest(),
+        )
+    return ("none",)
+
+
+def _remember_admin_id(request: Request, admin_id: int, binding) -> None:
     state = getattr(request, "state", None)
     if state is None:
         return
     try:
-        setattr(state, _ADMIN_ID_CACHE_ATTR, admin_id)
-    except Exception:
+        setattr(state, _ADMIN_ID_CACHE_ATTR, (binding, int(admin_id)))
+    except (TypeError, ValueError, AttributeError):
         pass  # A non-state request double simply pays the lookup again.
+
+
+def _cached_admin_id(request: Request, binding) -> Optional[int]:
+    """Return a memoised admin id only when the credential still matches."""
+    state = getattr(request, "state", None)
+    cached = getattr(state, _ADMIN_ID_CACHE_ATTR, None) if state is not None else None
+    if not isinstance(cached, tuple) or len(cached) != 2:
+        return None
+    cached_binding, cached_id = cached
+    if cached_binding != binding:
+        return None
+    # A self-test binding is only meaningful on the fully authenticated
+    # self-test path; never let one authorise an ordinary request.
+    if binding == ("selftest",) and not is_authenticated_self_test(request):
+        return None
+    if not isinstance(cached_id, int) or isinstance(cached_id, bool) or cached_id <= 0:
+        return None
+    return cached_id
 
 
 def get_admin_from_token(request: Request) -> int:
     """Get admin ID from Authorization header (validated once per request)."""
-    state = getattr(request, "state", None)
-    cached = getattr(state, _ADMIN_ID_CACHE_ATTR, None) if state is not None else None
+    binding = _credential_binding(request)
+    cached = _cached_admin_id(request, binding)
     if cached is not None:
         return cached
 
@@ -229,7 +268,7 @@ def get_admin_from_token(request: Request) -> int:
             # resolvable numeric identity.
             try:
                 admin_id = int(user.user_id)
-                _remember_admin_id(request, admin_id)
+                _remember_admin_id(request, admin_id, binding)
                 return admin_id
             except (TypeError, ValueError):
                 pass  # fall through to real token validation
@@ -247,7 +286,7 @@ def get_admin_from_token(request: Request) -> int:
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid or expired token"}},
         )
-    _remember_admin_id(request, admin_id)
+    _remember_admin_id(request, admin_id, binding)
     return admin_id
 
 

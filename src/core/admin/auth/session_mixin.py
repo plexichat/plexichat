@@ -10,7 +10,7 @@ from typing import Any
 
 
 from .helpers import _hash_admin_token
-from ..request_roles import remember_session_roles
+from ..request_roles import clear_session_roles, remember_session_roles
 
 
 def _row_value(row, key: str, index: int, default=None):
@@ -53,6 +53,15 @@ class SessionMixin:
         need a second ``admin_roles`` round trip. The LEFT JOIN always yields
         one row per matching session (NULL permissions for an admin with no
         roles), so the admin id and the exact expiry/hash guard are unchanged.
+
+        A session also stops being valid the moment its account is locked.
+        Locking an admin writes ``auth_users.account_locked = 1`` and revokes
+        ``auth_sessions``, but it never deletes the rows in ``admin_sessions``
+        that this method authenticates against. Without the guard below, a
+        locked/disabled administrator could keep using a previously issued
+        admin bearer token with full privileges. The ``auth_users`` row may
+        legitimately be absent (bootstrap/test installs), so only an explicit
+        lock flag invalidates the session.
         """
         now = int(time.time())
         token_hash = _hash_admin_token(token)
@@ -63,6 +72,10 @@ class SessionMixin:
             LEFT JOIN admin_role_assignments a ON a.admin_id = s.admin_id
             LEFT JOIN admin_roles r ON r.id = a.role_id
             WHERE s.token = ? AND s.expires_at > ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM auth_users u
+                  WHERE u.id = s.admin_id AND COALESCE(u.account_locked, 0) = 1
+              )
             """,
             (token_hash, now),
         )
@@ -71,6 +84,10 @@ class SessionMixin:
             # no longer accepted. They cannot be safely distinguished from a
             # leaked token at validation time; administrators must sign in
             # again so a deterministic fingerprint is stored instead.
+            # A locked account takes the same path. Drop any roles a prior
+            # validation in this context may have cached so they cannot be
+            # reused by a later permission check.
+            clear_session_roles()
             return None
 
         admin_id = _row_value(rows[0], "admin_id", 0)

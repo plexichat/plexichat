@@ -7,6 +7,7 @@ from src.api.schemas.common import ErrorResponse, SuccessResponse
 from src.core.database import invalidate_user_servers
 
 import utils.logger as logger
+from .members import _invalidate_member_access_caches
 
 router = APIRouter()
 
@@ -44,6 +45,9 @@ async def leave_server(
 
         servers_mod.leave_server(current_user.user_id, sid)
         invalidate_user_servers(current_user.user_id)
+        # Leaving revokes membership just like a kick; clear the per-viewer
+        # response caches so the former member cannot keep reading them.
+        _invalidate_member_access_caches()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise

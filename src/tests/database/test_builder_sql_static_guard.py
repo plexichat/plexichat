@@ -11,6 +11,7 @@ interpolated; everything else must be a DB-API placeholder.
 import ast
 import textwrap
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -122,7 +123,7 @@ def _static_text(node, constants):
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _static_text(node.left, constants) + _static_text(node.right, constants)
     if isinstance(node, ast.Call) and _call_name(node) == "format":
-        return _static_text(node.func.value, constants)
+        return _static_text(cast(ast.Attribute, node.func).value, constants)
     return ""
 
 

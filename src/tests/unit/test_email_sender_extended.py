@@ -1,6 +1,7 @@
 """Targeted tests for ``src.utils.mailer.SMTPEmailSender``."""
 
 import smtplib
+from typing import Any
 
 import pytest
 
@@ -44,7 +45,7 @@ def fake_smtp(monkeypatch):
 
 
 def _sender(**kw):
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         host="smtp.example.com",
         port=587,
         user="user",

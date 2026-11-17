@@ -254,6 +254,21 @@ class DiscoveryManager:
         Returns:
             List of ServerListing objects
         """
+        # Core-boundary page clamp: SQLite treats LIMIT -1 as *unlimited*, so
+        # a negative limit would dump every listing in the directory in one
+        # request. The HTTP route validates these, but the manager is also
+        # called directly (tests, internal callers) and must stay safe.
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError, OverflowError):
+            limit = 25
+        try:
+            offset = int(offset)
+        except (TypeError, ValueError, OverflowError):
+            offset = 0
+        limit = max(0, min(limit, 1000))
+        offset = max(0, min(offset, 1_000_000))
+
         sort_column = {
             "member_count": "member_count DESC",
             "bumped_at": "bumped_at DESC",

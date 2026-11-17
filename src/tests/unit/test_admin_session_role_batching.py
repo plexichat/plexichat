@@ -18,6 +18,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from src.api.schemas.common import SnowflakeIDParam
 import src.api as api
 from src.api.routes.admin import approvals as approvals_routes
 from src.api.routes.admin import audit as audit_routes
@@ -306,12 +307,12 @@ def test_target_read_paths_issue_auth_plus_one_query(monkeypatch):
         (
             "get_admin_roles",
             make_db("FROM admin_role_assignments ra", []),
-            lambda: asyncio.run(roles_routes.get_admin_roles(_request(), 42)),
+            lambda: asyncio.run(roles_routes.get_admin_roles(_request(), SnowflakeIDParam(42))),
         ),
         (
             "get_approval",
             make_db("FROM admin_approvals", [approval_row]),
-            lambda: asyncio.run(approvals_routes.get_approval(_request(), 7)),
+            lambda: asyncio.run(approvals_routes.get_approval(_request(), SnowflakeIDParam(7))),
         ),
         (
             "export_audit_logs",
@@ -391,6 +392,9 @@ def _mixin():
     class _Router(admin_users_routes.AdminUsersMixin):
         def _get_db(self):
             return api.get_db()
+
+        def _get_auth(self):
+            return object()
 
         def _parse_user_id(self, user_id):
             return int(user_id)

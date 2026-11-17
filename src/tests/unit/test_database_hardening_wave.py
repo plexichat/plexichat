@@ -118,6 +118,7 @@ class TestReportQueueIndexes:
 
         path = Path(pkg.__file__).parent / "006_report_queue_indexes.py"
         spec = importlib.util.spec_from_file_location("migration_006", path)
+        assert spec is not None and spec.loader is not None
         migration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
 

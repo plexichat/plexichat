@@ -13,6 +13,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from src.api.schemas.common import SnowflakeID
 from src.core.admin.permissions import can_grant_existing_role
 
 
@@ -85,7 +86,7 @@ class TestAssignRoleObjectGate:
             "role_is_system": False,
             "role_permissions": json.dumps({"config.security": True}),
         }
-        body = RoleAssignment(admin_id="2", role_id="7")
+        body = RoleAssignment(admin_id=SnowflakeID("2"), role_id=SnowflakeID("7"))
         with (
             patch.object(role_routes, "check_host_restriction"),
             patch.object(role_routes, "require_admin_permission", return_value=1),

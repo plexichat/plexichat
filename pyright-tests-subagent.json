@@ -1,0 +1,22 @@
+{
+  "include": [
+    "src/tests/api",
+    "src/tests/unit",
+    "src/tests/database"
+  ],
+  "extraPaths": [
+    "src",
+    "src/utils/common_utils",
+    "src/utils"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "standard",
+  "useLibraryCodeForTypes": true,
+  "reportMissingImports": "error",
+  "reportOptionalMemberAccess": "error",
+  "reportOptionalSubscript": "error",
+  "reportArgumentType": "error",
+  "reportReturnType": "error"
+}

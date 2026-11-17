@@ -11,10 +11,29 @@ from .protocol import NotificationProtocol
 
 
 class FeedMixin(NotificationProtocol):
-    def get_notification(self, notification_id: SnowflakeID) -> Optional[Notification]:
-        row = self._db.fetch_one(
-            "SELECT * FROM notif_notifications WHERE id = ?", (notification_id,)
-        )
+    def get_notification(
+        self,
+        notification_id: SnowflakeID,
+        user_id: Optional[SnowflakeID] = None,
+    ) -> Optional[Notification]:
+        """Fetch a notification by id, optionally scoped to its owner.
+
+        ``user_id`` is ``None`` only for trusted internal callers that just
+        inserted a row and need to read it back. Every caller handling a
+        user-supplied notification id MUST pass ``user_id``: an unscoped
+        lookup is an IDOR primitive even when the mutation that follows is
+        guarded, because it hands another user's notification (including its
+        decrypted content preview) to the caller.
+        """
+        if user_id is None:
+            row = self._db.fetch_one(
+                "SELECT * FROM notif_notifications WHERE id = ?", (notification_id,)
+            )
+        else:
+            row = self._db.fetch_one(
+                "SELECT * FROM notif_notifications WHERE id = ? AND user_id = ?",
+                (notification_id, user_id),
+            )
         if not row:
             return None
         return row_to_notification(row)
@@ -110,19 +129,23 @@ class FeedMixin(NotificationProtocol):
     def mark_notification_read(
         self, user_id: SnowflakeID, notification_id: SnowflakeID
     ) -> bool:
-        notif = self.get_notification(notification_id)
+        notif = self.get_notification(notification_id, user_id)
         if not notif:
-            raise NotificationNotFoundError("Notification not found")
-        if notif.user_id != user_id:
             raise NotificationNotFoundError("Notification not found")
 
         # Idempotency (M5): the conditional UPDATE transitions the row only
         # when it is still unread, so a repeated mark-read is a no-op — it
         # must not double-decrement the mention/unread counters or emit a
         # second NOTIFICATION_UPDATE event for the same transition.
+        # Ownership is enforced in the WRITE as well as the read above: the
+        # fetch-then-check is a TOCTOU window, and a scoped UPDATE guarantees
+        # no other user's row can ever be flipped even under a concurrent
+        # reassignment. ``user_id`` is part of the predicate, not a post-hoc
+        # comparison.
         cursor = self._db.execute(
-            "UPDATE notif_notifications SET read = 1 WHERE id = ? AND read = 0",
-            (notification_id,),
+            "UPDATE notif_notifications SET read = 1 "
+            "WHERE id = ? AND user_id = ? AND read = 0",
+            (notification_id, user_id),
         )
         if getattr(cursor, "rowcount", 0) == 0:
             # Already read (or concurrently marked): nothing transitioned.
@@ -264,19 +287,25 @@ class FeedMixin(NotificationProtocol):
     def delete_notification(
         self, user_id: SnowflakeID, notification_id: SnowflakeID
     ) -> bool:
-        notif = self.get_notification(notification_id)
+        notif = self.get_notification(notification_id, user_id)
         if not notif:
             raise NotificationNotFoundError("Notification not found")
-        if notif.user_id != user_id:
+
+        # Owner-scoped delete: the write itself carries the ownership
+        # predicate so a race between the scoped read above and this DELETE
+        # cannot turn a cross-user lookup into a cross-user deletion. Side
+        # effects run only after the delete is confirmed to have touched the
+        # caller's own row.
+        cursor = self._db.execute(
+            "DELETE FROM notif_notifications WHERE id = ? AND user_id = ?",
+            (notification_id, user_id),
+        )
+        if getattr(cursor, "rowcount", 0) == 0:
             raise NotificationNotFoundError("Notification not found")
 
         if not notif.read:
             self._decrement_mention_count(user_id, notif.conversation_id)
             self._decrement_unread_count(user_id, notif.conversation_id)
-
-        self._db.execute(
-            "DELETE FROM notif_notifications WHERE id = ?", (notification_id,)
-        )
 
         self._dispatch_notification_event(
             user_id,

@@ -6,8 +6,11 @@ remaining interpolations — object names and bounded numeric clauses — cannot
 be bound and are documented in ``sql_safety.py`` / the builder README.
 """
 
+from typing import cast
+
 import pytest
 
+from src.core.database.core import Database
 from src.core.database.builder import QueryBuilder
 from src.core.migrations.cloner import DataCloner
 
@@ -50,7 +53,7 @@ class _FakeDB:
 def test_cloner_binds_serial_sequence_table_name():
     source = _FakeDB("sqlite", "/tmp/src.db", rows=[{"id": 1, "content": "x"}])
     target = _FakeDB("postgres", "dbname=target")
-    DataCloner(source, target).clone_table("users")
+    DataCloner(cast(Database, source), cast(Database, target)).clone_table("users")
 
     setval = [(q, p) for q, p in target.executed if "pg_get_serial_sequence" in q]
     assert len(setval) == 1

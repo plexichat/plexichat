@@ -1,6 +1,7 @@
 """Bounds and enum checks on the launcher capability surface."""
 
 import inspect
+from typing import cast
 
 from src.api.routes.capabilities import (
     CapabilityStateFilter,
@@ -57,7 +58,7 @@ class TestBoundCapabilities:
             == {}
         )
         assert bound_capabilities(payload, feature="bad\nname") == {}
-        assert bound_capabilities(payload, state="not_a_state") == {}
+        assert bound_capabilities(payload, state=cast(CapabilityStateFilter, "not_a_state")) == {}
 
     def test_drops_payloads_with_unknown_state(self):
         assert bound_capabilities({"editor": _info("surprise")}) == {}

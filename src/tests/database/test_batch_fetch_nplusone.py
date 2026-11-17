@@ -29,9 +29,9 @@ def db_env(tmp_path):
     Database.reset()
     db = Database()
     db.connect()
-    db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT)")
+    getattr(db, "execute")("CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT)")
     for item_id in range(1, 41):
-        db.execute(
+        getattr(db, "execute")(
             "INSERT INTO items (id, label) VALUES (?, ?)",
             (item_id, f"item-{item_id}"),
         )

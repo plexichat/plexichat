@@ -8,6 +8,8 @@ F6: Redeeming an exhausted invite (uses >= max_uses) must return
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -123,7 +125,7 @@ async def test_f6_exhausted_invite_join_returns_410_generic():
             await mixin._join_server_via_invite("EXHAUST1", _user())
 
     assert ei.value.status_code == 410
-    body = ei.value.detail
+    body = cast(dict[str, Any], ei.value.detail)
     assert body["error"]["code"] == 410
     assert body["error"]["message"] == "Invite is no longer usable"
     # No internal counters or raw exception text leaked.
@@ -138,7 +140,7 @@ async def test_f6_sibling_invite_errors_map_honestly():
     with pytest.raises(HTTPException) as ei:
         map_invite_join_error(srv.InviteNotFoundError("Invite not found"))
     assert ei.value.status_code == 404
-    assert ei.value.detail["error"]["message"] == "Invite not found or expired"
+    assert cast(dict[str, Any], ei.value.detail)["error"]["message"] == "Invite not found or expired"
 
     with pytest.raises(HTTPException) as ei:
         map_invite_join_error(

@@ -6,7 +6,8 @@ from src.api.schemas.servers import ServerResponse
 from src.api.schemas.common import ErrorResponse
 
 import utils.logger as logger
-from .helpers import _server_to_response
+from src.api.request_guards import read_upload_capped
+from .helpers import _server_to_response, _get_icon_size_limit
 
 router = APIRouter()
 
@@ -20,6 +21,7 @@ router = APIRouter()
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Access denied"},
         404: {"model": ErrorResponse, "description": "Server not found"},
+        413: {"model": ErrorResponse, "description": "Icon exceeds the size limit"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -69,7 +71,12 @@ async def upload_server_icon(
                 },
             )
 
-        content = await file.read()
+        # Cap the read at the configured icon limit *before* materialising the
+        # part. ``UploadFile.read()`` with no argument allocates the whole body
+        # in memory, so a large upload could exhaust worker memory long before
+        # the avatars module's post-read size check ever ran. The sibling
+        # /avatars/servers/{id} route uses the same guard.
+        content = await read_upload_capped(file, _get_icon_size_limit())
         result = avatars.upload_server_icon(
             server_id=sid,
             image_data=content,

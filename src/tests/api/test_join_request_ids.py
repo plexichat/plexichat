@@ -7,8 +7,12 @@ DB integer instead, so the client's ``Map`` keyed by ``Join_id`` saw both
 lookups/break calls missed.
 """
 
-import pytest
+from typing import cast
 
+import pytest
+from fastapi import Request
+
+from src.core.auth.models import TokenInfo
 import src.api.routes.join as join_module
 
 
@@ -62,9 +66,9 @@ async def test_request_join_create_serves_string_ids(monkeypatch):
     """The create path must stringify Join/connection ids."""
     manager = _FakeManager(_FakeDB(), connection={"id": 1234567890123456789})
     _patch(monkeypatch, manager)
-    request = _FakeRequest({"remote_url": "https://remote.example"})
+    request = cast(Request, _FakeRequest({"remote_url": "https://remote.example"}))
 
-    result = await join_module.request_join(request, current_user=object())
+    result = await join_module.request_join(request, current_user=cast(TokenInfo, object()))
 
     assert result["success"] is True
     assert result["Join_id"] == "1234567890123456789"
@@ -77,9 +81,9 @@ async def test_request_join_existing_serves_string_ids(monkeypatch):
     """The dedupe path must stringify Join/connection ids too."""
     manager = _FakeManager(_FakeDB(existing={"id": 42}))
     _patch(monkeypatch, manager)
-    request = _FakeRequest({"remote_url": "https://remote.example"})
+    request = cast(Request, _FakeRequest({"remote_url": "https://remote.example"}))
 
-    result = await join_module.request_join(request, current_user=object())
+    result = await join_module.request_join(request, current_user=cast(TokenInfo, object()))
 
     assert result["success"] is True
     assert result["existing"] is True
