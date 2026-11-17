@@ -25,9 +25,10 @@ class DocsTester:
         internal_secret = api.get_internal_secret()
         if internal_secret:
             session.headers.update({"X-Plexichat-Internal-Secret": internal_secret})
-            logger.debug(
-                f"Added X-Plexichat-Internal-Secret header to docs session: {internal_secret[:8]}..."
-            )
+            # Never log any part of the secret itself: even an 8-char prefix
+            # leaks entropy into shared debug logs (which are often shipped to
+            # aggregators). Match setup/auth.py and report only that it was set.
+            logger.debug("Added X-Plexichat-Internal-Secret header to docs session")
         else:
             logger.warning("No internal_secret found - docs may be rate limited")
 
