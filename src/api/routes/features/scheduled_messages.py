@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
@@ -6,6 +6,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.messaging.services.scheduled import ScheduledMessageService
 from src.core.security.hardening import reject_control_characters
 from .common import parse_id, call_or_raise
 
@@ -64,8 +65,6 @@ async def create_scheduled_message(
         getattr(messaging, "_participant_svc", None) if messaging else None
     )
 
-    from src.core.messaging.services.scheduled import ScheduledMessageService
-
     svc = ScheduledMessageService(db, participant_svc)
 
     result = call_or_raise(
@@ -90,14 +89,11 @@ async def list_scheduled_messages(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     if status is not None and status not in VALID_SCHEDULE_STATUSES:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid schedule status"}},
         )
     db = api.get_db()
-    from src.core.messaging.services.scheduled import ScheduledMessageService
 
     svc = ScheduledMessageService(db)
     conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None
@@ -116,7 +112,6 @@ async def cancel_scheduled_message(
     sid = parse_id(scheduled_id, "scheduled message ID")
 
     db = api.get_db()
-    from src.core.messaging.services.scheduled import ScheduledMessageService
 
     svc = ScheduledMessageService(db)
 

@@ -8,6 +8,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, _reject_ui_text_chars
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.messaging.services.bookmarks import BookmarkService
 from src.core.security.hardening import reject_control_characters, require_http_url
 from .common import parse_id, raise_internal
 import utils.logger as logger
@@ -129,8 +130,6 @@ async def add_bookmark(
         messaging._bookmark_svc if hasattr(messaging, "_bookmark_svc") else None
     )
     if not bookmark_svc:
-        from src.core.messaging.services.bookmarks import BookmarkService
-
         db = api.get_db()
         bookmark_svc = BookmarkService(db, messaging)
 
@@ -185,7 +184,6 @@ async def remove_bookmark(
     mid = parse_id(message_id, "message ID")
     messaging = api.get_messaging()
     db = api.get_db()
-    from src.core.messaging.services.bookmarks import BookmarkService
 
     bookmark_svc = BookmarkService(db, messaging)
     # M8: deletion is scoped to (user_id, message_id) and stays idempotent
@@ -226,7 +224,6 @@ async def list_bookmarks(
 ):
     messaging = api.get_messaging()
     db = api.get_db()
-    from src.core.messaging.services.bookmarks import BookmarkService
 
     bookmark_svc = BookmarkService(db, messaging)
     conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None

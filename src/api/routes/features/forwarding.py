@@ -5,6 +5,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.messaging.services.forwarding import ForwardingService
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
@@ -33,8 +34,6 @@ async def forward_message(
     participant_svc = (
         getattr(messaging, "_participant_svc", None) if messaging else None
     )
-
-    from src.core.messaging.services.forwarding import ForwardingService
 
     svc = ForwardingService(db, messaging, participant_svc)
 

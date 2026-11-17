@@ -8,6 +8,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeID, SnowflakeIDParam
 from src.core.database.cache.decorators import cached
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.profiles.manager import ProfileManager
 from src.core.security.hardening import (
     HardeningViolation,
     reject_control_characters,
@@ -330,7 +331,6 @@ async def get_user_profile(
     uid = user_id
 
     db = api.get_db()
-    from src.core.profiles.manager import ProfileManager
 
     svc = ProfileManager(db)
 
@@ -365,7 +365,6 @@ async def update_own_profile(
     body: ProfileUpdateRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
     db = api.get_db()
-    from src.core.profiles.manager import ProfileManager
 
     svc = ProfileManager(db)
 
