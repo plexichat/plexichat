@@ -70,8 +70,11 @@ _WEAK_CIPHER_TOKENS = (
 # are CBC + SHA-1 suites; the substring check above only caught the literal
 # ``SHA1`` spelling, so a one-character omission let them through. The segment
 # boundaries keep AEAD ``...-GCM-SHA256`` / ``...-SHA384`` suites (SHA-2 PRF)
-# allowed. Exclusion directives (``!SHA1``) are skipped before this check.
-_SHA1_MAC = re.compile(r"(?:^|[-+])SHA1?(?:$|[-+])")
+# allowed. ``_`` is a boundary too: OpenSSL also accepts IANA-style names such
+# as ``TLS_RSA_WITH_AES_128_CBC_SHA`` and enables the CBC + SHA-1 ``AES128-SHA``
+# suite for them, so matching only ``-``/``+`` segments let those through.
+# Exclusion directives (``!SHA1``) are skipped before this check.
+_SHA1_MAC = re.compile(r"(?:^|[-+_])SHA1?(?:$|[-+_])")
 
 _WEAK_VERSION_NAMES = frozenset(
     {
@@ -139,17 +142,24 @@ def validate_cipher_string(value: Any) -> str:
     if len(value) > 1024 or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise TLSHardeningError("tls.ciphers contains control characters or is too long")
     text = value.strip()
-    for part in text.split(":"):
-        token = part.strip()
+    # OpenSSL "at" directives act on the whole context, not one cipher.
+    # "@SECLEVEL=0" lowers the security level and re-enables weak key sizes /
+    # SHA-1 signatures that the TLS floor deliberately excludes. Reject "@"
+    # anywhere rather than only at the start of a colon-separated token:
+    # OpenSSL accepts spaces and commas as cipher-list separators too, so
+    # "ECDHE+AESGCM @SECLEVEL=0" is parsed as a directive even though the token
+    # produced by a ':' split does not start with "@".
+    if "@" in text:
+        raise TLSHardeningError("tls.ciphers may not contain OpenSSL directives")
+    # Match OpenSSL's own grammar: ':', ',' and whitespace all separate cipher
+    # entries. Splitting on ':' alone let a weak entry or directive smuggled
+    # behind another separator escape the per-token checks below.
+    for token in re.split(r"[\s,:]+", text):
+        token = token.strip()
         if not token or token.startswith(("!", "-", "+")):
             # Exclusion/subtraction directives tighten the list; they cannot
             # enable a weak cipher on their own.
             continue
-        if token.startswith("@"):
-            # OpenSSL "at" directives act on the whole context, not one cipher.
-            # "@SECLEVEL=0" lowers the security level and re-enables weak key
-            # sizes / SHA-1 signatures that the TLS floor deliberately excludes.
-            raise TLSHardeningError("tls.ciphers may not contain OpenSSL directives")
         upper = token.upper()
         if any(weak in upper for weak in _WEAK_CIPHER_TOKENS):
             raise TLSHardeningError("tls.ciphers enables a deprecated cipher")
