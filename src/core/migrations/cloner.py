@@ -26,7 +26,14 @@ def _db_identity(db: Database) -> tuple:
     cfg = getattr(db, "config", None) or {}
     db_type = getattr(db, "type", None) or str(cfg.get("type", "unknown"))
     if db_type == "sqlite":
-        path = os.path.abspath(os.path.expanduser(str(cfg.get("path", ""))))
+        # realpath, not abspath: clone_table() DELETEs every target row before
+        # copying. A symlinked alias of the source file (e.g. a maintenance
+        # symlink pointing at the live DB) would compare as a *different* path
+        # under abspath and pass this guard, then clone against the very same
+        # file and wipe the source. Resolve symlinks so aliases collapse to one
+        # identity. (Hardlinks remain indistinguishable by path; operators must
+        # not point a clone target at a hardlink of the live database.)
+        path = os.path.realpath(os.path.expanduser(str(cfg.get("path", ""))))
         return ("sqlite", path)
     pg = cfg.get("postgres", {}) or {}
     return (

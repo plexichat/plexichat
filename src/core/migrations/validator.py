@@ -38,6 +38,32 @@ RETIRED_MIGRATIONS = {"002", "003", "004"}
 
 _METADATA_RE = re.compile(r"MIGRATION_METADATA:\s*\n(\{.*?\})", re.DOTALL)
 
+_SQL_LINE_COMMENT_RE = re.compile(r"--.*?$", re.MULTILINE)
+_SQL_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """Collapse SQL comments to whitespace before keyword screening.
+
+    The destructive-SQL gate matches keyword pairs with ``\\bDROP\\s+TABLE\\b``
+    style regexes. An inline comment between the keywords (``DROP/**/TABLE``)
+    or a line comment (``DROP--note\\nTABLE``) breaks the ``\\s+`` match and
+    would otherwise slip a destructive statement past the gate. Replacing
+    comments with a single space restores the keyword adjacency the regexes
+    rely on without altering any actual SQL token.
+    """
+    # Screening runs on inspect.getsource(), where a Python ``\\n`` escape is
+    # two literal characters, not a newline. Decode the whitespace escapes so a
+    # ``--`` line comment terminated by ``\\n`` is seen the same way the SQL
+    # engine sees it at runtime (the escape becomes a real newline there).
+    decoded = (
+        sql.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\n")
+        .replace("\\t", " ")
+    )
+    return _SQL_BLOCK_COMMENT_RE.sub(" ", _SQL_LINE_COMMENT_RE.sub(" ", decoded))
+
 
 def migration_metadata_from_docstring(docstring: Optional[str]) -> dict:
     """Parse the MIGRATION_METADATA JSON block from a migration docstring."""
@@ -410,7 +436,7 @@ def validate_sql_safety(sql: str) -> tuple[bool, list[str]]:
     Raises:
         ValueError: If dangerous SQL is detected
     """
-    normalized_sql = sql.strip()
+    normalized_sql = _strip_sql_comments(sql).strip()
 
     for pattern, label in _DANGEROUS_SQL_PATTERNS:
         if pattern.search(normalized_sql):
@@ -436,13 +462,11 @@ _FORWARD_DANGEROUS_SQL_PATTERNS: Iterable[tuple[re.Pattern[str], str]] = (
 
 _DELETE_FROM_RE = re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE)
 _WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
-_LINE_COMMENT_RE = re.compile(r"--.*?$", re.MULTILINE)
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 
 def _contains_bare_delete(sql: str) -> bool:
     """True when any statement DELETEs without a WHERE clause."""
-    stripped = _BLOCK_COMMENT_RE.sub(" ", _LINE_COMMENT_RE.sub(" ", sql))
+    stripped = _strip_sql_comments(sql)
     for statement in stripped.split(";"):
         if _DELETE_FROM_RE.search(statement) and not _WHERE_RE.search(statement):
             return True
@@ -469,8 +493,11 @@ def validate_migration_up_sql(sql: str) -> tuple[bool, list[str]]:
     """
     _, warnings = validate_sql_safety(sql)
 
+    # Screen the comment-stripped form so an inline/line comment cannot split
+    # a keyword pair (DROP/**/TABLE) and evade the forward-migration gate.
+    normalized_sql = _strip_sql_comments(sql)
     for pattern, label in _FORWARD_DANGEROUS_SQL_PATTERNS:
-        if pattern.search(sql):
+        if pattern.search(normalized_sql):
             raise ValueError(
                 f"Dangerous SQL detected in migration up(): {label} - "
                 "forward migrations must not drop or truncate tables"

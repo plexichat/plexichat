@@ -160,10 +160,20 @@ class PlexiJoinManager:
         self._ensure_replay_nonce_table()
         # INSERT OR IGNORE is translated to the PostgreSQL equivalent by the
         # database dialect. Exactly one concurrent request can claim a nonce.
+        #
+        # ``seen_at`` stores the MESSAGE timestamp, not the wall-clock time we
+        # happened to process the request. A signed request is accepted while
+        # its timestamp is within +/- max_skew of "now", so a replay stays valid
+        # until ``timestamp + max_skew``. The cleanup below prunes rows older
+        # than ``now - max_skew``; using the timestamp here makes that boundary
+        # line up exactly with the last instant the signature is still fresh.
+        # Storing the processing time instead let a peer pick a near-future
+        # timestamp: the nonce row was pruned while the timestamp was still
+        # inside the skew window, reopening the request to replay.
         claimed = self.db.insert_or_ignore(
             "plexijoin_replay_nonces",
             ["connection_id", "nonce", "seen_at"],
-            (int(connection_id), nonce, now),
+            (int(connection_id), nonce, timestamp),
         )
         if claimed:
             try:
