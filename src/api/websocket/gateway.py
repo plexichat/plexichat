@@ -289,11 +289,33 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     3. Wait for IDENTIFY or RESUME
     4. Handle messages until disconnect
     """
-    await websocket.accept()
-
     # Detect if this is a secure self-test connection
     # Uses centralized validation (is_local + hmac.compare_digest)
     is_selftest = api.is_self_test_request(websocket)
+
+    # CSWSH defense: validate the Origin (and any handshake token) BEFORE the
+    # ASGI upgrade. A cross-site page must never obtain an accepted gateway
+    # socket, even though IDENTIFY still carries the authoritative ticket.
+    from .handshake import HandshakeRejected, close_reason, validate_handshake
+
+    try:
+        validate_handshake(websocket, is_selftest=is_selftest)
+    except HandshakeRejected as exc:
+        # A flood of throttled handshakes must not amplify into a log flood;
+        # keep rejections that are purely rate-limiting at debug level.
+        from .handshake import HANDSHAKE_THROTTLE_CLOSE_CODE
+
+        if exc.close_code == HANDSHAKE_THROTTLE_CLOSE_CODE:
+            logger.debug(f"Throttling gateway handshake: {exc.reason}")
+        else:
+            logger.warning(f"Rejecting gateway handshake: {exc.reason}")
+        try:
+            await websocket.close(code=exc.close_code, reason=close_reason(exc))
+        except Exception as close_error:
+            logger.debug(f"websocket handshake rejection close failed: {close_error}")
+        return
+
+    await websocket.accept()
 
     session_manager, dispatcher, auth_module, presence_module, servers_module = (
         _get_modules()
