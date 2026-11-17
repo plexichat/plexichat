@@ -80,6 +80,25 @@ def _response_metadata(
     return result
 
 
+def _signed_uid_from_query(query_string: str) -> Optional[str]:
+    """Return the ``uid`` value that the URL signer actually validated.
+
+    ``UrlSigner.verify_url`` reads the FIRST ``uid`` value via
+    ``parse_qs(query).get("uid", [None])[0]`` and drops *every* ``uid``
+    parameter before recomputing the HMAC. Starlette's
+    ``request.query_params.get("uid")`` instead returns the LAST value. If the
+    two disagree, appending a second ``uid`` keeps the signature valid while
+    the route compares a different id to the session user and silently skips
+    the per-file access re-check — letting a caller ride an unexpired
+    uid-bound URL after their channel access was revoked. Mirror the
+    verifier's first-value semantics so the two always agree.
+    """
+    from urllib.parse import parse_qs
+
+    values = parse_qs(query_string).get("uid", [])
+    return values[0] if values else None
+
+
 def _parse_byte_range(range_header: Optional[str], size: int) -> tuple[int, int, bool]:
     """Parse a single ``bytes=`` Range header into ``(start, end, is_partial)``.
 
@@ -200,7 +219,7 @@ def register_attachment_route(app: FastAPI) -> None:
                     # a user whose channel access was revoked cannot ride an
                     # unexpired URL. Intentionally public assets carry no
                     # uid and keep working anonymously.
-                    signed_uid_raw = request.query_params.get("uid")
+                    signed_uid_raw = _signed_uid_from_query(request.url.query)
                     if (
                         is_signed
                         and signed_uid_raw
