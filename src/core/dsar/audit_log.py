@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import hmac
 import time
 from pathlib import Path
 from typing import Optional, Dict, Tuple, List, Any, cast
@@ -38,7 +39,13 @@ class DSARLog:
         multi-worker deployments.
     """
 
-    def __init__(self, file_path: Optional[str] = None):
+    def __init__(
+        self,
+        file_path: Optional[str] = None,
+        chain_key: Optional[str] = None,
+        chain_key_id: Optional[str] = None,
+        chain_keys: Optional[Dict[str, str]] = None,
+    ):
         cfg = config.get("dsar.audit_log", {})
         self.file_path = file_path or cfg.get(
             "file_path",
@@ -49,7 +56,59 @@ class DSARLog:
         # cannot both write to the audit log.
         self.lock_path = str(Path(self.file_path).with_suffix(".lock"))
         self.hash_chain_enabled = cfg.get("hash_chain_enabled", True)
+
+        # Optional HMAC keying of the hash chain. With no key configured the
+        # historical unkeyed SHA-256 chain is used verbatim. When a key is
+        # supplied, new entries are HMAC-SHA256(key, prev_hash + content) and
+        # carry the id of the key that signed them. Every key id stays in the
+        # ``chain_keys`` map so entries written before a rotation remain
+        # verifiable - rotation must never invalidate existing evidence.
+        raw_keys = chain_keys if chain_keys is not None else cfg.get("chain_keys", {})
+        self._chain_keys: Dict[str, str] = {}
+        if isinstance(raw_keys, dict):
+            for key_id, key in raw_keys.items():
+                if key_id and key:
+                    self._chain_keys[str(key_id)] = str(key)
+
+        active_key = chain_key if chain_key is not None else cfg.get("chain_key")
+        active_id = (
+            chain_key_id if chain_key_id is not None else cfg.get("chain_key_id")
+        )
+        if active_key:
+            active_id = str(active_id) if active_id else "default"
+            self._chain_keys[active_id] = str(active_key)
+            self._current_key_id: Optional[str] = active_id
+        else:
+            self._current_key_id = None
+
         self._ensure_dir()
+
+    def _chain_checksum(self, prev_hash: str, content: str) -> str:
+        """Checksum for a NEW entry under the currently active chain key."""
+        data = (prev_hash + content).encode("utf-8")
+        if self._current_key_id:
+            key = self._chain_keys.get(self._current_key_id)
+            if not key:
+                raise RuntimeError("DSAR chain key for the active key id is missing")
+            return hmac.new(key.encode("utf-8"), data, hashlib.sha256).hexdigest()
+        return hashlib.sha256(data).hexdigest()
+
+    def rotate_chain_key(self, new_key: str, new_key_id: str) -> str:
+        """Rotate the internal HMAC key used to authenticate new entries.
+
+        The outgoing key is deliberately NOT removed from ``_chain_keys``:
+        entries written with it record their own ``key_id`` and must keep
+        verifying across the rotation. Nothing in the log is rewritten or
+        reset, so tamper evidence accumulated before the rotation survives.
+        Operators must persist ``chain_key``/``chain_key_id``/``chain_keys``
+        in configuration for the rotation to survive a process restart.
+        """
+        if not new_key or not new_key_id:
+            raise ValueError("new_key and new_key_id are required")
+        self._current_key_id = str(new_key_id)
+        self._chain_keys[str(new_key_id)] = str(new_key)
+        logger.info(f"DSAR audit chain key rotated to {new_key_id}")
+        return self._current_key_id
 
     def _ensure_dir(self):
         directory = os.path.dirname(self.file_path)
@@ -156,10 +215,10 @@ class DSARLog:
                             prev_hash = self._read_last_hash_from_handle(f)
                             entry["prev_hash"] = prev_hash
 
+                            if self._current_key_id:
+                                entry["key_id"] = self._current_key_id
                             content = json.dumps(entry, sort_keys=True)
-                            checksum = hashlib.sha256(
-                                (prev_hash + content).encode()
-                            ).hexdigest()
+                            checksum = self._chain_checksum(prev_hash, content)
                             entry["checksum"] = checksum
 
                             f.write(json.dumps(entry) + "\n")
@@ -223,8 +282,10 @@ class DSARLog:
                 prev_hash = self._read_last_hash_from_handle(f)
                 entry["prev_hash"] = prev_hash
 
+                if self._current_key_id:
+                    entry["key_id"] = self._current_key_id
                 content = json.dumps(entry, sort_keys=True)
-                checksum = hashlib.sha256((prev_hash + content).encode()).hexdigest()
+                checksum = self._chain_checksum(prev_hash, content)
                 entry["checksum"] = checksum
 
                 f.write(json.dumps(entry) + "\n")
@@ -336,6 +397,7 @@ class DSARLog:
                     entry = json.loads(line)
                     stored_checksum = entry.pop("checksum", None)
                     stored_prev_hash = entry.get("prev_hash")
+                    entry_key_id = entry.get("key_id")
 
                     if stored_prev_hash != expected_prev_hash:
                         return (
@@ -345,9 +407,27 @@ class DSARLog:
                         )
 
                     content = json.dumps(entry, sort_keys=True)
-                    calculated_checksum = hashlib.sha256(
-                        (stored_prev_hash + content).encode()
-                    ).hexdigest()
+                    data = (stored_prev_hash + content).encode("utf-8")
+                    if entry_key_id:
+                        # Each entry records the key that authenticated it, so
+                        # entries written before a rotation keep verifying with
+                        # their original key. A missing key is a hard failure -
+                        # never fall back to an unkeyed hash and let a keyed
+                        # entry be “verified” under the wrong algorithm.
+                        key = self._chain_keys.get(str(entry_key_id))
+                        if not key:
+                            return (
+                                False,
+                                count,
+                                f"Chain broken at line {line_num}: "
+                                f"unknown chain key id {entry_key_id!r}",
+                            )
+                        calculated_checksum = hmac.new(
+                            key.encode("utf-8"), data, hashlib.sha256
+                        ).hexdigest()
+                    else:
+                        # Legacy unkeyed entries remain verifiable verbatim.
+                        calculated_checksum = hashlib.sha256(data).hexdigest()
 
                     if calculated_checksum != stored_checksum:
                         return (

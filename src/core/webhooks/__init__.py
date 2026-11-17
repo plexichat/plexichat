@@ -74,6 +74,7 @@ __all__ = [
     "update_webhook",
     "delete_webhook",
     "regenerate_token",
+    "rotate_signing_key",
     # Webhook execution
     "execute_webhook",
     "execute_webhook_by_url",
@@ -185,6 +186,11 @@ def delete_webhook(user_id: int, webhook_id: int) -> bool:
 def regenerate_token(user_id: int, webhook_id: int) -> Webhook:
     """Regenerate a webhook's token."""
     return _get_manager().regenerate_token(user_id, webhook_id)
+
+
+def rotate_signing_key(user_id: int, webhook_id: int) -> bytes:
+    """Rotate a webhook's signing keypair (no old-signature grace window)."""
+    return _get_manager().rotate_signing_key(webhook_id, user_id)
 
 
 # === Webhook Execution ===

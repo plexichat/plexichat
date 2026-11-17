@@ -14,7 +14,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from src.utils.encryption import decrypt_data
+from src.core.webhooks.exceptions import (
+    PermissionDeniedError,
+    WebhookNotFoundError,
+)
+from src.utils.encryption import decrypt_data, encrypt_data, generate_key_pair
 
 from .constants import (
     MAX_SIGNATURE_HEADER_LENGTH,
@@ -129,6 +133,53 @@ class SignatureMixin(WebhookManagerTrait):
             SIGNATURE_TIMESTAMP_HEADER: str(timestamp),
         }
 
+    def rotate_signing_key(
+        self,
+        webhook_id: SnowflakeID,
+        user_id: Optional[SnowflakeID] = None,
+    ) -> bytes:
+        """Replace a webhook's Ed25519 signing keypair atomically.
+
+        Rotating a signing secret must not leave a grace window in which
+        deliveries signed with the retired key are still accepted. Both the
+        public key (used by ``verify_payload``) and the encrypted private key
+        (used by ``sign_payload``) are therefore replaced in a *single*
+        statement: there is no intermediate database state where one column
+        holds the new key and the other still holds the old one. The old key
+        is discarded rather than retained as a fallback, so a captured old
+        signature fails verification as soon as this method returns.
+        """
+        row = self._db.fetch_one(
+            "SELECT server_id, channel_id FROM webhook_webhooks WHERE id = ?",
+            (webhook_id,),
+        )
+        if not row:
+            raise WebhookNotFoundError("Webhook not found")
+
+        if user_id is not None and not self._check_manage_webhooks_permission(
+            user_id, row["server_id"], row["channel_id"]
+        ):
+            raise PermissionDeniedError(
+                "Missing permission to manage webhooks", "webhooks.manage"
+            )
+
+        private_key, public_key = generate_key_pair()
+        private_key_encrypted = encrypt_data(
+            base64.b64encode(private_key).decode("utf-8"),
+            context=f"webhook:{webhook_id}",
+        )
+        now = self._get_timestamp()
+
+        self._db.execute(
+            """UPDATE webhook_webhooks
+               SET signing_key_public = ?, signing_key_private_encrypted = ?,
+                   updated_at = ?
+               WHERE id = ?""",
+            (public_key, private_key_encrypted, now, webhook_id),
+        )
+        logger.info(f"Rotated signing key for webhook {webhook_id}")
+        return public_key
+
     def verify_payload(
         self,
         webhook_id: SnowflakeID,
@@ -205,7 +256,12 @@ class SignatureMixin(WebhookManagerTrait):
                     f"{webhook_id}: {e}"
                 )
                 return False
-        elif len(public_key_bytes) != 32:
+        # Enforce the 32-byte Ed25519 public-key length for *both* storage
+        # forms (raw BLOB and base64 TEXT). The TEXT branch previously skipped
+        # this check and leaned on the crypto library to reject malformed
+        # keys; failing here keeps verification explicitly fail-closed, which
+        # matters when a key is rotated between the BLOB and TEXT encodings.
+        if len(public_key_bytes) != 32:
             logger.error(f"Signing public key for webhook {webhook_id} is not 32 bytes")
             return False
 

@@ -449,6 +449,16 @@ class OAuth2Flow:
         # S256 challenge and compare in constant time. There is deliberately
         # no downgrade path — if a challenge exists, the verifier is mandatory.
         stored_challenge = code_record["code_challenge"]
+        # No legacy non-PKCE fallback: a deployment that requires PKCE must
+        # never redeem a code that carries no challenge (e.g. a row issued
+        # before the PKCE migration or through a path that bypassed
+        # ``_bind_pkce``). Accepting such a code would let anyone holding the
+        # authorization code skip PKCE entirely - a silent downgrade of the
+        # strict enforcement added in the PKCE wave.
+        if self._pkce_required() and not stored_challenge:
+            raise InvalidPKCEError(
+                "PKCE code_challenge is required for this authorization code"
+            )
         if stored_challenge:
             presented = self._require_pkce_verifier(code_verifier)
             if not verify_pkce_challenge(presented, stored_challenge):
