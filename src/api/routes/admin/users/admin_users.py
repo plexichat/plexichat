@@ -60,18 +60,33 @@ def _required_row_value(row, key: str, index: int, value_type):
 
 
 def _admin_user_query(where: str = "") -> str:
-    """Return the canonical admin-user projection used by read endpoints."""
+    """Return the canonical admin-user projection used by read endpoints.
+
+    The top role used to be a correlated scalar subquery (one lookup per admin
+    row). Ranking assignments once in a derived table keeps the result
+    identical while making the read a single set-based pass.
+    """
     return f"""
         SELECT a.id, a.username, a.email, a.created_at,
                a.last_login AS last_login_at,
                COALESCE(u.account_locked, 0) AS account_locked,
-               COALESCE((SELECT r.name
-                         FROM admin_role_assignments ra
-                         JOIN admin_roles r ON r.id = ra.role_id
-                         WHERE ra.admin_id = a.id
-                         ORDER BY r.position DESC LIMIT 1), 'unassigned') AS role
+               COALESCE(top_role.name, 'unassigned') AS role
         FROM admin_users a
         LEFT JOIN auth_users u ON u.id = a.id
+        LEFT JOIN (
+            SELECT admin_id, name
+            FROM (
+                SELECT ra.admin_id AS admin_id,
+                       r.name AS name,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ra.admin_id
+                           ORDER BY r.position DESC, ra.role_id DESC
+                       ) AS role_rank
+                FROM admin_role_assignments ra
+                JOIN admin_roles r ON r.id = ra.role_id
+            ) ranked_roles
+            WHERE role_rank = 1
+        ) top_role ON top_role.admin_id = a.id
         {where}
     """
 

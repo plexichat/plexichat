@@ -8,6 +8,7 @@ count and verify the hierarchy decision is unchanged.
 """
 
 import asyncio
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -263,3 +264,49 @@ def test_update_role_change_batches_role_lookup_with_hierarchy(monkeypatch):
     role_calls = [c for c in db.fetch_calls if "AS role_id" in c[0]]
     assert len(role_calls) == 1
     assert len(db.fetch_calls) == 2
+
+
+@pytest.mark.unit
+def test_admin_user_query_uses_set_based_role_ranking():
+    sql = au._admin_user_query("ORDER BY a.created_at DESC")
+
+    # The old projection correlated a scalar subquery on every admin row.
+    assert "ra.admin_id = a.id" not in sql
+    assert "ROW_NUMBER() OVER" in sql
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE admin_users (
+            id INTEGER PRIMARY KEY, username TEXT, email TEXT,
+            created_at INTEGER, last_login INTEGER
+        );
+        CREATE TABLE auth_users (
+            id INTEGER PRIMARY KEY, account_locked INTEGER DEFAULT 0, last_login INTEGER
+        );
+        CREATE TABLE admin_roles (
+            id INTEGER PRIMARY KEY, name TEXT, position INTEGER
+        );
+        CREATE TABLE admin_role_assignments (admin_id INTEGER, role_id INTEGER);
+        INSERT INTO admin_users VALUES (1, 'a', 'a@x', 1, 11);
+        INSERT INTO admin_users VALUES (2, 'b', 'b@x', 2, 22);
+        INSERT INTO admin_users VALUES (3, 'c', 'c@x', 3, 33);
+        INSERT INTO auth_users VALUES (1, 0, 11);
+        INSERT INTO auth_users VALUES (2, 1, 22);
+        INSERT INTO auth_users VALUES (3, 0, 33);
+        INSERT INTO admin_roles VALUES (10, 'support_admin', 5);
+        INSERT INTO admin_roles VALUES (11, 'moderator', 20);
+        INSERT INTO admin_role_assignments VALUES (1, 10);
+        INSERT INTO admin_role_assignments VALUES (1, 11);
+        INSERT INTO admin_role_assignments VALUES (2, 10);
+        """
+    )
+    rows = conn.execute(sql).fetchall()
+    by_id = {row["id"]: row for row in rows}
+
+    assert by_id[1]["role"] == "moderator"  # highest position wins
+    assert by_id[2]["role"] == "support_admin"
+    assert by_id[3]["role"] == "unassigned"
+    assert by_id[2]["account_locked"] == 1
+    conn.close()
