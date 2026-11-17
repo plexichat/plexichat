@@ -87,10 +87,38 @@ def validate_certificate_pair(
     return cert, key
 
 
+def validate_config_path_tokens(path: object, *, field: str = "certificate path") -> str:
+    """Reject traversal / control-character / over-long tokens in a config path.
+
+    This is the *pre-resolution* check applied to operator-supplied config
+    values before they reach ``os.path.abspath``/``realpath``. Once a path has
+    been normalised a ``..`` component is no longer visible, so it must be
+    rejected on the raw string. It complements :func:`validate_cert_path`'s
+    post-resolution confinement (which needs an explicit allowed root that a
+    TLS startup config does not always have) and shares its token rules.
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise TLSPathError(f"{field} must be a non-empty string")
+    if len(path) > MAX_PATH_LENGTH:
+        raise TLSPathError(f"{field} is too long")
+    for token in _FORBIDDEN_TOKENS:
+        if token in path:
+            raise TLSPathError(f"{field} contains a forbidden character")
+    try:
+        reject_control_characters(path, field=field)
+    except ValueError as exc:
+        raise TLSPathError(f"{field} contains a control character") from exc
+    # Normalise the separator so Windows-style ``..\\`` is caught too.
+    if any(part == ".." for part in path.replace("\\", "/").split("/")):
+        raise TLSPathError(f"{field} must not contain '..' traversal")
+    return path
+
+
 __all__ = [
     "DEFAULT_SUFFIXES",
     "MAX_PATH_LENGTH",
     "TLSPathError",
     "validate_cert_path",
     "validate_certificate_pair",
+    "validate_config_path_tokens",
 ]

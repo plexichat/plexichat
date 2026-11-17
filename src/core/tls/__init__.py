@@ -23,6 +23,7 @@ import utils.config as config
 import utils.logger as logger
 
 from .chain_validation import TLSChainError, validate_certificate_file
+from .path_validation import TLSPathError, validate_config_path_tokens
 from .ssl_settings import (
     SECURE_CIPHERS,
     TLSHardeningError,
@@ -163,6 +164,18 @@ def ensure_certificates(
 
     cert_source = cert_path or tls_config.get("cert_path")
     key_source = key_path or tls_config.get("key_path")
+    # Reject config-driven traversal/control tokens *before* abspath collapses
+    # them. Otherwise a 'tls.cert_path' of '../../etc/x.key' would silently
+    # direct key material to (or read it from) an arbitrary location.
+    for source, field in (
+        (cert_source, "tls.cert_path"),
+        (key_source, "tls.key_path"),
+    ):
+        if source is not None:
+            try:
+                validate_config_path_tokens(source, field=field)
+            except TLSPathError as exc:
+                raise TLSConfigError(str(exc)) from exc
     cert_path = _normalize_path(
         cert_source
         if isinstance(cert_source, str) and cert_source
@@ -444,6 +457,11 @@ def get_ssl_context(
         disabled compression and the refusal of legacy renegotiation; uvicorn's
         own context builder leaves those at insecure OpenSSL defaults.
     """
+    for source, field in ((cert_path, "tls.cert_path"), (key_path, "tls.key_path")):
+        try:
+            validate_config_path_tokens(source, field=field)
+        except TLSPathError as exc:
+            raise TLSConfigError(str(exc)) from exc
     cert_path = _normalize_path(cert_path)
     key_path = _normalize_path(key_path)
     if not os.path.exists(cert_path):
@@ -491,6 +509,18 @@ def get_tls_config() -> dict:
                 "TLS is enabled but cert_path/key_path are not configured; "
                 "refusing to start without HTTPS"
             )
+
+        # Validate the *raw* config strings before abspath collapses '..'.
+        # get_ssl_context/validate_certificate_file run on the resolved path
+        # and would otherwise follow a traversal to an arbitrary file.
+        for source, field in (
+            (cert_path, "tls.cert_path"),
+            (key_path, "tls.key_path"),
+        ):
+            try:
+                validate_config_path_tokens(source, field=field)
+            except TLSPathError as exc:
+                raise TLSConfigError(str(exc)) from exc
 
         cert_path = _normalize_path(cert_path)
         key_path = _normalize_path(key_path)

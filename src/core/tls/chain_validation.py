@@ -109,6 +109,32 @@ def _check_validity(cert: Any, now: datetime) -> None:
         raise TLSChainError("certificate is not currently valid")
 
 
+def _require_ca(cert: Any, x509: Any) -> None:
+    """Require an issuer certificate to be a CA allowed to sign certificates.
+
+    Signature verification alone is not proof of authority: any leaf whose
+    private key is available can sign another certificate. RFC 5280 requires
+    an issuer to assert ``basicConstraints.cA`` and, when KeyUsage is present,
+    ``keyCertSign``. Without this, a forged non-CA "intermediate" is accepted.
+    """
+    try:
+        basic = cert.extensions.get_extension_for_class(x509.BasicConstraints)
+    except x509.ExtensionNotFound as exc:
+        raise TLSChainError("issuer certificate has no BasicConstraints") from exc
+    except (ValueError, TypeError) as exc:
+        raise TLSChainError("issuer certificate extensions could not be parsed") from exc
+    if not basic.value.ca:
+        raise TLSChainError("issuer certificate is not a CA")
+    try:
+        usage = cert.extensions.get_extension_for_class(x509.KeyUsage)
+    except x509.ExtensionNotFound:
+        return
+    except (ValueError, TypeError) as exc:
+        raise TLSChainError("issuer certificate KeyUsage could not be parsed") from exc
+    if not usage.value.key_cert_sign:
+        raise TLSChainError("issuer certificate may not sign certificates")
+
+
 def verify_chain(certificates: Sequence[Any], *, now: Optional[datetime] = None) -> None:
     """Verify signatures, validity and basic constraints of an ordered chain."""
     x509 = _x509()
@@ -129,6 +155,11 @@ def verify_chain(certificates: Sequence[Any], *, now: Optional[datetime] = None)
         raise TLSChainError("leaf certificate extensions could not be parsed") from exc
     if basic.value.ca:
         raise TLSChainError("leaf certificate must not be a CA")
+
+    # Every issuer (intermediates and the trust anchor) must genuinely be a CA.
+    # Skipping this let a non-CA certificate sign the leaf and still pass.
+    for issuer in certificates[1:]:
+        _require_ca(issuer, x509)
 
     for child, issuer in zip(certificates, certificates[1:]):
         try:

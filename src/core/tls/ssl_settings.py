@@ -17,6 +17,7 @@ the settings actually apply rather than sitting in a constant nobody reads.
 
 from __future__ import annotations
 
+import re
 import ssl
 from functools import partial
 from typing import Any, Callable, Optional
@@ -63,6 +64,14 @@ _WEAK_CIPHER_TOKENS = (
     "SSLV3",
     "TLSV1",
 )
+
+# An enabled cipher whose MAC segment is bare ``SHA`` (OpenSSL's alias for
+# SHA-1) or ``SHA1`` must be refused. ``AES128-SHA`` / ``ECDHE-RSA-AES128-SHA``
+# are CBC + SHA-1 suites; the substring check above only caught the literal
+# ``SHA1`` spelling, so a one-character omission let them through. The segment
+# boundaries keep AEAD ``...-GCM-SHA256`` / ``...-SHA384`` suites (SHA-2 PRF)
+# allowed. Exclusion directives (``!SHA1``) are skipped before this check.
+_SHA1_MAC = re.compile(r"(?:^|[-+])SHA1?(?:$|[-+])")
 
 _WEAK_VERSION_NAMES = frozenset(
     {
@@ -136,9 +145,16 @@ def validate_cipher_string(value: Any) -> str:
             # Exclusion/subtraction directives tighten the list; they cannot
             # enable a weak cipher on their own.
             continue
+        if token.startswith("@"):
+            # OpenSSL "at" directives act on the whole context, not one cipher.
+            # "@SECLEVEL=0" lowers the security level and re-enables weak key
+            # sizes / SHA-1 signatures that the TLS floor deliberately excludes.
+            raise TLSHardeningError("tls.ciphers may not contain OpenSSL directives")
         upper = token.upper()
         if any(weak in upper for weak in _WEAK_CIPHER_TOKENS):
             raise TLSHardeningError("tls.ciphers enables a deprecated cipher")
+        if _SHA1_MAC.search(upper):
+            raise TLSHardeningError("tls.ciphers enables a SHA-1 MAC cipher")
     return text
 
 
