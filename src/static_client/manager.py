@@ -138,14 +138,44 @@ class StaticClientManager:
         return read_current_version(self._install_dir)
 
     def current_install_path(self) -> Optional[Path]:
-        """Return the absolute path to the active dist directory, if any."""
+        """Return the active dist directory, strictly confined to install_dir.
+
+        ``current_version`` is an on-disk marker file and is therefore
+        untrusted input. The router uses this path as the *root* for its own
+        traversal confinement, so an unvalidated marker (e.g. ``../../etc``)
+        would move that root outside the shipped client tree and make the
+        static middleware serve arbitrary host files. Validate the version
+        tag and confine the resolved path before handing it out.
+        """
         version = self.current_version()
         if not version:
             return None
-        path = self._install_dir / version
-        if not path.is_dir():
+        # No separators, no parent refs, no absolute paths. ``parse_version``
+        # additionally restricts the marker to a real release tag.
+        try:
+            parse_version(version)
+        except Exception:
+            logger.warning(
+                f"static_client: refusing invalid current_version marker {version!r}"
+            )
             return None
-        return path
+        if Path(version).name != version or version in (".", ".."):
+            logger.warning(
+                f"static_client: refusing non-basename current_version marker {version!r}"
+            )
+            return None
+        install_root = self._install_dir.resolve()
+        try:
+            candidate = (self._install_dir / version).resolve()
+            candidate.relative_to(install_root)
+        except (ValueError, OSError, RuntimeError):
+            logger.warning(
+                f"static_client: current_version marker escapes install dir: {version!r}"
+            )
+            return None
+        if not candidate.is_dir():
+            return None
+        return candidate
 
     def installed_versions(self) -> List[InstalledVersion]:
         """Return all on-disk installed versions, oldest first."""
@@ -277,8 +307,14 @@ class StaticClientManager:
                     # Verify manifest integrity on startup.
                     path = self._install_dir / format_release_tag(parsed)
                     key = get_signing_key()
+                    # config.js is generated after the manifest is signed and
+                    # its name is configurable; do not treat it as a planted
+                    # file during the file-set cross-check.
+                    runtime_files = {self._cfg.config_injection.filename}
                     if key is not None and path.is_dir():
-                        status = verify_manifest_detailed(path, key)
+                        status = verify_manifest_detailed(
+                            path, key, extra_exclude=runtime_files
+                        )
                         if status != VERIFY_OK:
                             logger.info(
                                 f"static_client: manifest invalid "
@@ -403,7 +439,9 @@ class StaticClientManager:
                 "(or missing epoch marker); treating install as tampered"
             )
             return False
-        if not files_match_manifest(path):
+        if not files_match_manifest(
+            path, extra_exclude={self._cfg.config_injection.filename}
+        ):
             logger.warning(
                 "static_client: file hashes diverge from signed manifest "
                 "during suspected key migration; refusing to re-sign"

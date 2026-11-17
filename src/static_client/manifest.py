@@ -83,6 +83,32 @@ def read_key_epoch(install_dir: Path) -> Optional[str]:
     return value or None
 
 
+def _relative_files(install_dir: Path, excluded: Set[str]) -> Set[str]:
+    """Return forward-slash relative paths of all non-excluded on-disk files.
+
+    Shared by manifest generation and verification so the two always agree on
+    which files belong to an install. Symlinks that resolve to a file are
+    included (``is_file`` follows them), matching ``generate_manifest``'s old
+    behaviour.
+    """
+    found: Set[str] = set()
+    try:
+        entries = list(install_dir.rglob("*"))
+    except OSError:
+        return found
+    for entry in entries:
+        try:
+            if not entry.is_file():
+                continue
+            rel = str(entry.relative_to(install_dir)).replace("\\", "/")
+        except (OSError, ValueError):
+            continue
+        if rel in excluded:
+            continue
+        found.add(rel)
+    return found
+
+
 def generate_manifest(
     install_dir: Path, exclude: Optional[Set[str]] = None
 ) -> Dict[str, str]:
@@ -93,15 +119,8 @@ def generate_manifest(
     """
     excluded = _EXCLUDED_FILES | (exclude or set())
     files: Dict[str, str] = {}
-    for entry in sorted(
-        install_dir.rglob("*"), key=lambda p: p.relative_to(install_dir)
-    ):
-        if not entry.is_file():
-            continue
-        rel = str(entry.relative_to(install_dir)).replace("\\", "/")
-        if rel in excluded:
-            continue
-        files[rel] = _hash_file(entry)
+    for rel in sorted(_relative_files(install_dir, excluded)):
+        files[rel] = _hash_file(install_dir / rel)
     return files
 
 
@@ -122,8 +141,16 @@ def write_manifest(
     )
 
 
-def verify_manifest_detailed(install_dir: Path, signing_key: bytes) -> str:
-    """Verify HMAC + all file hashes in the manifest.
+def verify_manifest_detailed(
+    install_dir: Path,
+    signing_key: bytes,
+    extra_exclude: Optional[Set[str]] = None,
+) -> str:
+    """Verify HMAC, the signed file set, and all file hashes.
+
+    ``extra_exclude`` lets callers ignore runtime-generated files whose name
+    is configurable (e.g. a non-default ``config.js`` filename); those files
+    are written *after* the manifest is signed.
 
     Returns one of ``VERIFY_OK``, ``VERIFY_HMAC_MISMATCH``,
     ``VERIFY_HASH_MISMATCH``, ``VERIFY_MISSING`` or ``VERIFY_ERROR`` so
@@ -151,7 +178,29 @@ def verify_manifest_detailed(install_dir: Path, signing_key: bytes) -> str:
             return VERIFY_HMAC_MISMATCH
 
         manifest = json.loads(manifest_bytes)
-        files: Dict[str, str] = manifest.get("files", {})
+        files = manifest.get("files", {})
+        if not isinstance(files, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in files.items()
+        ):
+            return VERIFY_ERROR
+
+        # A valid HMAC only proves the *listed* files are intact. Cross-check
+        # the signed list against the files actually on disk: an attacker with
+        # write access could otherwise plant an unlisted file (e.g. a malicious
+        # asset) that is never hashed and is still served by the middleware.
+        excluded = _EXCLUDED_FILES | (extra_exclude or set())
+        on_disk = _relative_files(install_dir, excluded)
+        unlisted = on_disk - set(files)
+        missing = set(files) - on_disk
+        if unlisted or missing:
+            logger.warning(
+                "static_client: manifest file-set mismatch "
+                "(unlisted=%d, missing=%d); treating install as tampered",
+                len(unlisted),
+                len(missing),
+            )
+            return VERIFY_HASH_MISMATCH
+
         for rel_path, expected_hash in files.items():
             # Forward-slash relative paths resolve correctly on every platform
             # via pathlib. The previous ``rel_path.replace("/", "\\")`` turned
@@ -174,19 +223,29 @@ def verify_manifest_detailed(install_dir: Path, signing_key: bytes) -> str:
         return VERIFY_ERROR
 
 
-def files_match_manifest(install_dir: Path) -> bool:
-    """Check every on-disk file against the hashes recorded in the manifest.
+def files_match_manifest(
+    install_dir: Path, extra_exclude: Optional[Set[str]] = None
+) -> bool:
+    """Check the on-disk files against the hashes recorded in the manifest.
 
     This deliberately does NOT verify the manifest's HMAC; it is used only
     as a secondary integrity cross-check when deciding whether an HMAC
-    failure is a benign key migration (files intact) or tampering.
+    failure is a benign key migration (files intact) or tampering. The file
+    *set* must also match, otherwise a planted, unlisted file would be
+    mistaken for a harmless key migration.
     """
     manifest_path = install_dir / _MANIFEST_FILE
     try:
         manifest = json.loads(manifest_path.read_bytes())
     except (OSError, json.JSONDecodeError):
         return False
-    for rel_path, expected_hash in manifest.get("files", {}).items():
+    files = manifest.get("files", {})
+    if not isinstance(files, dict):
+        return False
+    excluded = _EXCLUDED_FILES | (extra_exclude or set())
+    if _relative_files(install_dir, excluded) != set(files):
+        return False
+    for rel_path, expected_hash in files.items():
         file_path = install_dir / rel_path
         if not file_path.is_file():
             return False
