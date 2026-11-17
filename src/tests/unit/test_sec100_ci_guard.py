@@ -63,6 +63,14 @@ def _write_allowlist(path: Path, entries: list[dict[str, str]]) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def test_gate_is_wired_into_ci() -> None:
+    """The guard must stay a blocking job in the commit pipeline."""
+    ci = (REPO / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    assert "supplychain:dangerous_patterns" in ci
+    assert "ci-tooling/check_dangerous_patterns.py" in ci
+    assert 'if: \'$RUN_LIVE_SMOKE != "1"\'' in ci
+
+
 @pytest.mark.timeout(300)
 def test_real_tree_has_no_unallowlisted_findings() -> None:
     # Scanning the whole src/ tree walks ~2.5k files; the global 60s pytest
