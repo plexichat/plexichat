@@ -45,6 +45,9 @@ CREATE INDEX IF NOT EXISTS idx_notif_user_channel ON notif_notifications(user_id
 -- Per-channel unread counts filter user_id + channel_id + read=0.
 CREATE INDEX IF NOT EXISTS idx_notif_user_channel_read
     ON notif_notifications(user_id, channel_id, read);
+-- Per-thread unread counts filter user_id + thread_id + read=0.
+CREATE INDEX IF NOT EXISTS idx_notif_user_thread_read
+    ON notif_notifications(user_id, thread_id, read);
 CREATE INDEX IF NOT EXISTS idx_notif_message ON notif_notifications(message_id);
 CREATE INDEX IF NOT EXISTS idx_notif_created ON notif_notifications(created_at);
 
