@@ -54,7 +54,7 @@ class HealthResponse(BaseModel):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def health_check(response: Response) -> HealthResponse:
+async def health_check(response: Optional[Response] = None) -> HealthResponse:
     """Check API health status.
 
     Returns the current health status, API version, and — when
@@ -86,7 +86,11 @@ async def health_check(response: Response) -> HealthResponse:
             ver = "unknown"
 
         # Health is a live probe; never let a proxy or client cache it.
-        response.headers["Cache-Control"] = "no-store"
+        # ``response`` is injected by FastAPI on the /health route but is absent
+        # when called directly (e.g. the in-app health_redirect proxy), so guard
+        # it — the direct caller manages its own response headers.
+        if response is not None:
+            response.headers["Cache-Control"] = "no-store"
         events_metrics: Optional[Dict[str, Any]] = None
         recreate_pending: Optional[bool] = None
         try:

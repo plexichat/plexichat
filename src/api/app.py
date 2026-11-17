@@ -755,7 +755,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
             # health_check() already returns a validated HealthResponse; avoid
             # re-validating it through FastAPI's response-model pipeline.
-            return validated_json_response(await health_check())
+            result = validated_json_response(await health_check())
+            # Health is a live probe — never let a proxy or client cache the
+            # proxied response either (the /health route sets this via Response).
+            result.headers["Cache-Control"] = "no-store"
+            return result
         except HTTPException:
             raise
         except Exception as e:
