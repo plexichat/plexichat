@@ -2,6 +2,7 @@
 
 import ipaddress
 import json
+import socket
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -25,6 +26,44 @@ _BLOCKED_ENDPOINT_HOSTS = frozenset(
 )
 
 
+def _endpoint_address(host: str) -> Optional[Any]:
+    """Return an IP address for *host*, including legacy numeric spellings.
+
+    ``ipaddress`` only recognises canonical dotted-quad IPv4 and RFC 4291
+    IPv6. The system resolver (used by requests/pywebpush) additionally accepts
+    the ``inet_aton(3)`` forms -- decimal (``2130706433``), hexadecimal
+    (``0x7f000001``), octal (``0177.0.0.1``) and truncated (``127.1``) -- all of
+    which name loopback or another private address. Treating those as ordinary
+    DNS names would let a registered subscription POST its payload into the
+    internal network, defeating the literal-IP check below. Normalise every
+    such spelling through ``socket.inet_aton`` before deciding.
+
+    Returns ``None`` for a genuine DNS name (which the checker then admits,
+    subject to the hostname rules); returns an ``IPv4Address``/``IPv6Address``
+    for any host the resolver would turn into a literal IP.
+    """
+    candidate = host.strip("[]")
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+
+    # A mapped IPv6 literal may carry an obfuscated IPv4 tail (e.g.
+    # ``::ffff:2130706433``). Normalise the tail too rather than letting it
+    # slip through as a "DNS name".
+    lowered = candidate.lower()
+    if lowered.startswith("::ffff:"):
+        try:
+            return ipaddress.ip_address(socket.inet_aton(candidate[7:]))
+        except (OSError, ValueError):
+            pass
+
+    try:
+        return ipaddress.ip_address(socket.inet_aton(candidate))
+    except (OSError, ValueError):
+        return None
+
+
 def _require_public_endpoint(endpoint: str) -> str:
     """Refuse endpoints that point at loopback/private/link-local targets.
 
@@ -41,13 +80,12 @@ def _require_public_endpoint(endpoint: str) -> str:
         raise ValueError("endpoint has no host")
     if host in _BLOCKED_ENDPOINT_HOSTS or host.endswith((".local", ".internal")):
         raise ValueError("endpoint targets an internal host")
-    try:
-        address = ipaddress.ip_address(host.strip("[]"))
-    except ValueError:
+    address = _endpoint_address(host)
+    if address is None:
         # An ordinary DNS name; scheme/no-credentials were already checked by
         # require_https_url. DNS-based rebinding cannot be fully prevented by
         # pywebpush (it resolves the name itself), but literal/internal targets
-        # -- the overwhelming majority of SSRF payloads -- are blocked here.
+        # -- including their obfuscated inet_aton spellings -- are blocked here.
         return endpoint
     if (
         address.is_private
@@ -59,6 +97,39 @@ def _require_public_endpoint(endpoint: str) -> str:
     ):
         raise ValueError("endpoint targets a non-public IP address")
     return endpoint
+
+
+class _NoRedirectSession:
+    """A minimal requests-session shim that never follows redirects.
+
+    pywebpush accepts any object exposing ``post`` through its
+    ``requests_session`` argument. A subscription endpoint is registered by an
+    authenticated user, so a validated *public* URL can still answer with a
+    30x whose ``Location`` points at loopback or ``169.254.169.254``; requests
+    follows that redirect by default and re-POSTs the payload to the internal
+    target, bypassing the literal-IP gate above. Forcing
+    ``allow_redirects=False`` means only the endpoint we validated is ever
+    contacted. ``requests`` is imported lazily because pywebpush (and thus the
+    whole transport) is optional.
+    """
+
+    def __init__(self) -> None:
+        import requests
+
+        self._session = requests.Session()
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        kwargs["allow_redirects"] = False
+        return self._session.post(url, **kwargs)
+
+    def close(self) -> None:
+        self._session.close()
+
+    def __enter__(self) -> "_NoRedirectSession":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
 
 class WebPushMixin(PushManagerBase):
@@ -128,13 +199,19 @@ class WebPushMixin(PushManagerBase):
         }
         payload = json.dumps({"title": title, "body": body, "data": data or {}})
         try:
-            webpush(
-                subscription_info=subscription_info,
-                data=payload,
-                vapid_private_key=push_config["vapid_private_key"],
-                vapid_claims={"sub": push_config["vapid_subject"]},
-                content_encoding="aes128gcm",
-            )
+            # Never follow a redirect from the subscription endpoint: a public
+            # URL under the caller's control could otherwise bounce the POST
+            # (and its encrypted payload) to an internal address. See
+            # :class:`_NoRedirectSession`.
+            with _NoRedirectSession() as session:
+                webpush(
+                    subscription_info=subscription_info,
+                    data=payload,
+                    vapid_private_key=push_config["vapid_private_key"],
+                    vapid_claims={"sub": push_config["vapid_subject"]},
+                    content_encoding="aes128gcm",
+                    requests_session=session,
+                )
             logger.debug(f"Web Push sent to {endpoint[:16]}...")
             return True
         except WebPushException as e:
