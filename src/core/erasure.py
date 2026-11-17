@@ -41,13 +41,35 @@ _OPTIONAL_TABLES = (
     "webhook_messages",
 )
 
+# Per-user residue lives in tables that have no cascade from ``auth_users``
+# (some have no foreign key at all). Older or partial installs may not have
+# them yet, so a missing table must not abort the rest of the purge.
+_RESIDUE_TABLES = (
+    "notif_notifications",
+    "notif_settings",
+    "notif_channel_overrides",
+    "notif_unread",
+    "pres_presence",
+    "pres_custom_status",
+    "pres_activity",
+    "pres_typing",
+    "user_profiles",
+    "push_tokens",
+    "user_last_chat",
+    "user_recent_chats",
+    "user_bookmarks",
+    "msg_scheduled",
+    "msg_forwarded",
+    "webhook_retry_queue",
+)
+
 
 def _execute(db: Any, statement: str, params: tuple = ()) -> None:
     """Run one cleanup statement, tolerating a schema without that table."""
     try:
         db.execute(statement, params)
     except Exception as exc:
-        if any(table in statement for table in _OPTIONAL_TABLES):
+        if any(table in statement for table in _OPTIONAL_TABLES + _RESIDUE_TABLES):
             logger.debug(
                 "Erase: optional cleanup skipped (%s): %s", statement[:60], exc
             )
@@ -121,6 +143,14 @@ def purge_server_recursive(db: Any, server_id: int) -> None:
         "(SELECT id FROM webhook_webhooks WHERE server_id = ?)",
         (sid,),
     )
+    # The retry queue carries the full webhook payload and response history.
+    # Left behind it keeps PII from the deleted server's deliveries alive.
+    _execute(
+        db,
+        "DELETE FROM webhook_retry_queue WHERE webhook_id IN "
+        "(SELECT id FROM webhook_webhooks WHERE server_id = ?)",
+        (sid,),
+    )
     _execute(db, "DELETE FROM webhook_webhooks WHERE server_id = ?", (sid,))
     for table in (
         "automod_rules",
@@ -153,6 +183,19 @@ def purge_owned_servers(db: Any, user_id: int) -> List[int]:
 def delete_conversation(db: Any, conversation_id: int) -> None:
     """Delete a conversation with its messages, attachments and threads."""
     cid = int(conversation_id)
+    # notif_notifications has no ON DELETE CASCADE on its message/conversation
+    # foreign keys. Without this, a notification about a message here would
+    # block the parent deletes on PostgreSQL and its content preview would
+    # survive as orphaned residue. The per-user chat tracking rows have no
+    # foreign key at all and would keep pointing at a dead conversation.
+    _execute(
+        db,
+        "DELETE FROM notif_notifications WHERE conversation_id = ? "
+        "OR message_id IN (SELECT id FROM msg_messages WHERE conversation_id = ?)",
+        (cid, cid),
+    )
+    _execute(db, "DELETE FROM user_last_chat WHERE conversation_id = ?", (cid,))
+    _execute(db, "DELETE FROM user_recent_chats WHERE conversation_id = ?", (cid,))
     _execute(
         db,
         "DELETE FROM msg_message_status WHERE message_id IN "
@@ -423,6 +466,74 @@ def purge_user_media(db: Any, user_id: int, media: Optional[Any] = None) -> List
     return unswept
 
 
+# === notifications, presence, profile and tracking residue ===
+
+
+def purge_user_notifications(db: Any, user_id: int) -> int:
+    """Delete every notification tied to the account.
+
+    Three distinct links have to go:
+
+    * the user's own feed (``user_id``) -- holds message content previews;
+    * notifications the user *sent* (``sender_id``);
+    * notifications *about the user's messages* (``message_id``) still sitting
+      in somebody else's feed.
+
+    This runs before the conversation/message purges: ``notif_notifications``
+    has foreign keys to ``msg_messages``/``msg_conversations`` without
+    ``ON DELETE CASCADE``, so a lingering notification both survives as PII
+    residue and blocks the parent delete on PostgreSQL.
+    """
+    uid = int(user_id)
+    before = _count(db, "SELECT count(*) AS n FROM notif_notifications")
+    _execute(
+        db,
+        "DELETE FROM notif_notifications WHERE user_id = ? OR sender_id = ? "
+        "OR message_id IN (SELECT id FROM msg_messages WHERE author_id = ?)",
+        (uid, uid, uid),
+    )
+    for table in ("notif_settings", "notif_channel_overrides", "notif_unread"):
+        _execute(db, f"DELETE FROM {table} WHERE user_id = ?", (uid,))
+    return max(0, before - _count(db, "SELECT count(*) AS n FROM notif_notifications"))
+
+
+def purge_user_personal_rows(db: Any, user_id: int) -> int:
+    """Delete the account's presence, profile, push-token and chat-tracking rows.
+
+    All of these tables key rows by a bare user id with no cascade from
+    ``auth_users``. Left behind they keep the deleted account's status, bio,
+    device tokens and recent-conversation history queryable under a dead id.
+    Children go before ``pres_presence`` for the benefit of any schema that
+    does declare a cascade between them.
+    """
+    uid = int(user_id)
+    affected = 0
+    for table in (
+        "pres_custom_status",
+        "pres_activity",
+        "pres_typing",
+        "pres_presence",
+        "user_profiles",
+        "push_tokens",
+        "user_last_chat",
+        "user_recent_chats",
+        "user_bookmarks",
+        "msg_scheduled",
+        "msg_forwarded",
+    ):
+        column = "author_id" if table == "msg_scheduled" else (
+            "forwarded_by" if table == "msg_forwarded" else "user_id"
+        )
+        try:
+            cursor = db.execute(f"DELETE FROM {table} WHERE {column} = ?", (uid,))
+            affected += int(getattr(cursor, "rowcount", 0) or 0)
+        except Exception as exc:
+            if table not in _RESIDUE_TABLES:
+                raise
+            logger.debug("Erase: optional residue cleanup skipped (%s): %s", table, exc)
+    return affected
+
+
 # === orchestration ===
 
 
@@ -430,19 +541,28 @@ def erase_user_residue(
     db: Any, user_id: int, media: Optional[Any] = None
 ) -> Dict[str, Any]:
     """Erase everything the account owned outside the ``auth_users`` row."""
+    # Notifications first: their un-cascaded FKs would otherwise block the
+    # conversation/message deletes below and leak message previews.
+    notifications = purge_user_notifications(db, user_id)
+    personal_rows = purge_user_personal_rows(db, user_id)
     servers = purge_owned_servers(db, user_id)
     conversations = purge_user_conversations(db, user_id)
     unswept_media = purge_user_media(db, user_id, media=media)
-    if servers or conversations or unswept_media:
+    if servers or conversations or unswept_media or notifications or personal_rows:
         logger.info(
-            "Erase: user %s left %s server(s), %s conversation(s), %s unswept "
-            "media object(s) cleaned up",
+            "Erase: user %s left %s notification(s), %s personal row(s), "
+            "%s server(s), %s conversation(s), %s unswept media object(s) "
+            "cleaned up",
             user_id,
+            notifications,
+            personal_rows,
             len(servers),
             len(conversations),
             len(unswept_media),
         )
     return {
+        "notifications": notifications,
+        "personal_rows": personal_rows,
         "servers": servers,
         "conversations": conversations,
         "media_unswept": unswept_media,
@@ -509,6 +629,8 @@ __all__ = [
     "purge_server_recursive",
     "purge_user_conversations",
     "purge_user_media",
+    "purge_user_notifications",
+    "purge_user_personal_rows",
     "sweep_orphaned_servers",
     "sweep_orphans",
 ]

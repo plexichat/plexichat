@@ -7,6 +7,7 @@ custom status, bio, banner images, social links, and more.
 
 import ipaddress
 import json
+import socket
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
@@ -70,6 +71,45 @@ def _strip_internal_keys(data: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in data.items() if k not in _INTERNAL_PROFILE_KEYS}
 
 
+def _is_internal_address(address: Any) -> bool:
+    """True for an address no public profile link should ever target."""
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
+def _host_is_internal(hostname: str) -> bool:
+    """Recognise internal hosts without resolving DNS.
+
+    ``ipaddress`` only parses canonical IPv4/IPv6 spellings. Browsers, however,
+    treat several alternative spellings of the same literal as an IP address:
+    a decimal integer (``2130706433``), hex (``0x7f000001``), octal
+    (``0177.0.0.1``) and shorthand with fewer than four octets (``127.1``).
+    Every one of them resolves to loopback in a viewer's browser, so letting
+    them through the guard defeated its purpose: a stored profile link could
+    silently target the viewer's own machine or local network.
+
+    ``socket.inet_aton`` parses exactly those numeric/shorthand forms and,
+    crucially, never consults DNS. Anything it cannot parse is a hostname and
+    is left alone (resolved-address checks belong in the server-side fetch
+    gate, :mod:`src.core.security.outbound`, which this module is not).
+    """
+    host = hostname.rstrip(".")
+    try:
+        return _is_internal_address(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    try:
+        packed = socket.inet_aton(host)
+    except (OSError, ValueError, UnicodeError):
+        return False
+    return _is_internal_address(ipaddress.ip_address(packed))
+
+
 def _ssrf_guard_url(url: str, field_name: str) -> None:
     """Reject a stored link whose host is plainly internal.
 
@@ -79,7 +119,8 @@ def _ssrf_guard_url(url: str, field_name: str) -> None:
     rejected whenever resolution was unavailable (offline install, CI, a
     resolver outage) even though nothing was ever going to connect to it.
 
-    Literal internal addresses are still refused, without touching the
+    Literal internal addresses -- including the numeric and shorthand IPv4
+    spellings browsers accept -- are still refused, without touching the
     network. Resolved-address checks belong where the server does connect, in
     :mod:`src.core.security.outbound`.
     """
@@ -91,23 +132,12 @@ def _ssrf_guard_url(url: str, field_name: str) -> None:
         ) from exc
     if not hostname:
         raise OutboundUrlRejected(f"{field_name} is missing a host", field=field_name)
-    if hostname == "localhost" or hostname.endswith(
-        (".localhost", ".local", ".internal")
-    ):
+    host = hostname.rstrip(".")
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
         raise OutboundUrlRejected(
             f"{field_name} must not point at an internal host", field=field_name
         )
-    try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        return
-    if (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_unspecified
-    ):
+    if _host_is_internal(hostname):
         raise OutboundUrlRejected(
             f"{field_name} must not point at an internal address", field=field_name
         )
