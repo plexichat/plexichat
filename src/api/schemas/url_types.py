@@ -53,6 +53,19 @@ def validate_http_url(
     # Reuse the text policy's shared control/bidi rule rather than growing a
     # second character list that can drift out of sync with it.
     reject_unsafe_unicode(text, field)
+    # Browsers and HTTP clients normalise a raw ``\`` to ``/`` in special
+    # schemes (http/https/ws/wss), but ``urlparse`` does not. That parser
+    # differential lets a value validated against one authority be fetched or
+    # rendered with another -- e.g. an allowlisted host followed by
+    # ``\@attacker.tld`` reads as a different host in a browser, and
+    # ``https://example.com\evil.tld`` is navigated to as
+    # ``https://example.com/evil.tld``. A literal backslash in a URL is
+    # anomalous and must be percent-encoded (``%5C``) by the caller, so refuse
+    # it outright rather than trusting two parsers to agree.
+    if "\\" in text:
+        raise OutboundUrlRejected(
+            f"{field} must not contain backslashes", field=field
+        )
     # require_http_url enforces absolute http(s) + no embedded credentials.
     require_http_url(text, field)
     if allowed_hosts is not None:

@@ -28,13 +28,17 @@ from src.core.security.policies import TEXT_POLICIES, TextPolicy
 # Invisible characters that let one string render as another. C0 + DEL + C1
 # corrupt terminals and logs; the bidirectional controls reorder displayed
 # text so ``evil\u202eexe.exe`` reads as ``evilexe.exe`` without changing the
-# stored value. The zero-width joiner (U+200D) is deliberately absent: it is a
+# stored value. The full Unicode ``Bidi_Control`` set is covered: the Arabic,
+# left/right and embedding/override/isolate marks, the Syriac abbreviation mark
+# (U+070F, a strong right-to-left control) and the legacy directional formats
+# U+206A-U+206F. The zero-width joiner (U+200D) is deliberately absent: it is a
 # legitimate part of many emoji sequences and rejecting it would refuse ordinary
 # text.
 UNSAFE_UNICODE = re.compile(
     r"[\x00-\x1f\x7f-\x9f"  # C0 controls, DEL, C1 controls
-    r"\u061c\u200e\u200f"  # Arabic/left/right directional marks
-    r"\u202a-\u202e\u2066-\u2069"  # bidi embedding, overrides and isolates
+    r"\u061c\u200e\u200f\u070f"  # Arabic/LR/RL marks + Syriac abbreviation mark
+    r"\u202a-\u202e"  # bidi embedding and overrides
+    r"\u2066-\u206f"  # bidi isolates + legacy directional formats (206A-206F)
     r"\u2028\u2029\u2060\ufeff]"  # line/paragraph separators, word joiner, BOM
 )
 
