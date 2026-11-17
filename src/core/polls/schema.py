@@ -58,6 +58,8 @@ CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_user_poll ON poll_votes(user_id, poll_id);
 -- Rosters for a poll order by voted_at; serve the sort from the index.
 CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_time ON poll_votes(poll_id, voted_at);
+-- Results tally: WHERE poll_id = ? GROUP BY option_id.
+CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_option ON poll_votes(poll_id, option_id);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_user ON poll_votes(user_id);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(option_id);
 
