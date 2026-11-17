@@ -122,6 +122,24 @@ def test_delete_with_another_users_id_does_not_delete_the_row():
     assert not [s for s in db.statements if s[0] == "execute"]
 
 
+def test_concurrent_delete_is_not_reported_as_successful_mark_read():
+    class VanishingDB(_FakeDB):
+        def execute(self, sql, params=()):
+            # Row is removed concurrently just before the UPDATE lands.
+            self.rows.clear()
+
+            class Result:
+                rowcount = 0
+
+            return Result()
+
+    db = VanishingDB([_row(1, OWNER)])
+    feed = _Feed(db)
+    with pytest.raises(NotificationNotFoundError):
+        feed.mark_notification_read(OWNER, 1)
+    assert feed.events == []
+
+
 def test_owner_can_still_read_and_delete_their_own_notification():
     feed, db = _manager()
     assert feed.mark_notification_read(OWNER, 1) is True

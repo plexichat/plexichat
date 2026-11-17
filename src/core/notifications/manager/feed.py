@@ -149,6 +149,12 @@ class FeedMixin(NotificationProtocol):
         )
         if getattr(cursor, "rowcount", 0) == 0:
             # Already read (or concurrently marked): nothing transitioned.
+            # Confirm the row still belongs to the caller before reporting
+            # success — a concurrent delete between the scoped read and this
+            # UPDATE must surface as "not found", not a false success for a
+            # notification that no longer exists.
+            if self.get_notification(notification_id, user_id) is None:
+                raise NotificationNotFoundError("Notification not found")
             return True
 
         self._decrement_mention_count(user_id, notif.conversation_id)
