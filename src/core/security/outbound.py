@@ -28,6 +28,30 @@ from .hardening.text import reject_control_characters
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
 
+def _authority_has_backslash(url: str) -> bool:
+    """Return whether the URL's authority (userinfo/host/port) contains a ``\\``.
+
+    Only ``/``, ``?`` and ``#`` terminate the authority, so a backslash placed
+    before any of them stays inside ``urlparse``'s userinfo and
+    ``urlparse(url).hostname`` reports the host to the RIGHT of an ``@``. Other
+    consumers disagree: ``requests``/urllib3, curl and browsers following the
+    WHATWG URL standard treat a backslash as a forward slash in http(s) URLs and
+    therefore connect to the host to the LEFT of it.
+
+    That parser differential is an SSRF bypass. For example,
+    ``http://169.254.169.254\\@public.example/x`` is validated against the
+    public ``public.example`` but fetched from the link-local metadata address
+    by a downstream client. A literal backslash has no legitimate place in a
+    URL authority; one that is meant as data must be percent-encoded (``%5C``),
+    which puts it in the path where it cannot influence host selection.
+
+    ``urlparse``'s ``netloc`` is exactly the authority it uses to derive the
+    hostname the gate validates, so a backslash there marks a real disagreement
+    with the downstream HTTP client.
+    """
+    return "\\" in (urlparse(url).netloc or "")
+
+
 @dataclass(frozen=True)
 class OutboundUrl:
     """A URL that has passed the SSRF gate.
@@ -65,6 +89,16 @@ def parse_outbound_url(value: str, field: str = "url") -> OutboundUrl:
     if scheme not in ALLOWED_SCHEMES:
         logger.warning(f"Rejected {field}: scheme {scheme or 'none'} not allowed")
         raise OutboundUrlRejected(f"{field} must use http or https", field=field)
+
+    # A backslash in the authority makes urlparse (this gate) and the HTTP
+    # client that later fetches the URL disagree about which host to contact.
+    # Reject it before DNS resolution so a private/metadata address cannot be
+    # smuggled into the userinfo and reached by a re-resolving sink.
+    if _authority_has_backslash(candidate):
+        logger.warning(f"Rejected {field}: backslash in URL authority")
+        raise OutboundUrlRejected(
+            f"{field} contains a backslash in the URL authority", field=field
+        )
 
     try:
         hostname, address = URLValidator().validate_url_for_request(candidate)
