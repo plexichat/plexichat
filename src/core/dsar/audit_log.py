@@ -457,6 +457,37 @@ class DSARLog:
                             f"Chain broken at line {line_num}: checksum invalid",
                         )
 
+                    # SECURITY: export/deletion events carry a self-verifying
+                    # integrity_hash over their metadata. It was written by
+                    # ``_log_integrity_event`` but never checked, so a record
+                    # whose chain checksum was recomputed (possible on the
+                    # legacy unkeyed chain, or with a compromised chain key)
+                    # could have its artifact_sha256/storage_path/deleted
+                    # fields silently altered while still "verifying". Bind
+                    # the metadata to its hash on every verification so the
+                    # advertised per-record tamper evidence is real.
+                    metadata = entry.get("metadata")
+                    if isinstance(metadata, dict) and "integrity_hash" in metadata:
+                        stored_integrity = metadata["integrity_hash"]
+                        payload = {
+                            k: v
+                            for k, v in metadata.items()
+                            if k != "integrity_hash"
+                        }
+                        expected_integrity = self._integrity_hash(payload)
+                        if not (
+                            isinstance(stored_integrity, str)
+                            and hmac.compare_digest(
+                                stored_integrity, expected_integrity
+                            )
+                        ):
+                            return (
+                                False,
+                                count,
+                                f"Chain broken at line {line_num}: "
+                                "metadata integrity_hash mismatch",
+                            )
+
                     expected_prev_hash = stored_checksum
                     count += 1
 

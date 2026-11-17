@@ -75,6 +75,14 @@ SUBJECT_ID_FIELDS: FrozenSet[str] = frozenset(
         "reporter_id",
         "reported_user_id",
         "sender_id",
+        # Ownership columns used by collectors whose tables have no
+        # ``user_id`` column. Without these, a collector that loses its
+        # WHERE predicate returns foreign rows that carry NO recognised
+        # subject field at all, so ``verify_export_scope`` treated them as
+        # "no owner information" and let them straight into the export.
+        "target_id",       # automod_exemptions (target_type='user')
+        "installer_id",    # app_installations
+        "uploaded_by",     # media_files
     }
 )
 
@@ -84,13 +92,26 @@ class ExportScopeViolation(ValueError):
 
 
 def _candidate_subject_ids(value: Any) -> Iterable[int]:
-    """Yield integer ids from a field, tolerating string-coded ids."""
+    """Yield integer ids from a field, tolerating string/float coded ids.
+
+    Collected rows come from a database driver, so an ownership column may
+    arrive as ``int``, as a digit string (some columns are TEXT), as a float
+    (SQLite REAL affinity), or with surrounding whitespace. Treating any of
+    those as "no owner" let a foreign row slip past :func:`verify_export_scope`
+    simply because its id was encoded differently from the requesting user's.
+    Normalise all of them here so the scope check cannot be bypassed by the
+    storage type of an ownership column.
+    """
     if isinstance(value, bool):
         return
     if isinstance(value, int):
         yield value
-    elif isinstance(value, str) and value.isdigit():
+    elif isinstance(value, float) and value.is_integer():
         yield int(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            yield int(stripped)
 
 
 def _iter_mappings(value: Any) -> Iterator[Dict[str, Any]]:
@@ -272,6 +293,32 @@ def export_record_counts(data: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
+def _export_serialized_size(data: Dict[str, Any]) -> int:
+    """Upper bound of the bytes the generator will actually write.
+
+    ``ExportFormatGenerator.generate_json`` does NOT write the compact JSON
+    measured by a bare ``json.dumps(data)``. It wraps ``data`` in an envelope
+    (request/user ids, generated_at, ...) and serialises with ``indent=2``.
+    Pretty-printing routinely adds 1.5-2x overhead on nested collector rows,
+    so measuring the compact form let an export blow well past
+    ``max_export_bytes`` while the quota gate reported it as within bounds.
+
+    Replicate the generator's envelope + indentation here (with worst-case
+    snowflake-length numeric fields) so the byte quota is checked against the
+    real artifact size. ZIP exports are bounded too: their compressed bytes
+    are smaller than this uncompressed upper bound.
+    """
+    probe_envelope = {
+        "export_type": "dsar_json",
+        "export_version": "1.0",
+        "request_id": 10**19 - 1,
+        "user_id": 10**19 - 1,
+        "generated_at": 10**10 - 1,
+        "data": data,
+    }
+    return len(json.dumps(probe_envelope, indent=2, default=str).encode("utf-8"))
+
+
 def enforce_export_quotas(
     data: Dict[str, Any],
     *,
@@ -304,8 +351,7 @@ def enforce_export_quotas(
             f"max_total_records={max_total_records}"
         )
 
-    serialized = json.dumps(data, default=str).encode("utf-8")
-    size = len(serialized)
+    size = _export_serialized_size(data)
     if size > max_export_bytes:
         raise ExportQuotaExceeded(
             f"export payload is {size} bytes, exceeding "
