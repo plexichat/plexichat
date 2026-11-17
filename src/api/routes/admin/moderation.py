@@ -3,7 +3,7 @@ Admin moderation and content review routes.
 """
 
 from fastapi import APIRouter, Query, Request, HTTPException
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, cast
 from src.api.schemas.admin import (
     HashReportResponse,
     HashReportCountsResponse,
@@ -27,6 +27,7 @@ from src.api.schemas.admin import (
     AutomodConfigResponse,
     AutomodConfigUpdateRequest,
 )
+from src.api.schemas.admin.automod import ActionTypeValue
 from src.api.schemas.common import (
     ErrorResponse,
     SnowflakeIDParam,
@@ -760,9 +761,12 @@ def _rule_to_response(rule) -> AutomodRuleResponse:
         config=rule.config,
         actions=[
             AutomodRuleAction(
-                action_type=a.action_type.value
-                if hasattr(a.action_type, "value")
-                else str(a.action_type),
+                action_type=cast(
+                    ActionTypeValue,
+                    a.action_type.value
+                    if hasattr(a.action_type, "value")
+                    else str(a.action_type),
+                ),
                 duration_seconds=a.duration_seconds,
                 reason=a.reason,
                 notify_user=a.notify_user,

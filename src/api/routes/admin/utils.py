@@ -356,7 +356,7 @@ def require_approved_request(action_type: str) -> Optional[int]:
             admin_count = gate_row[0] if len(gate_row) > 0 else None
             approval_id = gate_row[1] if len(gate_row) > 1 else None
         try:
-            admin_count = int(admin_count)
+            admin_count = int(admin_count) if admin_count is not None else None
         except (TypeError, ValueError):
             admin_count = None
 

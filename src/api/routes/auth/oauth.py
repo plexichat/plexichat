@@ -5,7 +5,7 @@ import json as _json
 import re
 import secrets as _secrets
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -296,8 +296,8 @@ def _validate_id_token_claims(
         )
 
     now = int(time.time())
-    exp = _claim_int(claims, "exp")
-    iat = _claim_int(claims, "iat")
+    exp = cast(int, _claim_int(claims, "exp"))
+    iat = cast(int, _claim_int(claims, "iat"))
     nbf = _claim_int(claims, "nbf", required=False)
     if exp <= now - ID_TOKEN_CLOCK_SKEW_SECONDS:
         raise HTTPException(
