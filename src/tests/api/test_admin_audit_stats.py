@@ -373,7 +373,9 @@ def test_export_escapes_action_family_like_wildcards():
         assert response.status_code == 200
         query, params = fake_db.calls[0]
         assert "action LIKE ? ESCAPE '\\'" in query
-        assert params == ("\\%%",)
+        # The export is hard-capped so a single request cannot materialise an
+        # unbounded number of rows; the row limit is the trailing bound param.
+        assert params == ("\\%%", 10_000)
     finally:
         for c in reversed(ctx):
             c.stop()

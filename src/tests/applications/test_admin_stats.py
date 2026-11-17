@@ -42,25 +42,28 @@ class TestAdminStats:
         """Feature stats break pending/retrying/dead-letter retry queue rows out."""
         queue = WebhookRetryQueue(db)
 
+        # Only loopback targets are permitted through the private-network
+        # testing seam; these rows are never delivered, so distinct loopback
+        # endpoints keep the SSRF gate happy while exercising the stat query.
         pending = queue.enqueue(
             101,
             "message.created",
             {"n": 1},
-            "https://hook.example/pending",
+            "http://127.0.0.1:9001/pending",
             allow_private_network=True,
         )
         retrying = queue.enqueue(
             101,
             "message.created",
             {"n": 2},
-            "https://hook.example/retrying",
+            "http://127.0.0.1:9002/retrying",
             allow_private_network=True,
         )
         dead = queue.enqueue(
             101,
             "message.created",
             {"n": 3},
-            "https://hook.example/dead",
+            "http://127.0.0.1:9003/dead",
             allow_private_network=True,
         )
 

@@ -11,6 +11,7 @@ Covers:
 
 import asyncio
 import pytest
+from pydantic import ValidationError
 
 from src.core import reports as reports_module
 from src.core.reports import schema as reports_schema
@@ -92,10 +93,10 @@ class TestRep345EnhancedReportValidation:
     def test_invalid_target_type_rejected(self, monkeypatch):
         db = _FakeDB()
         _patch_api(monkeypatch, db, None)
-        req = EnhancedReportRequest(target_type="server", target_id="5", reason="spam")
-        with pytest.raises(Exception) as exc:
-            asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
-        assert exc.value.status_code == 400
+        # An invalid target_type is rejected at the request boundary, before
+        # the route runs: model construction raises a pydantic ValidationError.
+        with pytest.raises(ValidationError, match="target_type"):
+            EnhancedReportRequest(target_type="server", target_id="5", reason="spam")
 
     def test_self_user_report_rejected(self, monkeypatch):
         db = _FakeDB(user_exists=True)
@@ -116,15 +117,15 @@ class TestRep345EnhancedReportValidation:
     def test_invalid_evidence_url_rejected(self, monkeypatch):
         db = _FakeDB(user_exists=True)
         _patch_api(monkeypatch, db, None)
-        req = EnhancedReportRequest(
-            target_type="user",
-            target_id="999",
-            reason="spam",
-            evidence_urls=["javascript:alert(1)"],
-        )
-        with pytest.raises(Exception) as exc:
-            asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
-        assert exc.value.status_code == 400
+        # Unsafe evidence URLs are rejected at the request boundary, before
+        # the route runs: model construction raises a pydantic ValidationError.
+        with pytest.raises(ValidationError, match="evidence_urls"):
+            EnhancedReportRequest(
+                target_type="user",
+                target_id="999",
+                reason="spam",
+                evidence_urls=["javascript:alert(1)"],
+            )
 
     def test_self_message_report_rejected(self, monkeypatch):
         db = _FakeDB()
