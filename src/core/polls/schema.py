@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS poll_votes (
 CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id);
 -- Rosters query by (user_id, poll_id) and order by voted_at.
 CREATE INDEX IF NOT EXISTS idx_poll_votes_user_poll ON poll_votes(user_id, poll_id);
+-- Rosters for a poll order by voted_at; serve the sort from the index.
+CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_time ON poll_votes(poll_id, voted_at);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_user ON poll_votes(user_id);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(option_id);
 
