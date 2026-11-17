@@ -145,34 +145,62 @@ def _sanitize_message_embed(
             sanitized[key] = _sanitize_message_embed(
                 value, child_path, depth=depth + 1, budget=budget
             )
-        elif isinstance(value, list):
-            if len(value) > MAX_EMBED_LIST_ITEMS:
-                raise EmbedValidationError(
-                    f"{child_path} has too many items ({len(value)}/{MAX_EMBED_LIST_ITEMS})",
-                    [child_path],
-                )
-            items: List[Any] = []
-            for j, v in enumerate(value):
-                item_path = f"{child_path}[{j}]"
-                budget.charge_node(item_path)
-                if isinstance(v, dict):
-                    items.append(
-                        _sanitize_message_embed(
-                            v, item_path, depth=depth + 1, budget=budget
-                        )
-                    )
-                elif isinstance(v, str):
-                    budget.charge_text(v, item_path, field_string_limit(key))
-                    items.append(sanitize_content(v, item_path))
-                else:
-                    items.append(v)
-            sanitized[key] = items
+        elif isinstance(value, (list, tuple)):
+            # Use the recursive value sanitizer so strings, URLs and nested
+            # objects inside a list (including lists nested in lists) get the
+            # same treatment as fields directly on an embed. A flat loop that
+            # only handled dict and str items let an attacker hide active
+            # content in a nested list and have it stored verbatim.
+            sanitized[key] = _sanitize_message_value(
+                value, child_path, depth=depth, budget=budget, key=key
+            )
         elif isinstance(value, str):
             budget.charge_text(value, child_path, field_string_limit(key))
             sanitized[key] = sanitize_content(value, child_path)
         else:
             sanitized[key] = value
     return sanitized
+
+
+def _sanitize_message_value(
+    value: Any,
+    path: str,
+    depth: int,
+    budget: EmbedBudget,
+    key: str,
+) -> Any:
+    """Sanitize one value found inside an embed list.
+
+    ``depth`` is the depth of the embed that owns the list; every child of
+    this value therefore lives at ``depth + 1``. Lists are recursive so a
+    string or object hidden in a list-of-lists cannot escape the XSS, URL
+    and resource-bound checks that apply to fields directly on an embed.
+    """
+    if depth + 1 > MAX_EMBED_NESTING_DEPTH:
+        raise EmbedValidationError(
+            f"{path} exceeds maximum embed nesting depth ({MAX_EMBED_NESTING_DEPTH})",
+            [path],
+        )
+    if isinstance(value, dict):
+        return _sanitize_message_embed(value, path, depth=depth + 1, budget=budget)
+    if isinstance(value, (list, tuple)):
+        if len(value) > MAX_EMBED_LIST_ITEMS:
+            raise EmbedValidationError(
+                f"{path} has too many items ({len(value)}/{MAX_EMBED_LIST_ITEMS})",
+                [path],
+            )
+        items: List[Any] = []
+        for j, item in enumerate(value):
+            item_path = f"{path}[{j}]"
+            budget.charge_node(item_path)
+            items.append(
+                _sanitize_message_value(item, item_path, depth + 1, budget, key)
+            )
+        return items
+    if isinstance(value, str):
+        budget.charge_text(value, path, field_string_limit(key))
+        return sanitize_content(value, path)
+    return value
 
 
 def _sanitize_message_fields(

@@ -137,6 +137,39 @@ class TestSanitizeMessageEmbeds:
         result = sanitize_message_embeds(embeds)
         assert result[0]["timestamp"] == "2026-01-01T12:00:00Z"
 
+    def test_xss_in_nested_list_rejected(self):
+        # A string hidden in a list-of-lists must not survive verbatim: the
+        # flat list loop used to append nested lists unsanitized.
+        with pytest.raises(EmbedSanitizationError):
+            sanitize_message_embeds(
+                [{"description": [["hi <script>alert(1)</script>"]]}]
+            )
+        with pytest.raises(EmbedSanitizationError):
+            sanitize_message_embeds(
+                [{"custom": [[["<img src=x onerror=alert(1)>"]]]}]
+            )
+
+    def test_safe_nested_list_strings_preserved(self):
+        result = sanitize_message_embeds([{"custom": [["ok", "also ok"]]}])
+        assert result[0]["custom"] == [["ok", "also ok"]]
+
+    def test_unsafe_url_and_active_content_inside_nested_list_rejected(self):
+        # Objects and URL-shaped keys inside nested lists must go through the
+        # same URL gate as fields directly on the embed.
+        with pytest.raises((InvalidUrlError, EmbedValidationError)):
+            sanitize_message_embeds([{"custom": [[{"url": "javascript:alert(1)"}]]}])
+        with pytest.raises(EmbedSanitizationError):
+            sanitize_message_embeds([{"custom": [[["<svg onload=alert(1)>"]]]}])
+
+    def test_deeply_nested_list_rejected(self):
+        # Nested lists must be charged against the same depth budget as
+        # nested objects instead of being appended verbatim.
+        payload: object = "deep"
+        for _ in range(12):
+            payload = [payload]
+        with pytest.raises(EmbedValidationError, match="nesting depth"):
+            sanitize_message_embeds([{"custom": payload}])
+
 
 class TestSendMessageSanitization:
     """Enforcement at the messaging persistence boundary."""
