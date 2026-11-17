@@ -497,7 +497,7 @@ async def acknowledge_messages_bulk(
         # chunking; the loop below only handles best-effort side effects.
         try:
             marked_by_channel = await run_in_threadpool(
-                msg_manager.mark_read_bulk,
+                msg_manager.get_manager().mark_read_bulk,
                 current_user.user_id,
                 list(parsed_ids.items()),
             )
