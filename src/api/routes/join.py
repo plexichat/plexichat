@@ -32,7 +32,7 @@ nested under a FastAPI ``detail`` envelope.
 import json
 import re
 import inspect
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -305,7 +305,9 @@ async def request_join(
         if not remote_url or not isinstance(remote_url, str):
             raise _error(400, "remote_url is required")
         try:
-            remote_url = _bounded_text(remote_url, "remote_url", MAX_TEXT_FIELD)
+            remote_url = cast(
+                str, _bounded_text(remote_url, "remote_url", MAX_TEXT_FIELD)
+            )
             note = _bounded_text(body.get("note"), "note", MAX_NOTE_LEN)
         except HardeningViolation as exc:
             raise _error(400, str(exc))
@@ -408,8 +410,8 @@ async def send_join_message(
         if not message_type or not isinstance(payload, dict):
             raise _error(400, "message_type and payload are required")
         try:
-            message_type = _bounded_text(
-                message_type, "message_type", MAX_MESSAGE_TYPE_LEN
+            message_type = cast(
+                str, _bounded_text(message_type, "message_type", MAX_MESSAGE_TYPE_LEN)
             )
             validate_join_payload(payload)
             if (

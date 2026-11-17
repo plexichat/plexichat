@@ -2,7 +2,7 @@
 Sticker routes - Sticker and pack management endpoints.
 """
 
-from typing import List, NoReturn, Optional
+from typing import Any, List, NoReturn, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
 
 import time
@@ -65,7 +65,7 @@ def _batch_pack_stickers(stickers_mod, packs, user_id: int) -> dict:
     if not by_pack:
         return by_pack
 
-    manager = None
+    manager: Any = None
     db = None
     try:
         manager = stickers_mod._get_manager()
