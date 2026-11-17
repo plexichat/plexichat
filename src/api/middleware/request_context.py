@@ -134,14 +134,30 @@ def cached_client_ip(obj: Any, resolver=None) -> Any:
 
 
 def cached_is_self_test(obj: Any, resolver=None) -> bool:
-    """Run the localhost + internal-secret check at most once per request."""
-    ctx = get_request_context(obj)
-    if ctx is not None and ctx.is_self_test is not None:
-        return ctx.is_self_test
+    """Run the localhost + internal-secret check at most once per request.
+
+    A cached ``False`` is only trusted when the request carries no internal
+    secret header. A cached false can otherwise be poisoned by an earlier
+    middleware that evaluated the marker before the request context was fully
+    bound to the current scope (e.g. the outermost rate-limit middleware): that
+    stale false would suppress the self-test rate-limit bypass and admin trust
+    path for the rest of the request. When the header is present we re-verify,
+    which is cheap (localhost + constant-time compare) and always correct.
+    """
     if resolver is None:
         import src.api as api
 
         resolver = api.is_self_test_request
+
+    ctx = get_request_context(obj)
+    headers = getattr(obj, "headers", None)
+    has_marker = bool(
+        headers is not None
+        and hasattr(headers, "get")
+        and headers.get("X-Plexichat-Internal-Secret")
+    )
+    if ctx is not None and ctx.is_self_test is not None and not has_marker:
+        return ctx.is_self_test
 
     result = bool(resolver(obj))
     if ctx is not None:
