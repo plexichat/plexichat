@@ -27,6 +27,18 @@ from .processing import flatten_alpha_onto_white
 from .processing.video import resolve_ffprobe_path
 
 
+# Pillow's ~2x decompression-bomb threshold (~13400x13400 pixels). A crafted
+# image can declare enormous dimensions in its header and make the decoder
+# allocate gigabytes before a resize ever happens, so the compressor validates
+# the pixel count itself instead of relying on Pillow's process-wide global.
+DEFAULT_MAX_IMAGE_PIXELS = 178956970
+
+# ffmpeg output is bounded by wall-clock time (5 minutes) but not by size. A
+# small upload with a forged duration/geometry header can make ffmpeg emit far
+# more data than the source; never load that file into memory unbounded.
+MAX_TRANSCODE_OUTPUT_BYTES = 512 * 1024 * 1024
+
+
 class CompressionQuality(Enum):
     """Compression quality presets."""
 
@@ -125,6 +137,12 @@ class ImageCompressor:
             minimum=1,
             maximum=16384,
         )
+        self._max_pixels = bounded_int(
+            self._config["max_pixels"],
+            "compression max_pixels",
+            minimum=1,
+            maximum=2**31 - 1,
+        )
         self._format = str(self._config["format"]).strip().lower()
 
     def _load_config(self) -> dict:
@@ -138,6 +156,7 @@ class ImageCompressor:
             "format": image_config.get("format", "webp"),
             "quality": image_config.get("quality", 85),
             "max_dimension": image_config.get("max_dimension", 4096),
+            "max_pixels": image_config.get("max_pixels", DEFAULT_MAX_IMAGE_PIXELS),
             "preserve_original": compression_config.get("preserve_original", False),
         }
 
@@ -158,6 +177,26 @@ class ImageCompressor:
     def is_available(self) -> bool:
         """Check if compression is available."""
         return self._available and self._config["enabled"]
+
+    def _reject_decompression_bomb(self, img) -> None:
+        """Refuse an image whose header declares too many pixels.
+
+        ``Image.open`` is lazy: it reads the header but not the pixel data, so
+        checking ``img.size`` here rejects a decompression bomb *before*
+        ``thumbnail()`` forces a full decode. The check is on total pixels (not
+        width/height) so ordinary large images are still legitimately resized
+        down to ``max_dimension``. Pillow's process-wide ``MAX_IMAGE_PIXELS``
+        global is deliberately not touched -- it belongs to the shared decoder
+        and would affect unrelated code paths.
+        """
+        width, height = img.size
+        if width <= 0 or height <= 0:
+            raise HardeningViolation("compression image has invalid dimensions")
+        if width * height > self._max_pixels:
+            raise HardeningViolation(
+                f"compression image exceeds decompression-bomb limit of "
+                f"{self._max_pixels} pixels"
+            )
 
     def compress(
         self,
@@ -189,8 +228,10 @@ class ImageCompressor:
 
             original_size = len(image_data)
 
-            # Open image
+            # Open image. Image.open() is lazy, so this header-only step does
+            # not decode pixels; validate before anything forces a decode.
             img = Image.open(io.BytesIO(image_data))
+            self._reject_decompression_bomb(img)
             original_format = img.format
 
             # Determine output format
@@ -544,9 +585,36 @@ class VideoCompressor:
                     error=f"Transcoding failed: {error}",
                 )
 
-            # Read compressed output
+            # Read compressed output with a hard size cap. ffmpeg runs under a
+            # 5-minute wall-clock timeout but that does not bound how many bytes
+            # it writes: a forged input header can produce a huge file, and an
+            # unbounded f.read() would pin all of it in memory.
+            try:
+                output_size = os.path.getsize(output_path)
+            except OSError:
+                output_size = 0
+            if output_size > MAX_TRANSCODE_OUTPUT_BYTES:
+                logger.error(
+                    f"ffmpeg output too large: {output_size} bytes "
+                    f"(limit {MAX_TRANSCODE_OUTPUT_BYTES})"
+                )
+                return CompressionResult(
+                    success=False,
+                    original_size=original_size,
+                    error="Transcoded output exceeds size limit",
+                )
+
             with open(output_path, "rb") as f:
-                compressed_data = f.read()
+                compressed_data = f.read(MAX_TRANSCODE_OUTPUT_BYTES + 1)
+            if len(compressed_data) > MAX_TRANSCODE_OUTPUT_BYTES:
+                # The file grew between the stat() and the read(); fail closed
+                # instead of retaining an oversized buffer.
+                logger.error("ffmpeg output grew past the read size cap")
+                return CompressionResult(
+                    success=False,
+                    original_size=original_size,
+                    error="Transcoded output exceeds size limit",
+                )
 
             compressed_size = len(compressed_data)
 
