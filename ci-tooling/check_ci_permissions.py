@@ -24,7 +24,8 @@ import sys
 from pathlib import Path
 
 DEFAULT_POLICY = Path(__file__).with_name("ci-permissions-policy.json")
-TOKEN_LINE = re.compile(r"^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_]*):\s*(?:#.*)?$")
+TOKEN_LINE = re.compile(r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*):\s*(?:#.*)?$")
+AUD_RE = re.compile(r"^\s+aud:\s*(?P<value>\S+)")
 PUSH_RE = re.compile(r"\bgit\s+push\b")
 
 
@@ -62,32 +63,51 @@ def _is_job(job: Job) -> bool:
 
 
 def check_id_tokens(job: Job, required_aud: str, errors: list[str]) -> None:
-    """An OIDC token without an audience can be exchanged by any bound peer."""
+    """An OIDC token must be bound to exactly the audience the policy declares.
+
+    A wildcard (``*``) or an arbitrary https:// audience is *not* bounded: any
+    peer that can obtain a token for that audience may exchange it. The earlier
+    implementation also broke out of the aud scan on the token-name line itself,
+    so it never read the declared audience at all -- the policy check was dead
+    code and any real id_tokens block was rejected for the wrong reason. Read
+    each token's own indented block instead and require an exact match to the
+    declared audience.
+    """
     lines = job.body
     for index, line in enumerate(lines):
         if not re.match(r"^\s{2}id_tokens:\s*(?:#.*)?$", line):
             continue
-        token_names: list[tuple[str, int]] = []
-        for nested in lines[index + 1 :]:
+        # Tokens are the first nested level under ``id_tokens``. Remember that
+        # indent so the token's own ``aud:`` child is not mistaken for a token.
+        token_indent: int | None = None
+        tokens: list[tuple[int, str, int]] = []
+        for offset, nested in enumerate(lines[index + 1 :], start=index + 1):
+            stripped = nested.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
             indent = len(nested) - len(nested.lstrip())
-            if indent <= 2 and nested.strip() and not nested.lstrip().startswith("#"):
+            if indent <= 2:
                 break
+            if token_indent is None:
+                token_indent = indent
+            if indent != token_indent:
+                continue
             match = TOKEN_LINE.match(nested)
             if match:
-                token_names.append((match.group("name"), indent))
-        if not token_names:
+                tokens.append((offset, match.group("name"), indent))
+        if not tokens:
             errors.append(f"{job.name}: id_tokens declares no token")
-        for name, indent in token_names:
+        for tok_index, name, indent in tokens:
             audience: str | None = None
-            for nested in lines[index + 1 :]:
-                nested_indent = len(nested) - len(nested.lstrip())
-                if (
-                    nested_indent <= indent
-                    and nested.strip()
-                    and not nested.lstrip().startswith("#")
-                ):
+            # Scan only this token's block: stop at the next sibling token or
+            # at the end of the id_tokens mapping.
+            for nested in lines[tok_index + 1 :]:
+                stripped = nested.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if len(nested) - len(nested.lstrip()) <= indent:
                     break
-                aud = re.match(r"^\s+aud:\s*(?P<value>\S+)", nested)
+                aud = AUD_RE.match(nested)
                 if aud:
                     audience = aud.group("value").strip("'\"")
                     break
@@ -95,11 +115,11 @@ def check_id_tokens(job: Job, required_aud: str, errors: list[str]) -> None:
                 errors.append(
                     f"{job.name}: id token {name!r} has no aud; token scope is unbounded"
                 )
-            elif (
-                required_aud
-                and audience not in {required_aud, "*"}
-                and not audience.startswith("https://")
-            ):
+            elif audience == "*":
+                errors.append(
+                    f"{job.name}: id token {name!r} uses wildcard audience '*'; token scope is unbounded"
+                )
+            elif required_aud and audience != required_aud:
                 errors.append(
                     f"{job.name}: id token {name!r} audience {audience!r} is outside the declared policy audience"
                 )
@@ -121,12 +141,20 @@ def check(repo: Path, policy_path: Path, ci_files: list[Path]) -> list[str]:
             errors.append(f"{ci}: CI file is missing")
             continue
         for name, job in parse_jobs(path.read_text(encoding="utf-8")).items():
-            if not _is_job(job):
-                continue
             body = job.text
             used = {
                 var for var in privileged if re.search(rf"\b{re.escape(var)}\b", body)
             }
+            if not _is_job(job):
+                # A privileged variable declared outside a job (most notably in
+                # a global ``variables:`` block) is inherited by every job and
+                # can be referenced through an alias, escaping the per-job
+                # allowlist entirely.
+                for var in sorted(used):
+                    errors.append(
+                        f"{ci}:{name}: privileged variable {var} is declared outside a job; it would be inherited by every job"
+                    )
+                continue
             for var in sorted(used - var_allowlist.get(name, set())):
                 errors.append(
                     f"{ci}:{name}: privileged variable {var} is not allowed for this job"

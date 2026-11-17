@@ -221,5 +221,88 @@ class RegressionFixtures(unittest.TestCase):
             self.assertIn("sha256 mismatch", result.stderr)
 
 
+    def test_wildcard_id_token_audience_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitlab-ci.yml").write_text(
+                "stages:\n  - test\n"
+                "oidc:\n  stage: test\n  id_tokens:\n    TOKEN:\n"
+                "      aud: '*'\n  script:\n    - true\n",
+                encoding="utf-8",
+            )
+            result = run(
+                SCRIPTS["permissions"], "--repo", str(root), "--ci", ".gitlab-ci.yml"
+            )
+            self.assertNotEqual(result.returncode, 0, "a wildcard aud must fail")
+            self.assertIn("wildcard audience", result.stderr)
+
+    def test_bounded_id_token_audience_is_accepted(self) -> None:
+        policy = json.loads(
+            (HERE / "ci-permissions-policy.json").read_text(encoding="utf-8")
+        )
+        aud = policy["required_aud"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitlab-ci.yml").write_text(
+                "stages:\n  - test\n"
+                "oidc:\n  stage: test\n  id_tokens:\n    TOKEN:\n"
+                f"      aud: {aud}\n  script:\n    - true\n",
+                encoding="utf-8",
+            )
+            result = run(
+                SCRIPTS["permissions"], "--repo", str(root), "--ci", ".gitlab-ci.yml"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_global_privileged_variable_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitlab-ci.yml").write_text(
+                "stages:\n  - test\n"
+                "variables:\n  ALIAS: $PLEXICHAT_MR_PAT\n"
+                "user:\n  stage: test\n  script:\n    - echo $ALIAS\n",
+                encoding="utf-8",
+            )
+            result = run(
+                SCRIPTS["permissions"], "--repo", str(root), "--ci", ".gitlab-ci.yml"
+            )
+            self.assertNotEqual(result.returncode, 0, "a global PAT alias must fail")
+            self.assertIn("declared outside a job", result.stderr)
+
+    def test_checksum_keyword_does_not_count_as_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitlab-ci.yml").write_text(
+                "stages:\n  - test\n"
+                "install:\n  stage: test\n  script:\n"
+                '    - curl -sSLo tool.sh https://example.invalid/tool.sh\n'
+                '    - echo "checksum verified"\n'
+                "    - sh tool.sh\n",
+                encoding="utf-8",
+            )
+            result = run(
+                SCRIPTS["checksums"], "--repo", str(root), "--ci", ".gitlab-ci.yml"
+            )
+            self.assertNotEqual(
+                result.returncode, 0, "a bare 'checksum' mention must not pass"
+            )
+            self.assertIn("without a sha256 verification", result.stderr)
+
+    def test_real_checksum_verification_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitlab-ci.yml").write_text(
+                "stages:\n  - test\n"
+                "install:\n  stage: test\n  script:\n"
+                '    - curl -sSLo tool.sh https://example.invalid/tool.sh\n'
+                "    - sha256sum -c tool.sh.sha256\n",
+                encoding="utf-8",
+            )
+            result = run(
+                SCRIPTS["checksums"], "--repo", str(root), "--ci", ".gitlab-ci.yml"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

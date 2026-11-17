@@ -30,7 +30,14 @@ PIP_INSTALL_RE = re.compile(r"\bpip(?:3)?\s+install\b[^|;&]*-r\s+(?P<lock>\S+?\.
 DOWNLOAD_RE = re.compile(
     r"\b(?:curl|wget)\b[^|;&]*?(?:--output[= ]|\s-[A-Za-z]*[oO]\s+)(?P<out>\S+)"
 )
-VERIFY_RE = re.compile(r"sha256sum\s+-c|sha256\s+.*--check|checksum")
+# An actual checksum-verification command, not the bare word "checksum" (a
+# comment or an `echo checksum` must not satisfy the gate). Require the
+# verifier and its --check/-c (or openssl -verify) flag on the same line.
+VERIFY_RE = re.compile(
+    r"\b(?:sha256sum|sha512sum)\b[^\n]*\s(?:-c|--check)(?:\s|$)"
+    r"|\bshasum\b[^\n]*\s-c(?:\s|$)"
+    r"|\bopenssl\s+dgst\s+-sha256\b[^\n]*\s-verify(?:\s|$)"
+)
 SKIP_DIRS = {
     ".git",
     ".venv",
