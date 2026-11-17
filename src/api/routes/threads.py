@@ -870,8 +870,8 @@ async def list_my_threads(
 async def get_thread_messages(
     thread_id: str,
     limit: int = Query(50, ge=1, le=100),
-    before_id: Optional[str] = None,
-    after_id: Optional[str] = None,
+    before_id: Optional[str] = Query(None, max_length=32),
+    after_id: Optional[str] = Query(None, max_length=32),
     current_user: TokenInfo = Depends(get_current_user),
 ):
     threads_mod = _get_threads()
