@@ -53,6 +53,7 @@ from .storage import (
     _icon_absent_cache,
     _user_initials_cache,
     _server_initials_cache,
+    _default_svg_cache,
     _invalidate_user_avatar_cache,
     _invalidate_server_icon_cache,
 )
@@ -70,6 +71,26 @@ def _not_available() -> HTTPException:
         status_code=500,
         detail={"error": {"code": 500, "message": "Avatars module not available"}},
     )
+
+
+def _default_svg(seed: object, initials: str) -> tuple[str, str]:
+    """Return ``(svg_markup, sha256_etag)`` for a default avatar.
+
+    The template only depends on ``(seed, initials)``; the bounded cache keeps
+    repeat requests from re-entering the manager and re-hashing the markup.
+    """
+    key = (str(seed), str(initials))
+    cached = _default_svg_cache.get(key)
+    if cached is not None:
+        return cached
+    from src.core.avatars import generate_default_svg
+
+    svg_content = generate_default_svg(seed, initials)
+    svg_bytes = svg_content.encode() if isinstance(svg_content, str) else svg_content
+    etag = hashlib.sha256(svg_bytes).hexdigest()
+    result = (svg_content, etag)
+    _default_svg_cache.set(key, result)
+    return result
 
 
 @router.get(
@@ -152,8 +173,6 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
                 # the checksum and the binary read for this user.
                 _cache_set_checksum(_avatar_absent_cache, uid, "1")
                 # Generate a default SVG avatar if none exists
-                from src.core.avatars import generate_default_svg
-
                 cached_initials = _user_initials_cache.get(uid)
                 if cached_initials is not None:
                     cached_username, initials = cached_initials.split("|", 1)
@@ -184,14 +203,7 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
                         _user_initials_cache, uid, f"{username or ''}|{initials}"
                     )
 
-                svg_content = generate_default_svg(username or str(uid), initials)
-                # Ensure content is encoded before hashing
-                svg_bytes = (
-                    svg_content.encode()
-                    if isinstance(svg_content, str)
-                    else svg_content
-                )
-                svg_etag = hashlib.sha256(svg_bytes).hexdigest()
+                svg_content, svg_etag = _default_svg(username or str(uid), initials)
 
                 if etag_client == f'"{svg_etag}"':
                     return Response(status_code=304)
@@ -543,8 +555,6 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
                 # the checksum and the binary read for this server.
                 _cache_set_checksum(_icon_absent_cache, sid, "1")
                 # Generate a default SVG icon if none exists
-                from src.core.avatars import generate_default_svg
-
                 initials = _server_initials_cache.get(sid)
                 if initials is None:
                     # Try to get server name for initials
@@ -570,13 +580,7 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
                     _cache_set_checksum(_server_initials_cache, sid, initials)
 
                 try:
-                    svg_content = generate_default_svg(sid, initials)
-                    svg_bytes = (
-                        svg_content.encode()
-                        if isinstance(svg_content, str)
-                        else svg_content
-                    )
-                    svg_etag = hashlib.sha256(svg_bytes).hexdigest()
+                    svg_content, svg_etag = _default_svg(sid, initials)
 
                     if etag_client == f'"{svg_etag}"':
                         return Response(status_code=304)

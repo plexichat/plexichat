@@ -18,6 +18,39 @@ from .constants import _CHECKSUM_CACHE_TTL_SEC, _MAX_CHECKSUM_CACHE_ENTRIES
 import utils.logger as logger
 
 
+class _BoundedSvgCache:
+    """Small LRU for generated default SVGs and their ETags.
+
+    Default avatars are deterministic in ``(seed, initials)``. Caching the
+    rendered markup and its SHA-256 avoids re-entering the avatar manager and
+    re-hashing the same template on every request for users/servers without an
+    uploaded image.
+    """
+
+    def __init__(self, maxsize: int = 1024) -> None:
+        self._maxsize = maxsize
+        self._data: "OrderedDict[tuple[str, str], tuple[str, str]]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[str, str]) -> Optional[tuple[str, str]]:
+        with self._lock:
+            value = self._data.get(key)
+            if value is not None:
+                self._data.move_to_end(key)
+            return value
+
+    def set(self, key: tuple[str, str], value: tuple[str, str]) -> None:
+        with self._lock:
+            self._data[key] = value
+            self._data.move_to_end(key)
+            while len(self._data) > self._maxsize:
+                self._data.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+
 class _BoundedChecksumCache:
     """Thread-safe bounded LRU cache with TTL for checksum strings. (M5)"""
 
@@ -129,6 +162,7 @@ _avatar_absent_cache = _BoundedChecksumCache()
 _icon_absent_cache = _BoundedChecksumCache()
 _user_initials_cache = _BoundedChecksumCache()
 _server_initials_cache = _BoundedChecksumCache()
+_default_svg_cache = _BoundedSvgCache()
 
 
 def _cache_set_checksum(cache: Any, key: int, checksum: str) -> None:
@@ -196,6 +230,7 @@ def invalidate_icon_caches(server_id: int) -> None:
 
 __all__ = [
     "_BoundedChecksumCache",
+    "_BoundedSvgCache",
     "_cache_set_checksum",
     "_avatar_checksum_cache",
     "_icon_checksum_cache",
@@ -203,6 +238,7 @@ __all__ = [
     "_icon_absent_cache",
     "_user_initials_cache",
     "_server_initials_cache",
+    "_default_svg_cache",
     "_invalidate_user_avatar_cache",
     "_invalidate_server_icon_cache",
     "invalidate_avatar_caches",

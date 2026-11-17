@@ -31,6 +31,7 @@ def _clear_caches():
         avatar_routes._icon_checksum_cache,
         avatar_routes._icon_absent_cache,
         avatar_routes._server_initials_cache,
+        avatar_routes._default_svg_cache,
     ):
         cache.clear()
     yield
@@ -47,7 +48,7 @@ async def test_user_default_skips_repeated_storage_and_profile_lookups():
     with (
         patch.object(api, "get_avatars", return_value=fake_avatars),
         patch.object(api, "get_auth", return_value=auth),
-        patch("src.core.avatars.generate_default_svg", return_value=SVG),
+        patch("src.core.avatars.generate_default_svg", return_value=SVG) as gen_svg,
     ):
         first = await get_user_avatar(UID, request)
         second = await get_user_avatar(UID, request)
@@ -56,6 +57,8 @@ async def test_user_default_skips_repeated_storage_and_profile_lookups():
     assert fake_avatars.get_user_avatar_checksum.call_count == 1
     assert fake_avatars.get_user_avatar_data.call_count == 1
     assert auth.get_user_profiles_bulk.call_count == 1
+    # The rendered default template (and its ETag) is reused, not regenerated.
+    assert gen_svg.call_count == 1
 
 
 @pytest.mark.asyncio
