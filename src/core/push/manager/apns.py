@@ -21,6 +21,12 @@ _APNS_TOKEN_FORBIDDEN = re.compile(r"[\x00-\x20\x7f/?#@:%\\]")
 # from a caller would otherwise bloat every APNs request, so each coerced
 # value is bounded here (and dropped, like other uncoercible values).
 MAX_APNS_DATA_VALUE_LENGTH = 4096
+# Keys are caller-supplied too. ``aps`` is owned by APNs and holds the alert;
+# letting a custom key with that name through overwrites the whole payload.
+# Bound key length/count as well so a hostile data dict cannot bloat or reshape
+# the notification the server sends on a user's behalf.
+MAX_APNS_DATA_KEY_LENGTH = 256
+MAX_APNS_DATA_KEYS = 32
 
 
 def _safe_apns_token(token: Any) -> str:
@@ -163,6 +169,18 @@ class ApnsMixin(PushManagerBase):
                 # anything that cannot be coerced is dropped with a debug
                 # log rather than silently, so missing keys are traceable.
                 for k, v in data.items():
+                    key = str(k)
+                    # ``aps`` is reserved by APNs and carries the alert itself:
+                    # a caller-supplied key of that name would overwrite it.
+                    # Reject it (and empty/oversized keys) before any coercion.
+                    if (
+                        not key
+                        or key == "aps"
+                        or len(key) > MAX_APNS_DATA_KEY_LENGTH
+                        or len(payload_dict) >= MAX_APNS_DATA_KEYS
+                    ):
+                        logger.debug(f"APNs payload key {k!r} dropped: reserved/invalid")
+                        continue
                     try:
                         if isinstance(v, str):
                             coerced = v
@@ -174,7 +192,7 @@ class ApnsMixin(PushManagerBase):
                             raise ValueError(
                                 f"value exceeds {MAX_APNS_DATA_VALUE_LENGTH} chars"
                             )
-                        payload_dict[str(k)] = coerced
+                        payload_dict[key] = coerced
                     except Exception as e:
                         logger.debug(f"APNs payload key {k!r} dropped: {e}")
 

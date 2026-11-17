@@ -75,6 +75,13 @@ class DeliveryMixin(PushManagerBase):
         if not tokens:
             return 0
 
+        # A user cannot hold more than MAX_TOKENS_PER_USER tokens; apply the
+        # same ceiling as send_push_async so a corrupt/lenient repository
+        # cannot turn one notification into an unbounded device fan-out.
+        tokens = list(tokens)[: self.MAX_TOKENS_PER_USER]
+        if not tokens:
+            return 0
+
         # Check user's notification settings
         if self._notifications:
             try:
@@ -249,8 +256,12 @@ class DeliveryMixin(PushManagerBase):
         data: Optional[Dict[str, Any]] = None,
     ) -> int:
         """Send push notification to multiple users."""
+        # Mirror send_bulk_push_async: a single bulk call may fan out to at
+        # most MAX_BULK_PUSH_USERS so one caller cannot enqueue unbounded
+        # work through the synchronous path (which would block the worker).
+        users = list(user_ids)[:MAX_BULK_PUSH_USERS]
         total_sent = 0
-        for user_id in user_ids:
+        for user_id in users:
             try:
                 sent = self.send_push(user_id, title, body, data)
                 total_sent += sent

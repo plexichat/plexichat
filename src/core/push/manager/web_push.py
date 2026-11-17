@@ -1,12 +1,64 @@
 """Web Push transport (VAPID over the browser push services)."""
 
+import ipaddress
 import json
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import utils.logger as logger
 from src.core.security.hardening import HardeningViolation, require_https_url
 
 from .base import PushManagerBase
+
+# Hostnames that must never be reached through a user-supplied Web Push
+# subscription endpoint: loopback names, cloud metadata services, and the
+# reserved .local/.internal suffixes all designate infrastructure the server
+# must not contact on a caller's behalf.
+_BLOCKED_ENDPOINT_HOSTS = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "local",
+        "metadata",
+        "metadata.google.internal",
+    }
+)
+
+
+def _require_public_endpoint(endpoint: str) -> str:
+    """Refuse endpoints that point at loopback/private/link-local targets.
+
+    ``require_https_url`` guarantees the scheme and absence of embedded
+    credentials, but an attacker who can register a Web Push subscription may
+    otherwise point its endpoint at ``127.0.0.1``, ``::1``, ``10.0.0.0/8`` or
+    the cloud metadata address ``169.254.169.254``; pywebpush would then POST
+    an (encrypted) payload straight into the internal network (SSRF). Reject
+    literal IPs in every reserved range plus internal/loopback hostnames.
+    Ordinary public DNS names are returned unchanged.
+    """
+    host = (urlparse(endpoint).hostname or "").lower().rstrip(".")
+    if not host:
+        raise ValueError("endpoint has no host")
+    if host in _BLOCKED_ENDPOINT_HOSTS or host.endswith((".local", ".internal")):
+        raise ValueError("endpoint targets an internal host")
+    try:
+        address = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        # An ordinary DNS name; scheme/no-credentials were already checked by
+        # require_https_url. DNS-based rebinding cannot be fully prevented by
+        # pywebpush (it resolves the name itself), but literal/internal targets
+        # -- the overwhelming majority of SSRF payloads -- are blocked here.
+        return endpoint
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    ):
+        raise ValueError("endpoint targets a non-public IP address")
+    return endpoint
 
 
 class WebPushMixin(PushManagerBase):
@@ -59,7 +111,8 @@ class WebPushMixin(PushManagerBase):
         # than letting a malformed record turn into an off-origin request.
         try:
             endpoint = require_https_url(endpoint, "Web Push endpoint")
-        except HardeningViolation as exc:
+            endpoint = _require_public_endpoint(endpoint)
+        except (HardeningViolation, ValueError) as exc:
             logger.warning(f"Refusing Web Push delivery: {exc}")
             return None
 
