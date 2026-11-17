@@ -31,6 +31,12 @@ from .common import parse_artifact_id
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
 
+# Emit exports in bounded pieces so the ASGI server can flush incrementally
+# instead of holding one potentially very large blob as a single response
+# chunk. Rendering still completes up front, so failures remain reportable as
+# HTTP 500 before any headers are sent.
+_EXPORT_CHUNK_BYTES = 64 * 1024
+
 
 @router.get(
     "/{artifact_id}/export",
@@ -121,7 +127,8 @@ async def _export_artifact_impl(
         )
 
         def _chunk_iter() -> Any:
-            yield data
+            for offset in range(0, len(data), _EXPORT_CHUNK_BYTES):
+                yield data[offset : offset + _EXPORT_CHUNK_BYTES]
 
         return StreamingResponse(
             _chunk_iter(),

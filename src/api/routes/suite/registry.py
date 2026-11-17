@@ -9,6 +9,7 @@ silently routed through the generic artifact payload.
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
+import utils.logger as logger
 from fastapi import APIRouter, Depends, Query
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
@@ -541,6 +542,31 @@ async def list_shared_suite_items(
     }
 
 
+# The activity feed reads a single actor's newest rows. Stash's canonical
+# schema declares this covering index, but Suite routes can be reached before
+# that schema has been applied (and on deployments where Stash is disabled).
+# Ensure it once, idempotently, so the feed always has an index-backed access
+# path. One attempt per process: on a read-only replica the DDL is skipped and
+# retrying it on every request would only add overhead.
+_ACTIVITY_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_suite_audit_actor "
+    "ON suite_audit_log(actor_id, created_at DESC)"
+)
+_activity_index_ready = False
+
+
+def _ensure_activity_index(db) -> None:
+    """Best-effort, one-time creation of the feed's covering index."""
+    global _activity_index_ready
+    if _activity_index_ready:
+        return
+    try:
+        db.execute(_ACTIVITY_INDEX_SQL)
+    except Exception as e:  # pragma: no cover - depends on deployment role
+        logger.debug(f"Suite activity index check skipped: {e}")
+    _activity_index_ready = True
+
+
 def _activity_summary(
     details_json: Any, action: str, resource_type: str
 ) -> Optional[str]:
@@ -593,6 +619,7 @@ async def list_suite_activity(
     db = api.get_db()
     if db is None:
         raise RuntimeError("Database unavailable")
+    _ensure_activity_index(db)
     rows = db.fetch_all(
         "SELECT id, domain, action, resource_type, resource_id, details_json, created_at "
         "FROM suite_audit_log WHERE actor_id = ? ORDER BY created_at DESC LIMIT ?",

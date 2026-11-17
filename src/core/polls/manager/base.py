@@ -123,6 +123,12 @@ class PollManagerBase(BaseManager):
     def _voter_count(self, poll_id: SnowflakeID) -> int:
         raise NotImplementedError
 
+    def _voter_stats(
+        self, user_id: SnowflakeID, poll_id: SnowflakeID
+    ) -> tuple[int, bool]:
+        """Return ``(voter count, viewer voted)`` from one aggregate query."""
+        raise NotImplementedError
+
     def _can_view_results(self, poll: Poll, user_voted: bool) -> bool:
         raise NotImplementedError
 

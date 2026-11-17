@@ -33,9 +33,14 @@ class ReadingMixin(PollManagerBase):
         # requesting user.  A user who is not entitled to see the results
         # (e.g. has not voted on an ``AFTER_VOTE`` poll) must not receive
         # the voter headcount, so it is suppressed.
-        user_voted = self._has_voted(user_id, poll_id)
+        #
+        # The viewer's own voter flag and the headcount both come from
+        # ``poll_voters``. Compute them in ONE conditional-aggregation pass
+        # instead of a separate existence probe + COUNT (two round trips per
+        # read). ``_voter_stats`` returns ``(total, viewer_voted)``.
+        total_voters, user_voted = self._voter_stats(user_id, poll_id)
         if self._can_view_results(poll, user_voted):
-            poll.total_votes = self._voter_count(poll_id)
+            poll.total_votes = total_voters
         else:
             poll.total_votes = None
 
@@ -114,6 +119,31 @@ class ReadingMixin(PollManagerBase):
             (poll_id, user_id),
         )
         return bool(row)
+
+    def _voter_stats(
+        self, user_id: SnowflakeID, poll_id: SnowflakeID
+    ) -> tuple[int, bool]:
+        """Return ``(distinct voter count, viewer_has_voted)`` in one query.
+
+        Both values are derived from ``poll_voters``; the conditional SUM
+        identifies the requesting user's row in the same pass that counts the
+        headcount. Callers that need both (notably the read/results paths) avoid
+        the second round trip that ``_has_voted`` + ``_voter_count`` required.
+        """
+        if not poll_id:
+            return 0, False
+        # Keep counting even for a falsy viewer id: the old code always
+        # computed the headcount via ``_voter_count`` regardless of viewer,
+        # and binding a non-matching id here preserves that behaviour.
+        row = self._db.fetch_one(
+            "SELECT COUNT(*) AS count, "
+            "SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine "
+            "FROM poll_voters WHERE poll_id = ?",
+            (user_id, poll_id),
+        )
+        if not row:
+            return 0, False
+        return int(row["count"] or 0), bool(row["mine"])
 
     def _voter_count(self, poll_id: SnowflakeID) -> int:
         """Number of distinct voters on a poll."""

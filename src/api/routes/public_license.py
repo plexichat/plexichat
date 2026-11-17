@@ -14,7 +14,7 @@ import hashlib
 import secrets
 import threading
 import time
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -213,6 +213,36 @@ class NonceStore:
 
 # Module-level singleton.
 nonce_store = NonceStore(ttl_seconds=_DEFAULT_TTL_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# Public info cache
+# ---------------------------------------------------------------------------
+
+# ``/info`` is an unauthenticated reachability check whose payload is derived
+# entirely from license state. That state changes rarely and never mid-request,
+# so recomputing every field on every call is wasted work. Cache the assembled
+# (secret-free) payload for a short TTL: bursts collapse to one computation,
+# while ``valid`` still refreshes quickly enough to track license expiry.
+_INFO_CACHE_TTL_SECONDS = 5.0
+_info_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+_info_cache_lock = threading.Lock()
+
+
+def _copy_info(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a detached copy so callers cannot mutate the cached payload."""
+    copied = dict(payload)
+    hosts = copied.get("allowed_hosts")
+    if isinstance(hosts, list):
+        copied["allowed_hosts"] = list(hosts)
+    return copied
+
+
+def _clear_info_cache() -> None:
+    """Drop the cached info payload (used by license hot-swaps and tests)."""
+    global _info_cache
+    with _info_cache_lock:
+        _info_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -430,10 +460,17 @@ async def license_info() -> dict:
     Returns only booleans and counts; no key material, no license body.
     Useful as a reachability check.
     """
+    global _info_cache
+    now = time.time()
+    with _info_cache_lock:
+        cached = _info_cache
+    if cached is not None and (now - cached[0]) < _INFO_CACHE_TTL_SECONDS:
+        return _copy_info(cached[1])
+
     try:
         from src.utils import licensing as licensing_module
 
-        return {
+        result = {
             "available": True,
             "free_tier": licensing_module.is_free_tier(),
             "valid": licensing_module.is_valid(),
@@ -446,6 +483,10 @@ async def license_info() -> dict:
     except Exception as e:
         logger.debug(f"license_info error: {e}")
         return {"available": False}
+
+    with _info_cache_lock:
+        _info_cache = (now, result)
+    return _copy_info(result)
 
 
 __all__ = ["router", "NonceStore", "nonce_store"]
