@@ -16,6 +16,7 @@ from .helpers import (
     get_role_members,
     get_server_members,
     get_online_members,
+    sanitize_notification_content,
     truncate_content,
 )
 
@@ -336,12 +337,15 @@ class NotificationCreatorMixin(NotificationProtocol):
         created_at: int,
     ) -> Optional[Notification]:
         notif_id = self._generate_id()
-        content_preview_encrypted = _encrypt_content_preview(content_preview, notif_id)
+        # Direct callers (e.g. automod alerts) bypass ``truncate_content``, so
+        # sanitize here too before the preview is encrypted/stored/dispatched.
+        safe_preview = sanitize_notification_content(content_preview)
+        content_preview_encrypted = _encrypt_content_preview(safe_preview, notif_id)
 
-        if content_preview_encrypted and content_preview_encrypted != content_preview:
+        if content_preview_encrypted and content_preview_encrypted != safe_preview:
             content_preview_to_store = ""
         else:
-            content_preview_to_store = content_preview
+            content_preview_to_store = safe_preview
             content_preview_encrypted = None
 
         # Idempotent on UNIQUE(user_id, message_id): a duplicate insert is a
@@ -367,7 +371,12 @@ class NotificationCreatorMixin(NotificationProtocol):
             ),
         )
 
-        notification = self.get_notification(notif_id)
+        # Scope the read-back to the owner. An unscoped lookup here is an IDOR
+        # primitive: if the generated id collides with an existing row (e.g.
+        # after a DB import/restore), the unscoped read would hand back that
+        # other user's notification and its decrypted preview, which is then
+        # dispatched to ``user_id`` over the websocket and push channels.
+        notification = self.get_notification(notif_id, user_id)
         if notification:
             self._dispatch_notification_event(
                 user_id,

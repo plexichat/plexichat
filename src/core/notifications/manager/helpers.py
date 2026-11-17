@@ -1,3 +1,4 @@
+import re
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
@@ -12,15 +13,40 @@ from ..models import (
 from src.core.base import SnowflakeID
 
 
+# Notification previews are copied verbatim into websocket events, push
+# payloads, log lines and the HTTP response. C0/C1 controls and DEL let a
+# message author forge a log line or escape a terminal; bidi overrides and
+# zero-width format characters let them visually disguise a link or reverse
+# the apparent direction of a preview. None of these are legitimate in a
+# single-line preview, so strip them at every read/write boundary.
+_UNSAFE_PREVIEW_CHARS = re.compile(
+    "[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff\u061c\u00ad]"
+)
+
+
+def sanitize_notification_content(content: Optional[str]) -> str:
+    """Return a single-line preview free of control/format characters.
+
+    Removed characters are replaced with a space (rather than deleted) so
+    adjacent words do not merge, then whitespace runs are collapsed.
+    """
+    if not content:
+        return ""
+    cleaned = _UNSAFE_PREVIEW_CHARS.sub(" ", str(content))
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 def row_to_notification(row: Dict[str, Any]) -> Notification:
-    content_preview = row.get("content_preview") or ""
+    content_preview = sanitize_notification_content(row.get("content_preview"))
     if row.get("content_preview_encrypted"):
         try:
             from src.utils.encryption import decrypt_data
 
-            content_preview = decrypt_data(
-                row["content_preview_encrypted"],
-                context=f"notification:{row['id']}",
+            content_preview = sanitize_notification_content(
+                decrypt_data(
+                    row["content_preview_encrypted"],
+                    context=f"notification:{row['id']}",
+                )
             )
         except Exception as e:
             logger.warning(
@@ -113,9 +139,12 @@ def get_blocked_user_ids(relationships, db, user_id: int) -> set:
 
 def truncate_content(content: str, config: Dict[str, Any]) -> str:
     max_len = max(3, config.get("content_preview_length", 100))
-    if len(content) <= max_len:
-        return content
-    return content[: max_len - 3] + "..."
+    # Sanitize before truncating so a control character can never survive in
+    # the stored preview (including when a cut splits a format sequence).
+    safe = sanitize_notification_content(content)
+    if len(safe) <= max_len:
+        return safe
+    return safe[: max_len - 3] + "..."
 
 
 def role_exists(db, role_id: SnowflakeID) -> bool:
