@@ -157,8 +157,8 @@ async def get_channel_ratchet_intervals(
     channel_id: str,
     limit: Optional[int] = Query(None, ge=1, le=200),
     offset: Optional[int] = Query(None, ge=0, le=100_000),
-    sort: Optional[str] = Query(None),
-    order: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None, max_length=32),
+    order: Optional[str] = Query(None, max_length=16),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return every ratchet interval for a channel, newest first.
