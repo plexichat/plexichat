@@ -8,6 +8,7 @@ bounded by type, and the helpers are shared by the admin write path.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, List, Optional
 
@@ -118,12 +119,18 @@ def validate_feature_flags(mapping: Any, *, field: str = "flags") -> Dict[str, A
 def validate_rollout_percentage(
     value: Any, *, field: str = "rollout_percentage"
 ) -> float:
-    """Return a percentage in ``[0, 100]``."""
+    """Return a finite percentage in ``[0, 100]``."""
     try:
         number = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
+        # A huge int (e.g. 10**400) raises OverflowError on float coercion; it
+        # is just as invalid as any other out-of-range value and must surface
+        # as the same ValueError-compatible hardening error.
         raise HardeningViolation(f"{field} must be numeric") from exc
-    if number < 0.0 or number > MAX_ROLLOUT_PERCENTAGE:
+    # NaN compares false against both bounds, so the old range check let it
+    # through: it then poisoned arithmetic (``int(nan)`` raises) or a tier
+    # multiplier (``base_limit * nan``). Reject every non-finite value.
+    if not math.isfinite(number) or number < 0.0 or number > MAX_ROLLOUT_PERCENTAGE:
         raise HardeningViolation(
             f"{field} must be between 0 and {MAX_ROLLOUT_PERCENTAGE}"
         )
@@ -135,17 +142,21 @@ def validate_target_list(value: Any, *, field: str = "targets") -> List[int]:
     if value is None:
         return []
     try:
-        candidates = list(value)
+        candidates = iter(value)
     except TypeError as exc:
         raise HardeningViolation(f"{field} must be a list") from exc
-    if len(candidates) > MAX_ROLLOUT_TARGETS:
-        raise HardeningViolation(
-            f"{field} may contain at most {MAX_ROLLOUT_TARGETS} entries"
-        )
-    return [
-        parse_id(candidate, f"{field}[{index}]")
-        for index, candidate in enumerate(candidates)
-    ]
+    result: List[int] = []
+    for index, candidate in enumerate(candidates):
+        # Bound *while* iterating. The previous ``list(value)`` fully
+        # materialized the iterable before checking its length, so an
+        # oversized list or an endless generator could exhaust memory/CPU
+        # before the cap was ever applied. Stop at the first excess entry.
+        if index >= MAX_ROLLOUT_TARGETS:
+            raise HardeningViolation(
+                f"{field} may contain at most {MAX_ROLLOUT_TARGETS} entries"
+            )
+        result.append(parse_id(candidate, f"{field}[{index}]"))
+    return result
 
 
 def feature_enabled_for(

@@ -394,7 +394,13 @@ def has_feature(user_id: int, feature: str) -> bool:
     if features.expires_at and features.expires_at < int(time.time() * 1000):
         return False
 
-    return getattr(features, feature, False)
+    # Only an actual boolean ``True`` grants a flag. Returning the raw
+    # attribute meant that public names which pass the declared key grammar
+    # (``notes``, ``badges``, ``user_id``, ``to_dict``, ...) were treated as
+    # granted whenever their value happened to be truthy. A caller passing a
+    # user-influenced feature name could therefore bypass the flag check.
+    granted = getattr(features, feature, False)
+    return granted is True
 
 
 def get_user_badges(user_id: int) -> List[str]:
