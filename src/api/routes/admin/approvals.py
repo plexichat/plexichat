@@ -15,6 +15,7 @@ from .utils import (
 )
 from typing import Optional, List
 from pydantic import BaseModel, Field
+from src.core.security.hardening.text import strip_control_characters
 import json
 import time
 
@@ -303,11 +304,19 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
 
     from src.core.admin.permissions import log_admin_action
 
+    # SECURITY: ``target_type`` is caller-controlled and AdminLogger copies it
+    # verbatim into a single-line audit log message. Embedded CR/LF (or other
+    # C0/DEL controls) would let an admin with only the ``admin.approvals``
+    # scope forge extra audit lines and obscure the real actor. Strip controls
+    # before the value reaches the logger; the stored request row keeps the
+    # original value, so this only affects the audit representation.
+    audit_target_type = strip_control_characters(approval_data.target_type) or "system"
+
     log_admin_action(
         db,
         admin_id,
         "approval.request",
-        approval_data.target_type or "system",
+        audit_target_type,
         int(approval_data.target_id) if approval_data.target_id else 0,
         {"action_type": approval_data.action_type, "approval_id": str(approval_id)},
         request.client.host if request.client else "unknown",
@@ -691,6 +700,7 @@ async def reject_request(
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Insufficient permissions"},
         404: {"model": ErrorResponse, "description": "Approval request not found"},
+        409: {"model": ErrorResponse, "description": "Approval changed concurrently"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -761,14 +771,30 @@ async def cancel_approval(request: Request, approval_id: SnowflakeIDParam):
 
     now = int(time.time() * 1000)
 
-    db.execute(
+    # SECURITY: the SELECT above is only an advisory check. Without a guard on
+    # the write, a concurrent approve/reject (or a second cancel) could move the
+    # row out of 'pending' between our read and this UPDATE, and we would then
+    # silently clobber that decision back to 'cancelled'. Make the transition a
+    # compare-and-swap on the exact status we observed so a stale cancel can
+    # never overwrite a newer state.
+    cursor = db.execute(
         """
         UPDATE admin_approvals
         SET status = 'cancelled', updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND status = 'pending'
     """,
         (now, approval_id),
     )
+    if getattr(cursor, "rowcount", 0) <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Approval request changed concurrently, retry",
+                }
+            },
+        )
 
     from src.core.admin.permissions import log_admin_action
 
