@@ -4,8 +4,6 @@ DSAR (Data Subject Access Request) mixin - Data export route handlers.
 
 from src.core.security.hardening import parse_id
 
-from typing import Optional
-
 from fastapi import HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 
@@ -36,37 +34,34 @@ from src.core.ratelimit.models import RateLimitConfig
 
 class DataExportMixin:
     def _verify_password(self, user_id: int, password: str) -> bool:
-        auth = api.get_auth()
-        if not auth:
+        # Auth must be available (same 500 contract as the rest of the route).
+        if not api.get_auth():
             raise HTTPException(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Auth module not available"}},
             )
 
-        user = auth.get_user(user_id)
-        if not user:
+        # Presence and password hash come from a SINGLE query. The previous
+        # implementation called auth.get_user() (a full user fetch + PII
+        # decryption) only to test existence, then issued a second SELECT for
+        # the hash that get_user() never populates. Both checks are about the
+        # same auth_users row, so one lookup covers them.
+        db = api.get_db()
+        row = (
+            db.fetch_one(
+                "SELECT password_hash FROM auth_users WHERE id = ?",
+                (user_id,),
+            )
+            if db
+            else None
+        )
+        if not row:
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "User not found"}},
             )
 
-        # The User model's password_hash is not populated by get_user()
-        # (it is only set on specific operations like login). Query the
-        # hash directly from the database so DSAR verification works
-        # without requiring a prior login in the same process.
-        password_hash: Optional[str] = getattr(user, "password_hash", None)
-        if not password_hash:
-            db = api.get_db()
-            if db:
-                row = db.fetch_one(
-                    "SELECT password_hash FROM auth_users WHERE id = ?",
-                    (user_id,),
-                )
-                if row:
-                    password_hash = (
-                        row["password_hash"] if isinstance(row, dict) else row[0]
-                    )
-
+        password_hash = row["password_hash"] if isinstance(row, dict) else row[0]
         if not password_hash:
             raise HTTPException(
                 status_code=400,

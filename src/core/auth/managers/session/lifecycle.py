@@ -83,8 +83,18 @@ class LifecycleMixin(AuthManagerProtocol):
         ua_encrypted = self._encrypt_ua(ua, str(sid))
 
         max_sessions = sessions_config.get("max_per_user", 10)
-        sessions = self.get_sessions(user_id)
-        if len(sessions) >= max_sessions:
+        # Counting is sufficient in the common (under-cap) case. Previously
+        # this fetched EVERY active session and decrypted its stored IP/UA on
+        # every login, registration and 2FA completion just to learn the
+        # count. Only materialise the full session objects when a row actually
+        # needs evicting; the eviction logic below stays identical.
+        count_row = self._db.fetch_one(
+            "SELECT COUNT(*) AS c FROM auth_sessions WHERE user_id = ? AND revoked = 0",
+            (user_id,),
+        )
+        active_count = int(count_row["c"]) if count_row else 0
+        if active_count >= max_sessions:
+            sessions = self.get_sessions(user_id)
             sessions.sort(key=lambda x: x.last_activity)
             to_revoke = len(sessions) - max_sessions + 1
             for i in range(to_revoke):
