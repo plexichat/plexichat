@@ -706,7 +706,7 @@ async def get_reaction_users(
     message_id: str,
     emoji: str,
     limit: int = Query(default=50, ge=1, le=100),
-    after: Optional[str] = Query(default=None),
+    after: Optional[str] = Query(default=None, max_length=64),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[ReactionUserResponse]:
     """
