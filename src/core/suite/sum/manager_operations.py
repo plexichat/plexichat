@@ -10,6 +10,8 @@ from .schema import (
     SUM_OPERATION_TYPES,
     SUM_VALUE_TYPES,
 )
+from src.core.security.hardening import HardeningViolation
+
 from .segments import SegmentEncoder
 from ..boundaries import bound_formula_text
 from .manager_protocol import SumManagerProtocol
@@ -291,7 +293,15 @@ class SumManagerOperations(SumManagerProtocol):
                 # could bloat the workbook blob, survive reloads and be echoed
                 # into an exported spreadsheet as an attacker-chosen formula.
                 # This is the single normalization choke point for writes.
-                formula = bound_formula_text(formula, error_cls=SumValidationError)
+                try:
+                    formula = bound_formula_text(
+                        formula, error_cls=SumValidationError
+                    )
+                except HardeningViolation as exc:
+                    # reject_control_characters always raises HardeningViolation
+                    # (it has no error_cls hook), so normalize it to the
+                    # manager's validation error like every other bad cell.
+                    raise SumValidationError(str(exc)) from exc
             normalized.append(
                 {
                     "row": row_index,
