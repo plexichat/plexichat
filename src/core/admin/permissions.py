@@ -14,6 +14,8 @@ from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 import utils.logger as logger
 
+from .request_roles import cached_session_roles
+
 
 @dataclass
 class AdminRole:
@@ -212,6 +214,43 @@ def is_approval_required_action(
     return action in set(configured)
 
 
+def _parse_permission_payload(raw) -> Optional[Dict[str, bool]]:
+    """Parse a stored ``admin_roles.permissions`` value into a dict.
+
+    Malformed or non-dict payloads are unusable and fail closed (they grant
+    nothing), matching how a broken row behaved through ``_get_admin_roles``.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _payloads_grant(payloads, required_permission: str) -> bool:
+    """Pure form of the wildcard/exact grant check shared by both read paths.
+
+    This reproduces the three checks in ``check_permission`` verbatim: a
+    super-admin ``*``, a wildcard ``scope.*`` prefix, then the exact scope.
+    """
+    for permissions in payloads:
+        if not isinstance(permissions, dict):
+            continue
+        if permissions.get("*", False):
+            return True
+        if "." in required_permission:
+            scope_prefix = required_permission.split(".")[0] + ".*"
+            if permissions.get(scope_prefix, False):
+                return True
+        if permissions.get(required_permission, False):
+            return True
+    return False
+
+
 def check_permission(
     admin_id: int, required_permission: str, db, config: Optional[Dict[str, Any]] = None
 ) -> AdminPermission:
@@ -228,6 +267,28 @@ def check_permission(
         AdminPermission with the check result
     """
     try:
+        # Fast path: when this request validated a session, the role payloads
+        # arrived with it in the session query. Reuse them instead of issuing a
+        # second round trip. No value (self-test identity path, direct callers,
+        # or a different admin/db) simply takes the original query below.
+        cached = cached_session_roles(db, admin_id)
+        if cached is not None:
+            payloads = tuple(
+                parsed
+                for parsed in (_parse_permission_payload(raw) for raw in cached)
+                if parsed is not None
+            )
+            if not payloads:
+                return AdminPermission(
+                    has_permission=False, reason="No roles assigned to admin"
+                )
+            if _payloads_grant(payloads, required_permission):
+                return AdminPermission(has_permission=True)
+            return AdminPermission(
+                has_permission=False,
+                reason=f"Permission '{required_permission}' not granted in any assigned role",
+            )
+
         # Get admin's roles
         roles = _get_admin_roles(db, admin_id)
 
@@ -237,22 +298,8 @@ def check_permission(
             )
 
         # Check each role for the permission
-        for role in roles:
-            permissions = role.permissions
-
-            # Check for wildcard permission (super admin)
-            if permissions.get("*", False):
-                return AdminPermission(has_permission=True)
-
-            # Check for wildcard sub-permissions
-            if "." in required_permission:
-                scope_prefix = required_permission.split(".")[0] + ".*"
-                if permissions.get(scope_prefix, False):
-                    return AdminPermission(has_permission=True)
-
-            # Check for exact permission
-            if permissions.get(required_permission, False):
-                return AdminPermission(has_permission=True)
+        if _payloads_grant((role.permissions for role in roles), required_permission):
+            return AdminPermission(has_permission=True)
 
         # Permission not found in any role
         return AdminPermission(

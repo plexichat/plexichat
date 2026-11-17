@@ -10,6 +10,16 @@ from typing import Any
 
 
 from .helpers import _hash_admin_token
+from ..request_roles import remember_session_roles
+
+
+def _row_value(row, key: str, index: int, default=None):
+    """Read a row value consistently across dict and tuple drivers."""
+    if isinstance(row, dict):
+        value = row.get(key, default)
+    else:
+        value = row[index] if len(row) > index else default
+    return default if value is None else value
 
 
 class SessionMixin:
@@ -36,24 +46,41 @@ class SessionMixin:
         return token
 
     def validate_session(self, token: str) -> Optional[int]:
-        """Validate admin session token."""
+        """Validate an admin session token.
+
+        The caller's role permission payloads are selected in this same
+        statement and cached for the request, so the permission gate does not
+        need a second ``admin_roles`` round trip. The LEFT JOIN always yields
+        one row per matching session (NULL permissions for an admin with no
+        roles), so the admin id and the exact expiry/hash guard are unchanged.
+        """
         now = int(time.time())
         token_hash = _hash_admin_token(token)
-        row = self._db.fetch_one(
-            "SELECT id, admin_id, token FROM admin_sessions WHERE token = ? AND expires_at > ?",
+        rows = self._db.fetch_all(
+            """
+            SELECT s.admin_id, r.permissions
+            FROM admin_sessions s
+            LEFT JOIN admin_role_assignments a ON a.admin_id = s.admin_id
+            LEFT JOIN admin_roles r ON r.id = a.role_id
+            WHERE s.token = ? AND s.expires_at > ?
+            """,
             (token_hash, now),
         )
-        if not row:
+        if not rows:
             # Raw bearer values from pre-hardened deployments are deliberately
             # no longer accepted. They cannot be safely distinguished from a
             # leaked token at validation time; administrators must sign in
             # again so a deterministic fingerprint is stored instead.
             return None
 
-        if isinstance(row, dict):
-            admin_id = row["admin_id"]
-        else:
-            admin_id = row[1]
+        admin_id = _row_value(rows[0], "admin_id", 0)
+        if admin_id is None:
+            return None
+        remember_session_roles(
+            self._db,
+            admin_id,
+            tuple(_row_value(row, "permissions", 1) for row in rows),
+        )
         return admin_id
 
     def logout(self, token: str) -> bool:
