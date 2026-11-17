@@ -898,9 +898,18 @@ async def add_approval_comment(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_approval_comments(request: Request, approval_id: SnowflakeIDParam):
+async def get_approval_comments(
+    request: Request,
+    approval_id: SnowflakeIDParam,
+    # SECURITY: an approval's comment thread is unbounded (each comment is up
+    # to 1000 chars and any admin.approvals holder may post many). Serving the
+    # whole thread in one query let a single admin exhaust worker memory and
+    # stall the process. Bound both the page size and how far it may paginate.
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=1_000_000),
+):
     """
-    Get all comments for an approval request.
+    Get a bounded page of comments for an approval request.
     """
     check_host_restriction(request)
     require_admin_permission(request, "admin.approvals")
@@ -920,8 +929,9 @@ async def get_approval_comments(request: Request, approval_id: SnowflakeIDParam)
         FROM admin_approval_comments
         WHERE approval_id = ?
         ORDER BY created_at ASC
+        LIMIT ? OFFSET ?
     """,
-        (approval_id,),
+        (approval_id, limit, offset),
     )
 
     # The echoed approval id, each comment's own snowflake id, and its author

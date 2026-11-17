@@ -521,12 +521,34 @@ async def update_role(
                 },
             )
 
+    # SECURITY: the hierarchy gate above reads the role's position/system flag
+    # and then writes in a separate statement. Without a guard on the write, a
+    # concurrent admin could promote the role to a system role (or raise its
+    # position) between our read and this UPDATE, and we would still modify a
+    # now-protected role. Re-check the exact invariants that authorized the
+    # mutation in the WHERE clause so the write is a compare-and-swap against
+    # the observed state; a stale updater gets 409 instead of a silent clobber.
     params.append(int(role_id))
+    params.append(hierarchy["current_pos"])
 
     # updates list contains only hardcoded column assignments (safe from injection)
-    template = "UPDATE admin_roles SET {assignments} WHERE id = ?"
+    template = (
+        "UPDATE admin_roles SET {assignments} "
+        "WHERE id = ? AND is_system = 0 AND position < ?"
+    )
     query = template.format(assignments=", ".join(updates))
-    db.execute(query, params)
+    cursor = db.execute(query, params)
+    rowcount = getattr(cursor, "rowcount", None)
+    if isinstance(rowcount, int) and rowcount <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Role changed concurrently, retry",
+                }
+            },
+        )
 
     # Editing a role's scopes changes the effective privileges of every
     # holder.  Drop the cached auth context so a bearer/cookie token cannot
@@ -627,7 +649,25 @@ async def delete_role(request: Request, role_id: SnowflakeIDParam):
             },
         )
 
-    db.execute("DELETE FROM admin_roles WHERE id = ?", (int(role_id),))
+    # SECURITY: same read-then-write TOCTOU as update_role. The DELETE must
+    # re-assert the invariants that authorized it, otherwise a concurrent
+    # promotion of the role to system (or above the actor) would still delete
+    # a now-protected role using our stale, previously-authorized snapshot.
+    cursor = db.execute(
+        "DELETE FROM admin_roles WHERE id = ? AND is_system = 0 AND position < ?",
+        (int(role_id), hierarchy["current_pos"]),
+    )
+    rowcount = getattr(cursor, "rowcount", None)
+    if isinstance(rowcount, int) and rowcount <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Role changed concurrently, retry",
+                }
+            },
+        )
     invalidate_privilege_caches()
 
     # Log the action
