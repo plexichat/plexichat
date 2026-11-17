@@ -22,7 +22,8 @@ class SecurityMixin:
         """Return security settings and posture for an admin account."""
         row = self._db.fetch_one(
             """
-            SELECT username, email, created_at, last_login, totp_enabled, must_setup_otp, backup_codes
+            SELECT username, email, created_at, last_login, totp_enabled, must_setup_otp,
+                   backup_codes, backup_codes_hash
             FROM admin_users
             WHERE id = ?
             """,
@@ -38,6 +39,7 @@ class SecurityMixin:
             totp_enabled = bool(row["totp_enabled"])
             must_setup_otp = bool(row["must_setup_otp"])
             backup_codes = row["backup_codes"] or ""
+            hashed = row.get("backup_codes_hash")
         else:
             (
                 username,
@@ -47,30 +49,17 @@ class SecurityMixin:
                 totp_enabled,
                 must_setup_otp,
                 backup_codes,
+                *extra,
             ) = row
+            hashed = extra[0] if extra else None
 
-        hash_row = self._db.fetch_one(
-            "SELECT backup_codes_hash FROM admin_users WHERE id = ?", (admin_id,)
-        )
-        if hash_row:
-            hashed = (
-                hash_row.get("backup_codes_hash")
-                if isinstance(hash_row, dict)
-                else hash_row[0]
-            )
-            if hashed:
-                try:
-                    remaining = len(json.loads(hashed))
-                except (json.JSONDecodeError, TypeError):
-                    remaining = 0
-            else:
-                remaining = len(
-                    [
-                        code
-                        for code in str(backup_codes or "").split(",")
-                        if code.strip()
-                    ]
-                )
+        # backup_codes_hash is selected alongside the rest of the row above;
+        # no second admin_users read is needed to count remaining codes.
+        if hashed:
+            try:
+                remaining = len(json.loads(hashed))
+            except (json.JSONDecodeError, TypeError):
+                remaining = 0
         else:
             remaining = len(
                 [code for code in str(backup_codes or "").split(",") if code.strip()]

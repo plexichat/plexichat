@@ -66,12 +66,11 @@ class OTPSetupMixin:
         if not _check_otp_attempt_limit(f"disable:{admin_id}"):
             return False, "Too many OTP attempts"
 
-        secret_row = self._db.fetch_one(
-            "SELECT totp_secret, totp_secret_encrypted, totp_enabled, backup_codes, backup_codes_hash FROM admin_users WHERE id = ?",
-            (admin_id,),
-        )
-        if not secret_row:
-            return False, "Admin user not found"
+        # The password-verification read above already selected every OTP
+        # column we need (totp_secret, totp_secret_encrypted, totp_enabled,
+        # backup_codes, backup_codes_hash). Reuse that row instead of paying
+        # for a second admin_users round trip.
+        secret_row = row
         if isinstance(secret_row, dict):
             encrypted_secret = secret_row.get("totp_secret_encrypted")
             plaintext_secret = secret_row.get("totp_secret")
@@ -79,11 +78,14 @@ class OTPSetupMixin:
             backup_codes_plaintext = secret_row.get("backup_codes") or ""
             backup_codes_hashed = secret_row.get("backup_codes_hash")
         else:
-            plaintext_secret = secret_row[0]
-            encrypted_secret = secret_row[1] if len(secret_row) > 1 else None
-            totp_enabled = bool(secret_row[2])
-            backup_codes_plaintext = secret_row[3] if len(secret_row) > 3 else ""
-            backup_codes_hashed = secret_row[4] if len(secret_row) > 4 else None
+            # Defensive: _verify_admin_password normalizes to a dict, but keep
+            # tuple access aligned with its SELECT column order if that ever
+            # changes back.
+            totp_enabled = bool(secret_row[5]) if len(secret_row) > 5 else False
+            backup_codes_plaintext = secret_row[7] if len(secret_row) > 7 else ""
+            plaintext_secret = secret_row[8] if len(secret_row) > 8 else None
+            encrypted_secret = secret_row[9] if len(secret_row) > 9 else None
+            backup_codes_hashed = secret_row[10] if len(secret_row) > 10 else None
 
         secret = None
         if encrypted_secret:
@@ -193,21 +195,17 @@ class OTPSetupMixin:
         self, admin_id: int, current_password: str
     ) -> Tuple[bool, List[str], str]:
         """Regenerate admin backup codes after password verification."""
-        valid, _row, message = _verify_admin_password(
+        valid, row, message = _verify_admin_password(
             self._db, admin_id, current_password
         )
-        if not valid:
+        if not valid or row is None:
             return False, [], message
 
-        state_row = self._db.fetch_one(
-            "SELECT totp_enabled FROM admin_users WHERE id = ?", (admin_id,)
-        )
-        if not state_row:
-            return False, [], "Admin user not found"
+        # _verify_admin_password already selected totp_enabled on the row we
+        # just verified the password against; a second read of the same value
+        # was pure overhead on this hot path.
         totp_enabled = (
-            bool(state_row["totp_enabled"])
-            if isinstance(state_row, dict)
-            else bool(state_row[0])
+            bool(row["totp_enabled"]) if isinstance(row, dict) else bool(row[5])
         )
         if not totp_enabled:
             return False, [], "Enable OTP before generating backup codes"

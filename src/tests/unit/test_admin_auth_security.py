@@ -89,7 +89,18 @@ class TestAdminAuthSecurity:
         ]
         mocker.patch(
             "src.core.admin.auth.otp_setup_mixin._verify_admin_password",
-            return_value=(True, {"username": "admin"}, ""),
+            return_value=(
+                True,
+                {
+                    "username": "admin",
+                    "totp_enabled": 1,
+                    "totp_secret": "BASE32SECRET",
+                    "totp_secret_encrypted": None,
+                    "backup_codes": "AAA111,BBB222",
+                    "backup_codes_hash": None,
+                },
+                "",
+            ),
         )
         mocker.patch(
             "src.core.admin.auth.helpers._check_otp_attempt_limit",
@@ -156,18 +167,22 @@ class TestAdminAuthSecurity:
 
         admin_id = 7
         mock_db = MagicMock()
-        mock_db.fetch_one.return_value = {
-            "totp_secret": None,
-            "totp_secret_encrypted": encrypt_data(
-                "ROUNDTRIPSECRET", context=f"admin_totp:{admin_id}"
-            ),
-            "totp_enabled": 1,
-            "backup_codes": None,
-            "backup_codes_hash": None,
-        }
         mocker.patch(
             "src.core.admin.auth.otp_setup_mixin._verify_admin_password",
-            return_value=(True, {"username": "admin"}, ""),
+            return_value=(
+                True,
+                {
+                    "username": "admin",
+                    "totp_secret": None,
+                    "totp_secret_encrypted": encrypt_data(
+                        "ROUNDTRIPSECRET", context=f"admin_totp:{admin_id}"
+                    ),
+                    "totp_enabled": 1,
+                    "backup_codes": None,
+                    "backup_codes_hash": None,
+                },
+                "",
+            ),
         )
         mocker.patch(
             "src.core.admin.auth.helpers._check_otp_attempt_limit",
@@ -198,20 +213,24 @@ class TestAdminAuthSecurity:
 
         admin_id = 7
         mock_db = MagicMock()
-        mock_db.fetch_one.return_value = {
-            "totp_secret": None,
-            # Sealed under the wrong admin id: decryption must fail rather
-            # than silently downgrade to the plaintext column.
-            "totp_secret_encrypted": encrypt_data(
-                "ROUNDTRIPSECRET", context=f"admin_totp:{admin_id + 1}"
-            ),
-            "totp_enabled": 1,
-            "backup_codes": None,
-            "backup_codes_hash": None,
-        }
         mocker.patch(
             "src.core.admin.auth.otp_setup_mixin._verify_admin_password",
-            return_value=(True, {"username": "admin"}, ""),
+            return_value=(
+                True,
+                {
+                    "username": "admin",
+                    "totp_secret": None,
+                    # Sealed under the wrong admin id: decryption must fail
+                    # rather than silently downgrade to the plaintext column.
+                    "totp_secret_encrypted": encrypt_data(
+                        "ROUNDTRIPSECRET", context=f"admin_totp:{admin_id + 1}"
+                    ),
+                    "totp_enabled": 1,
+                    "backup_codes": None,
+                    "backup_codes_hash": None,
+                },
+                "",
+            ),
         )
         mocker.patch(
             "src.core.admin.auth.helpers._check_otp_attempt_limit",

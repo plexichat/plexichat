@@ -14,6 +14,28 @@ from typing import Any
 from .helpers import _sync_password_to_auth_users, _verify_admin_password
 
 
+# Static password-policy denylist. Built once at import time instead of on
+# every change-password request: the list never changes and allocating it in
+# the hot path is avoidable work. The policy *thresholds* remain config-driven
+# (see _validate_password_policy); only this fixed set is cached here.
+_COMMON_PASSWORDS = frozenset(
+    {
+        "password",
+        "123456",
+        "qwerty",
+        "admin",
+        "letmein",
+        "welcome",
+        "monkey",
+        "dragon",
+        "master",
+        "hello",
+        "football",
+        "iloveyou",
+    }
+)
+
+
 class PasswordMixin:
     _db: Any
 
@@ -84,26 +106,11 @@ class PasswordMixin:
         ):
             return False, "Password must contain at least one special character"
 
-        if prevent_common_passwords:
-            common_passwords = [
-                "password",
-                "123456",
-                "qwerty",
-                "admin",
-                "letmein",
-                "welcome",
-                "monkey",
-                "dragon",
-                "master",
-                "hello",
-                "football",
-                "iloveyou",
-            ]
-            if new_password.lower() in common_passwords:
-                return (
-                    False,
-                    "Password is too common, please choose a stronger password",
-                )
+        if prevent_common_passwords and new_password.lower() in _COMMON_PASSWORDS:
+            return (
+                False,
+                "Password is too common, please choose a stronger password",
+            )
 
         return True, ""
 

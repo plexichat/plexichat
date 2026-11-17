@@ -99,10 +99,18 @@ def _verify_admin_password(
     db: Any, admin_id: int, current_password: str
 ) -> Tuple[bool, Optional[Dict[str, Any]], str]:
     """Verify the current admin password and return the account row."""
+    # Fetch every admin_users column the self-service credential flows need
+    # in a single round trip. Callers used to re-read totp_secret /
+    # totp_secret_encrypted / backup_codes_hash / totp_enabled in a second
+    # query after this one; those columns are always available on the row we
+    # already pay for (the expensive part is the Argon2 verify below, not the
+    # read). Adding columns is backward compatible: every caller accesses the
+    # row by key.
     row = db.fetch_one(
         """
         SELECT username, email, password_hash, created_at, last_login,
-               totp_enabled, must_setup_otp, backup_codes
+               totp_enabled, must_setup_otp, backup_codes,
+               totp_secret, totp_secret_encrypted, backup_codes_hash
         FROM admin_users
         WHERE id = ?
         """,
@@ -121,6 +129,9 @@ def _verify_admin_password(
             "totp_enabled": row[5],
             "must_setup_otp": row[6],
             "backup_codes": row[7],
+            "totp_secret": row[8] if len(row) > 8 else None,
+            "totp_secret_encrypted": row[9] if len(row) > 9 else None,
+            "backup_codes_hash": row[10] if len(row) > 10 else None,
         }
 
     import src.utils.encryption as encryption
