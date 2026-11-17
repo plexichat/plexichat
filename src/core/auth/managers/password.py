@@ -6,7 +6,7 @@ from ..exceptions import (
 )
 from ..models import AuditEventType, PasswordValidation
 from ..passwords import validate_password as validate_pwd
-from ..tokens import create_email_token, parse_token, verify_token_hash
+from ..tokens import create_email_token, parse_token, verify_token_hash, is_expired
 from src.core.database import invalidate_pattern
 
 import utils.logger as logger
@@ -146,10 +146,14 @@ class PasswordMixin(AuthManagerProtocol):
         rec = self._db.fetch_one(
             "SELECT * FROM auth_email_tokens WHERE id = ?", (parsed["id"],)
         )
+        now = self._get_timestamp()
+        # Fail closed on a corrupt/units-mismatched expiry (NULL, seconds
+        # instead of ms, non-numeric) instead of comparing it as "not expired"
+        # and granting a permanent reset credential.
         if (
             not rec
             or rec["used"]
-            or rec["expires_at"] < self._get_timestamp()
+            or is_expired(rec["expires_at"], now)
             or rec["token_type"] != "reset_password"
         ):
             raise TokenInvalidError("Invalid token")
@@ -162,9 +166,18 @@ class PasswordMixin(AuthManagerProtocol):
         # conditional UPDATE is what enforces "used exactly once" under
         # concurrent replays; doing it first means a request that loses the
         # claim has not already written a new password hash.
+        #
+        # The SELECT above is only a fast-path validity check; every validity
+        # predicate is re-checked in the atomic UPDATE so a token that expires
+        # (or whose type/used state changes) between the read and the claim
+        # cannot be redeemed. This mirrors the single-use guard used by email
+        # verification and closes the time-of-check/time-of-use gap where an
+        # almost-expired token's claim landed after its expiry.
         cursor = self._db.execute(
-            "UPDATE auth_email_tokens SET used = 1 WHERE id = ? AND used = 0",
-            (rec["id"],),
+            "UPDATE auth_email_tokens SET used = 1 "
+            "WHERE id = ? AND used = 0 AND token_type = 'reset_password' "
+            "AND expires_at > ?",
+            (rec["id"], now),
         )
         if getattr(cursor, "rowcount", 0) == 0:
             raise TokenInvalidError("Invalid token")
