@@ -1,0 +1,27 @@
+{
+  "description": "Least-privilege policy enforced by ci-tooling/check_ci_permissions.py. Privileged variables and repository writes are limited to the jobs that actually perform them; OIDC tokens must carry a bounded audience.",
+  "privileged_vars": [
+    "PLEXICHAT_MR_PAT",
+    "PLEXICHAT_API_TOKEN",
+    "REGISTRY_CLEANUP_TOKEN",
+    "DOCKER_HUB_TOKEN"
+  ],
+  "var_allowlist": {
+    "create_merge_request": ["PLEXICHAT_MR_PAT"],
+    "docker:nginx_bundle": ["DOCKER_HUB_TOKEN"],
+    "docker:build_and_push": ["DOCKER_HUB_TOKEN"],
+    "docker:backup": ["DOCKER_HUB_TOKEN"],
+    "docker:cleanup_old_images": []
+  },
+  "write_jobs": [
+    "create_merge_request",
+    "validate_master_and_tag",
+    "release:create_release",
+    "docker:nginx_bundle",
+    "docker:cleanup_old_images",
+    "metrics:trend",
+    "ots:push_proofs",
+    "ots:timestamp_commit"
+  ],
+  "required_aud": "plexichat-server-ci"
+}

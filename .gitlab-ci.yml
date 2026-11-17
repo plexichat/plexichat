@@ -47,3 +47,56 @@ supplychain:pinned_deps:
   script:
     - python ci-tooling/check_pinned_deps.py
   allow_failure: false
+
+# A token is a capability, so the gates below deliberately declare none: they
+# read the checkout and the policy files, and nothing else. The permission
+# checker enforces the same rule on every other job -- privileged variables
+# only in allowlisted jobs, OIDC tokens only with a bounded audience, git push
+# only from declared write jobs. A widening fails supplychain:permissions.
+supplychain:secrets_baseline:
+  stage: security
+  timeout: 10m
+  image: python:3.14-slim
+  needs: []
+  rules:
+    - if: '$RUN_LIVE_SMOKE != "1"'
+  before_script: []
+  script:
+    - python ci-tooling/check_secrets_baseline.py
+  allow_failure: false
+
+supplychain:permissions:
+  stage: security
+  timeout: 10m
+  image: python:3.14-slim
+  needs: []
+  rules:
+    - if: '$RUN_LIVE_SMOKE != "1"'
+  before_script: []
+  script:
+    - python ci-tooling/check_ci_permissions.py
+  allow_failure: false
+
+supplychain:checksums:
+  stage: security
+  timeout: 10m
+  image: python:3.14-slim
+  needs: []
+  rules:
+    - if: '$RUN_LIVE_SMOKE != "1"'
+  before_script: []
+  script:
+    - python ci-tooling/check_artifact_checksums.py
+  allow_failure: false
+
+supplychain:regressions:
+  stage: security
+  timeout: 20m
+  image: python:3.14-slim
+  needs: []
+  rules:
+    - if: '$RUN_LIVE_SMOKE != "1"'
+  before_script: []
+  script:
+    - python ci-tooling/test_supply_chain.py
+  allow_failure: false
