@@ -215,17 +215,15 @@ _MIME_TO_CONTAINERS: dict[str, frozenset[str]] = {
 # Long, low-collision signatures that can be searched for anywhere in the
 # scanned head. The bare 3-byte JPEG SOI marker (and the loose ``0xFF 0xEx``
 # MP3 sync) are intentionally excluded as too short -- they occur by chance in
-# random compressed data. A JPEG SOI followed by an APPn marker is four bytes
-# with a negligible false-positive rate, so it is safe to search for here.
-# Without it a PNG/GIF + JPEG polyglot (a second JPEG hidden after a valid
-# leading image) was invisible to the polyglot detector.
+# random compressed data. A JPEG SOI followed by any *standard* marker byte is
+# four bytes with a negligible false-positive rate, so it is safe to search for
+# here (see ``_EMBEDDED_JPEG_RE`` below). Covering only the APPn markers left a
+# hole: a JPEG whose first segment is DQT/SOF/DHT/SOS (all perfectly valid)
+# could be hidden after a PNG/GIF and passed the polyglot detector.
 _EMBEDDED_SIGNATURES: dict[bytes, str] = {
     b"\x89PNG\r\n\x1a\n": "png",
     b"GIF87a": "gif",
     b"GIF89a": "gif",
-    b"\xff\xd8\xff\xe0": "jpeg",  # JFIF
-    b"\xff\xd8\xff\xe1": "jpeg",  # Exif / XMP
-    b"\xff\xd8\xff\xe8": "jpeg",  # SPIFF
     b"OggS": "ogg",
     b"WAVE": "wav",
     b"WEBP": "webp",
@@ -240,6 +238,14 @@ _EMBEDDED_SIGNATURES: dict[bytes, str] = {
 _BINARY_CONTAINERS = frozenset(
     {"png", "gif", "jpeg", "webp", "wav", "mp3", "ogg", "webm", "riff"}
 )
+
+# SOI (FF D8) followed by any standard JPEG marker code is a 4-byte,
+# low-collision signature. The old explicit list only covered APP0/APP1/APP8,
+# so a second JPEG beginning with DQT (FF DB), SOF0 (FF C0), DHT (FF C4),
+# SOS (FF DA) or a comment (FF FE) slipped past the polyglot check when it was
+# embedded after a valid PNG/GIF. Marker codes 0xC0-0xCF, 0xDA, 0xDB, 0xDD,
+# 0xE0-0xEF and 0xFE are all valid "first segment" markers for a JPEG stream.
+_EMBEDDED_JPEG_RE = re.compile(rb"\xff\xd8\xff[\xc0-\xcf\xda\xdb\xdd\xe0-\xef\xfe]")
 
 
 def normalize_mime(content_type: str | None) -> str:
@@ -288,6 +294,8 @@ def _markers_from_head(data: bytes, head: bytes) -> frozenset[str]:
     for signature, marker in _EMBEDDED_SIGNATURES.items():
         if signature.lower() in head:
             found.add(marker)
+    if _EMBEDDED_JPEG_RE.search(head):
+        found.add("jpeg")
     if head.lstrip().startswith((b"{", b"[")):
         try:
             json.loads(bytes(data).decode("utf-8"))

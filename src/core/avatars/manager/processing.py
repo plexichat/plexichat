@@ -160,17 +160,17 @@ class AvatarProcessingMixin(AvatarProtocol):
             )
             content_type = actual_type
 
-        # Open image (lazy)
+        # Open image (lazy). Container properties (size, frame count, format)
+        # are available from the header without loading any pixels, so they
+        # can be read and validated before a decoding budget is committed.
         try:
             img = Image.open(io.BytesIO(image_data))
 
-            # DEEP: honour EXIF orientation, then drop every metadata key that
-            # is not required to render the picture. Do this before reading
-            # dimensions so a rotated image is measured in its final layout.
-            img = strip_image_metadata(img)
+            n_frames = getattr(img, "n_frames", 1)
+            is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
+            width, height = img.size
 
             # Security: Validate dimensions before processing
-            width, height = img.size
             if width > max_dim or height > max_dim:
                 raise ValueError(
                     f"Image dimensions ({width}x{height}) exceed maximum allowed ({max_dim}x{max_dim})"
@@ -181,14 +181,10 @@ class AvatarProcessingMixin(AvatarProtocol):
                     f"Image has too many pixels ({width * height}) - maximum is {max_pixels}"
                 )
 
-            original_format = img.format
-            n_frames = getattr(img, "n_frames", 1)
-            is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
-
             # DEEP: refuse an image whose decoded size (across every frame)
             # blows past the hard byte ceiling or the expansion ratio. This
-            # runs before Pillow ever loads pixel data, so a tiny header that
-            # declares a huge canvas cannot force a large allocation.
+            # MUST run before anything that calls Image.load(), so a tiny
+            # header declaring a huge canvas cannot force a large allocation.
             try:
                 check_image_decode_limits(
                     len(image_data), width, height, frames=n_frames
@@ -197,6 +193,17 @@ class AvatarProcessingMixin(AvatarProtocol):
                 raise ValueError(
                     "Invalid image file: decompression limit exceeded"
                 ) from exc
+
+            # Only now that the canvas is bounded is it safe to honour EXIF
+            # orientation. ImageOps.exif_transpose() calls image.load() up
+            # front, so doing this before the limit check above let a small
+            # malicious header allocate the full decoded buffer first.
+            img = strip_image_metadata(img)
+
+            # A 90/270-degree transpose swaps width and height; re-read the
+            # final dimensions so the resize math below uses the real layout.
+            width, height = img.size
+            original_format = img.format
 
             # Capture the animation loop count while positioned on the first
             # frame: Pillow keeps the loop extension on frame 0, so reading
