@@ -24,10 +24,16 @@ CREATE TABLE IF NOT EXISTS notif_notifications (
     read INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     UNIQUE(user_id, message_id),
-    FOREIGN KEY (user_id) REFERENCES auth_users(id),
-    FOREIGN KEY (sender_id) REFERENCES auth_users(id),
-    FOREIGN KEY (message_id) REFERENCES msg_messages(id),
-    FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id)
+    -- Notifications carry message content previews. Without cascades, deleting
+    -- the account, the sender or the underlying message left those previews
+    -- orphaned in the database (and, where foreign keys are enforced, blocked
+    -- the parent delete outright). src.core.erasure still scrubs them
+    -- explicitly so older installs are covered; these cascades stop new ones
+    -- from accumulating residue in the first place.
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (sender_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (message_id) REFERENCES msg_messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id) ON DELETE CASCADE
 );
 
 -- Notifications indexes
@@ -50,6 +56,8 @@ CREATE INDEX IF NOT EXISTS idx_notif_user_thread_read
     ON notif_notifications(user_id, thread_id, read);
 CREATE INDEX IF NOT EXISTS idx_notif_message ON notif_notifications(message_id);
 CREATE INDEX IF NOT EXISTS idx_notif_created ON notif_notifications(created_at);
+-- The feed lists a user notifications newest-first; serve the sort.
+CREATE INDEX IF NOT EXISTS idx_notif_user_created ON notif_notifications(user_id, created_at);
 
 -- User notification settings (global and per-server)
 CREATE TABLE IF NOT EXISTS notif_settings (
