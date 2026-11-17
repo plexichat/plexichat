@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 PRIVATE_THREAD_ID = 111
+PUBLIC_THREAD_ID = 444
 GUILD_ID = 222
 CHANNEL_ID = 333
 MEMBERS = [1, 2, 3]
@@ -45,11 +46,14 @@ def threads_private(monkeypatch):
     monkeypatch.setattr(
         threads, "get_thread_member_user_ids", lambda tid: list(MEMBERS)
     )
-    monkeypatch.setattr(
-        threads,
-        "get_thread_type_value",
-        lambda tid: ThreadType.PRIVATE.value if tid == PRIVATE_THREAD_ID else None,
-    )
+    def _thread_type(tid):
+        if tid == PRIVATE_THREAD_ID:
+            return ThreadType.PRIVATE.value
+        if tid == PUBLIC_THREAD_ID:
+            return ThreadType.PUBLIC.value
+        return None
+
+    monkeypatch.setattr(threads, "get_thread_type_value", _thread_type)
 
 
 def _private_payload():
@@ -105,6 +109,7 @@ def test_public_thread_keeps_server_routing(dispatch_spy, threads_private):
     from src.core.events.gateway_emit import emit_thread_create
 
     payload = _private_payload()
+    payload["id"] = str(PUBLIC_THREAD_ID)
     payload["thread_type"] = "public"
     emit_thread_create(payload)
 

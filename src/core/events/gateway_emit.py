@@ -100,9 +100,6 @@ def _is_private_thread_type(value: Any) -> bool:
 
     ThreadType is a str-valued enum ("public"/"private"/"announcement").
     Enum members, their ``.value`` and the raw string are all accepted.
-    Unknown values are treated as *not private* so legacy callers that omit
-    the field keep their previous routing; that preserves behaviour without
-    ever treating a private thread as public when its type is actually known.
     """
     if isinstance(value, bool):
         return False
@@ -111,6 +108,64 @@ def _is_private_thread_type(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() == "private"
     return False
+
+
+def _is_known_public_thread_type(value: Any) -> bool:
+    """True only for an explicit, recognized non-private thread type."""
+    if isinstance(value, bool):
+        return False
+    if hasattr(value, "value"):
+        value = value.value
+    if isinstance(value, str):
+        return value.strip().lower() in ("public", "announcement")
+    return False
+
+
+def _thread_privacy(thread_id: Optional[int], claimed_type: Any) -> bool:
+    """Whether a thread event must be treated as private (fail closed).
+
+    Resolution order:
+
+    1. The authoritative ``threads.get_thread_type_value(thread_id)`` when the
+       threads module is available. That lookup deliberately sees soft-deleted
+       (tombstoned) rows, so THREAD_DELETE can still classify its own thread.
+    2. The type carried on the caller's payload/argument.
+
+    Fail-closed rule: the event is audience-scoped unless we have *positive*
+    evidence that the thread is public. A failed/unavailable authoritative
+    lookup, a missing type, or an unrecognized type therefore all resolve to
+    "private" (scope to members) rather than "broadcast to the whole server".
+    A payload that explicitly says "public"/"announcement" is still safe to
+    route normally when no authoritative value is available.
+    """
+    authoritative = None
+    lookup_failed = thread_id is None
+    if not lookup_failed:
+        try:
+            from src.core import threads as _threads
+
+            if _threads.is_setup():
+                authoritative = _threads.get_thread_type_value(thread_id)
+            else:
+                lookup_failed = True
+        except Exception:
+            lookup_failed = True
+
+    if authoritative is not None:
+        # Authoritative DB value wins over any caller-supplied claim. Anything
+        # that is not a *known public* type (incl. unknown values) is scoped.
+        return not _is_known_public_thread_type(authoritative)
+
+    # No authoritative row: trust an explicit public claim, otherwise fail
+    # closed (this covers the THREAD_DELETE fail-open on a failed tombstone
+    # lookup and any payload that omits/mangles thread_type).
+    if lookup_failed and not _is_known_public_thread_type(claimed_type):
+        return True
+    if _is_private_thread_type(claimed_type):
+        return True
+    if _is_known_public_thread_type(claimed_type):
+        return False
+    return True
 
 
 def _private_thread_recipients(thread_id: Optional[int], is_private: bool):
@@ -137,6 +192,149 @@ def _private_thread_recipients(thread_id: Optional[int], is_private: bool):
         return list(_threads.get_thread_member_user_ids(thread_id))
     except Exception:
         return []
+
+
+def _thread_audience(thread_id: Optional[int], claimed_type: Any) -> Optional[List[int]]:
+    """Explicit member ids for a private-thread event; None for public routing."""
+    if not _thread_privacy(thread_id, claimed_type):
+        return None
+    return _private_thread_recipients(thread_id, True)
+
+
+def _known_private_thread_members(channel_id: Optional[int]) -> Optional[List[int]]:
+    """Members if ``channel_id`` is an explicitly private thread, else None.
+
+    Unlike :func:`_thread_audience` this does NOT fail closed merely because
+    the type is unknown: it only scopes when the authoritative lookup says
+    "private". Used for channel-scoped events (typing, read receipts, message
+    events) where the channel is usually a normal channel/thread, so treating
+    every unrecognized id as private would wrongly silence public traffic.
+    """
+    if channel_id is None:
+        return None
+    try:
+        from src.core import threads as _threads
+
+        if not _threads.is_setup():
+            return None
+        thread_type = _threads.get_thread_type_value(channel_id)
+    except Exception:
+        return None
+    if _is_private_thread_type(thread_type):
+        # Known private thread: member-scoped and fail closed on lookup error.
+        return _private_thread_recipients(channel_id, True)
+    return None
+
+
+def resolve_channel_event_recipients(
+    channel_id: Optional[int],
+    *,
+    guild_id: Optional[int] = None,
+    actor_id: Optional[int] = None,
+    exclude_user_ids: Optional[List[int]] = None,
+) -> List[int]:
+    """Resolve the exact audience of a channel-scoped gateway event.
+
+    Routing an event by ``server_id`` lets the event router expand it to
+    *every* member of the server, which leaks typing indicators, read
+    receipts and message activity in restricted/private channels. This helper
+    returns an explicit recipient list instead, so callers pass it as
+    ``user_ids`` and the router cannot widen the audience:
+
+      * a channel that is a known private thread -> its thread members only;
+        a failed member lookup yields an empty list (fail closed);
+      * a server channel -> members that can actually VIEW it (``channels.view``);
+        without a permission API the result is empty (fail closed);
+      * otherwise -> DM / group conversation participants.
+
+    The actor is always excluded (their client already applied the action).
+    """
+    if channel_id is None:
+        return []
+
+    exclude = set()
+    for uid in exclude_user_ids or []:
+        try:
+            exclude.add(int(uid))
+        except (TypeError, ValueError):
+            continue
+    if actor_id is not None:
+        try:
+            exclude.add(int(actor_id))
+        except (TypeError, ValueError):
+            pass
+
+    def _final(ids) -> List[int]:
+        """Coerce, dedupe (preserving order) and drop excluded ids."""
+        seen = set()
+        result = []
+        for uid in ids:
+            try:
+                uid = int(uid)
+            except (TypeError, ValueError):
+                continue
+            if uid not in exclude and uid not in seen:
+                seen.add(uid)
+                result.append(uid)
+        return result
+
+    # 1. Known private thread: exact member set (fail closed on lookup error).
+    thread_members = _known_private_thread_members(channel_id)
+    if thread_members is not None:
+        return _final(thread_members)
+
+    # 2. Server channel: members with channels.view, never the raw member list.
+    try:
+        import src.api as api
+
+        servers = api.get_servers()
+    except Exception:
+        servers = None
+
+    server_id = guild_id
+    channel = None
+    if servers is not None:
+        try:
+            channel = servers.get_channel(channel_id, actor_id)
+        except Exception:
+            channel = None
+        if channel is not None:
+            server_id = getattr(channel, "server_id", None) or server_id
+
+    if server_id is not None and servers is not None:
+        has_permission = getattr(servers, "has_permission", None)
+        if not callable(has_permission):
+            # Cannot verify channel access -> no recipients (fail closed).
+            return []
+        try:
+            member_ids = servers.get_member_user_ids(int(server_id)) or []
+        except Exception:
+            member_ids = []
+        recipients = []
+        for uid in member_ids:
+            try:
+                if has_permission(uid, int(server_id), "channels.view", channel_id):
+                    recipients.append(uid)
+            except Exception:
+                continue
+        return _final(recipients)
+
+    # 3. DM / group conversation participants.
+    try:
+        import src.api as api
+
+        messaging = api.get_messaging()
+        if messaging is not None:
+            manager = (
+                messaging.get_manager()
+                if hasattr(messaging, "get_manager")
+                else messaging
+            )
+            participants = manager.get_participant_ids(channel_id)
+            return _final(participants or [])
+    except Exception:
+        pass
+    return []
 
 
 # --------------------------------------------------------------------------
@@ -169,9 +367,16 @@ def emit_message_delete_bulk(
     """Notify clients that a batch of messages was deleted from a channel.
 
     The scope key is canonical ``server_id`` (matching single
-    MESSAGE_DELETE); ``guild_id`` stays as a legacy alias.
+    MESSAGE_DELETE); ``guild_id`` stays as a legacy alias. Recipients are
+    resolved to the channel's actual viewers (thread members for a private
+    thread) so a bulk delete in a restricted channel cannot leak its message
+    ids to every server member. The legacy routing keys are kept for intent
+    filtering, but the explicit ``user_ids`` take precedence in the router.
     """
     sid = str(guild_id) if guild_id is not None else None
+    recipients = resolve_channel_event_recipients(
+        channel_id, guild_id=guild_id, actor_id=actor_id
+    )
     _emit(
         EventType.MESSAGE_DELETE_BULK,
         {
@@ -180,6 +385,7 @@ def emit_message_delete_bulk(
             "server_id": sid,
             "guild_id": sid,
         },
+        user_ids=recipients,
         channel_id=channel_id,
         server_id=guild_id,
         exclude_user_ids=[actor_id] if actor_id is not None else None,
@@ -196,8 +402,12 @@ def emit_message_reaction_remove_all(
     """Notify clients that all reactions on a message were cleared.
 
     Payload id fields are stringified (and the acting user included) so the
-    shape matches MESSAGE_REACTION_ADD/REMOVE events.
+    shape matches MESSAGE_REACTION_ADD/REMOVE events. Recipients are the
+    channel's actual viewers, never the whole server member list.
     """
+    recipients = resolve_channel_event_recipients(
+        channel_id, guild_id=guild_id, actor_id=actor_id
+    )
     _emit(
         EventType.MESSAGE_REACTION_REMOVE_ALL,
         {
@@ -206,6 +416,7 @@ def emit_message_reaction_remove_all(
             "guild_id": str(guild_id) if guild_id is not None else None,
             "user_id": str(actor_id) if actor_id is not None else None,
         },
+        user_ids=recipients,
         channel_id=channel_id,
         server_id=guild_id,
         exclude_user_ids=[actor_id] if actor_id is not None else None,
@@ -229,8 +440,9 @@ def emit_poll_update(
     The payload carries identifiers only — no vote counts — because
     result visibility is per-viewer; clients refetch
     ``GET /polls/{id}/results`` with their own credentials when the
-    event arrives.
+    event arrives. Recipients are restricted to the channel's actual viewers.
     """
+    recipients = resolve_channel_event_recipients(channel_id, actor_id=actor_id)
     _emit(
         EventType.POLL_UPDATE,
         {
@@ -241,6 +453,7 @@ def emit_poll_update(
             "actor_id": str(actor_id) if actor_id is not None else None,
             "is_ended": is_ended,
         },
+        user_ids=recipients,
         channel_id=channel_id,
         exclude_user_ids=[actor_id] if actor_id is not None else None,
     )
@@ -254,7 +467,14 @@ def emit_message_reaction_remove_emoji(
     guild_id: Optional[int] = None,
     actor_id: Optional[int] = None,
 ) -> None:
-    """Notify clients that every reaction of one emoji was removed by a moderator."""
+    """Notify clients that every reaction of one emoji was removed by a moderator.
+
+    Scoped to the channel's actual viewers so a moderation action in a
+    private/restricted channel is not announced to the entire server.
+    """
+    recipients = resolve_channel_event_recipients(
+        channel_id, guild_id=guild_id, actor_id=actor_id
+    )
     _emit(
         EventType.MESSAGE_REACTION_REMOVE_EMOJI,
         {
@@ -264,6 +484,7 @@ def emit_message_reaction_remove_emoji(
             "guild_id": str(guild_id) if guild_id is not None else None,
             "user_id": str(actor_id) if actor_id is not None else None,
         },
+        user_ids=recipients,
         channel_id=channel_id,
         server_id=guild_id,
         exclude_user_ids=[actor_id] if actor_id is not None else None,
@@ -280,9 +501,12 @@ def emit_channel_pins_update(
 
     Payload id fields are stringified so the shape matches the other
     message-family events; ``server_id`` is canonical with ``guild_id``
-    kept as a legacy alias (matching MESSAGE_DELETE_BULK).
+    kept as a legacy alias (matching MESSAGE_DELETE_BULK). Recipients are
+    the channel's actual viewers, so a pin in a private/restricted channel is
+    not announced to every member of the server.
     """
     sid = str(guild_id) if guild_id is not None else None
+    recipients = resolve_channel_event_recipients(channel_id, guild_id=guild_id)
     _emit(
         EventType.CHANNEL_PINS_UPDATE,
         {
@@ -291,6 +515,7 @@ def emit_channel_pins_update(
             "guild_id": sid,
             "pinned_message_ids": [str(mid) for mid in (pinned_message_ids or [])],
         },
+        user_ids=recipients,
         channel_id=channel_id,
         server_id=guild_id,
     )
@@ -423,9 +648,7 @@ def emit_thread_create(thread: Dict[str, Any]) -> None:
     # broadcast to every member of the server. Scope it to the thread's
     # exact member set; public threads keep the normal server routing.
     tid = _coerce_routing_id(thread.get("id"))
-    recipients = _private_thread_recipients(
-        tid, _is_private_thread_type(thread.get("thread_type"))
-    )
+    recipients = _thread_audience(tid, thread.get("thread_type"))
     if recipients is not None:
         _emit(EventType.THREAD_CREATE, stringify_snowflake_ids(thread),
               user_ids=recipients)
@@ -441,9 +664,7 @@ def emit_thread_create(thread: Dict[str, Any]) -> None:
 @_non_raising
 def emit_thread_update(thread: Dict[str, Any]) -> None:
     tid = _coerce_routing_id(thread.get("id"))
-    recipients = _private_thread_recipients(
-        tid, _is_private_thread_type(thread.get("thread_type"))
-    )
+    recipients = _thread_audience(tid, thread.get("thread_type"))
     if recipients is not None:
         _emit(EventType.THREAD_UPDATE, stringify_snowflake_ids(thread),
               user_ids=recipients)
@@ -463,26 +684,17 @@ def emit_thread_delete(
     parent_id: Optional[int] = None,
     thread_type: Optional[Any] = None,
 ) -> None:
-    # Resolve the type from the argument when supplied, otherwise from the
-    # still-present tombstone row (delete events fire after the soft delete).
-    is_private = _is_private_thread_type(thread_type)
-    if not is_private and thread_type is None:
-        try:
-            from src.core import threads as _threads
-
-            if _threads.is_setup():
-                is_private = _is_private_thread_type(
-                    _threads.get_thread_type_value(thread_id)
-                )
-        except Exception:
-            is_private = False
-
+    # Privacy is resolved from the explicit argument first, then from the
+    # authoritative threads module (which sees the tombstone). If neither can
+    # positively establish "public", _thread_audience fails closed and scopes
+    # to members instead of broadcasting a private thread's name/existence to
+    # the entire server.
     payload = {
         "id": str(thread_id),
         "guild_id": str(guild_id) if guild_id is not None else None,
         "parent_id": str(parent_id) if parent_id is not None else None,
     }
-    recipients = _private_thread_recipients(_coerce_routing_id(thread_id), is_private)
+    recipients = _thread_audience(_coerce_routing_id(thread_id), thread_type)
     if recipients is not None:
         _emit(EventType.THREAD_DELETE, payload, user_ids=recipients)
         return
@@ -553,4 +765,80 @@ def emit_security_alert(
             "detail": stringify_snowflake_ids(detail or {}),
         },
         user_ids=[user_id],
+    )
+
+
+# --------------------------------------------------------------------------
+# Channel-scoped ephemeral events (typing, read receipts)
+# --------------------------------------------------------------------------
+# These used to be dispatched with a ``server_id`` (or with the unfiltered
+# ``get_member_user_ids`` list), which the router expands to *every* server
+# member. For a restricted or private channel that leaks who is typing and
+# who read which message. The emitters below resolve the actual member set via
+# ``resolve_channel_event_recipients`` and always pass it as explicit
+# ``user_ids`` so the router cannot widen the audience.
+@_non_raising
+def emit_typing_start(
+    channel_id: int,
+    user_id: int,
+    username: Optional[str] = None,
+    *,
+    guild_id: Optional[int] = None,
+) -> None:
+    """Notify only the channel's viewers that a user started typing."""
+    recipients = resolve_channel_event_recipients(
+        channel_id, guild_id=guild_id, actor_id=user_id
+    )
+    _emit(
+        EventType.TYPING_START,
+        {
+            "channel_id": str(channel_id),
+            "user_id": str(user_id),
+            "username": username or "Someone",
+        },
+        user_ids=recipients,
+    )
+
+
+@_non_raising
+def emit_typing_stop(
+    channel_id: int,
+    user_id: int,
+    *,
+    guild_id: Optional[int] = None,
+) -> None:
+    """Notify only the channel's viewers that a user stopped typing."""
+    recipients = resolve_channel_event_recipients(
+        channel_id, guild_id=guild_id, actor_id=user_id
+    )
+    _emit(
+        EventType.TYPING_STOP,
+        {"channel_id": str(channel_id), "user_id": str(user_id)},
+        user_ids=recipients,
+    )
+
+
+@_non_raising
+def emit_message_ack(
+    channel_id: int,
+    user_id: int,
+    message_id: Optional[int] = None,
+    *,
+    guild_id: Optional[int] = None,
+) -> None:
+    """Broadcast a read receipt to the channel's actual viewers only.
+
+    The sender is excluded (their client already rendered the checkmark).
+    """
+    recipients = resolve_channel_event_recipients(
+        channel_id, guild_id=guild_id, actor_id=user_id
+    )
+    _emit(
+        EventType.MESSAGE_ACK,
+        {
+            "channel_id": str(channel_id),
+            "user_id": str(user_id),
+            "message_id": str(message_id) if message_id is not None else None,
+        },
+        user_ids=recipients,
     )
