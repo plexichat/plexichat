@@ -15,8 +15,18 @@ from typing import Any
 # Statements that would destroy shared data if executed unscoped. Cleanup
 # code paths are checked against this denylist in tests to keep the
 # self-test permanently non-destructive.
+#
+# The unscoped-DELETE pattern must run to the *logical* end of the statement.
+# A bare ``DELETE FROM t`` is the obvious case, but ``DELETE FROM t;`` or
+# ``DELETE FROM t -- comment`` is just as destructive. An earlier version
+# anchored on ``\s*$``, so either trailing form slipped past the guard while
+# still being a whole-table wipe. Allow a statement terminator and/or a
+# trailing SQL comment after the table name -- but not a WHERE clause.
 _FORBIDDEN_PATTERNS = (
-    re.compile(r"DELETE\s+FROM\s+\w+\s*$", re.IGNORECASE),  # unscoped whole-table
+    re.compile(
+        r"DELETE\s+FROM\s+[\"'`]?\w+[\"'`]?\s*(?:;.*|--.*|/\*.*)?\s*$",
+        re.IGNORECASE,
+    ),  # unscoped whole-table wipe (with optional terminator/comment)
     re.compile(r"DROP\s+TABLE", re.IGNORECASE),
     re.compile(r"TRUNCATE", re.IGNORECASE),
 )
@@ -26,7 +36,9 @@ def assert_non_destructive(statement: str) -> None:
     """Raise if a statement is an unscoped whole-table wipe.
 
     Used by selftest cleanup code (and its tests) to guarantee the suite
-    can never destroy shared data on a live deployment.
+    can never destroy shared data on a live deployment. Trailing semicolons
+    and SQL comments are ignored so they cannot be used to disguise an
+    otherwise unscoped DELETE.
     """
     normalized = " ".join(statement.split())
     for pattern in _FORBIDDEN_PATTERNS:

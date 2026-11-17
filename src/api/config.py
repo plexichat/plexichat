@@ -114,6 +114,9 @@ def _build_api_config() -> APIConfig:
             "https://www.plexichat.com",
         ]
     allow_wildcard = api_conf.get("allow_wildcard_cors", False)
+    # Credentials are opt-out here (secure default). Capture the value once so
+    # the wildcard/credentials cross-check and the final APIConfig agree.
+    allow_credentials = api_conf.get("cors_allow_credentials", True)
 
     import utils.logger as logger
 
@@ -121,11 +124,25 @@ def _build_api_config() -> APIConfig:
     logger.debug(f"cors_origins from conf: {cors_origins}")
     logger.debug(f"allow_wildcard from conf: {allow_wildcard}")
 
-    if (cors_origins == ["*"] or "*" in cors_origins) and not allow_wildcard:
-        logger.error(
-            "SECURITY ERROR: CORS wildcard '*' is not allowed. Configure explicit origins."
-        )
-        cors_origins = []  # Fail closed - no CORS allowed
+    if cors_origins == ["*"] or "*" in cors_origins:
+        if not allow_wildcard:
+            logger.error(
+                "SECURITY ERROR: CORS wildcard '*' is not allowed. Configure explicit origins."
+            )
+            cors_origins = []  # Fail closed - no CORS allowed
+        elif allow_credentials:
+            # Starlette's CORSMiddleware MUST reflect the request Origin when
+            # allow_origins contains '*' and credentials are enabled (it cannot
+            # send the literal '*' alongside Allow-Credentials: true). That
+            # combination lets ANY site make credentialed cross-origin calls
+            # and read the responses -- a full CSRF/data-theft primitive. The
+            # operator opt-in for wildcards never implied opting into that, so
+            # fail closed rather than build an unsafe middleware.
+            logger.error(
+                "SECURITY ERROR: CORS wildcard '*' cannot be combined with "
+                "credentialed requests; refusing wildcard origins."
+            )
+            cors_origins = []  # Fail closed - no CORS allowed
 
     # SECURITY: Reject wildcard methods/headers
     cors_methods = api_conf.get(
@@ -171,7 +188,7 @@ def _build_api_config() -> APIConfig:
         api_prefix=api_conf.get("api_prefix", "/api/v1"),
         debug=api_conf.get("debug", False),
         cors_origins=cors_origins,
-        cors_allow_credentials=api_conf.get("cors_allow_credentials", True),
+        cors_allow_credentials=allow_credentials,
         cors_allow_methods=cors_methods,
         cors_allow_headers=cors_headers,
         cors_expose_headers=cors_expose_headers,
