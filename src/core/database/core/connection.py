@@ -45,10 +45,10 @@ class _DatabaseConnectionProtocol(Protocol):
     _lock: Any
     config: Dict[str, Any]
     monitor: Any
-    _max_idle_time: float
+    _max_idle_time: int
     _max_connection_age_seconds: float
     _enable_validation: bool
-    _validation_interval: float
+    _validation_interval: int
     _validation_query: str
     type: str
 
