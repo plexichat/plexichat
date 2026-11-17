@@ -171,12 +171,26 @@ def parse_expiry_ms(value: Any) -> Optional[int]:
 
 
 def is_expired(expires_at: Any, now_ms: Optional[int] = None) -> bool:
-    """Whether an expiry is expired or unparseable (fail closed)."""
+    """Whether an expiry is expired or unparseable (fail closed).
+
+    An invalid clock value must never turn this check into a grant: callers
+    pass ``now_ms`` from their own clock, and a corrupt/zero/units-mismatched
+    value (e.g. seconds instead of milliseconds) would otherwise compare as
+    "not expired" and hand out a permanent session. Any clock value that is
+    not a plausible epoch-millisecond integer is treated as expiry.
+    """
     parsed = parse_expiry_ms(expires_at)
     if parsed is None:
         return True
     if now_ms is None:
         now_ms = int(time.time() * 1000)
+    elif (
+        isinstance(now_ms, bool)
+        or not isinstance(now_ms, int)
+        or now_ms < 1
+        or now_ms > MAX_EXPIRY_MS
+    ):
+        return True
     return parsed <= now_ms
 
 
@@ -200,7 +214,17 @@ def safe_token_cache_key(token: Any) -> str:
 
 
 def verify_token_hash(token_secret: str, stored_hash: str) -> bool:
-    """Verify a token secret against its stored hash."""
+    """Verify a token secret against its stored hash (fail closed).
+
+    Both operands are validated before any hashing/comparison so a malformed
+    credential or a corrupt stored hash is a clean denial rather than an
+    ``AttributeError`` raised out of ``hash_token`` (which turned a bad auth
+    value into a 500 and bypassed the constant-time comparator entirely).
+    """
+    if not isinstance(token_secret, str) or not isinstance(stored_hash, str):
+        return False
+    if not token_secret or len(token_secret) > MAX_TOKEN_LENGTH:
+        return False
     computed_hash = hash_token(token_secret)
     return _constant_time_compare(computed_hash, stored_hash)
 

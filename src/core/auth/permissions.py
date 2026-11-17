@@ -194,20 +194,25 @@ def validate_permissions(
 
             # Check wildcard grants of restricted permissions.
             #
-            # "*" is the widest wildcard: it grants every restricted scope, but
-            # the dotted-prefix check below can never match it (no restricted
-            # name starts with the literal "*"). Treating it like an ordinary
-            # wildcard let a bot be granted {"*": True} and thereby obtain
-            # admin.system / account.delete / bots.create in full. A full
-            # wildcard is never delegable to a bot.
-            if perm == "*":
+            # The namespace a wildcard grants is the literal text before its
+            # trailing ".*"; the full wildcard "*" has the empty namespace.
+            # Two forms grant *every* scope (including admin.system): "*" and
+            # "*.*" -- has_permission() honours the latter through its own
+            # parts loop when checking for "*" (the generic admin gate). An
+            # empty namespace (".*") is treated the same way, fail closed.
+            # Neither may ever be delegated to a bot. For ordinary namespaces
+            # require a dot boundary so "bot.*" cannot be mistaken for
+            # "bots.*" (the old startswith check had no such boundary).
+            namespace = (
+                "" if perm == "*" else (perm[:-2] if perm.endswith(".*") else None)
+            )
+            if namespace is not None:
                 for restricted in sorted(BOT_RESTRICTED_PERMISSIONS):
-                    issues.append(
-                        f"Bots cannot have permission: {restricted} (via {perm})"
-                    )
-            elif perm.endswith(".*"):
-                for restricted in BOT_RESTRICTED_PERMISSIONS:
-                    if restricted.startswith(perm.replace(".*", "")):
+                    if (
+                        namespace in ("", "*")
+                        or restricted == namespace
+                        or restricted.startswith(namespace + ".")
+                    ):
                         issues.append(
                             f"Bots cannot have permission: {restricted} (via {perm})"
                         )
