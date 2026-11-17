@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -244,7 +244,7 @@ async def delete_server_automod_rule(
 async def get_server_automod_violations(
     server_id: str,
     user_id: Optional[str] = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=100),
     before: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[AutomodViolationResponse]:
