@@ -336,4 +336,11 @@ class ParamValueMixin(DataGeneratorBase):
             val = "pending"
         elif name_low == "state" and "capabilities" in path:
             val = "available"
+        elif name_low == "sort":
+            # Channel webhook/ratchet listings allowlist their sort keys;
+            # "created_at" is valid for both and exercises the ordering path.
+            val = "created_at"
+        elif name_low == "order":
+            # The same listings normalise order to asc/desc; "1" is a 400.
+            val = "desc"
         return val
