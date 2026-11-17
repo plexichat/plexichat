@@ -28,7 +28,7 @@ import json
 import os
 import pkgutil
 from pathlib import Path
-from typing import Any, Union, get_args, get_origin
+from typing import Annotated, Any, Union, get_args, get_origin
 
 import pytest
 from pydantic import BaseModel
@@ -137,6 +137,7 @@ UNRESTRICTED_TEXT_FIELDS = frozenset(
         "bio",
         "body",
         "comment",
+        "confirmation",
         "content",
         "current_password",
         "description",
@@ -183,12 +184,41 @@ def _iter_models():
 
 
 def _policy_name(field: Any) -> str | None:
-    """The policy a field's annotation declares, if any."""
+    """The policy a field's annotation declares, if any.
+
+    Pydantic keeps the ``Annotated`` metadata on the field for a bare
+    ``UIText`` but nests it inside the annotation for ``Optional[UIText]``
+    (and ``Optional[HttpUrl]``). Walk both shapes so an optional field cannot
+    silently opt out of the policy just because it is nullable.
+    """
     for metadata in field.metadata:
         candidate = getattr(getattr(metadata, "func", None), "__policy_name__", None)
         if candidate:
             return candidate
-    return None
+
+    def scan(annotation: Any) -> str | None:
+        if get_origin(annotation) is Annotated:
+            for metadata in get_args(annotation)[1:]:
+                candidate = getattr(
+                    getattr(metadata, "func", None), "__policy_name__", None
+                )
+                if candidate:
+                    return candidate
+            return scan(get_args(annotation)[0])
+        origin = get_origin(annotation)
+        if origin is Union:
+            for argument in get_args(annotation):
+                found = scan(argument)
+                if found:
+                    return found
+        if origin in (list, tuple):
+            for argument in get_args(annotation):
+                found = scan(argument)
+                if found:
+                    return found
+        return None
+
+    return scan(field.annotation)
 
 
 def _validator_covers(model: type[BaseModel], field_name: str) -> bool:
