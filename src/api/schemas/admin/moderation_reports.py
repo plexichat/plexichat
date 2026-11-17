@@ -4,6 +4,7 @@ Moderation report schemas.
 
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from ..common import SnowflakeID
 
 
 class ModerationReportCountsResponse(BaseModel):
@@ -84,7 +85,7 @@ class BlockUserRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    user_id: str = Field(..., description="User ID to block")
+    user_id: SnowflakeID = Field(..., description="User ID to block")
     reason: str = Field(
         ..., min_length=1, max_length=500, description="Reason for blocking"
     )

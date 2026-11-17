@@ -6,6 +6,7 @@ from typing import Optional
 from typing_extensions import Annotated
 from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
 from .policy_types import UIText
+from .common import SnowflakeID
 
 
 def _to_str(v):
@@ -56,7 +57,7 @@ class SoundPermissionRequest(BaseModel):
 class SoundPlayRequest(BaseModel):
     """Playback trigger payload."""
 
-    channel_id: str = Field(..., description="Voice channel ID")
+    channel_id: SnowflakeID = Field(..., description="Voice channel ID")
     volume: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 

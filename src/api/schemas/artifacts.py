@@ -180,7 +180,7 @@ class RetentionPurgeResponse(BaseModel):
 class ServerRetentionRequest(BaseModel):
     """Request body for setting a per-server retention override."""
 
-    server_id: str = Field(..., description="Target server id")
+    server_id: SnowflakeID = Field(..., description="Target server id")
     retention_days: Optional[int] = Field(
         None,
         ge=1,

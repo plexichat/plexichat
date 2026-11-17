@@ -452,12 +452,12 @@ class SumXlsxImportRequest(BaseModel):
 class SumFeatureCreateRequest(BaseModel):
     feature_type: str = Field(..., pattern="^(chart|pivot|sparkline)$")
     definition: Dict[str, Any] = Field(default_factory=dict)
-    sheet_id: Optional[str] = None
+    sheet_id: Optional[SnowflakeID] = None
 
 
 class SumFeatureUpdateRequest(BaseModel):
     definition: Optional[Dict[str, Any]] = None
-    sheet_id: Optional[str] = None
+    sheet_id: Optional[SnowflakeID] = None
 
 
 class SumFeatureResponse(BaseModel):

@@ -11,6 +11,19 @@ from pydantic import BaseModel, BeforeValidator, Field, ConfigDict, GetCoreSchem
 from pydantic_core import CoreSchema, core_schema
 
 from src.core.security.policies import HTML_META_CHARS, RejectUICharacters
+from src.core.security.hardening.numbers import SNOWFLAKE_MAX
+
+# A snowflake is a non-negative 64-bit identifier. Python ints are unbounded,
+# so an unvalidated ``"999999999999999999999999"`` used to sail through and
+# reach lookups, cache keys and offset arithmetic. The lower bound stays at 0
+# (callers use 0 as a "no id yet"/"clear" sentinel); the upper bound is the
+# hardening constant shared with path/query id parsing.
+def _check_snowflake_upper_bound(numeric: int) -> None:
+    if numeric > SNOWFLAKE_MAX:
+        raise ValueError(
+            f"Invalid snowflake ID: must be at most {SNOWFLAKE_MAX}"
+        )
+
 
 # One JSON encoder configuration for every hand-built API response.
 #
@@ -100,6 +113,7 @@ class SnowflakeID(str):
         if isinstance(v, int):
             if v < 0:
                 raise ValueError("Invalid snowflake ID: must be non-negative")
+            _check_snowflake_upper_bound(v)
             return cls(str(v))
         if isinstance(v, str):
             text = v.strip()
@@ -109,6 +123,7 @@ class SnowflakeID(str):
                 raise ValueError("Invalid snowflake ID: must be numeric string")
             if numeric < 0:
                 raise ValueError("Invalid snowflake ID: must be non-negative")
+            _check_snowflake_upper_bound(numeric)
             return cls(str(numeric))
         raise ValueError(f"Invalid snowflake ID type: {type(v)}")
 
@@ -144,6 +159,7 @@ class SnowflakeIDParam(int):
         if isinstance(v, int):
             if v < 0:
                 raise ValueError("Invalid snowflake ID: must be non-negative")
+            _check_snowflake_upper_bound(v)
             return cls(v)
         if isinstance(v, str):
             try:
@@ -152,6 +168,7 @@ class SnowflakeIDParam(int):
                 raise ValueError("Invalid snowflake ID: must be numeric string")
             if numeric < 0:
                 raise ValueError("Invalid snowflake ID: must be non-negative")
+            _check_snowflake_upper_bound(numeric)
             return cls(numeric)
         raise ValueError(f"Invalid snowflake ID type: {type(v)}")
 
@@ -255,6 +272,7 @@ def snowflake_to_str(v: Any) -> Optional[str]:
     if isinstance(v, int):
         if v < 0:
             raise ValueError("Invalid snowflake ID: must be non-negative")
+        _check_snowflake_upper_bound(v)
         return str(v)
     if isinstance(v, str):
         try:
@@ -263,6 +281,7 @@ def snowflake_to_str(v: Any) -> Optional[str]:
             raise ValueError("Invalid snowflake ID: must be numeric string")
         if numeric < 0:
             raise ValueError("Invalid snowflake ID: must be non-negative")
+        _check_snowflake_upper_bound(numeric)
         return str(numeric)
     raise ValueError("Invalid snowflake ID type")
 
@@ -281,6 +300,7 @@ def snowflake_from_str(v: Any) -> Optional[int]:
     if isinstance(v, int):
         if v < 0:
             raise ValueError("Invalid snowflake ID: must be non-negative")
+        _check_snowflake_upper_bound(v)
         return v
     if isinstance(v, str):
         try:
@@ -289,6 +309,7 @@ def snowflake_from_str(v: Any) -> Optional[int]:
             raise ValueError("Invalid snowflake ID")
         if numeric < 0:
             raise ValueError("Invalid snowflake ID: must be non-negative")
+        _check_snowflake_upper_bound(numeric)
         return numeric
     raise ValueError("Invalid snowflake ID type")
 

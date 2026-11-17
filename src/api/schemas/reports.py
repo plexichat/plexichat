@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Literal, Optional, List
 
-from .common import _reject_ui_text_chars
+from .common import SnowflakeID, _reject_ui_text_chars
 
 #: Categories the report store knows how to bucket (``ReportCategory``). The
 #: routes already reject anything else at runtime; declaring the set here moves
@@ -21,8 +21,8 @@ ReportCategoryValue = Literal[
 class MessageReportRequest(BaseModel):
     """Report a message."""
 
-    message_id: str = Field(..., description="ID of the message to report")
-    channel_id: str = Field(..., description="Channel containing the message")
+    message_id: SnowflakeID = Field(..., description="ID of the message to report")
+    channel_id: SnowflakeID = Field(..., description="Channel containing the message")
     reason: str = Field(
         ..., min_length=1, max_length=500, description="Reason for report"
     )
@@ -30,7 +30,7 @@ class MessageReportRequest(BaseModel):
     details: Optional[str] = Field(
         None, max_length=2000, description="Additional details"
     )
-    server_id: Optional[str] = Field(None, description="Server ID if applicable")
+    server_id: Optional[SnowflakeID] = Field(None, description="Server ID if applicable")
 
     @field_validator("reason", "details")
     @classmethod
@@ -43,7 +43,7 @@ class MessageReportRequest(BaseModel):
 class UserReportRequest(BaseModel):
     """Report a user."""
 
-    user_id: str = Field(..., description="ID of the user to report")
+    user_id: SnowflakeID = Field(..., description="ID of the user to report")
     reason: str = Field(
         ..., min_length=1, max_length=500, description="Reason for report"
     )
@@ -51,7 +51,7 @@ class UserReportRequest(BaseModel):
     details: Optional[str] = Field(
         None, max_length=2000, description="Additional details"
     )
-    evidence_message_ids: Optional[List[str]] = Field(
+    evidence_message_ids: Optional[List[SnowflakeID]] = Field(
         None, max_length=20, description="Message IDs as evidence"
     )
 

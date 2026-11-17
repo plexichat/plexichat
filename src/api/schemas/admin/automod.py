@@ -5,6 +5,7 @@ Automod schemas.
 from typing import List, Literal, Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 from ..policy_types import UIText
+from ..common import SnowflakeID
 
 #: Rule/action kinds the automod engine knows about (``RuleType`` / ``ActionType``).
 #: The route already converts through those enums; declaring the values here
@@ -63,7 +64,7 @@ class AutomodRuleResponse(BaseModel):
 class AutomodRuleCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    server_id: str
+    server_id: SnowflakeID
     name: UIText = Field(..., min_length=1, max_length=100)
     rule_type: RuleTypeValue
     config: Dict[str, Any]
