@@ -40,7 +40,7 @@ def test_mask_string_destroys_session_secret():
     masked = mask_string(secret)
     assert secret not in masked
     assert masked != secret
-    assert set(masked) - set(secret) or len(masked) != len(secret)  # altered
+    assert "***" in masked  # the sanitizer's masking marker is present
 
 
 @pytest.mark.security
