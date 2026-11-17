@@ -25,7 +25,7 @@ Usage:
     verified = encryption.verify_signature(b"message", signature, public_key)
 """
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple, cast
 from .core import (
     EncryptionManager,
     Keyring,
@@ -154,7 +154,11 @@ def _get_ratchet_manager() -> Optional[_ChannelRatchetManager]:
         is_connected = False
     if not is_connected:
         try:
-            db.connect()
+            # ``Database.connect`` is declared with a protocol-typed ``self``
+            # whose mutable interval attrs are float, while the concrete
+            # singleton stores ints — a static-only mismatch. The runtime
+            # method is present and callable, so opt out of static binding.
+            cast(Any, db).connect()
         except Exception:
             return None
     _ratchet_manager = _ChannelRatchetManager(db)
@@ -194,7 +198,7 @@ class _LazyDb:
             is_connected = False
         if not is_connected:
             try:
-                db.connect()
+                cast(Any, db).connect()
             except Exception as exc:
                 # Without this, every later call on the proxy failed with a
                 # confusing attribute error on a disconnected database.
