@@ -12,6 +12,8 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.users import UserAvatarResponse
 from src.core.database import invalidate_pattern
 
+from .helpers import require_user_token
+
 
 class AvatarMixin:
     async def upload_avatar(
@@ -19,6 +21,7 @@ class AvatarMixin:
         file: UploadFile = File(...),
         current_user: TokenInfo = Depends(get_current_user),
     ) -> UserAvatarResponse:
+        require_user_token(current_user)
         avatars = api.get_avatars()
         if not avatars:
             logger.error("Avatars module not available")

@@ -22,6 +22,7 @@ from src.core.messaging.exceptions import (
     ConversationNotFoundError,
     InvalidRecipientError,
 )
+from .helpers import authenticated_cache_key, require_user_token
 
 
 class ChannelMixin:
@@ -29,6 +30,7 @@ class ChannelMixin:
         self,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> NotesChannelResponse:
+        require_user_token(current_user)
         messaging = api.get_messaging()
         if not messaging:
             logger.error("Messaging module not available")
@@ -83,11 +85,16 @@ class ChannelMixin:
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
-    @cached(ttl=5, prefix="user_dm_channels_api")
+    @cached(
+        ttl=5,
+        prefix="user_dm_channels_api",
+        key_builder=authenticated_cache_key("user_dm_channels_api"),
+    )
     def get_dm_channels(
         self,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> List[DMChannelResponse]:
+        require_user_token(current_user)
         messaging = api.get_messaging()
         if not messaging:
             logger.error("Messaging module not available")
@@ -121,9 +128,11 @@ class ChannelMixin:
                         recipient_ids.append(rid)
 
                 users_map = {}
+                bulk_ok = False
                 if recipient_ids:
                     try:
                         users_map = auth.get_user_profiles_bulk(recipient_ids)
+                        bulk_ok = True
                     except Exception as e:
                         logger.debug(
                             f"Bulk profile fetch failed for DM recipients: {e}"
@@ -137,7 +146,13 @@ class ChannelMixin:
                             user_data = users_map.get(str(rid))
                             if user_data:
                                 recipient_username = user_data.get("username")
-                            else:
+                            elif not bulk_ok:
+                                # Only fall back to per-recipient lookups when
+                                # the bulk fetch failed outright. When it
+                                # succeeded, a missing id means no such user
+                                # (get_user_profiles_bulk already queried the
+                                # DB for it), so a second lookup per channel
+                                # would just repeat the same miss.
                                 try:
                                     user = auth.get_user(rid)
                                     if user:
@@ -185,6 +200,7 @@ class ChannelMixin:
         body: DMChannelCreateRequest,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> DMChannelResponse:
+        require_user_token(current_user)
         messaging = api.get_messaging()
         auth = api.get_auth()
 

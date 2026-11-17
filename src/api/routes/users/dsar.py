@@ -30,6 +30,7 @@ from src.core.dsar import (
 )
 from src.core.ratelimit.decorators import custom_rate_limit
 from src.core.ratelimit.models import RateLimitConfig
+from .helpers import require_user_token
 
 
 class DataExportMixin:
@@ -84,6 +85,7 @@ class DataExportMixin:
         request: Request,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> SuccessResponse:
+        require_user_token(current_user)
         auth = api.get_auth()
         if not auth:
             logger.error("Auth module not available")
@@ -130,6 +132,7 @@ class DataExportMixin:
         self,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> DSARRequestListResponse:
+        require_user_token(current_user)
         try:
             user_id = int(current_user.user_id)
             requests = get_user_requests(user_id)
@@ -167,6 +170,7 @@ class DataExportMixin:
         request_id: str,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> DSARRequestResponse:
+        require_user_token(current_user)
         try:
             user_id = int(current_user.user_id)
             req_id = parse_id(request_id, "request_id")
@@ -210,6 +214,7 @@ class DataExportMixin:
         request_id: str,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> SuccessResponse:
+        require_user_token(current_user)
         try:
             user_id = int(current_user.user_id)
             req_id = parse_id(request_id, "request_id")
@@ -266,6 +271,7 @@ class DataExportMixin:
         request_id: str,
         current_user: TokenInfo = Depends(get_current_user),
     ):
+        require_user_token(current_user)
         try:
             user_id = int(current_user.user_id)
             req_id = parse_id(request_id, "request_id")

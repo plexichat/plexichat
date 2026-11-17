@@ -13,15 +13,20 @@ from src.api.schemas.messages import (
 )
 from src.core.database import cached
 from src.core.database.cache.operations import invalidate_cached
-from src.core.database.cache.serialization import generate_cache_key
+from .helpers import authenticated_cache_key, require_user_token
 
 
 class SettingsMixin:
-    @cached(ttl=60, prefix="messaging_settings_api")
+    @cached(
+        ttl=60,
+        prefix="messaging_settings_api",
+        key_builder=authenticated_cache_key("messaging_settings_api"),
+    )
     def get_messaging_settings(
         self,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> MessagingSettingsResponse:
+        require_user_token(current_user)
         messaging = api.get_messaging()
         if not messaging:
             logger.error("Messaging module not available")
@@ -50,6 +55,7 @@ class SettingsMixin:
         body: MessagingSettingsUpdateRequest,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> MessagingSettingsResponse:
+        require_user_token(current_user)
         messaging = api.get_messaging()
         if not messaging:
             logger.error("Messaging module not available")
@@ -66,12 +72,13 @@ class SettingsMixin:
                 user_id=current_user.user_id, **update_data
             )
             # Mirror the routes/settings.py pattern: a write must invalidate
-            # the cached GET for the same user or PATCH-then-GET serves stale
-            # data for up to the cache TTL. The key layout matches how the
-            # cached decorator builds it when FastAPI calls the bound GET
-            # handler with keyword arguments (current_user=...).
+            # the cached GET for the same credential or PATCH-then-GET serves
+            # stale data for up to the cache TTL. Use the same key builder as
+            # the cached GET so the write clears the exact entry it populated.
             invalidate_cached(
-                generate_cache_key("messaging_settings_api", current_user=current_user)
+                authenticated_cache_key("messaging_settings_api")(
+                    current_user=current_user
+                )
             )
             return MessagingSettingsResponse.model_validate(settings)
         except Exception as e:

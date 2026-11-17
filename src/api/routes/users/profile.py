@@ -23,11 +23,21 @@ from src.core.auth.exceptions import (
     UserNotFoundError,
     WeakPasswordError,
 )
-from .helpers import _user_to_response, _user_to_public_response, _get_user_cached
+from .helpers import (
+    _user_to_response,
+    _user_to_public_response,
+    _get_user_cached,
+    authenticated_cache_key,
+    require_user_token,
+)
 
 
 class ProfileMixin:
-    @cached(ttl=60, prefix="current_user_api")
+    @cached(
+        ttl=60,
+        prefix="current_user_api",
+        key_builder=authenticated_cache_key("current_user_api"),
+    )
     def get_current_user_info(
         self,
         current_user: TokenInfo = Depends(get_current_user),
@@ -96,6 +106,7 @@ class ProfileMixin:
         body: UserUpdateRequest,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> UserResponse:
+        require_user_token(current_user)
         auth = api.get_auth()
         if not auth:
             logger.error("Auth module not available")
@@ -345,7 +356,11 @@ class ProfileMixin:
         except Exception as ce:
             logger.debug(f"Cache invalidation failed for user {user_id}: {ce}")
 
-    @cached(ttl=60, prefix="user_profile_api")
+    @cached(
+        ttl=60,
+        prefix="user_profile_api",
+        key_builder=authenticated_cache_key("user_profile_api"),
+    )
     async def get_user(
         self, user_id: str, current_user: TokenInfo = Depends(get_current_user)
     ) -> UserPublicResponse:
@@ -411,6 +426,7 @@ class ProfileMixin:
         body: UserDeletionRequest,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> SuccessResponse:
+        require_user_token(current_user)
         auth = api.get_auth()
         if not auth:
             logger.error("Auth module not available")

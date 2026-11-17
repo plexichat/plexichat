@@ -1,9 +1,68 @@
+from fastapi import HTTPException
+
 import src.api as api
 import utils.logger as logger
 from src.api.schemas.auth import UserResponse
 from src.api.schemas.users import UserPublicResponse
 from src.api.schemas.common import SnowflakeID
 from src.core.database import cached
+from src.core.database.cache.serialization import generate_cache_key
+
+
+def require_user_token(current_user) -> None:
+    """Reject bot credentials on endpoints bound to a human account.
+
+    A bot token's ``user_id`` is its *owner*, so ``/@me`` handlers that read or
+    mutate the authenticated account would otherwise operate on the owner's
+    profile, DMs, settings and deletion state using a bot's token. Only
+    ``GET /@me`` intentionally supports bots (it returns the bot's own
+    synthetic profile); every other handler here acts on a human account.
+    """
+    if getattr(current_user, "token_type", "user") != "user":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "A user token is required for this endpoint",
+                }
+            },
+        )
+
+
+def authenticated_cache_key(prefix: str):
+    """Build a cache key that partitions entries by the *credential* used.
+
+    ``generate_cache_key`` reduces ``TokenInfo`` to ``TokenInfo:<user_id>``.
+    Bot tokens carry their owner's ``user_id`` (``account_id`` is the bot), so
+    a bot credential and its owner's user session collide on that key. Any
+    private response cached by one — own profile, DM list, messaging settings —
+    can then be served to the other. Bot credentials get a dedicated namespace
+    keyed on the bot account id; user credentials keep the legacy layout so
+    existing invalidation helpers continue to match.
+    """
+    def _builder(*args, **kwargs):
+        token = kwargs.get("current_user")
+        if token is None:
+            token = next((a for a in args if hasattr(a, "token_type")), None)
+        # Decorated handlers are bound methods; ``self`` carries no request
+        # identity (and its repr is not stable) so it must not enter the key.
+        passthrough = args[1:] if args and args[0] is not token else ()
+
+        if getattr(token, "token_type", None) != "bot":
+            return generate_cache_key(prefix, *passthrough, **kwargs)
+
+        extras = [str(a) for a in passthrough if a is not token]
+        extras.extend(
+            f"{k}={v}" for k, v in sorted(kwargs.items()) if k != "current_user"
+        )
+        key = (
+            f"{prefix}:bot:{getattr(token, 'account_id', '')}"
+            f":{getattr(token, 'user_id', '')}"
+        )
+        return f"{key}:{':'.join(extras)}" if extras else key
+
+    return _builder
 
 
 def _get_attr(obj, key, default=None):
