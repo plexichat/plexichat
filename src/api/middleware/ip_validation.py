@@ -75,11 +75,23 @@ def parse_rule_list(
 
 
 def ip_in_rules(ip: Any, rules: Iterable[ipaddress._BaseNetwork]) -> bool:
-    """Whether ``ip`` is contained in any of ``rules``."""
+    """Whether ``ip`` is contained in any of ``rules``.
+
+    An IPv4-mapped IPv6 address (``::ffff:a.b.c.d``) names the very same host
+    as ``a.b.c.d``; ``ipaddress`` still treats it as an IPv6 address, so
+    ``address in IPv4Network(...)`` is always false. An attacker who can pick
+    the textual form of the client address (a proxy hop, a dual-stack socket)
+    could otherwise slip past an IPv4 allow/deny rule entirely. Normalize the
+    mapped form to IPv4 before testing membership so both spellings decide
+    identically. A genuine (non-mapped) IPv6 address is left untouched.
+    """
     try:
         address = ipaddress.ip_address(ip)
     except (ValueError, TypeError):
         return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
     return any(address in network for network in rules)
 
 

@@ -51,6 +51,15 @@ def is_weakened(name: bytes, value: bytes) -> bool:
         return lowered not in _REFERRER_SAFE
     if key == b"x-frame-options":
         return lowered not in _FRAME_SAFE
+    if key == b"x-xss-protection":
+        # "0" explicitly switches the browser's XSS auditor off, and any
+        # non-canonical value is at best weaker than "1; mode=block". Only
+        # the enabling block form may be kept from an upstream handler.
+        return lowered != b"1; mode=block"
+    if key == b"x-permitted-cross-domain-policies":
+        # "all" (and every value other than "none") re-enables cross-domain
+        # policy files for Flash/PDF, undoing the canonical restriction.
+        return lowered != b"none"
     return False
 
 
