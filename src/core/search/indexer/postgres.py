@@ -17,7 +17,13 @@ from src.core.database.builder.sql_safety import (
 )
 from src.core.security.hardening import SNOWFLAKE_MAX
 
-from .base import BaseIndexer, IndexerConfig
+from .base import (
+    BaseIndexer,
+    IndexerConfig,
+    MAX_BACKEND_RESULTS,
+    bounded_page,
+    bounded_query,
+)
 from ..models import (
     IndexedMessage,
     IndexedUser,
@@ -288,6 +294,8 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return []
+            query = bounded_query(query)
+            limit, offset = bounded_page(limit, offset)
 
             use_websearch = self._check_websearch_support()
             like = f"%{_escape_like(query)}%"
@@ -332,7 +340,7 @@ class PostgresIndexer(BaseIndexer):
                 params.extend(author_ids)
 
             sql += " ORDER BY rank DESC, created_at DESC LIMIT ? OFFSET ?"
-            params.append(max(1, sql_limit(limit, "limit")))
+            params.append(min(MAX_BACKEND_RESULTS, max(1, sql_limit(limit, "limit"))))
             params.append(max(0, sql_offset(offset, "offset")))
 
             rows = self._db.fetch_all(sql, tuple(params))
@@ -399,6 +407,8 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return [], None
+            query = bounded_query(query)
+            limit, _ = bounded_page(limit, 0)
 
             sql = """
                 SELECT message_id, content, author_id, conversation_id, server_id, channel_id,
@@ -460,7 +470,7 @@ class PostgresIndexer(BaseIndexer):
                 )
 
             sql += " ORDER BY rank DESC, created_at DESC, message_id DESC LIMIT ?"
-            params.append(max(1, sql_limit(limit, "limit")))
+            params.append(min(MAX_BACKEND_RESULTS, max(1, sql_limit(limit, "limit"))))
             rows = self._db.fetch_all(sql, tuple(params))
 
             results = [
@@ -530,6 +540,8 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return []
+            query = bounded_query(query)
+            limit, offset = bounded_page(limit, offset)
 
             use_websearch = self._check_websearch_support()
             like = f"%{_escape_like(query)}%"
@@ -546,7 +558,7 @@ class PostgresIndexer(BaseIndexer):
                     query,
                     like,
                     like,
-                    max(1, sql_limit(limit, "limit")),
+                    min(MAX_BACKEND_RESULTS, max(1, sql_limit(limit, "limit"))),
                     max(0, sql_offset(offset, "offset")),
                 ]
             else:
@@ -562,7 +574,7 @@ class PostgresIndexer(BaseIndexer):
                     query,
                     like,
                     like,
-                    max(1, sql_limit(limit, "limit")),
+                    min(MAX_BACKEND_RESULTS, max(1, sql_limit(limit, "limit"))),
                     max(0, sql_offset(offset, "offset")),
                 ]
 
@@ -596,6 +608,8 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return [], None
+            query = bounded_query(query)
+            limit, _ = bounded_page(limit, 0)
 
             use_websearch = self._check_websearch_support()
             like = f"%{_escape_like(query)}%"
@@ -640,7 +654,7 @@ class PostgresIndexer(BaseIndexer):
                 )
 
             sql += " ORDER BY rank DESC, user_id DESC LIMIT ?"
-            params.append(max(1, sql_limit(limit, "limit")))
+            params.append(min(MAX_BACKEND_RESULTS, max(1, sql_limit(limit, "limit"))))
             rows = self._db.fetch_all(sql, tuple(params))
             results = [
                 UserSearchResult(
@@ -718,6 +732,8 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return []
+            query = bounded_query(query)
+            limit, offset = bounded_page(limit, offset)
 
             use_websearch = self._check_websearch_support()
             like = f"%{_escape_like(query)}%"
@@ -746,7 +762,7 @@ class PostgresIndexer(BaseIndexer):
                 params.append(category)
 
             sql += " ORDER BY rank DESC LIMIT ? OFFSET ?"
-            params.append(max(1, sql_limit(limit, "limit")))
+            params.append(min(MAX_BACKEND_RESULTS, max(1, sql_limit(limit, "limit"))))
             params.append(max(0, sql_offset(offset, "offset")))
 
             rows = self._db.fetch_all(sql, tuple(params))
@@ -783,6 +799,8 @@ class PostgresIndexer(BaseIndexer):
             self._ensure_initialized()
             if not query or not query.strip():
                 return [], None
+            query = bounded_query(query)
+            limit, _ = bounded_page(limit, 0)
 
             use_websearch = self._check_websearch_support()
             like = f"%{_escape_like(query)}%"
@@ -833,7 +851,7 @@ class PostgresIndexer(BaseIndexer):
                 )
 
             sql += " ORDER BY rank DESC, server_id DESC LIMIT ?"
-            params.append(max(1, sql_limit(limit, "limit")))
+            params.append(min(MAX_BACKEND_RESULTS, max(1, sql_limit(limit, "limit"))))
             rows = self._db.fetch_all(sql, tuple(params))
             results = [
                 ServerSearchResult(

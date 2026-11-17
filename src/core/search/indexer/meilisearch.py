@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Union
 
 import utils.logger as logger
 
-from .base import BaseIndexer, IndexerConfig
+from .base import BaseIndexer, IndexerConfig, bounded_page, bounded_query
 from ..models import (
     IndexedMessage,
     IndexedUser,
@@ -350,6 +350,11 @@ class MeilisearchIndexer(BaseIndexer):
     ) -> List[MessageSearchResult]:
         """Search messages using Meilisearch."""
         try:
+            # Indexers are directly callable; never forward unbounded query
+            # text or result windows to the backend (mirror the manager and
+            # SQLite FTS5 boundary checks).
+            limit, offset = bounded_page(limit, offset)
+            query = bounded_query(query)
             filters = []
 
             if conversation_ids:
@@ -474,6 +479,8 @@ class MeilisearchIndexer(BaseIndexer):
     ) -> List[UserSearchResult]:
         """Search users using Meilisearch."""
         try:
+            limit, offset = bounded_page(limit, offset)
+            query = bounded_query(query)
             result = self._request(
                 "POST",
                 f"/indexes/{self._user_index}/search",
@@ -546,6 +553,8 @@ class MeilisearchIndexer(BaseIndexer):
     ) -> List[ServerSearchResult]:
         """Search servers using Meilisearch."""
         try:
+            limit, offset = bounded_page(limit, offset)
+            query = bounded_query(query)
             filters = []
 
             if public_only:

@@ -5,8 +5,11 @@ Base indexer - Abstract interface for search indexers.
 from abc import ABC, abstractmethod
 import base64
 import json
+import math
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
+
+from src.core.security.hardening import HardeningViolation
 
 from ..models import (
     IndexedMessage,
@@ -16,6 +19,50 @@ from ..models import (
     UserSearchResult,
     ServerSearchResult,
 )
+
+# Search managers validate query length and result windows at their entry
+# points, but indexers are directly callable (rebuilds, tests, internal
+# callers) and every backend must stay safe on its own — the same defence the
+# SQLite FTS5 indexer applies locally via ``_bounded_page`` and its query caps.
+# A multi-KB needle burned CPU in MATCH/ILIKE/websearch planning and a huge
+# (or negative) LIMIT turns a single search into a full-index read.
+MAX_BACKEND_QUERY_CHARS = 256
+MAX_BACKEND_RESULTS = 1000
+MAX_BACKEND_OFFSET = 1_000_000
+
+
+def bounded_query(query: Any) -> str:
+    """Return a bounded string safe to hand to any search backend.
+
+    Truncation keeps normal queries untouched while making sure a hostile
+    caller cannot make the backend parse an arbitrarily large expression.
+    """
+    return str(query or "")[:MAX_BACKEND_QUERY_CHARS]
+
+
+def bounded_page(limit: Any, offset: Any) -> Tuple[int, int]:
+    """Clamp LIMIT/OFFSET before they reach a search backend.
+
+    A huge limit turns one request into a full-index dump; a negative limit
+    reads as *unlimited* in SQLite and is rejected or ignored elsewhere.
+    Non-finite floats are rejected outright rather than silently clamped, and
+    bogus types fall back to conservative defaults.
+    """
+    for value, field_name in ((limit, "limit"), (offset, "offset")):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise HardeningViolation(f"{field_name} must be a finite number")
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError, OverflowError):
+        limit = 25
+    try:
+        offset = int(offset)
+    except (TypeError, ValueError, OverflowError):
+        offset = 0
+    return (
+        max(1, min(limit, MAX_BACKEND_RESULTS)),
+        max(0, min(offset, MAX_BACKEND_OFFSET)),
+    )
 
 
 @dataclass

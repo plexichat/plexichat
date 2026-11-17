@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 
-from .base import BaseIndexer, IndexerConfig
+from .base import BaseIndexer, IndexerConfig, bounded_page, bounded_query
 from ..models import (
     IndexedMessage,
     IndexedUser,
@@ -378,6 +378,11 @@ class ElasticsearchIndexer(BaseIndexer):
     ) -> List[MessageSearchResult]:
         """Search messages using Elasticsearch."""
         try:
+            # Indexers are directly callable; never forward unbounded query
+            # text or result windows to the backend (mirror the manager and
+            # SQLite FTS5 boundary checks).
+            limit, offset = bounded_page(limit, offset)
+            query = bounded_query(query)
             must: List[Dict[str, Any]] = [{"match": {"content": query}}]
 
             if conversation_ids:
@@ -499,6 +504,8 @@ class ElasticsearchIndexer(BaseIndexer):
     ) -> List[UserSearchResult]:
         """Search users using Elasticsearch."""
         try:
+            limit, offset = bounded_page(limit, offset)
+            query = bounded_query(query)
             search_body = {
                 "query": {
                     "multi_match": {
@@ -577,6 +584,8 @@ class ElasticsearchIndexer(BaseIndexer):
     ) -> List[ServerSearchResult]:
         """Search servers using Elasticsearch."""
         try:
+            limit, offset = bounded_page(limit, offset)
+            query = bounded_query(query)
             must = [
                 {
                     "multi_match": {
