@@ -178,15 +178,19 @@ async def get_channel_ratchet_intervals(
     enabled = ratchet_encryption_licensed()
     manager = _resolve_manager(db)
     intervals = manager.snapshot_list(cid) if manager is not None else []
-    payloads = [_stringify_ids(item) for item in intervals]
+    # stringify_snowflake_ids only converts id fields with str(), so ordering
+    # the raw snapshots by str(field) is identical to ordering the serialized
+    # ones. Sort first, then serialize only the requested page: a small page
+    # no longer rebuilds every fetched snapshot's dicts.
     if safe_sort:
-        payloads.sort(
+        intervals.sort(
             key=lambda item: str(item.get(safe_sort, "")),
             reverse=(safe_order == "desc"),
         )
+    page = intervals[safe_offset : safe_offset + safe_limit]
     return {
         "channel_id": str(cid),
-        "intervals": payloads[safe_offset : safe_offset + safe_limit],
+        "intervals": [_stringify_ids(item) for item in page],
         "enabled": enabled,
     }
 

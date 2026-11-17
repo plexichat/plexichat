@@ -149,7 +149,12 @@ def test_ratchet_intervals_endpoint_resolves_a_rotated_interval(monkeypatch):
 
     result = asyncio.run(
         ratchet_module.get_channel_ratchet_intervals(
-            "42", current_user=SimpleNamespace(user_id=7)
+            "42",
+            limit=100,
+            offset=0,
+            sort=None,
+            order=None,
+            current_user=SimpleNamespace(user_id=7),
         )
     )
 
