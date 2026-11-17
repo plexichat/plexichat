@@ -68,8 +68,8 @@ def test_set_filter_accepts_valid_values():
 
 def test_long_content_is_truncated_before_matching():
     detector = DMSpamDetector(FakeDB())
-    detector._get_user_filters = lambda *a: []
-    detector._is_new_user = lambda *a: False
+    detector._get_user_filters = lambda recipient_id, sender_id: []
+    detector._is_new_user = lambda sender_id: False
     from src.core.antispam import detector as module
 
     seen = {}

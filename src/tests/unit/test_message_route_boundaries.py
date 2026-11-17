@@ -202,7 +202,7 @@ def test_bulk_delete_rejects_out_of_range_ids():
 
     from src.api.routes.messages.messages_crud.delete import DeleteMixin
 
-    body = SimpleNamespace(message_ids=["0"])
+    body = cast(BulkDeleteRequest, SimpleNamespace(message_ids=["0"]))
     with patch("src.api.get_messaging", return_value=object()):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(DeleteMixin().bulk_delete_messages("123", body, _dummy_user()))
