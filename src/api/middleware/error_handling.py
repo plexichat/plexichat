@@ -240,6 +240,7 @@ def _get_cors_headers(request: Request) -> dict:
         "X-Plexichat-Request",
     ]
     cors_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    allow_credentials = False  # fail closed until configuration says otherwise
     try:
         api_conf = config.get("api", {})
         cors_origins = api_conf.get("cors_origins", ["*"])
@@ -256,11 +257,16 @@ def _get_cors_headers(request: Request) -> dict:
         cors_methods = api_conf.get(
             "cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         )
+        # ``Access-Control-Allow-Credentials`` used to be hard-coded to "true"
+        # here, so error responses granted credentialed CORS even when the
+        # operator had explicitly disabled it. Honour the configured policy.
+        allow_credentials = bool(api_conf.get("cors_allow_credentials", True))
     except Exception:
         # Error handling must fail closed if configuration cannot be read;
         # reflecting an arbitrary Origin with credentials would weaken the
         # authentication/CSRF boundary precisely during failures.
         cors_origins = []
+        allow_credentials = False
 
     origin = request.headers.get("origin", "")
 
@@ -269,12 +275,14 @@ def _get_cors_headers(request: Request) -> dict:
     is_allowed = bool(origin) and origin in cors_origins
 
     if is_allowed:
-        return {
+        headers = {
             "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": ", ".join(cors_methods),
             "Access-Control-Allow-Headers": ", ".join(cors_allow_headers),
         }
+        if allow_credentials:
+            headers["Access-Control-Allow-Credentials"] = "true"
+        return headers
     return {}
 
 

@@ -94,16 +94,37 @@ def _enforce_cors(
         if name.lower() == b"access-control-allow-origin"
     ]
 
+    # ``allow_credentials`` is a browser security decision, not a hint. A
+    # handler that emits ``Access-Control-Allow-Credentials: true`` while the
+    # operator disabled credentialed CORS must not be able to re-enable it --
+    # the middleware is the last word on every CORS response header.
+    credentialed = any(
+        name.lower() == b"access-control-allow-credentials"
+        and value.strip().lower() == b"true"
+        for name, value in entries
+    )
+
     valid = bool(origins)
     for origin in origins:
         text = origin.decode("latin-1")
         if text in allowed:
             continue
         # A wildcard is only safe when no credentials are attached; otherwise
-        # any site could make authenticated cross-origin requests.
-        if wildcard_without_credentials:
+        # any site could make authenticated cross-origin requests. An upstream
+        # handler that adds ACAC alongside a reflected origin must never turn
+        # a wildcard/no-credentials policy into credentialed access.
+        if wildcard_without_credentials and not credentialed:
             continue
         valid = False
+
+    if not allow_credentials:
+        # Strip credential grants unconditionally; an allowed origin is not a
+        # licence to ignore the configured credential policy.
+        entries = [
+            (name, value)
+            for name, value in entries
+            if name.lower() != b"access-control-allow-credentials"
+        ]
 
     if valid:
         return entries

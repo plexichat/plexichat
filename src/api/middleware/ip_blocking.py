@@ -38,7 +38,7 @@ class IPBlockingMiddleware:
             if scope["type"] == "websocket":
                 await self._send_websocket_forbidden(send)
             else:
-                await self._send_forbidden(send)
+                await self._send_forbidden(scope.get("path", ""), send)
             return
 
         await self.app(scope, receive, send)
@@ -48,18 +48,35 @@ class IPBlockingMiddleware:
         # 4003 is often used for forbidden/unauthorized in WS
         await send({"type": "websocket.close", "code": 4003, "reason": "IP Blocked"})
 
-    async def _send_forbidden(self, send: Send) -> None:
-        """Send a 403 Forbidden response."""
+    async def _send_forbidden(self, path: str, send: Send) -> None:
+        """Send a 403 Forbidden response with the canonical security policy.
+
+        This middleware is registered outermost, so a blocked request never
+        reaches ``SecurityHeadersMiddleware``. Without stamping here, every
+        perimeter rejection escaped with no CSP, nosniff, framing or HSTS
+        headers -- a security-header gap precisely on the hostile traffic the
+        block list exists to stop. Reuse the same enforcement function the
+        normal response path uses so the two can never drift apart.
+        """
         response_body = b'{"error": {"code": 403, "message": "Access denied: your IP address is blocked."}}'
+
+        from .response_policy import enforce_response_policy
+        from .security import _resolve_api_prefix
+
+        headers = enforce_response_policy(
+            [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(response_body)).encode()),
+            ],
+            path=path,
+            api_prefix=_resolve_api_prefix(),
+        )
 
         await send(
             {
                 "type": "http.response.start",
                 "status": 403,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"content-length", str(len(response_body)).encode()),
-                ],
+                "headers": headers,
             }
         )
         await send(
