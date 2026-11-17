@@ -13,6 +13,7 @@ from src.api.schemas.common import (
 )
 from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.policy_types import UIText
+from src.core.auth.privilege_cache import invalidate_privilege_caches
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -527,6 +528,11 @@ async def update_role(
     query = template.format(assignments=", ".join(updates))
     db.execute(query, params)
 
+    # Editing a role's scopes changes the effective privileges of every
+    # holder.  Drop the cached auth context so a bearer/cookie token cannot
+    # keep answering with the pre-edit permission map.
+    invalidate_privilege_caches()
+
     # Log the action
     from src.core.admin.permissions import log_admin_action
 
@@ -622,6 +628,7 @@ async def delete_role(request: Request, role_id: SnowflakeIDParam):
         )
 
     db.execute("DELETE FROM admin_roles WHERE id = ?", (int(role_id),))
+    invalidate_privilege_caches()
 
     # Log the action
     from src.core.admin.permissions import log_admin_action
@@ -766,6 +773,9 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     """,
         (target_admin_id, target_role_id, now, admin_id),
     )
+    # The target just gained privileges; do not let a cached auth context
+    # keep reporting the old (lower) permission set.
+    invalidate_privilege_caches()
 
     # Log the action
     from src.core.admin.permissions import log_admin_action
@@ -858,6 +868,9 @@ async def revoke_role(
         "DELETE FROM admin_role_assignments WHERE admin_id = ? AND role_id = ?",
         (admin_id, role_id),
     )
+    # Revocation must take effect immediately, including for a session whose
+    # verification result is still cached from just before the revoke.
+    invalidate_privilege_caches()
 
     # Log the action
     from src.core.admin.permissions import log_admin_action

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from src.api.schemas.common import SuccessResponse
 from src.api.schemas.policy_types import UIText
+from src.core.auth.privilege_cache import invalidate_privilege_caches
 from ..utils import check_host_restriction, require_admin_permission
 from .base import AdminUsersRouterProtocol
 import utils.logger as logger
@@ -486,6 +487,9 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                     (uid, role_id, int(time.time() * 1000), admin_id),
                 )
                 changed["role"] = requested_role
+                # The admin's effective privileges changed via this alternate
+                # role-assignment path too; refresh cached auth context.
+                invalidate_privilege_caches()
 
             log_admin_action(
                 db,
@@ -552,6 +556,7 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (uid,))
             db.execute("DELETE FROM admin_users WHERE id = ?", (uid,))
             db.execute("DELETE FROM auth_users WHERE id = ?", (uid,))
+            invalidate_privilege_caches()
             log_admin_action(
                 db,
                 admin_id,
@@ -621,6 +626,10 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             )
             if new_status:
                 db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (uid,))
+            # This writes auth_users directly (bypassing auth.update_user), so
+            # without an explicit invalidation a cached TokenInfo still carries
+            # the old account_locked flag for the rest of the verify TTL.
+            invalidate_privilege_caches()
             log_admin_action(
                 db,
                 admin_id,
