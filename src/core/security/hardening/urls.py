@@ -12,12 +12,25 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .errors import HardeningViolation
+from .text import reject_control_characters
 
 
 def _require_absolute(value: Any, field: str, schemes: tuple[str, ...]) -> str:
-    url = str(value or "").strip()
-    parsed = urlparse(url)
-    if parsed.scheme.lower() not in schemes or not parsed.hostname:
+    # Reject C0/DEL controls before parsing. ``urlparse`` tolerates an embedded
+    # CR, LF or TAB, but a client that later fetches the URL or writes it into a
+    # header/log line can read a different authority (or inject a header) than
+    # the one that was checked here.
+    url = reject_control_characters(value, field).strip()
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except ValueError as exc:
+        # A malformed bracketed IPv6 literal (e.g. "https://[::1") makes
+        # ``.hostname`` raise a bare ValueError; keep the helper's contract.
+        raise HardeningViolation(
+            f"{field} must be an absolute {'/'.join(schemes)} URL"
+        ) from exc
+    if parsed.scheme.lower() not in schemes or not hostname:
         raise HardeningViolation(f"{field} must be an absolute {'/'.join(schemes)} URL")
     if parsed.username or parsed.password:
         raise HardeningViolation(f"{field} must not embed credentials")

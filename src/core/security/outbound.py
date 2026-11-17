@@ -22,6 +22,8 @@ import utils.logger as logger
 from src.utils.security import URLValidator
 
 from .errors import OutboundUrlRejected
+from .hardening.errors import HardeningViolation
+from .hardening.text import reject_control_characters
 
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
@@ -47,7 +49,15 @@ def parse_outbound_url(value: str, field: str = "url") -> OutboundUrl:
     or an address the server must not reach. The exception message names the
     field; the public detail never contains the resolved IP.
     """
-    candidate = (value or "").strip()
+    try:
+        # A CR/LF/TAB embedded in a URL is invisible to ``urlparse`` but can
+        # split a header in a sink that stores or fetches the URL later.
+        candidate = reject_control_characters(value, field).strip()
+    except HardeningViolation as exc:
+        logger.warning(f"Rejected {field}: control characters in URL")
+        raise OutboundUrlRejected(
+            f"{field} contains control characters", field=field
+        ) from exc
     if not candidate:
         raise OutboundUrlRejected(f"{field} must not be empty", field=field)
 
