@@ -38,6 +38,9 @@ _SECRET_KEYS = frozenset(
         "cookie",
         "session",
         "session_id",
+        "sessionid",
+        "set-cookie",
+        "x-api-key",
         "private_key",
         "credential",
         "bypass_secret",
@@ -45,21 +48,38 @@ _SECRET_KEYS = frozenset(
 )
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
+# HTTP Basic carries a base64 "user:password" credential in the token position.
+# Without its own rule the generic key/value pattern below consumes only the
+# word "Basic" (it stops at whitespace) and leaves the credential in the log.
+_BASIC = re.compile(r"(?i)\bbasic\s+[A-Za-z0-9+/=]{8,}")
 _KEY_VALUE = re.compile(
-    r"(?i)\b(password|token|secret|api[_-]?key|authorization)\b\s*[:=]\s*\S+"
+    r"(?i)\b(client_secret|private_key|password|passwd|authorization|set-cookie|"
+    r"api[_-]?key|sessionid|session|cookie|token|secret|credential|sid)\b"
+    r"\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|\S+)"
+)
+# Substring check as well as exact names: a field called "session_cookie" or
+# "auth_cookie" holds a credential just as surely as one called "cookie".
+_SECRET_KEY_PARTS = (
+    "password",
+    "token",
+    "secret",
+    "api_key",
+    "cookie",
+    "session",
+    "credential",
+    "bearer",
 )
 
 
 def _is_secret_key(key: str) -> bool:
     lowered = key.lower()
-    return lowered in _SECRET_KEYS or any(
-        token in lowered for token in ("password", "token", "secret", "api_key")
-    )
+    return lowered in _SECRET_KEYS or any(part in lowered for part in _SECRET_KEY_PARTS)
 
 
 def redact_text(text: str) -> str:
     """Redact credential-looking substrings from free text."""
     text = _BEARER.sub(f"Bearer {REDACTED}", text)
+    text = _BASIC.sub(f"Basic {REDACTED}", text)
     text = _KEY_VALUE.sub(lambda m: f"{m.group(1)}={REDACTED}", text)
     return text
 

@@ -192,8 +192,20 @@ def validate_permissions(
             if perm in BOT_RESTRICTED_PERMISSIONS:
                 issues.append(f"Bots cannot have permission: {perm}")
 
-            # Check wildcard grants of restricted permissions
-            if perm == "*" or perm.endswith(".*"):
+            # Check wildcard grants of restricted permissions.
+            #
+            # "*" is the widest wildcard: it grants every restricted scope, but
+            # the dotted-prefix check below can never match it (no restricted
+            # name starts with the literal "*"). Treating it like an ordinary
+            # wildcard let a bot be granted {"*": True} and thereby obtain
+            # admin.system / account.delete / bots.create in full. A full
+            # wildcard is never delegable to a bot.
+            if perm == "*":
+                for restricted in sorted(BOT_RESTRICTED_PERMISSIONS):
+                    issues.append(
+                        f"Bots cannot have permission: {restricted} (via {perm})"
+                    )
+            elif perm.endswith(".*"):
                 for restricted in BOT_RESTRICTED_PERMISSIONS:
                     if restricted.startswith(perm.replace(".*", "")):
                         issues.append(
