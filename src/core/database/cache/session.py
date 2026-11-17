@@ -31,7 +31,14 @@ def _glob_safe_id(value: Any) -> Optional[str]:
     text = str(value)
     if not text.isdigit():
         return None
-    return str(int(text))
+    # ``isdigit`` also accepts non-decimal digit characters (e.g. superscripts
+    # such as "²") that ``int`` cannot parse. Letting that ValueError escape
+    # would turn a malformed id into an unhandled exception; treat it like any
+    # other unsafe id instead.
+    try:
+        return str(int(text))
+    except (ValueError, TypeError):
+        return None
 
 
 def cache_session(
@@ -43,10 +50,18 @@ def cache_session(
     bulk invalidation); otherwise falls back to the in-memory tier so the
     session is still served from cache in single-node deployments.
     """
+    # The authenticated ``user_id`` and server-generated ``created_at`` are
+    # trusted ownership/audit fields: they must win over any same-named key in
+    # ``data``. Previously ``**data`` was unpacked last, so a payload carrying
+    # ``{"user_id": <other>}`` reassigned the session to a different tenant —
+    # ``invalidate_user_sessions(<other>)`` then evicted this session while the
+    # real owner's logout-left-everywhere no longer touched it (cross-tenant
+    # cache leak / invalidation bypass). Unpack ``data`` first and set the
+    # trusted fields afterwards so they cannot be spoofed.
     session_data: Dict[str, Any] = {
+        **data,
         "user_id": user_id,
         "created_at": time.time(),
-        **data,
     }
 
     try:

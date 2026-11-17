@@ -73,38 +73,62 @@ _KEY_DELIMITER = ":"
 _MAX_KEY_COMPONENT_LEN = 128
 
 
+def _safe_tag(tag: str) -> str:
+    """Render ``tag`` as a single, delimiter-free, bounded key segment.
+
+    ``tag`` is normally a Python type/class name or a fixed literal, but an
+    object's ``__name__`` is forgeable (e.g. ``type("int:1", (), {})`` or a
+    class named ``"Evil:Manager"``). Concatenating such a tag into a
+    ``tag:value`` component injects extra ``:``-delimited segments, which
+    breaks the delimiter-safety guarantee and lets one argument forge the key
+    of another caller. Hash unsafe tags so the tag is always exactly one
+    bounded segment. Safe tags (ordinary type names/literals) are unchanged so
+    legacy key shapes such as ``int:7`` / ``Core:MigrationManager`` still match
+    invalidation patterns.
+    """
+    text = str(tag)
+    if _KEY_DELIMITER in text or len(text) > _MAX_KEY_COMPONENT_LEN or not text:
+        return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24]
+    return text
+
+
 def _hash_key_component(tag: str, raw: str) -> str:
     """Return a short, bounded, collision-resistant key component for ``raw``.
 
-    ``~`` never appears in the valid ``tag:value`` grammar (tags are Python
-    type names or fixed literals, and raw values containing ``:`` are always
-    hashed here), so a hashed ``tag~<digest>`` component can never be confused
-    with a raw one, even for adversarial input.
+    ``~`` never appears in the valid ``tag:value`` grammar (both the tag and
+    any raw value containing ``:`` are passed through ``_safe_tag``/hashed
+    here), so a hashed ``tag~<digest>`` component can never be confused with a
+    raw one or inject extra segments, even for adversarial input.
     """
     digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:24]
-    return f"{tag}~{digest}"
+    return f"{_safe_tag(tag)}~{digest}"
 
 
 def _safe_key_value(tag: str, value: Any) -> str:
     """Render ``value`` as a bounded ``tag:value`` (or hashed) component.
 
-    Values containing the key delimiter, or longer than the component cap,
-    are replaced with a digest bound to ``tag``. Distinct inputs stay distinct
-    and no single argument can inject extra segments or create an unbounded
-    key/memory entry in the shared cache.
+    Both the ``tag`` and the value are constrained to a single delimiter-free
+    segment. Values containing the key delimiter, or longer than the component
+    cap, are replaced with a digest bound to ``tag``. Distinct inputs stay
+    distinct, no single argument can inject extra segments through either the
+    tag or the value, and no unbounded key/memory entry can be created in the
+    shared cache.
     """
+    safe_tag = _safe_tag(tag)
     text = str(value)
     if _KEY_DELIMITER in text or len(text) > _MAX_KEY_COMPONENT_LEN:
         return _hash_key_component(tag, text)
-    return f"{tag}:{text}"
+    return f"{safe_tag}:{text}"
 
 
 def generate_cache_key(prefix: str, *args, **kwargs) -> str:
     """Generate a cache key from function arguments.
 
     Returns a ``:``-delimited string whose components are individually bounded
-    and delimiter-safe (see ``_safe_key_value``). Numeric ids keep the legacy
-    ``int:<id>`` / ``TokenInfo:<id>`` shape relied on by invalidation patterns.
+    and delimiter-safe: both the value and its type/class-name tag are
+    constrained to a single segment (see ``_safe_key_value`` / ``_safe_tag``).
+    Numeric ids keep the legacy ``int:<id>`` / ``TokenInfo:<id>`` shape relied
+    on by invalidation patterns.
     """
     key_parts = [prefix]
 
@@ -126,7 +150,12 @@ def generate_cache_key(prefix: str, *args, **kwargs) -> str:
                 if isinstance(val, BaseManager) or class_name.endswith(
                     ("Repository", "Service", "Manager")
                 ):
-                    return f"Core:{class_name}"
+                    # ``class_name`` is a type name and therefore forgeable;
+                    # route it through _safe_key_value so a class named
+                    # "Evil:Manager" cannot append extra key segments while a
+                    # normal "MigrationManager" keeps the legacy Core:<name>
+                    # shape relied on by invalidation patterns.
+                    return _safe_key_value("Core", class_name)
             except Exception as namespace_error:
                 logger.debug(f"cache namespace probe failed: {namespace_error}")
 
@@ -136,7 +165,9 @@ def generate_cache_key(prefix: str, *args, **kwargs) -> str:
             except Exception:
                 payload = repr(val)
             digest = hashlib.sha256(payload.encode()).hexdigest()[:12]
-            return f"{type(val).__name__}:{digest}"
+            # type(val).__name__ can be forged on a dict/list subclass; keep
+            # both the tag and the digest single-segment and bounded.
+            return _safe_key_value(type(val).__name__, digest)
         return _safe_key_value(type(val).__name__, val)
 
     for arg in args:
