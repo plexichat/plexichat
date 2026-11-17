@@ -60,6 +60,9 @@ def test_get_feature_settings_stringifies_server_id(monkeypatch):
 
     monkeypatch.setattr(artifact_routes, "check_host_restriction", lambda request: None)
     monkeypatch.setattr(artifact_routes, "get_admin_from_token", lambda request: 1)
+    monkeypatch.setattr(
+        artifact_routes, "require_admin_permission", lambda request, perm: 1
+    )
     monkeypatch.setattr(artifact_routes, "_get_manager", _artifact_manager)
 
     body = asyncio.run(

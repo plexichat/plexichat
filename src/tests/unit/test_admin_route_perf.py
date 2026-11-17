@@ -79,6 +79,9 @@ class TestArtifactListBatching:
         monkeypatch.setattr(artifacts_routes, "check_host_restriction", lambda r: None)
         monkeypatch.setattr(artifacts_routes, "get_admin_from_token", lambda r: 1)
         monkeypatch.setattr(
+            artifacts_routes, "require_admin_permission", lambda r, p: 1
+        )
+        monkeypatch.setattr(
             artifacts_routes, "_list_with_total", lambda db, limit, offset: ([], None)
         )
         manager = MagicMock()

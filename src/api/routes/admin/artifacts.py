@@ -15,7 +15,9 @@ from fastapi import APIRouter, Request, HTTPException, status
 
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
+    # Retained for test monkeypatch compatibility; the routes now authenticate
+    # and authorize together through require_admin_permission.
+    get_admin_from_token,  # noqa: F401
     require_admin_permission,
     require_approved_request,
 )
@@ -75,12 +77,12 @@ def _get_manager():
 async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
     """List all artifacts across every server (admin oversight)."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
-    if admin_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": "Admin token required"}},
-        )
+    # This reads artifact metadata across *every* server. Authentication alone
+    # is not sufficient: a valid admin token carrying an unrelated scope (e.g.
+    # only ``users.read``) must not be able to enumerate the whole instance's
+    # artifacts. Require the same scoped permission as the neighbouring
+    # force-delete / retention mutations.
+    require_admin_permission(request, "admin.artifacts.manage")
 
     try:
         limit = bounded_int(
@@ -288,7 +290,11 @@ async def admin_get_feature_settings(
 ) -> Dict[str, Any]:
     """Get per-server override settings for a feature."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    # Reading a server's feature overrides exposes configuration across the
+    # whole instance. The previous code only authenticated the caller (and
+    # even discarded the returned id), so any valid token with any scope could
+    # read these settings while the matching write needed a scoped permission.
+    require_admin_permission(request, "admin.artifacts.manage")
     if feature not in ALLOWED_FEATURES:
         raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
     manager = _get_manager()
