@@ -278,18 +278,23 @@ class ServerOpsMixin(ServerProtocol):
         # negative limit would bypass the page cap and dump the whole list.
         limit = max(0, min(limit, 200))
 
+        # Correlated scalar subqueries instead of three LEFT JOINs: the old
+        # form materialised a members x channels x roles cross product per
+        # server before collapsing it with distinct counts.  These counts use
+        # the (server_id) indexes directly and membership is an EXISTS, so
+        # each server contributes exactly one row regardless of how many
+        # channels/roles/members it has.
         query = """
             SELECT s.*,
-                   COUNT(DISTINCT m2.id) as member_count,
-                   COUNT(DISTINCT c.id) as channel_count,
-                   COUNT(DISTINCT r.id) as role_count
+                   (SELECT COUNT(*) FROM srv_members WHERE server_id = s.id) as member_count,
+                   (SELECT COUNT(*) FROM srv_channels WHERE server_id = s.id AND deleted = 0) as channel_count,
+                   (SELECT COUNT(*) FROM srv_roles WHERE server_id = s.id AND deleted = 0) as role_count
             FROM srv_servers s
-            INNER JOIN srv_members m1 ON s.id = m1.server_id
-            LEFT JOIN srv_members m2 ON s.id = m2.server_id
-            LEFT JOIN srv_channels c ON s.id = c.server_id AND c.deleted = 0
-            LEFT JOIN srv_roles r ON s.id = r.server_id AND r.deleted = 0
-            WHERE m1.user_id = ? AND s.deleted = 0
-            GROUP BY s.id
+            WHERE s.deleted = 0
+              AND EXISTS (
+                  SELECT 1 FROM srv_members
+                  WHERE server_id = s.id AND user_id = ?
+              )
             ORDER BY s.name
             LIMIT ?
         """

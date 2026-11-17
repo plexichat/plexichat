@@ -21,19 +21,25 @@ class RolePermissionMixin(RoleHandlerProtocol):
         server_id: SnowflakeID,
         channel_ids: List[SnowflakeID],
     ) -> Dict[SnowflakeID, Dict[str, bool]]:
-        """Get permissions for multiple channels in a server."""
+        """Get permissions for multiple channels in a server.
+
+        Overrides are fetched with at most two set-based queries (one for the
+        caller's member overrides, one for all of their role overrides)
+        instead of one query per ``(channel, role)`` pair.  The channel-listing
+        path calls this with every channel in a server, so the old loop grew
+        linearly with ``channels x roles`` on every cold cache read.
+        """
         if not channel_ids:
             return {}
 
-        # 1. Base permissions
-        # This uses existing cache/logic for base perms
+        # 1. Base permissions: resolved once for the whole batch.
         base_perms = self.get_permissions(user_id, server_id)
 
-        # If admin, return all true for all channels
+        # Administrators bypass channel overrides entirely.
         if base_perms.get("administrator"):
             return {cid: base_perms for cid in channel_ids}
 
-        # 2. Get user's roles
+        # 2. The caller's roles, used to scope and order role overrides.
         role_rows = self.manager._get_member_role_rows(server_id, user_id)
         role_ids = [r["id"] for r in role_rows]
 
@@ -46,38 +52,35 @@ class RolePermissionMixin(RoleHandlerProtocol):
         # allow (see apply_channel_overrides ordering contract).
         role_positions = {int(r["id"]): int(r.get("position") or 0) for r in role_rows}
 
-        # Avoid dynamic IN clause to satisfy bandit - use individual queries
-        overrides_rows = []
-        for channel_id in channel_ids:
-            # Check member override
-            member_row = self.db.fetch_one(
-                "SELECT * FROM srv_channel_overrides WHERE channel_id = ? AND target_type = 'member' AND target_id = ?",
-                (channel_id, user_id),
-            )
-            if member_row:
-                overrides_rows.append(member_row)
-            # Check role overrides if any
-            if role_ids:
-                for role_id in role_ids:
-                    role_row = self.db.fetch_one(
-                        "SELECT * FROM srv_channel_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id = ?",
-                        (channel_id, role_id),
-                    )
-                    if role_row:
-                        overrides_rows.append(role_row)
+        # 3. Fetch every relevant override in two bounded queries.  The
+        #    placeholders are generated from the number of bound parameters,
+        #    never from untrusted values, and every value is bound -- the same
+        #    pattern MemberOpsMixin.get_members uses for its role batch.
+        channel_ph = ",".join("?" for _ in channel_ids)
+        member_rows = self.db.fetch_all(
+            "SELECT * FROM srv_channel_overrides "
+            f"WHERE channel_id IN ({channel_ph}) "
+            "AND target_type = 'member' AND target_id = ?",
+            (*channel_ids, user_id),
+        )
+        member_overrides: Dict[SnowflakeID, Dict[str, Any]] = {
+            row["channel_id"]: dict(row) for row in member_rows
+        }
 
-        # Group overrides by channel
         channel_overrides: Dict[SnowflakeID, List[Dict[str, Any]]] = {
             cid: [] for cid in channel_ids
         }
-        member_overrides: Dict[SnowflakeID, Dict[str, Any]] = {}
-
-        for row in overrides_rows:
-            cid = row["channel_id"]
-            if cid in channel_overrides:
-                if row["target_type"] == "member":
-                    member_overrides[cid] = dict(row)
-                else:
+        if role_ids:
+            role_ph = ",".join("?" for _ in role_ids)
+            role_override_rows = self.db.fetch_all(
+                "SELECT * FROM srv_channel_overrides "
+                f"WHERE channel_id IN ({channel_ph}) "
+                f"AND target_type = 'role' AND target_id IN ({role_ph})",
+                (*channel_ids, *role_ids),
+            )
+            for row in role_override_rows:
+                cid = row["channel_id"]
+                if cid in channel_overrides:
                     channel_overrides[cid].append(dict(row))
 
         # Lowest-position role first so the highest role's decision wins.
@@ -86,15 +89,14 @@ class RolePermissionMixin(RoleHandlerProtocol):
                 key=lambda o: role_positions.get(int(o.get("target_id") or 0), 0)
             )
 
-        # 4. Calculate permissions for each channel
-        result = {}
+        # 4. Calculate permissions for each channel and warm per-channel cache.
+        result: Dict[SnowflakeID, Dict[str, bool]] = {}
         for cid in channel_ids:
             perms = apply_channel_overrides(
                 base_perms, channel_overrides[cid], member_overrides.get(cid)
             )
             result[cid] = perms
 
-            # Populate cache
             cache_key = (user_id, server_id, cid)
             self.manager._cache_set(
                 self.manager._permission_cache_prefix, cache_key, perms
@@ -174,14 +176,14 @@ class RolePermissionMixin(RoleHandlerProtocol):
                 if role_ids:
                     if not all(isinstance(rid, int) for rid in role_ids):
                         raise ValueError("All role IDs must be integers")
-                    override_rows = []
-                    for role_id in role_ids:
-                        row = self.db.fetch_one(
-                            "SELECT * FROM srv_channel_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id = ?",
-                            (channel_id, role_id),
-                        )
-                        if row:
-                            override_rows.append(row)
+                    # One set-based lookup instead of one query per role.
+                    role_ph = ",".join("?" for _ in role_ids)
+                    override_rows = self.db.fetch_all(
+                        "SELECT * FROM srv_channel_overrides "
+                        f"WHERE channel_id = ? AND target_type = 'role' "
+                        f"AND target_id IN ({role_ph})",
+                        (channel_id, *role_ids),
+                    )
                     # Lowest-position role first so a higher role's deny
                     # beats a lower role's allow (apply_channel_overrides
                     # applies them in the order given).
