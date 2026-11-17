@@ -751,13 +751,16 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     async def health_redirect() -> Response:
         """Redirect or proxy to health check endpoint."""
         try:
+            from fastapi import Response
+
             from .routes.health import health_check
 
-            # health_check() already returns a validated HealthResponse; avoid
-            # re-validating it through FastAPI's response-model pipeline.
-            result = validated_json_response(await health_check())
-            # Health is a live probe — never let a proxy or client cache the
-            # proxied response either (the /health route sets this via Response).
+            # health_check() takes a FastAPI-injected Response; when called
+            # directly we supply one, then carry its headers onto the result.
+            probe_response = Response()
+            payload = await health_check(probe_response)
+            # Health is a live probe — never let a proxy or client cache it.
+            result = validated_json_response(payload)
             result.headers["Cache-Control"] = "no-store"
             return result
         except HTTPException:
