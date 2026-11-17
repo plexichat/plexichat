@@ -9,6 +9,8 @@ from typing import Optional, List, Annotated
 import logging
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 
+import src.api as api
+
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 
 from src.api.schemas.policy_types import UIText
@@ -211,6 +213,56 @@ def _bot_id(value: object, field: str = "id") -> int:
         ) from exc
 
 
+def _require_server_manage(user_id: int, server_id: int, action: str) -> None:
+    """Fail-closed ``server.manage`` gate for server-scoped bot listings.
+
+    ``get_approved_bots`` and ``get_bot_requests`` are plain lookups keyed only
+    by ``server_id``: the core applies no authorization, so the HTTP layer is
+    the only place that can stop any authenticated user from reading another
+    server's bot moderation queue (which includes the requester, the submitted
+    reason and the reviewer's private notes). Writing to that queue already
+    requires ``server.manage``; reading it must require the same.
+
+    A permission check that cannot be evaluated denies access (503/403) rather
+    than silently letting the request through, matching the emoji and
+    soundboard route gates.
+    """
+    servers = api.get_servers()
+    if not servers:
+        logger.error(f"Servers module not available for {action}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": {"code": 503, "message": "Servers module not available"}},
+        )
+
+    try:
+        if hasattr(servers, "has_permission"):
+            allowed = servers.has_permission(user_id, server_id, "server.manage")
+        else:
+            from src.core.auth.permissions import has_permission
+
+            allowed = has_permission(
+                servers.get_permissions(user_id, server_id), "server.manage"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to verify server.manage for server {server_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Access denied"}},
+        )
+
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Access denied"}},
+        )
+
+
 def _coerce_nullable_int(value):
     """Coerce ``null``/empty query values for optional int params to None."""
     if (
@@ -268,6 +320,7 @@ def _bot_request_to_response(req) -> BotRequestResponse:
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {"model": ErrorResponse, "description": "Permission denied"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 async def list_approved_bots(
@@ -276,6 +329,7 @@ async def list_approved_bots(
 ):
     """Get all approved bots for a server."""
     sid = _bot_id(server_id, "server_id")
+    _require_server_manage(current_user.user_id, sid, "approved bot listing")
     try:
         bots = applications.get_approved_bots(server_id=sid, status="approved")
         return [_approved_bot_to_response(bot) for bot in bots]
@@ -442,7 +496,9 @@ async def enable_bot(
     summary="List bot requests for a server",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Permission denied"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 async def list_bot_requests(
@@ -450,8 +506,9 @@ async def list_bot_requests(
     status_filter: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ):
-    """Get bot requests for a server."""
+    """Get bot requests for a server (server managers only)."""
     sid = _bot_id(server_id, "server_id")
+    _require_server_manage(current_user.user_id, sid, "bot request listing")
     try:
         requests = applications.get_bot_requests(
             server_id=sid,
