@@ -163,6 +163,12 @@ class ProfileMixin(AuthManagerProtocol):
             )
             invalidate_pattern("token_verify:*")
             invalidate_pattern("user_data:*")
+            # The username lookup caches a full ``User`` (permissions
+            # included) under a *different* prefix from ``user_data``.  Without
+            # this, a grant/revoke leaves the old permission map readable for
+            # the whole username-cache TTL even though the token verification
+            # cache was refreshed.
+            invalidate_pattern("user_by_username:*")
             from src.core.database import cache_delete
 
             cache_delete(f"user_profile:{user_id}")
