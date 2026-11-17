@@ -360,6 +360,31 @@ class CleanupService:
         except Exception as delete_error:
             logger.debug(f"selftest admin audit cleanup failed: {delete_error}")
 
+        # Access tokens the selftest mints carry encrypted credentials
+        # (token_encrypted, last-used IP/UA) and monitor/admin scopes. API
+        # cleanup removes the token it tracked by id, but a crash before that
+        # leaves a row whose ``created_by`` is a selftest account we are about
+        # to delete: a still-usable credential and orphaned sensitive fields.
+        # Purge by creator for this selftest user only. Scope/event rows cascade
+        # on PostgreSQL, but SQLite foreign keys are OFF during cleanup, so
+        # remove them explicitly first.
+        try:
+            db.execute(
+                "DELETE FROM auth_api_access_token_scopes WHERE token_id IN "
+                "(SELECT id FROM auth_api_access_tokens WHERE created_by = ?)",
+                (uid,),
+            )
+            db.execute(
+                "DELETE FROM auth_api_access_token_events WHERE token_id IN "
+                "(SELECT id FROM auth_api_access_tokens WHERE created_by = ?)",
+                (uid,),
+            )
+            db.execute(
+                "DELETE FROM auth_api_access_tokens WHERE created_by = ?", (uid,)
+            )
+        except Exception as exc:
+            logger.debug("API access token cleanup skipped: %s", exc)
+
         from src.core.erasure import purge_owned_servers, purge_user_media
 
         purge_owned_servers(db, uid)
