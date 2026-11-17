@@ -125,8 +125,29 @@ def _invalidate_mem_user_sessions(user_id: int) -> int:
 
 
 def invalidate_user_servers(user_id: int) -> int:
-    """Invalidate the server list cache for a user."""
-    return invalidate_pattern(f"servers:*:{user_id}*")
+    """Invalidate every per-user server-list cache entry for ``user_id``.
+
+    A user's server list is cached under three independent key shapes:
+
+    * ``user_servers:int:<uid>:limit:int:<n>`` -- ``@cached(prefix="user_servers")``
+      on ``ServerManager.get_servers`` (the bound ``self`` is dropped from the
+      generated key, leaving the typed ``int:<uid>`` segment).
+    * ``user_servers_api:current_user:TokenInfo:<uid>`` -- ``@cached(prefix="user_servers_api")``
+      on the ``GET /servers`` route.
+    * ``user_servers:<uid>`` -- the plain key written directly by the membership
+      helpers in ``servers.manager``.
+
+    The old glob ``servers:*:<uid>*`` matched none of these (they all start with
+    ``user_servers``/``user_servers_api``, not ``servers:``), so a membership
+    change left stale server lists served until TTL expiry. Each replacement
+    glob is anchored around the user id so invalidating (e.g.) user 42 does not
+    also evict user 142's entries.
+    """
+    total = 0
+    total += invalidate_pattern(f"user_servers:int:{user_id}:*")
+    total += invalidate_pattern(f"user_servers:{user_id}")
+    total += invalidate_pattern(f"user_servers_api:*:TokenInfo:{user_id}")
+    return total
 
 
 def invalidate_server(server_id: int) -> int:
