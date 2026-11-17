@@ -10,6 +10,7 @@ import utils.version as version_util
 from utils.version import InvalidVersionError
 import utils.logger as logger
 from src.core.database.cache import cached, invalidate_pattern
+from src.core.security.hardening.text import strip_control_characters
 
 from ..schemas.version import (
     ServerVersionResponse,
@@ -22,6 +23,11 @@ from ..schemas.version import (
 )
 
 router = APIRouter(tags=["Version"])
+
+# Bound attacker-controlled version input. The value is echoed back in
+# negotiation error responses, so an unlimited string would also produce an
+# unlimited reflected response (and unbounded work in the PEP 440 parser).
+MAX_CLIENT_VERSION_LENGTH = 128
 
 # Server start time for uptime calculation
 _server_start_time: float = time.time()
@@ -119,20 +125,35 @@ def negotiate_version(
     Clients should call this endpoint to check if their version is compatible.
     The server will indicate if an update is required or recommended.
     """
+    # ``client_version`` is fully attacker-controlled and is echoed into both
+    # logs and error responses. Bound it and strip C0 controls (newlines in
+    # particular) before either use: a crafted value must not forge log lines
+    # and the reflected response must stay bounded.
+    raw_client_version = request.client_version
+    if len(raw_client_version) > MAX_CLIENT_VERSION_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": "INVALID_VERSION_FORMAT",
+                    "message": "Invalid version format",
+                }
+            },
+        )
+    client_version = strip_control_characters(raw_client_version)
+
     try:
         try:
-            client_ver = version_util.parse(request.client_version)
+            client_ver = version_util.parse(client_version)
         except InvalidVersionError:
-            logger.warning(
-                f"Invalid version format negotiated: {request.client_version}"
-            )
+            logger.warning("Invalid version format negotiated: %s", client_version)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "error": {
                         "code": "INVALID_VERSION_FORMAT",
                         "message": "Invalid version format",
-                        "client_version": request.client_version,
+                        "client_version": client_version,
                     }
                 },
             )
@@ -141,13 +162,13 @@ def negotiate_version(
             min_supported = version_util.min_supported()
 
             # Check compatibility
-            is_compatible = version_util.is_client_compatible(request.client_version)
+            is_compatible = version_util.is_client_compatible(client_version)
 
             # Determine if update is recommended (client is older than server)
             update_recommended = False
             if is_compatible:
                 comparison = version_util.compare(
-                    request.client_version, version_util.current_string()
+                    client_version, version_util.current_string()
                 )
                 update_recommended = comparison < 0
 
@@ -159,7 +180,7 @@ def negotiate_version(
                     else "latest"
                 )
                 message = (
-                    f"Client version {request.client_version} is no longer supported. "
+                    f"Client version {client_version} is no longer supported. "
                     f"Please update to at least {min_version_str}."
                 )
 
@@ -178,7 +199,11 @@ def negotiate_version(
 
             if not is_compatible:
                 logger.info(
-                    f"Client version {request.client_version} is outdated. Min supported: {version_util.format_version(min_supported) if min_supported else 'N/A'}"
+                    "Client version %s is outdated. Min supported: %s",
+                    client_version,
+                    version_util.format_version(min_supported)
+                    if min_supported
+                    else "N/A",
                 )
                 raise HTTPException(
                     status_code=status.HTTP_426_UPGRADE_REQUIRED,
@@ -186,7 +211,7 @@ def negotiate_version(
                         "error": {
                             "code": "VERSION_OUTDATED",
                             "message": response.message,
-                            "client_version": request.client_version,
+                            "client_version": client_version,
                             "min_version": version_util.format_version(min_supported)
                             if min_supported is not None
                             else None,
@@ -211,12 +236,15 @@ def negotiate_version(
             logger.error(
                 f"Error in negotiate_version business logic: {e}", exc_info=True
             )
+            # Never return the raw exception string: internal errors routinely
+            # carry file paths, connection strings or other implementation
+            # details (CWE-209). The full exception stays in the server log.
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={
                     "error": {
                         "code": "INTERNAL_SERVER_ERROR",
-                        "message": f"Failed to negotiate version: {str(e)}",
+                        "message": "Internal server error",
                     }
                 },
             )
