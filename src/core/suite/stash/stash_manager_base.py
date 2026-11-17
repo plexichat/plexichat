@@ -1,6 +1,9 @@
 """Stash manager mixin: construction, audit, authorization (split from manager.py)."""
 
+import ipaddress
 import json
+import math
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -8,13 +11,54 @@ from urllib.parse import urlparse
 from .schema import (
     STASH_PERMISSIONS,
 )
-
 from .stash_manager_protocol import StashManagerProtocol
 from ._shared import (
     StashPermissionError,
     StashStorageError,
     StashValidationError,
 )
+
+
+# Titles, descriptions, and tags are bounded by ``boundaries.py``. ``metadata``
+# was the one free-form field with no bound at all: a client could persist an
+# arbitrarily large JSON blob (storage/CPU DoS on write and on every read, since
+# it is decoded for each listing/response) or deeply nested structures that
+# make json.dumps/json.loads and downstream renderers recurse dangerously. These
+# ceilings keep the field useful for notes/link attributes without letting it
+# become an unbounded sink.
+MAX_METADATA_SERIALIZED_LENGTH = 64_000
+MAX_METADATA_DEPTH = 10
+MAX_METADATA_CONTAINER_ITEMS = 100
+MAX_METADATA_STRING_LENGTH = 10_000
+
+# DNS names are validated syntactically here; the actual resolution/fetch is the
+# link-preview/thumbnail boundary's job. Single-label names, localhost and any
+# non-global IP literal are rejected so a stored link cannot point a future
+# renderer at loopback, RFC1918, link-local (cloud metadata), or other reserved
+# ranges.
+_HOST_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _is_public_http_host(host: str) -> bool:
+    """Return whether ``host`` may be used as a link-preview target host."""
+    normalized = str(host).strip().rstrip(".").lower()
+    if not normalized:
+        return False
+    if normalized in ("localhost", "localhost.localdomain") or normalized.endswith(
+        ".localhost"
+    ):
+        return False
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        # Not an IP literal: require a normal multi-label DNS name so internal
+        # single-label names and malformed/obscured hosts cannot slip through.
+        if "." not in normalized:
+            return False
+        return all(_HOST_LABEL_RE.match(label) for label in normalized.split("."))
+    # is_global is False for loopback, private, link-local, reserved, multicast
+    # and unspecified addresses on both IPv4 and IPv6.
+    return bool(address.is_global)
 
 
 class StashManagerBase(StashManagerProtocol):
@@ -83,16 +127,79 @@ class StashManagerBase(StashManagerProtocol):
         return media_file
 
     @staticmethod
+    def _bound_metadata(metadata: Any) -> Dict[str, Any]:
+        """Validate and bound the free-form per-item metadata object.
+
+        Returns a plain dict suitable for persistence. Unlike title/description/
+        tags, metadata has no schema-level size ceiling (``Dict[str, Any]``), so
+        without this check a client could persist multi-megabyte JSON that is
+        re-decoded on every read, nest it deeply enough to blow parser recursion,
+        or smuggle control characters into stored metadata and audit records.
+        """
+        if metadata is None:
+            return {}
+        if not isinstance(metadata, dict):
+            raise StashValidationError("metadata must be a JSON object")
+
+        def walk(value: Any, depth: int) -> None:
+            if depth > MAX_METADATA_DEPTH:
+                raise StashValidationError("metadata is nested too deeply")
+            if isinstance(value, str):
+                if len(value) > MAX_METADATA_STRING_LENGTH:
+                    raise StashValidationError("metadata string is too long")
+                if any(
+                    ord(char) < 32 and char not in ("\t", "\n", "\r")
+                    for char in value
+                ):
+                    raise StashValidationError(
+                        "metadata contains disallowed control characters"
+                    )
+            elif isinstance(value, (dict, list, tuple)):
+                if len(value) > MAX_METADATA_CONTAINER_ITEMS:
+                    raise StashValidationError("metadata contains too many entries")
+                if isinstance(value, dict):
+                    for key in value:
+                        if not isinstance(key, str):
+                            raise StashValidationError(
+                                "metadata object keys must be strings"
+                            )
+                        if len(key) > MAX_METADATA_STRING_LENGTH:
+                            raise StashValidationError("metadata key is too long")
+                        if any(
+                            ord(char) < 32 and char not in ("\t", "\n", "\r")
+                            for char in key
+                        ):
+                            raise StashValidationError(
+                                "metadata contains disallowed control characters"
+                            )
+                children = value.values() if isinstance(value, dict) else value
+                for child in children:
+                    walk(child, depth + 1)
+            elif isinstance(value, float):
+                if not math.isfinite(value):
+                    raise StashValidationError(
+                        "metadata contains a non-finite number"
+                    )
+            elif value is not None and not isinstance(value, (bool, int)):
+                raise StashValidationError("metadata contains an unsupported value")
+
+        walk(metadata, 0)
+        # ``_json`` rejects non-serializable values; also cap the on-disk size.
+        if len(json.dumps(metadata, separators=(",", ":"))) > MAX_METADATA_SERIALIZED_LENGTH:
+            raise StashValidationError("metadata is too large")
+        return metadata
+
+    @staticmethod
     def _validate_link_metadata(
         item_type: str, metadata: Optional[Dict[str, Any]]
     ) -> None:
         """Reject unsafe link URLs before they are persisted as metadata.
 
         Link items store a URL in ``metadata.url``. The client only performs a
-        shallow regex check, so the server is the authoritative boundary:
-        accept only absolute http(s) URLs so a future link-preview/renderer
-        cannot be coerced into fetching ``file:``, ``javascript:``, or
-        internal/private endpoints (SSRF / XSS).
+        shallow regex check, so the server is the authoritative boundary: accept
+        only absolute http(s) URLs whose host is a public DNS name or global IP,
+        so a link-preview/thumbnail renderer cannot be coerced into fetching
+        ``file:``/``javascript:`` URLs or internal/private endpoints (SSRF/XSS).
         """
         if item_type != "link":
             return
@@ -103,9 +210,17 @@ class StashManagerBase(StashManagerProtocol):
             return
         if not isinstance(url, str):
             raise StashValidationError("link url must be a string")
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        try:
+            parsed = urlparse(url)
+            host = parsed.hostname
+        except ValueError as exc:
+            raise StashValidationError("link url is malformed") from exc
+        if parsed.scheme not in ("http", "https") or not host:
             raise StashValidationError("link url must be an absolute http(s) URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise StashValidationError("link url must not contain credentials")
+        if not _is_public_http_host(host):
+            raise StashValidationError("link url host is not permitted")
 
     def _audit(
         self,

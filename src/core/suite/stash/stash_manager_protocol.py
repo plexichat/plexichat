@@ -32,6 +32,9 @@ class StashManagerProtocol:
     def _audit(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
+    def _bound_metadata(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
     def _authorize(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 

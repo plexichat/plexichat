@@ -44,8 +44,9 @@ class ItemMutationMixin(StashManagerProtocol):
             self._resolve_media_object(media_object_id, user_id)
             updates["media_object_id"] = media_object_id
         if "metadata" in fields:
-            self._validate_link_metadata(row["item_type"], fields["metadata"])
-            updates["metadata_json"] = self._json(fields["metadata"], {})
+            bounded_metadata = self._bound_metadata(fields["metadata"])
+            self._validate_link_metadata(row["item_type"], bounded_metadata)
+            updates["metadata_json"] = self._json(bounded_metadata, {})
         if "tags" in fields:
             clean_tags = sorted(
                 {

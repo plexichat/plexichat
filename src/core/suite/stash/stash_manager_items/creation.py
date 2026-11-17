@@ -62,6 +62,7 @@ class ItemCreationMixin(StashManagerProtocol):
         ):
             raise StashPermissionError("You are not a member of this server")
         self._validate_collection(user_id, collection_id, scope, server_id)
+        metadata = self._bound_metadata(metadata)
         self._validate_link_metadata(item_type, metadata)
         self._resolve_media_object(media_object_id, user_id)
         now = int(time.time() * 1000)
