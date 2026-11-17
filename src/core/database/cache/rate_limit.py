@@ -7,7 +7,8 @@ with Valkey primary and in-memory fallback.
 
 import threading
 import time
-from typing import Dict, List, Tuple
+from collections import OrderedDict
+from typing import List, Tuple
 
 import utils.logger as logger
 from src.core.security.hardening import bounded_int
@@ -18,8 +19,12 @@ from ..valkey_client import (
 )
 from .operations import cache_delete
 
-# Global dictionary for in-memory rate limiting when Valkey is unavailable
-_mem_rate_limits: Dict[str, List[float]] = {}
+# Global map for in-memory rate limiting when Valkey is unavailable. It is an
+# OrderedDict so a hard entry cap can evict the least-recently-used key: the
+# previous age-only sweep never removed anything while all counters were fresh,
+# letting a flood of distinct keys grow the map without bound (memory DoS).
+_mem_rate_limits: "OrderedDict[str, List[float]]" = OrderedDict()
+_MEM_RATE_LIMIT_MAX_KEYS = 5000
 _mem_rate_limits_lock = threading.Lock()
 
 # Atomic INCR + first-hit EXPIRE. Doing this in Lua closes the race where a
@@ -61,14 +66,29 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
         now = time.time()
 
         with _mem_rate_limits_lock:
-            if len(_mem_rate_limits) > 5000:
-                logger.debug("Cleaning up in-memory rate limit cache")
-                for k in list(_mem_rate_limits.keys()):
-                    if _mem_rate_limits[k] and _mem_rate_limits[k][-1] < now - 3600:
-                        del _mem_rate_limits[k]
+            # Touch the key first so a still-active counter is never chosen as
+            # the eviction victim when the map is at its hard cap.
+            if full_key in _mem_rate_limits:
+                _mem_rate_limits.move_to_end(full_key)
 
-            timestamps = _mem_rate_limits.get(full_key, [])
-            timestamps = [ts for ts in timestamps if ts > now - window_seconds]
+            if len(_mem_rate_limits) >= _MEM_RATE_LIMIT_MAX_KEYS:
+                logger.debug("Cleaning up in-memory rate limit cache")
+                # First drop stale counters older than an hour...
+                for k in list(_mem_rate_limits.keys()):
+                    entry = _mem_rate_limits.get(k)
+                    if entry and entry[-1] < now - 3600:
+                        del _mem_rate_limits[k]
+                # ...then enforce the hard cap even when every counter is
+                # fresh, evicting the least-recently-used keys so a burst of
+                # distinct keys cannot grow the map without bound.
+                while len(_mem_rate_limits) >= _MEM_RATE_LIMIT_MAX_KEYS:
+                    _mem_rate_limits.popitem(last=False)
+
+            timestamps = [
+                ts
+                for ts in _mem_rate_limits.get(full_key, [])
+                if ts > now - window_seconds
+            ]
 
             if len(timestamps) < limit:
                 timestamps.append(now)

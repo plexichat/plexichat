@@ -18,6 +18,22 @@ from .operations import cache_get, cache_delete, cache_set, invalidate_pattern
 from .base import default_ttl, mem_cache_delete, mem_cache_get, mem_cache_matching_keys
 
 
+def _glob_safe_id(value: Any) -> Optional[str]:
+    """Canonical string form of an integer id, or ``None`` if unsafe.
+
+    The invalidation helpers splice ids into glob patterns. A value carrying
+    glob metacharacters (``*``, ``?``, ``[...]``) — e.g. ``"1:*"`` — would widen
+    the pattern and evict other users'/servers' cache entries, letting a caller
+    that reaches these helpers with a non-numeric id wipe unrelated caches.
+    Only a purely decimal id is accepted; it is normalised via ``int`` so the
+    pattern matches exactly one numeric segment.
+    """
+    text = str(value)
+    if not text.isdigit():
+        return None
+    return str(int(text))
+
+
 def cache_session(
     session_id: str, user_id: int, data: Dict[str, Any], ttl: Optional[int] = None
 ) -> bool:
@@ -143,10 +159,18 @@ def invalidate_user_servers(user_id: int) -> int:
     glob is anchored around the user id so invalidating (e.g.) user 42 does not
     also evict user 142's entries.
     """
+    uid = _glob_safe_id(user_id)
+    if uid is None:
+        logger.warning(
+            "Refusing to build cache invalidation pattern from non-numeric "
+            "user id %r",
+            user_id,
+        )
+        return 0
     total = 0
-    total += invalidate_pattern(f"user_servers:int:{user_id}:*")
-    total += invalidate_pattern(f"user_servers:{user_id}")
-    total += invalidate_pattern(f"user_servers_api:*:TokenInfo:{user_id}")
+    total += invalidate_pattern(f"user_servers:int:{uid}:*")
+    total += invalidate_pattern(f"user_servers:{uid}")
+    total += invalidate_pattern(f"user_servers_api:*:TokenInfo:{uid}")
     return total
 
 
@@ -157,4 +181,12 @@ def invalidate_server(server_id: int) -> int:
 
 def invalidate_server_channels(server_id: int) -> int:
     """Invalidate the channel list cache for all users of a server."""
-    return invalidate_pattern(f"channels:*:{server_id}*")
+    sid = _glob_safe_id(server_id)
+    if sid is None:
+        logger.warning(
+            "Refusing to build cache invalidation pattern from non-numeric "
+            "server id %r",
+            server_id,
+        )
+        return 0
+    return invalidate_pattern(f"channels:*:{sid}*")

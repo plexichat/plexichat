@@ -63,16 +63,63 @@ def get_type_from_name(type_name: str) -> Optional[type]:
         return None
 
 
+# ``generate_cache_key`` joins components with ``:``. If a value may contain
+# that delimiter it can forge/merge key segments: the single string argument
+# ``"x:str:y"`` produced the same key as the two arguments ``"x", "y"``. A
+# forged segment can collide with another caller's entry (a cross-user cache
+# read/poison) or with a pattern used to invalidate that caller's entries.
+# Bound and reject such values so every component is unambiguous and bounded.
+_KEY_DELIMITER = ":"
+_MAX_KEY_COMPONENT_LEN = 128
+
+
+def _hash_key_component(tag: str, raw: str) -> str:
+    """Return a short, bounded, collision-resistant key component for ``raw``.
+
+    ``~`` never appears in the valid ``tag:value`` grammar (tags are Python
+    type names or fixed literals, and raw values containing ``:`` are always
+    hashed here), so a hashed ``tag~<digest>`` component can never be confused
+    with a raw one, even for adversarial input.
+    """
+    digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:24]
+    return f"{tag}~{digest}"
+
+
+def _safe_key_value(tag: str, value: Any) -> str:
+    """Render ``value`` as a bounded ``tag:value`` (or hashed) component.
+
+    Values containing the key delimiter, or longer than the component cap,
+    are replaced with a digest bound to ``tag``. Distinct inputs stay distinct
+    and no single argument can inject extra segments or create an unbounded
+    key/memory entry in the shared cache.
+    """
+    text = str(value)
+    if _KEY_DELIMITER in text or len(text) > _MAX_KEY_COMPONENT_LEN:
+        return _hash_key_component(tag, text)
+    return f"{tag}:{text}"
+
+
 def generate_cache_key(prefix: str, *args, **kwargs) -> str:
-    """Generate a cache key from function arguments."""
+    """Generate a cache key from function arguments.
+
+    Returns a ``:``-delimited string whose components are individually bounded
+    and delimiter-safe (see ``_safe_key_value``). Numeric ids keep the legacy
+    ``int:<id>`` / ``TokenInfo:<id>`` shape relied on by invalidation patterns.
+    """
     key_parts = [prefix]
 
     def process_val(val: Any) -> str:
         if hasattr(val, "__class__"):
             class_name = val.__class__.__name__
             if class_name in ("TokenInfo", "User"):
-                uid = getattr(val, "user_id", None) or getattr(val, "id", "unknown")
-                return f"{class_name}:{uid}"
+                # ``or`` collapsed a falsy id (e.g. 0) into a different user's
+                # id or "unknown", colliding distinct users in the cache.
+                uid = getattr(val, "user_id", None)
+                if uid is None:
+                    uid = getattr(val, "id", None)
+                if uid is None:
+                    uid = "unknown"
+                return _safe_key_value(class_name, uid)
             from src.core.base import BaseManager
 
             try:
@@ -90,12 +137,15 @@ def generate_cache_key(prefix: str, *args, **kwargs) -> str:
                 payload = repr(val)
             digest = hashlib.sha256(payload.encode()).hexdigest()[:12]
             return f"{type(val).__name__}:{digest}"
-        return f"{type(val).__name__}:{val}"
+        return _safe_key_value(type(val).__name__, val)
 
     for arg in args:
         key_parts.append(process_val(arg))
     for k, v in sorted(kwargs.items()):
-        key_parts.append(f"{k}:{process_val(v)}")
+        name = str(k)
+        if _KEY_DELIMITER in name or len(name) > _MAX_KEY_COMPONENT_LEN:
+            name = _hash_key_component("kw", name)
+        key_parts.append(f"{name}:{process_val(v)}")
 
     return ":".join(key_parts)
 
