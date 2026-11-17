@@ -64,6 +64,23 @@ def _get_limits() -> Tuple[int, int]:
     )
 
 
+def _clamp_decompression_limit(value: Any, default: int) -> int:
+    """Clamp an explicit decompression ceiling into ``[1, MAX_DECOMPRESSED_BYTES]``.
+
+    The public helpers accept an explicit ``max_size``/``max_decompressed_size``
+    argument. Used verbatim, an oversized value silently disabled the zip-bomb
+    guard even though the config path was clamped. Anything outside the ceiling
+    is replaced by the built-in default instead of being trusted, so a caller
+    can never widen the protection beyond the absolute bound.
+    """
+    try:
+        return clamp_configured_limit(
+            value, "decompression size limit", MAX_DECOMPRESSED_BYTES, default
+        )
+    except (ValueError, TypeError):
+        return default
+
+
 class CompressionError(Exception):
     """Raised when compression/decompression fails due to security limits."""
 
@@ -109,8 +126,19 @@ class ZlibDecompressor:
         """
         self._decompressor = zlib.decompressobj()
         self._buffer = bytearray()
-        _, default_max = _get_limits()
-        self._max_size = max_decompressed_size or default_max
+        max_msg, default_max = _get_limits()
+        # Never trust an explicit ceiling past the absolute bound: a caller
+        # passing a huge value would otherwise turn off zip-bomb protection.
+        self._max_size = (
+            default_max
+            if max_decompressed_size is None
+            else _clamp_decompression_limit(max_decompressed_size, default_max)
+        )
+        # A streaming message's compressed form must fit in the same bounded
+        # frame any other inbound payload does. Without this, a peer that keeps
+        # sending fragments without the sync-flush marker grows ``_buffer``
+        # without limit, which is a memory-exhaustion vector of its own.
+        self._max_buffer = max_msg
 
     def decompress(self, data: bytes) -> Optional[dict]:
         """
@@ -124,7 +152,26 @@ class ZlibDecompressor:
 
         Raises:
             CompressionError: If decompressed size exceeds limit (zip bomb protection)
+                or if the pending compressed buffer exceeds its ceiling.
         """
+        if not isinstance(data, (bytes, bytearray)):
+            self.reset()
+            raise CompressionError("decompression input must be bytes")
+        # Bound the pending input *before* buffering it. Each fragment may be
+        # individually small, so checking a single chunk is not enough; the
+        # cumulative size is what an attacker can grow without a sync flush.
+        if len(data) > self._max_buffer or (
+            len(self._buffer) + len(data) > self._max_buffer
+        ):
+            self.reset()
+            logger.warning(
+                "Decompression pending buffer exceeded %s bytes - refusing stream",
+                self._max_buffer,
+            )
+            raise CompressionError(
+                f"Compressed input exceeds maximum buffered size of "
+                f"{self._max_buffer} bytes"
+            )
         self._buffer.extend(data)
 
         if len(self._buffer) < 4 or self._buffer[-4:] != ZLIB_SUFFIX:
@@ -193,7 +240,14 @@ def decompress_payload(data: bytes, max_size: Optional[int] = None) -> Optional[
         CompressionError: If decompressed size exceeds limit
     """
     _, default_max = _get_limits()
-    limit = max_size or default_max
+    # An explicit limit is a request, not a way to opt out of the absolute
+    # ceiling. Clamp it like the config path so the zip-bomb guard cannot be
+    # disabled by a caller passing an oversized value.
+    limit = (
+        default_max
+        if max_size is None
+        else _clamp_decompression_limit(max_size, default_max)
+    )
 
     try:
         # Create decompressor with size limit

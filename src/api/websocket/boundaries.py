@@ -319,7 +319,11 @@ def validate_ticket(value: object, field: str = "token") -> str:
     text = reject_control_characters(value, field)
     if not (MIN_TICKET_LEN <= len(text) <= MAX_TICKET_LEN):
         raise HardeningViolation(f"{field} length is out of range")
-    if not TICKET_PATTERN.match(text):
+    # ``fullmatch`` rather than ``match`` + ``$``: Python's ``$`` also matches
+    # just before a trailing newline. ``reject_control_characters`` already
+    # strips that vector, but anchoring the whole value here keeps the rule
+    # correct even if the pattern or helper changes later.
+    if not TICKET_PATTERN.fullmatch(text):
         raise HardeningViolation(f"{field} has an invalid format")
     return text
 
@@ -328,9 +332,14 @@ def validate_session_id(value: object) -> str:
     """Validate a resume session id (hex token of bounded length)."""
     if not isinstance(value, str) or not (1 <= len(value) <= MAX_SESSION_ID_LEN):
         raise HardeningViolation("session_id length is out of range")
-    if not SESSION_ID_PATTERN.match(value):
+    text = reject_control_characters(value, "session_id")
+    # ``match`` + ``$`` accepted a trailing newline ("deadbeef\n") because
+    # Python's ``$`` matches before a final ``\n``. That value flowed into
+    # Valkey session keys and log lines. ``fullmatch`` consumes the entire
+    # string, so no trailing/embedded separator can slip through.
+    if not SESSION_ID_PATTERN.fullmatch(text):
         raise HardeningViolation("session_id has an invalid format")
-    return value
+    return text
 
 
 def bounded_resume_sequence(value: object) -> int:
