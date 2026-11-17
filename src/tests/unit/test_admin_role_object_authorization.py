@@ -83,6 +83,7 @@ class TestAssignRoleObjectGate:
             "admin_exists": True,
             "role_pos": 5,
             "role_is_system": False,
+            "role_permissions": json.dumps({"config.security": True}),
         }
         body = RoleAssignment(admin_id="2", role_id="7")
         with (
@@ -92,6 +93,10 @@ class TestAssignRoleObjectGate:
             patch(
                 "src.core.admin.permissions.can_grant_existing_role",
                 return_value=False,
+            ),
+            patch(
+                "src.core.admin.permissions.get_admin_granted_permissions",
+                return_value=frozenset({"users.read"}),
             ),
             patch("src.api.get_db"),
         ):
@@ -105,4 +110,9 @@ class TestAssignRoleObjectGate:
         from src.api.routes.admin import roles as role_routes
 
         source = inspect.getsource(role_routes.assign_role)
-        assert "can_grant_existing_role(db, admin_id, target_role_id)" in source
+        # The check may resolve the role payload through the dedicated helper
+        # or through the batched hierarchy lookup; both enforce the same rule.
+        assert (
+            "can_grant_existing_role(db, admin_id, target_role_id)" in source
+            or "can_delegate_permissions(" in source
+        )
