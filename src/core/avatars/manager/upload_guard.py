@@ -31,6 +31,7 @@ __all__ = [
     "normalize_mime",
     "detect_containers",
     "contains_active_content",
+    "contains_tracking_metadata",
     "is_markup_payload",
     "is_polyglot",
     "assert_safe_media_payload",
@@ -264,6 +265,33 @@ def contains_active_content(data: bytes) -> bool:
     if not data:
         return False
     return _has_active_content(_scan_payload(data)[1])
+
+
+# Markers for metadata that can carry payloads or track users (EXIF/GPS,
+# XMP, IPTC, Photoshop resources, PNG eXIf/text chunks). Checked on the
+# re-encoded output so a stripped input cannot smuggle metadata back in.
+_TRACKING_METADATA_MARKERS = (
+    b"Exif\x00\x00",
+    b"http://ns.adobe.com/xap/",
+    b"<x:xmpmeta",
+    b"\x00\x00Adobe",
+    b"Photoshop 3.0",
+    b"eXIf",
+    b"iTXt",
+    b"tEXt",
+    b"zTXt",
+)
+
+
+def contains_tracking_metadata(data: bytes) -> bool:
+    """True when re-encoded bytes still contain EXIF/XMP/text metadata."""
+    if not data:
+        return False
+    try:
+        head = bytes(data[:_SCAN_LIMIT])
+    except Exception:
+        return True
+    return any(marker in head for marker in _TRACKING_METADATA_MARKERS)
 
 
 def is_markup_payload(data: bytes) -> bool:

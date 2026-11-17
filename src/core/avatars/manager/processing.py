@@ -9,6 +9,56 @@ import utils.logger as logger
 from .protocol import AvatarProtocol
 
 
+# Image info keys that are required to render the picture correctly. Every
+# other key (EXIF/GPS, XMP, ICC profiles, Photoshop/IPTC resources, comments,
+# text chunks, timestamps, ...) is dropped before the image is re-encoded.
+_SAFE_IMAGE_INFO_KEYS = frozenset(
+    {"transparency", "duration", "loop", "background", "version", "gamma"}
+)
+
+
+def strip_image_metadata(img):
+    """Apply EXIF orientation then strip metadata that can track or attack.
+
+    Orientation is applied so the visible image is unchanged; all metadata
+    not required for rendering is removed from ``img.info``. The image itself
+    is returned (Pillow's ``save`` never re-emits a stripped info key).
+    """
+    try:
+        orientation = img.getexif().get(274, 1)
+    except Exception:
+        orientation = 1
+    # Only transpose when there is a real orientation to honour. Pillow's
+    # exif_transpose collapses animated GIF/WebP sequences to one frame, so
+    # animated uploads just have the EXIF data stripped below.
+    if orientation not in (None, 1) and getattr(img, "n_frames", 1) == 1:
+        try:
+            from PIL import ImageOps
+
+            img = ImageOps.exif_transpose(img)
+        except Exception:
+            pass
+    try:
+        for key in list(img.info.keys()):
+            if key not in _SAFE_IMAGE_INFO_KEYS:
+                try:
+                    del img.info[key]
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return img
+
+
+def _finalize_output(data: bytes) -> bytes:
+    """Fail closed if re-encoded bytes still carry tracking metadata."""
+    from .upload_guard import contains_tracking_metadata
+
+    if contains_tracking_metadata(data):
+        raise ValueError("Invalid image file: metadata could not be stripped")
+    return data
+
+
 class AvatarProcessingMixin(AvatarProtocol):
     """Mixin handling image processing, validation, and resizing."""
 
@@ -114,6 +164,11 @@ class AvatarProcessingMixin(AvatarProtocol):
         try:
             img = Image.open(io.BytesIO(image_data))
 
+            # DEEP: honour EXIF orientation, then drop every metadata key that
+            # is not required to render the picture. Do this before reading
+            # dimensions so a rotated image is measured in its final layout.
+            img = strip_image_metadata(img)
+
             # Security: Validate dimensions before processing
             width, height = img.size
             if width > max_dim or height > max_dim:
@@ -190,7 +245,12 @@ class AvatarProcessingMixin(AvatarProtocol):
                         duration=durations,
                         loop=loop_count,
                     )
-                    return output.getvalue(), new_width, new_height, True
+                    return (
+                        _finalize_output(output.getvalue()),
+                        new_width,
+                        new_height,
+                        True,
+                    )
                 except Exception as e:
                     logger.warning(
                         f"Failed to process animated GIF: {e}, using first frame"
@@ -224,7 +284,12 @@ class AvatarProcessingMixin(AvatarProtocol):
                         loop=loop_count,
                         quality=90,
                     )
-                    return output.getvalue(), new_width, new_height, True
+                    return (
+                        _finalize_output(output.getvalue()),
+                        new_width,
+                        new_height,
+                        True,
+                    )
                 except Exception as e:
                     logger.warning(
                         f"Failed to process animated WebP: {e}, using first frame"
@@ -261,7 +326,7 @@ class AvatarProcessingMixin(AvatarProtocol):
                     duration=durations,
                     loop=loop_count,
                 )
-                return output.getvalue(), width, height, True
+                return _finalize_output(output.getvalue()), width, height, True
             except Exception as e:
                 logger.warning(f"Failed to save animated GIF: {e}, using first frame")
                 img.seek(0)
@@ -296,7 +361,7 @@ class AvatarProcessingMixin(AvatarProtocol):
                         loop=loop_count,
                         quality=90,
                     )
-                    return output.getvalue(), width, height, True
+                    return _finalize_output(output.getvalue()), width, height, True
                 except Exception as e:
                     logger.warning(
                         f"Failed to save animated WebP: {e}, using first frame"
@@ -319,7 +384,7 @@ class AvatarProcessingMixin(AvatarProtocol):
             img.save(output, format="JPEG", quality=90, optimize=True)
             content_type = "image/jpeg"
 
-        return output.getvalue(), width, height, is_animated
+        return _finalize_output(output.getvalue()), width, height, is_animated
 
     def _compute_checksum(self, data: bytes) -> str:
         """Compute SHA-256 checksum."""
