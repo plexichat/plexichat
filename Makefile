@@ -1,4 +1,4 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear client-test client-lint fmt check
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear client-test client-lint fmt clean version test-quiet check
 
 COMPOSE ?= docker-compose.yml
 REPORTS ?= test-results-*.xml
@@ -33,6 +33,9 @@ help:
 	@echo "  client-test          Run the sibling plexichat-client unit suite"
 	@echo "  client-lint          Run the sibling plexichat-client lint"
 	@echo "  fmt                  Auto-format and auto-fix with ruff"
+	@echo "  version              Print the server version"
+	@echo "  test-quiet           Run pytest quietly"
+	@echo "  clean                Remove caches and test artifacts"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -71,6 +74,16 @@ client-test:
 
 client-lint:
 	@if [ -d ../plexichat-client ]; then cd ../plexichat-client && npm run lint; else echo "plexichat-client not present"; fi
+
+version:
+	$(PYTHON) main.py version
+
+test-quiet:
+	$(PYTHON) -m pytest -q
+
+clean:
+	rm -rf .pytest_cache .ruff_cache .mypy_cache test_artifacts
+	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 
 fmt:
 	$(PYTHON) -m ruff format src
