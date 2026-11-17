@@ -609,14 +609,31 @@ class AuthenticationMiddleware:
         """
         try:
             from src.core import ratelimit
+            from src.core.ratelimit.middleware import extract_route_info
             from src.utils.net import get_client_ip
 
             if not ratelimit.is_setup():
                 return None
+            # The main RateLimitMiddleware normalizes the request path into a
+            # bounded route key with ``extract_route_info`` before it ever
+            # reaches the storage backend (the F8 keyspace hardening). This
+            # fallback charges the same backend but used to key on the RAW
+            # ``method + path``: an attacker flooding bad
+            # ``X-API-Access-Token`` requests at unique paths
+            # (``/api/v1/evil/1``, ``/api/v1/evil/2`` ...) created a brand-new
+            # persistent bucket row per path, bypassing the bounded keyspace
+            # and exhausting rate-limit storage (DoS). Reuse the very same
+            # normalization so the fallback cannot re-open that hole.
+            route, resource_id, webhook_id = extract_route_info(
+                request.url.path, request.method
+            )
             result = await ratelimit.acheck_rate_limit(
                 user_id=None,
                 ip_address=cached_client_ip(request, resolver=get_client_ip) or "unknown",
-                route=f"{request.method} {request.url.path}",
+                route=route,
+                resource_id=resource_id,
+                is_webhook=webhook_id is not None,
+                webhook_id=webhook_id,
             )
             if not result.allowed:
                 return JSONResponse(

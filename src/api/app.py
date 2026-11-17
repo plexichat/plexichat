@@ -531,12 +531,44 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     # byte-for-byte identical to the per-request version.
     preflight_origins = frozenset(config.cors_origins)
     preflight_static_headers = {
-        "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Methods": ", ".join(config.cors_allow_methods),
         "Access-Control-Allow-Headers": ", ".join(config.cors_allow_headers),
         "Access-Control-Expose-Headers": ", ".join(config.cors_expose_headers),
         "Access-Control-Max-Age": "86400",
     }
+    # SECURITY: never advertise credentialed CORS when the operator disabled
+    # it. The previous static header always said ``true``, so this fallback
+    # preflight invited browsers to attach cookies/session credentials even on
+    # deployments configured for anonymous cross-origin access.
+    if config.cors_allow_credentials:
+        preflight_static_headers["Access-Control-Allow-Credentials"] = "true"
+
+    def _stamp_preflight(response: Response, path: str) -> Response:
+        """Apply the canonical response policy to a perimeter-generated reply.
+
+        CORSPreflightMiddleware is registered OUTSIDE SecurityHeadersMiddleware,
+        so its locally generated 200/400 responses never traveled back out
+        through the security-headers layer and escaped without CSP, HSTS,
+        nosniff, framing or Referrer-Policy headers -- a security-header gap on
+        exactly the preflight path browsers hit first. Reuse the same
+        enforcement function the normal response path uses so the two cannot
+        drift apart. ``enforce_response_policy`` also re-validates the CORS
+        headers against the configured allowlist/credential policy.
+        """
+        from .middleware.response_policy import enforce_response_policy
+
+        # ``Response.headers`` is a read-only derived property in current
+        # Starlette; the authoritative store is ``raw_headers``. Replacing the
+        # raw list is enough for the response serializer to emit the stamped
+        # headers (and for ``response.headers`` to reflect them).
+        response.raw_headers = enforce_response_policy(
+            response.raw_headers,
+            path=path,
+            api_prefix=config.api_prefix,
+            cors_origins=config.cors_origins,
+            cors_allow_credentials=config.cors_allow_credentials,
+        )
+        return response
 
     # Explicit OPTIONS preflight handler for local dev - catches any
     # preflight that slips through the CORSMiddleware. Implemented as a
@@ -552,8 +584,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             if origin and origin in preflight_origins:
                 headers = {"Access-Control-Allow-Origin": origin}
                 headers.update(preflight_static_headers)
-                return Response(status_code=200, headers=headers)
-            return Response(status_code=400)
+                return _stamp_preflight(
+                    Response(status_code=200, headers=headers), request.url.path
+                )
+            return _stamp_preflight(Response(status_code=400), request.url.path)
 
     app.add_middleware(CORSPreflightMiddleware)
 
