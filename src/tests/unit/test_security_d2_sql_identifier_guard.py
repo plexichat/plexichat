@@ -105,7 +105,7 @@ def _binding_kind(name: str, scopes: list[ast.AST]) -> str | None:
     """Classify a Name by how it is bound in its module/function scopes."""
     for scope in scopes:
         for node in ast.walk(scope):
-            targets: list[ast.AST] = []
+            targets: list[ast.expr] = []
             value: ast.AST | None = None
             if isinstance(node, ast.Assign):
                 targets, value = node.targets, node.value
@@ -177,7 +177,7 @@ def _scan():
                     if not isinstance(piece.value, ast.Name):
                         violations.add((relative, expr))
                         continue
-                    kind = _binding_kind(piece.value.id, scopes)
+                    kind = _binding_kind(piece.value.id, scopes)  # pyright: ignore[reportArgumentType]
                     if kind == "fixed":
                         stats["fixed"] += 1
                     elif kind == "guard":

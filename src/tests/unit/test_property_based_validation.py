@@ -10,6 +10,18 @@ Run with: pytest src/tests/unit/test_property_based_validation.py -v
 import pytest
 import string
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hypothesis import (
+        given,
+        strategies as st,
+        assume,
+        settings,
+        example,
+        HealthCheck,
+    )
+    from hypothesis.strategies import composite
 
 try:
     from hypothesis import (

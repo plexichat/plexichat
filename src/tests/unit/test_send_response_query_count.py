@@ -92,7 +92,7 @@ async def test_send_response_does_not_query_embed_suppression(monkeypatch):
     )
     router = MessagesCRUDRouter()
 
-    response = await router.send_channel_message("10", body, _Token())
+    response = await router.send_channel_message("10", body, _Token())  # pyright: ignore[reportArgumentType]
 
     assert int(response.id) == 5001
     assert embeds_lookups == [], "send response must not query embed suppression"

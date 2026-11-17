@@ -66,7 +66,7 @@ def test_legacy_challenge_less_code_cannot_be_exchanged_when_pkce_required(
 
     strict = _flow(app_manager, pkce_enabled=True)
     with pytest.raises(InvalidPKCEError, match="PKCE"):
-        strict.exchange_code(app.id, secret, legacy.code, REDIRECT, "v" * 43)
+        strict.exchange_code(app.id, secret, legacy.code, REDIRECT, "v" * 43)  # pyright: ignore[reportArgumentType]
 
 
 def test_pkce_bound_code_still_exchanges_normally(app_manager, test_user):
@@ -82,7 +82,7 @@ def test_pkce_bound_code_still_exchanges_normally(app_manager, test_user):
         code_challenge=_s256(verifier),
         code_challenge_method="S256",
     )
-    token = flow.exchange_code(app.id, secret, code.code, REDIRECT, verifier)
+    token = flow.exchange_code(app.id, secret, code.code, REDIRECT, verifier)  # pyright: ignore[reportArgumentType]
     assert token.access_token
 
 
@@ -94,5 +94,5 @@ def test_non_pkce_deployment_still_exchanges_challenge_less_code(
     secret = _with_secret(app_manager, app)
     flow = _flow(app_manager, pkce_enabled=False)
     code = flow.create_authorization_code(app.id, test_user.id, REDIRECT, ["identify"])
-    token = flow.exchange_code(app.id, secret, code.code, REDIRECT)
+    token = flow.exchange_code(app.id, secret, code.code, REDIRECT)  # pyright: ignore[reportArgumentType]
     assert token.access_token

@@ -111,8 +111,8 @@ def test_batch_pack_stickers_falls_back_per_pack_without_batch_db():
 @pytest.mark.asyncio
 async def test_get_server_stickers_hydrates_packs_from_one_query(monkeypatch):
     packs = [
-        StickerPack(id=1, name="pack one", pack_type="server", server_id=555),
-        StickerPack(id=2, name="pack two", pack_type="server", server_id=555),
+        StickerPack(id=1, name="pack one", pack_type="server", server_id=555),  # pyright: ignore[reportArgumentType]
+        StickerPack(id=2, name="pack two", pack_type="server", server_id=555),  # pyright: ignore[reportArgumentType]
     ]
     rows = [
         {
@@ -138,7 +138,7 @@ async def test_get_server_stickers_hydrates_packs_from_one_query(monkeypatch):
     stickers = _FakeStickers(db=db, packs=packs, to_sticker=lambda row: Sticker(**row))
     monkeypatch.setattr(api, "get_stickers", lambda: stickers)
 
-    result = await get_server_stickers("555", current_user=SimpleNamespace(user_id=7))
+    result = await get_server_stickers("555", current_user=SimpleNamespace(user_id=7))  # pyright: ignore[reportArgumentType]
 
     assert [p.id for p in result] == ["1", "2"]
     assert [s.name for s in result[0].stickers] == ["sticker a"]
@@ -151,8 +151,8 @@ async def test_get_server_stickers_hydrates_packs_from_one_query(monkeypatch):
 @pytest.mark.asyncio
 async def test_dispatch_update_batches_sticker_lookups(monkeypatch):
     packs = [
-        StickerPack(id=1, name="pack one", pack_type="server", server_id=555),
-        StickerPack(id=2, name="pack two", pack_type="server", server_id=555),
+        StickerPack(id=1, name="pack one", pack_type="server", server_id=555),  # pyright: ignore[reportArgumentType]
+        StickerPack(id=2, name="pack two", pack_type="server", server_id=555),  # pyright: ignore[reportArgumentType]
     ]
     rows = [
         {

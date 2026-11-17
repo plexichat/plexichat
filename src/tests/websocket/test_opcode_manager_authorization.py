@@ -192,7 +192,7 @@ async def test_artifact_op_drops_non_member_write(
     result = await ha.ArtifactHandler().handle_artifact_op(
         authenticated_connection,
         {"artifact_id": 77, "op": {"op_type": "edit", "content": "x"}},
-        SimpleNamespace(_rate_limit_per_minute=None),
+        SimpleNamespace(_rate_limit_per_minute=None),  # pyright: ignore[reportArgumentType]
     )
 
     assert result == (None, None, None)

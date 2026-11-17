@@ -7,6 +7,11 @@ Run with: pytest src/tests/unit/test_property_based_edge_cases.py -v
 """
 
 import pytest
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hypothesis import given, settings, strategies as st
+    from hypothesis.strategies import composite
 
 try:
     from hypothesis import given, settings, strategies as st

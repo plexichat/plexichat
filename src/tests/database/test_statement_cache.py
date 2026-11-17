@@ -30,7 +30,7 @@ def db_env(tmp_path):
     Database.reset()
     db = Database()
     db.connect()
-    db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT)")
+    db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT)")  # pyright: ignore[reportAttributeAccessIssue]
     with db._query_cache_lock:
         db._query_cache.clear()
     yield db

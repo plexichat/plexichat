@@ -57,7 +57,7 @@ async def test_dispatch_raw_to_users_sends_one_frame_per_connection(
 
     assert sent == 2
     for conn in (first, second):
-        call_args = conn.websocket.send_json.call_args[0][0]
+        call_args = conn.websocket.send_json.call_args[0][0]  # pyright: ignore[reportAttributeAccessIssue]
         assert call_args["op"] == int(GatewayOpcode.VOICE_SPEAKING)
         assert call_args["d"] == payload
 
@@ -74,7 +74,7 @@ async def test_dispatch_raw_to_users_with_no_targets_sends_nothing(
         )
         == 0
     )
-    conn.websocket.send_json.assert_not_awaited()
+    conn.websocket.send_json.assert_not_awaited()  # pyright: ignore[reportAttributeAccessIssue]
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_dispatch_raw_to_users_ignores_users_without_connections(
         )
         == 1
     )
-    conn.websocket.send_json.assert_awaited()
+    conn.websocket.send_json.assert_awaited()  # pyright: ignore[reportAttributeAccessIssue]
 
 
 # === handler: relay to the channel's other members =========================

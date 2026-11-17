@@ -71,7 +71,7 @@ class TestRateLimitHonestSuccess:
             base_url="http://127.0.0.1:8000",
             results=[],
         )
-        RateLimitTester(ctx).test_rate_limits()
+        RateLimitTester(ctx).test_rate_limits()  # pyright: ignore[reportArgumentType]
         result = ctx.results[0]
         # No 429 observed -> the check must NOT be a pass.
         assert result["success"] is False
@@ -119,7 +119,7 @@ class TestReportSkips:
             start_time=0.0,
             ram_monitor=None,
         )
-        report = ReportGenerator(ctx)
+        report = ReportGenerator(ctx)  # pyright: ignore[reportArgumentType]
         # Skips are neither passes nor failures -> suite outcome is False
         # only because of the single genuine failure.
         assert report.report_summary() is False

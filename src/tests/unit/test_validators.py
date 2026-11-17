@@ -1,7 +1,11 @@
 import string
+from typing import TYPE_CHECKING
 
 import pytest
 from unittest.mock import MagicMock
+
+if TYPE_CHECKING:
+    from hypothesis import given, strategies as st, settings
 
 # Try to import hypothesis, skip tests if not available
 try:

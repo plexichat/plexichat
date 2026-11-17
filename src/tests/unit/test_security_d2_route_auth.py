@@ -149,7 +149,8 @@ def test_public_route_allowlist_has_no_stale_entries():
     stale = sorted(set(PUBLIC_MUTATING_ROUTES) - present)
     assert not stale, (
         "These public-route entries are now guarded or no longer exist; "
-        "remove them from PUBLIC_MUTATING_ROUTES:\n  " + "\n  ".join(stale)
+        "remove them from PUBLIC_MUTATING_ROUTES:\n  "
+        + "\n  ".join(f"{method} {path}" for method, path in stale)
     )
 
 

@@ -80,7 +80,7 @@ class TestValidator:
 
     def test_calculate_checksum_string_input(self):
         """Test that string input is handled."""
-        c = calculate_checksum("test")
+        c = calculate_checksum("test")  # pyright: ignore[reportArgumentType]
         assert len(c) == 64  # SHA-256 hex digest length
 
     def test_calculate_checksum_length(self):

@@ -101,7 +101,7 @@ class TestClonerCorrectness:
 
         source = _temp_sqlite_db()
         target = _temp_sqlite_db()
-        cloner = DataCloner(source, target)
+        cloner = DataCloner(source, target)  # pyright: ignore[reportArgumentType]
         for table in (
             "migrations_history",
             "migration_logs",
@@ -125,7 +125,7 @@ class TestClonerCorrectness:
         source.execute("INSERT INTO items (id, label) VALUES (1, 'a')")
         source.execute("INSERT INTO items (id, label) VALUES (2, 'b')")
         source.execute("INSERT INTO items (id, label) VALUES (3, 'c')")
-        cloner = DataCloner(source, target)
+        cloner = DataCloner(source, target)  # pyright: ignore[reportArgumentType]
         result = cloner.clone_table("items")
         assert result["rows"] == 3
         verification = cloner.verify_counts()
@@ -144,7 +144,7 @@ class TestClonerCorrectness:
         source.execute("INSERT INTO items (id, label) VALUES (2, 'b')")
         target.execute("INSERT INTO items (id, label) VALUES (1, 'a')")
         target.execute("INSERT INTO items (id, label) VALUES (2, 'CHANGED')")
-        cloner = DataCloner(source, target)
+        cloner = DataCloner(source, target)  # pyright: ignore[reportArgumentType]
         cloner._stats["items"] = {"rows": 2, "status": "completed"}
         verification = cloner.verify_counts()
         assert verification["valid"] is False

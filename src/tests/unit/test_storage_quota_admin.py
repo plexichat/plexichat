@@ -72,8 +72,8 @@ def _request():
 
 def _manager(db):
     manager = StorageQuotaManager(db, config_override={"default_quota_mb": 1})
-    manager._user_tier = lambda _user_id: "standard"
-    manager._tier_limit_bytes = lambda _tier: None
+    manager._user_tier = lambda _user_id: "standard"  # pyright: ignore[reportAttributeAccessIssue]
+    manager._tier_limit_bytes = lambda _tier: None  # pyright: ignore[reportAttributeAccessIssue]
     return manager
 
 

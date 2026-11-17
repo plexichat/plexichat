@@ -69,7 +69,7 @@ def test_multiple_policy_types_share_the_rule():
     for annotation in (UIText, UIText200, UIText500):
 
         class Carrier(BaseModel):
-            value: annotation = Field(..., min_length=1)
+            value: annotation = Field(..., min_length=1)  # pyright: ignore[reportInvalidTypeForm]
 
         with pytest.raises(ValidationError):
             Carrier(value="ok\u2069bad")
@@ -79,4 +79,4 @@ def test_request_model_field_inherits_the_rule():
     # A real request model, not just a synthetic carrier: the policy is applied
     # at the HTTP boundary because the annotation is on the field.
     with pytest.raises(ValidationError):
-        ChannelCreateRequest(name="general\u202eexe")
+        ChannelCreateRequest(name="general\u202eexe")  # pyright: ignore[reportCallIssue]

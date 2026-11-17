@@ -38,7 +38,7 @@ class TestRateLimitSelfTest:
             results=[],
         )
 
-        RateLimitTester(ctx).test_rate_limits()
+        RateLimitTester(ctx).test_rate_limits()  # pyright: ignore[reportArgumentType]
         return session, ctx.results[0]
 
     def test_decrementing_accounting_headers_pass(self):
@@ -163,7 +163,7 @@ class TestAdminStorageOverrideBody:
         from src.core.selftest.services.data import DataGenerator
 
         ctx = SimpleNamespace(_test_password="selftest-pw", config={})
-        body = DataGenerator(ctx).get_minimal_body(self._BODY, self._PATH, "PUT")
+        body = DataGenerator(ctx).get_minimal_body(self._BODY, self._PATH, "PUT")  # pyright: ignore[reportArgumentType]
         assert body["limit_bytes"] == 10 * 1024 * 1024 * 1024
 
 

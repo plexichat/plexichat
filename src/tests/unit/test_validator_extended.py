@@ -206,7 +206,7 @@ def test_multiple_patterns_first_match_reported():
     v = Validator(blocklist_patterns=[r"alpha", r"beta"])
     result = v.validate("beta")
     assert not result.is_valid
-    assert "beta" in result.error_message
+    assert "beta" in result.error_message  # pyright: ignore[reportOperatorIssue]
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +220,7 @@ def test_module_validate_defaults():
 
 
 def test_module_add_pattern_affects_module_validator():
-    from utils.validator import _get_validator
+    from utils.validator import _get_validator  # pyright: ignore[reportAttributeAccessIssue]
 
     v = _get_validator()
     before = v.validate("zzz-unique-token-zzz").is_valid

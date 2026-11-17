@@ -57,7 +57,7 @@ class TestReportExpectedDenials:
             ]
         )
         with caplog.at_level(logging.INFO, logger="AppLogger"):
-            assert ReportGenerator(ctx).report_summary() is True
+            assert ReportGenerator(ctx).report_summary() is True  # pyright: ignore[reportArgumentType]
 
         messages = [record.getMessage() for record in caplog.records]
 
@@ -78,7 +78,7 @@ class TestReportExpectedDenials:
 
         ctx = _ctx([_row("GET", "/a", status_code=200)])
         with caplog.at_level(logging.INFO, logger="AppLogger"):
-            assert ReportGenerator(ctx).report_summary() is True
+            assert ReportGenerator(ctx).report_summary() is True  # pyright: ignore[reportArgumentType]
 
         messages = [record.getMessage() for record in caplog.records]
         assert not any("Expected denials:" in m for m in messages), messages

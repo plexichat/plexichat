@@ -143,7 +143,8 @@ class TestMonitorWaitIntegration:
         thread = threading.Thread(target=waiter)
         try:
             thread.start()
-            assert _wait_for(lambda: len(db._pool._wait_queue) == 1)
+            assert db._pool is not None
+            assert _wait_for(lambda: len(db._pool._wait_queue) == 1)  # pyright: ignore[reportAttributeAccessIssue]
             db._release_conn()
             assert done.wait(3)
             waits = list(db.monitor._connection_pool_waits)

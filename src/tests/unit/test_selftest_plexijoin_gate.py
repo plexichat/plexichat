@@ -44,7 +44,7 @@ AUTHZ_BODY = '{"detail":"Access denied"}'
 
 @pytest.mark.unit
 def test_is_plexijoin_gated_matches_only_gated_routes():
-    discovery = RouteDiscovery(None)
+    discovery = RouteDiscovery(None)  # pyright: ignore[reportArgumentType]
     assert discovery.is_plexijoin_gated(GATED)
     assert discovery.is_plexijoin_gated("/api/v1/federation/artifact-op")
     assert not discovery.is_plexijoin_gated("/api/v1/admin/license/status")
@@ -56,7 +56,7 @@ def test_unlicensed_licence_denial_is_expected(licensing_state):
     """A 403 whose body names the licence gate is an expected denial."""
     licensing.setup()
     licensing._free_tier_mode = True
-    discovery = RouteDiscovery(None)
+    discovery = RouteDiscovery(None)  # pyright: ignore[reportArgumentType]
     assert discovery.expected_plexijoin_denial(GATED, 403, LICENSE_BODY) is True
 
 
@@ -65,7 +65,7 @@ def test_unlicensed_authorization_403_is_not_masked(licensing_state):
     """The gap being closed: an authorization 403 must NOT be expected."""
     licensing.setup()
     licensing._free_tier_mode = True
-    discovery = RouteDiscovery(None)
+    discovery = RouteDiscovery(None)  # pyright: ignore[reportArgumentType]
     assert discovery.expected_plexijoin_denial(GATED, 403, AUTHZ_BODY) is False
 
 
@@ -73,7 +73,7 @@ def test_unlicensed_authorization_403_is_not_masked(licensing_state):
 def test_success_and_non_gated_are_not_denials(licensing_state):
     licensing.setup()
     licensing._free_tier_mode = True
-    discovery = RouteDiscovery(None)
+    discovery = RouteDiscovery(None)  # pyright: ignore[reportArgumentType]
     # A 2xx is never a denial.
     assert discovery.expected_plexijoin_denial(GATED, 200, LICENSE_BODY) is False
     # A licence body on a NON-gated path is not a PlexiJoin denial.
@@ -90,5 +90,5 @@ def test_licensed_install_expects_no_denial(licensing_state):
     """With the feature licensed, the expected-status set is empty."""
     licensing.setup()
     assert licensing.apply_test_license()["success"] is True
-    discovery = RouteDiscovery(None)
+    discovery = RouteDiscovery(None)  # pyright: ignore[reportArgumentType]
     assert discovery.expected_plexijoin_denial(GATED, 403, LICENSE_BODY) is False

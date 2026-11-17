@@ -74,6 +74,7 @@ def _load_isolated(live_module: types.ModuleType) -> types.ModuleType:
     """
     package = live_module.__name__.rpartition(".")[0]
     probe_name = f"{package}._isolated_import_probe"
+    assert live_module.__file__ is not None
     path = Path(live_module.__file__).resolve()
     sys.modules.pop(probe_name, None)
     spec = importlib.util.spec_from_file_location(probe_name, path)

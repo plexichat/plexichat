@@ -63,8 +63,8 @@ def _manager(quota_db, *, default_mb=1, tier_bytes=None, tier="standard"):
     manager = StorageQuotaManager(
         quota_db, config_override={"default_quota_mb": default_mb}
     )
-    manager._user_tier = lambda _user_id: tier
-    manager._tier_limit_bytes = lambda _tier: tier_bytes
+    manager._user_tier = lambda _user_id: tier  # pyright: ignore[reportAttributeAccessIssue]
+    manager._tier_limit_bytes = lambda _tier: tier_bytes  # pyright: ignore[reportAttributeAccessIssue]
     return manager
 
 

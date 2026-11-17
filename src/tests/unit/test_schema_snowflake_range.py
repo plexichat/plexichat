@@ -49,20 +49,20 @@ def test_snowflake_boundary_values_are_accepted():
 def test_request_model_id_fields_are_range_validated():
     # Previously bare ``str`` fields: now snowflakes with the same guard.
     with pytest.raises(ValidationError):
-        MessageReportRequest(
+        MessageReportRequest(  # pyright: ignore[reportCallIssue]
             message_id=str(OVERSIZED),
             channel_id="123",
             reason="spam",
         )
     with pytest.raises(ValidationError):
-        UserReportRequest(user_id=str(OVERSIZED), reason="spam")
+        UserReportRequest(user_id=str(OVERSIZED), reason="spam")  # pyright: ignore[reportCallIssue]
     with pytest.raises(ValidationError):
-        SoundPlayRequest(channel_id=str(OVERSIZED))
+        SoundPlayRequest(channel_id=str(OVERSIZED))  # pyright: ignore[reportCallIssue]
 
 
 def test_id_lists_are_range_validated():
     with pytest.raises(ValidationError):
-        UserReportRequest(
+        UserReportRequest(  # pyright: ignore[reportCallIssue]
             user_id="123",
             reason="spam",
             evidence_message_ids=[str(OVERSIZED)],

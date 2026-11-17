@@ -7,6 +7,10 @@ Run with: pytest src/tests/unit/test_property_based_quick.py -v
 """
 
 import pytest
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hypothesis import given, strategies as st, settings, example
 
 try:
     from hypothesis import given, strategies as st, settings, example

@@ -53,7 +53,7 @@ def test_ip_matches_trusted(ip, proxies, expected):
 
 def test_ip_matches_trusted_type_error_proxies():
     # Non-list containers should not raise (defensive).
-    assert _ip_matches_trusted("10.0.0.5", ("10.0.0.0/8",)) is True
+    assert _ip_matches_trusted("10.0.0.5", ("10.0.0.0/8",)) is True  # pyright: ignore[reportArgumentType]
 
 
 # ---------------------------------------------------------------------------

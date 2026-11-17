@@ -19,30 +19,30 @@ from src.api.schemas.sum import (
 
 def test_transcript_window_rejects_inverted_dates():
     with pytest.raises(ValidationError, match="to_date"):
-        TranscriptExportRequest(from_date="2024-06-01", to_date="2024-01-01")
+        TranscriptExportRequest(from_date="2024-06-01", to_date="2024-01-01")  # pyright: ignore[reportCallIssue]
 
 
 def test_transcript_window_rejects_inverted_datetimes():
     with pytest.raises(ValidationError, match="to_date"):
-        TranscriptExportRequest(
+        TranscriptExportRequest(  # pyright: ignore[reportCallIssue]
             from_date="2024-06-01T12:00:00Z",
             to_date="2024-06-01T11:00:00Z",
         )
 
 
 def test_transcript_window_allows_ordered_and_partial_bounds():
-    TranscriptExportRequest(from_date="2024-01-01", to_date="2024-06-01")
-    TranscriptExportRequest(from_date="2024-01-01")
-    TranscriptExportRequest(to_date="2024-06-01")
-    TranscriptExportRequest()
+    TranscriptExportRequest(from_date="2024-01-01", to_date="2024-06-01")  # pyright: ignore[reportCallIssue]
+    TranscriptExportRequest(from_date="2024-01-01")  # pyright: ignore[reportCallIssue]
+    TranscriptExportRequest(to_date="2024-06-01")  # pyright: ignore[reportCallIssue]
+    TranscriptExportRequest()  # pyright: ignore[reportCallIssue]
     # Equal bounds describe a zero-length window and are accepted.
-    TranscriptExportRequest(from_date="2024-01-01", to_date="2024-01-01")
+    TranscriptExportRequest(from_date="2024-01-01", to_date="2024-01-01")  # pyright: ignore[reportCallIssue]
 
 
 def test_sum_sort_rejects_inverted_row_range():
     with pytest.raises(ValidationError, match="end_row"):
-        SumSortRequest(column=0, start_row=10, end_row=3, base_revision=0)
-    SumSortRequest(column=0, start_row=0, end_row=10, base_revision=0)
+        SumSortRequest(column=0, start_row=10, end_row=3, base_revision=0)  # pyright: ignore[reportCallIssue]
+    SumSortRequest(column=0, start_row=0, end_row=10, base_revision=0)  # pyright: ignore[reportCallIssue]
 
 
 @pytest.mark.parametrize(

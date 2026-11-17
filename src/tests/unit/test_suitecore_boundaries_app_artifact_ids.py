@@ -67,12 +67,12 @@ class TestRegistryUsesAllowlist:
         service = SuiteRegistryService()
         assert service.get_app("plexisum") is not None
         for bad in ("../../etc/passwd", "__import__", "", None):
-            assert service.get_app(bad) is None
+            assert service.get_app(bad) is None  # pyright: ignore[reportArgumentType]
 
     def test_get_capability_rejects_unknown(self):
         service = SuiteRegistryService()
         for bad in ("os.system", "not-a-capability", "", None):
-            assert service.get_capability(bad).state == "misconfigured"
+            assert service.get_capability(bad).state == "misconfigured"  # pyright: ignore[reportArgumentType]
         assert all(
             c in SUITE_CAPABILITIES
             for c in (

@@ -113,7 +113,7 @@ class TestPollBoundaries:
             {"_config": {}, "_validate_duration": CreationMixin._validate_duration},
         )()
         with pytest.raises(InvalidPollDurationError):
-            holder._validate_duration(10**9)
+            holder._validate_duration(10**9)  # pyright: ignore[reportAttributeAccessIssue]
 
 
 class TestPlexiJoinBoundaries:

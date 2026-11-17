@@ -80,17 +80,17 @@ class TestAuthorizationCodeInterception:
         )
 
         with pytest.raises(InvalidGrantError, match="verifier"):
-            flow.exchange_code(app.id, secret, code.code, REDIRECT)
+            flow.exchange_code(app.id, secret, code.code, REDIRECT)  # pyright: ignore[reportArgumentType]
 
         # A wrong verifier is equally useless (constant-time comparison path).
         with pytest.raises(InvalidGrantError):
-            flow.exchange_code(app.id, secret, code.code, REDIRECT, "x" * 43)
+            flow.exchange_code(app.id, secret, code.code, REDIRECT, "x" * 43)  # pyright: ignore[reportArgumentType]
 
         # The legitimate client can still redeem it, and only once.
-        token = flow.exchange_code(app.id, secret, code.code, REDIRECT, verifier)
+        token = flow.exchange_code(app.id, secret, code.code, REDIRECT, verifier)  # pyright: ignore[reportArgumentType]
         assert token.access_token
         with pytest.raises(InvalidGrantError, match="already used"):
-            flow.exchange_code(app.id, secret, code.code, REDIRECT, verifier)
+            flow.exchange_code(app.id, secret, code.code, REDIRECT, verifier)  # pyright: ignore[reportArgumentType]
 
     def test_pkce_verifier_is_bounded_and_compared_in_constant_time(self):
         challenge = _s256("a" * 43)
@@ -141,10 +141,10 @@ class TestRedirectBypass:
         code = flow.create_authorization_code(app.id, test_user.id, REDIRECT, ["identify"])
         with pytest.raises(InvalidGrantError, match="Redirect URI mismatch"):
             flow.exchange_code(
-                app.id, secret, code.code, "https://attacker.example.com/cb"
+                app.id, secret, code.code, "https://attacker.example.com/cb"  # pyright: ignore[reportArgumentType]
             )
         # The code was not consumed by the failed attempt.
-        assert flow.exchange_code(app.id, secret, code.code, REDIRECT).access_token
+        assert flow.exchange_code(app.id, secret, code.code, REDIRECT).access_token  # pyright: ignore[reportArgumentType]
 
     def test_registration_rejects_wildcard_redirects(self, app_manager, test_user):
         with pytest.raises(ValueError):

@@ -40,7 +40,7 @@ class TestChannelListSortOrderParams:
             test_webhook_id=None,
             test_message_id=None,
         )
-        return DataGenerator(ctx)
+        return DataGenerator(ctx)  # pyright: ignore[reportArgumentType]
 
     @pytest.mark.parametrize("path", [RATCHET_PATH, WEBHOOK_PATH])
     def test_generated_sort_value_is_allowlisted_for_both_routes(self, path):

@@ -28,7 +28,7 @@ class _FakeConn:
     """Minimal stand-in for a pg8000 connection object."""
 
 
-def _engine(sslmode: str) -> PostgresEngine:
+def _engine(sslmode: str) -> PostgresEngine:  # pyright: ignore[reportInvalidTypeForm]
     return PostgresEngine({"postgres": {"sslmode": sslmode}, "connection_pool": {}})
 
 

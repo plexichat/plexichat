@@ -102,6 +102,7 @@ def test_get_poll_uses_one_voter_query():
     voter_queries = [sql for sql, _ in db.fetch_one_calls if "poll_voters" in sql]
     assert len(voter_queries) == 1
     assert "SUM(CASE WHEN user_id = ?" in voter_queries[0]
+    assert poll is not None
     assert poll.total_votes == 2
 
 

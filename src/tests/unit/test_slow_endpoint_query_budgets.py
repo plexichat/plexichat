@@ -163,7 +163,7 @@ async def _run_search(messages):
         patch.object(api, "get_servers", return_value=_Servers()),
         patch.object(api, "get_db", return_value=None),
     ):
-        result = await search_messages.__wrapped__(
+        result = await search_messages.__wrapped__(  # pyright: ignore[reportFunctionMemberAccess]
             "12345", content="content", limit=100, current_user=_user()
         )
     return result, auth, media, embeds, messaging
@@ -194,7 +194,7 @@ async def test_search_preserves_channel_validation_and_not_found():
         patch.object(api, "get_servers", return_value=None),
     ):
         with pytest.raises(HTTPException) as exc:
-            await search_messages.__wrapped__(
+            await search_messages.__wrapped__(  # pyright: ignore[reportFunctionMemberAccess]
                 "not-a-snowflake", content="x", limit=10, current_user=_user()
             )
     assert exc.value.status_code == 400
@@ -210,7 +210,7 @@ async def _run_pins(messages):
         patch.object(api, "get_servers", return_value=_Servers()),
         patch.object(api, "get_db", return_value=None),
     ):
-        result = await get_pinned_messages.__wrapped__(
+        result = await get_pinned_messages.__wrapped__(  # pyright: ignore[reportFunctionMemberAccess]
             "12345", limit=100, current_user=_user()
         )
     return result, auth, media, embeds, messaging
@@ -238,7 +238,7 @@ async def test_pins_keep_empty_channel_empty_and_validate_id():
         patch.object(api, "get_servers", return_value=None),
     ):
         with pytest.raises(HTTPException) as exc:
-            await get_pinned_messages.__wrapped__("-1", limit=10, current_user=_user())
+            await get_pinned_messages.__wrapped__("-1", limit=10, current_user=_user())  # pyright: ignore[reportFunctionMemberAccess]
     assert exc.value.status_code == 400
 
 
@@ -292,7 +292,7 @@ async def test_invite_name_cache_is_keyed_by_viewer_and_never_stores_denials():
     servers = _CountingInviteServers()
 
     class _NoAccess(_CountingInviteServers):
-        def get_server(self, server_id, user_id):
+        def get_server(self, server_id, user_id):  # pyright: ignore[reportIncompatibleMethodOverride]
             self.get_server_calls += 1
             return None
 

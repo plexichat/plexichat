@@ -64,7 +64,7 @@ def test_host_allowlist():
     OnlyExample = allowlisted_http_url("example.com", "CDN.Example.com")
 
     class Carrier(BaseModel):
-        url: OnlyExample = Field(..., min_length=1)
+        url: OnlyExample = Field(..., min_length=1)  # pyright: ignore[reportInvalidTypeForm]
 
     assert Carrier(url="https://example.com/x").url == "https://example.com/x"
     assert Carrier(url="https://cdn.example.com/y").url == "https://cdn.example.com/y"
@@ -76,7 +76,7 @@ def test_host_allowlist():
 
 def test_request_model_url_field_is_hardened():
     with pytest.raises(ValidationError):
-        WebhookCreateRequest(
+        WebhookCreateRequest(  # pyright: ignore[reportCallIssue]
             channel_id="123456789012345678",
             name="hooks",
             avatar_url="https://user:pass@evil.test/a.png",

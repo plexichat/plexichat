@@ -39,7 +39,7 @@ def _call(db, limit=10, user_id=42):
     try:
         return asyncio.run(
             registry.list_suite_activity(
-                limit=limit, current_user=SimpleNamespace(user_id=user_id)
+                limit=limit, current_user=SimpleNamespace(user_id=user_id)  # pyright: ignore[reportArgumentType]
             )
         )
     finally:

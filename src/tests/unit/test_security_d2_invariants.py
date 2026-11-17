@@ -166,7 +166,7 @@ class TestBodyCaps:
                 return b"x" * 10
 
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(read_upload_capped(Upload(), 100))
+            asyncio.run(read_upload_capped(Upload(), 100))  # pyright: ignore[reportArgumentType]
         assert exc.value.status_code == 413
 
     def test_oversize_upload_is_rejected_from_actual_bytes(self):
@@ -177,7 +177,7 @@ class TestBodyCaps:
                 return b"x" * 101
 
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(read_upload_capped(Upload(), 100))
+            asyncio.run(read_upload_capped(Upload(), 100))  # pyright: ignore[reportArgumentType]
         assert exc.value.status_code == 413
 
     def test_oversized_channel_update_is_not_accepted_as_a_valid_body(

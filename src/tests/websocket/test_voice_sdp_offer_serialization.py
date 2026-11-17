@@ -34,7 +34,7 @@ async def test_sdp_offer_answer_serializes_from_user_id_as_string(monkeypatch) -
     # Use a snowflake past 2^53 where a JSON number would lose precision.
     user_id = 9007199254740993
     op, data, close = await VoiceHandler().handle_voice_sdp_offer(
-        _connection(user_id), {"channel_id": "123", "sdp": "v=0"}
+        _connection(user_id), {"channel_id": "123", "sdp": "v=0"}  # pyright: ignore[reportArgumentType]
     )
 
     assert close is None

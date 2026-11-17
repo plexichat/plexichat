@@ -36,7 +36,7 @@ from utils.validator import Validator
 def test_xss_patterns_rejected(text):
     result = Validator().validate(text)
     assert result.is_valid is False
-    assert "blocked pattern" in result.error_message
+    assert "blocked pattern" in result.error_message  # pyright: ignore[reportOperatorIssue]
 
 
 @pytest.mark.parametrize(
@@ -84,7 +84,7 @@ def test_harmless_text_accepted(text):
 def test_sql_injection_patterns_rejected(text):
     result = Validator().validate(text)
     assert result.is_valid is False
-    assert "blocked pattern" in result.error_message
+    assert "blocked pattern" in result.error_message  # pyright: ignore[reportOperatorIssue]
 
 
 @pytest.mark.parametrize(

@@ -119,7 +119,7 @@ def test_version_immutable():
 
     v = Version(release=(1, 2, 0))
     with pytest.raises(dataclasses.FrozenInstanceError):
-        v.release = (9, 0, 0)  # frozen dataclass
+        v.release = (9, 0, 0)  # frozen dataclass  # pyright: ignore[reportAttributeAccessIssue]
 
 
 # ---------------------------------------------------------------------------

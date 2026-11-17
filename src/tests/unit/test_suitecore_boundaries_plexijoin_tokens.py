@@ -93,5 +93,5 @@ class TestReplayNonceManager:
 
         manager = PlexiJoinManager(_DB())
         assert manager.consume_replay_nonce(1, "bad nonce!", _NOW) is False
-        assert manager.consume_replay_nonce(1, "ok_nonce", "not-a-time") is False
+        assert manager.consume_replay_nonce(1, "ok_nonce", "not-a-time") is False  # pyright: ignore[reportArgumentType]
         assert manager.consume_replay_nonce(1, "ok_nonce", _NOW - 10_000) is False

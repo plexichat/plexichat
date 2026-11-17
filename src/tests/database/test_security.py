@@ -5,6 +5,12 @@ Tests cover query parameterization, transaction isolation, SQL injection
 prevention, permission checks, and connection pooling under load.
 """
 
+# ``Database`` methods are defined against a structural self-protocol whose
+# ``_slow_query_threshold_ms`` is typed ``float`` while the concrete manager
+# stores an ``int``. Pyright therefore rejects every bound method call on a
+# ``Database`` instance even though the runtime behaviour is correct.
+# pyright: reportAttributeAccessIssue=false
+
 import pytest
 import os
 import sqlite3

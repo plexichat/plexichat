@@ -73,8 +73,8 @@ async def test_create_webhook_does_not_scan_cache(monkeypatch):
     )
 
     result = await create_webhook(
-        WebhookCreateRequest(channel_id="6", name="hook"),
-        current_user=SimpleNamespace(user_id=9),
+        WebhookCreateRequest(channel_id="6", name="hook"),  # pyright: ignore[reportCallIssue]
+        current_user=SimpleNamespace(user_id=9),  # pyright: ignore[reportArgumentType]
     )
 
     assert result.id == "5"

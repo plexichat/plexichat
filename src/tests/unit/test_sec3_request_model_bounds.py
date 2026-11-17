@@ -158,7 +158,7 @@ def test_a_pydantic_rejection_is_a_4xx_at_the_http_boundary():
     app = FastAPI()
 
     @app.post("/create")
-    def create(payload: model):  # noqa: ANN001 - annotation is the model under test
+    def create(payload: model):  # noqa: ANN001 - annotation is the model under test  # pyright: ignore[reportInvalidTypeForm]
         return {"ok": True}
 
     client = TestClient(app)

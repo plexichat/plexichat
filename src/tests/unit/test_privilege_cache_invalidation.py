@@ -88,7 +88,7 @@ class TestRoleMutationInvalidation:
             patch("src.core.admin.permissions.log_admin_action"),
         ):
             asyncio.run(
-                role_routes.update_role(_request(), 7, RoleUpdate(description="x"))
+                role_routes.update_role(_request(), 7, RoleUpdate(description="x"))  # pyright: ignore[reportArgumentType]
             )
         invalidate.assert_called_once_with()
 
@@ -96,7 +96,7 @@ class TestRoleMutationInvalidation:
         from src.api.routes.admin import roles as role_routes
         from src.api.routes.admin.roles import RoleAssignment
 
-        body = RoleAssignment(admin_id="2", role_id="7")
+        body = RoleAssignment(admin_id="2", role_id="7")  # pyright: ignore[reportArgumentType]
         with (
             patch.object(role_routes, "check_host_restriction"),
             patch.object(role_routes, "_require_role_manager", return_value=1),
@@ -123,7 +123,7 @@ class TestRoleMutationInvalidation:
             patch.object(role_routes, "invalidate_privilege_caches") as invalidate,
             patch("src.core.admin.permissions.log_admin_action"),
         ):
-            asyncio.run(role_routes.revoke_role(_request(), 2, 7))
+            asyncio.run(role_routes.revoke_role(_request(), 2, 7))  # pyright: ignore[reportArgumentType]
         invalidate.assert_called_once_with()
 
     def test_delete_role_invalidates_cache(self):
@@ -137,7 +137,7 @@ class TestRoleMutationInvalidation:
             patch.object(role_routes, "invalidate_privilege_caches") as invalidate,
             patch("src.core.admin.permissions.log_admin_action"),
         ):
-            asyncio.run(role_routes.delete_role(_request(), 7))
+            asyncio.run(role_routes.delete_role(_request(), 7))  # pyright: ignore[reportArgumentType]
         invalidate.assert_called_once_with()
 
 
@@ -168,5 +168,5 @@ class TestAccountStatusInvalidation:
             patch.object(users_module, "invalidate_privilege_caches") as invalidate,
             patch("src.core.admin.permissions.log_admin_action"),
         ):
-            asyncio.run(stub.toggle_admin_user_status(_request(), "2"))
+            asyncio.run(stub.toggle_admin_user_status(_request(), "2"))  # pyright: ignore[reportAttributeAccessIssue]
         invalidate.assert_called_once_with()

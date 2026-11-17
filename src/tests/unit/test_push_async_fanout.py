@@ -43,7 +43,7 @@ class FakeManager(DeliveryMixin):
         return 1234
 
     @staticmethod
-    def _token_blind_index(token):
+    def _token_blind_index(token):  # pyright: ignore[reportIncompatibleMethodOverride]
         return f"idx:{token}"
 
 

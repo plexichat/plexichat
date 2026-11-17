@@ -182,7 +182,7 @@ class TestStaticSinkAudit:
         # call without pinning/hardening would re-open DNS rebinding.
         for relative in DIRECT_VALIDATOR_API_SINKS:
             tree = _parse(ROOT / relative)
-            called = _called_names(tree)
+            called = _called_names(tree)  # pyright: ignore[reportArgumentType]
             for companion in ("require_https_url", "pinned_request_target", "is_private_ip"):
                 assert companion in called, f"{relative} lost its {companion} guard"
 
@@ -231,7 +231,7 @@ class TestRuntimeGateInvocation:
     def test_server_schema_delegates_to_resolve_outbound_url(self):
         with patch("src.api.schemas.servers.resolve_outbound_url") as spy:
             spy.side_effect = lambda value, field: value
-            ServerCreateRequest(name="a server", icon_url="https://example.com/i.png")
+            ServerCreateRequest(name="a server", icon_url="https://example.com/i.png")  # pyright: ignore[reportCallIssue]
             spy.assert_called_once_with(
                 "https://example.com/i.png", "Server icon URL"
             )
@@ -239,7 +239,7 @@ class TestRuntimeGateInvocation:
     def test_media_schema_delegates_to_resolve_outbound_url(self):
         with patch("src.api.schemas.media.resolve_outbound_url") as spy:
             spy.side_effect = lambda value, field: value
-            HashReportRequest(
+            HashReportRequest(  # pyright: ignore[reportCallIssue]
                 hash_value="a" * 32,
                 reason="report",
                 attachment_url="https://example.com/a.png",
@@ -254,7 +254,7 @@ class TestRuntimeGateInvocation:
                 "Access to 10.0.0.5 is forbidden"
             )
             with pytest.raises(ValidationError) as rejection:
-                HashReportRequest(
+                HashReportRequest(  # pyright: ignore[reportCallIssue]
                     hash_value="a" * 32,
                     reason="report",
                     attachment_url="http://internal.example/a.png",

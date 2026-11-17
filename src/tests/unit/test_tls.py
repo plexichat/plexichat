@@ -237,7 +237,7 @@ class TestTLSModule:
         names = [x509.DNSName(s) for s in sans]
         for s in sans:
             try:
-                names.append(x509.IPAddress(ipaddress.ip_address(s)))
+                names.append(x509.IPAddress(ipaddress.ip_address(s)))  # pyright: ignore[reportArgumentType]
             except ValueError:
                 pass
         now = datetime.now(timezone.utc)
@@ -362,8 +362,8 @@ class TestTLSModule:
             with open(cert_path, "rb") as f:
                 cert = x509.load_pem_x509_certificate(f.read())
 
-            pub_from_key = key.public_key().public_numbers()
-            pub_from_cert = cert.public_key().public_numbers()
+            pub_from_key = key.public_key().public_numbers()  # pyright: ignore[reportAttributeAccessIssue]
+            pub_from_cert = cert.public_key().public_numbers()  # pyright: ignore[reportAttributeAccessIssue]
             assert pub_from_key == pub_from_cert
 
     def test_version_tolerant_validity_check(self):

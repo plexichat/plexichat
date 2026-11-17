@@ -28,7 +28,7 @@ def _patch_licensing(monkeypatch, calls):
             calls.append(_name)
             return _value
 
-        monkeypatch.setattr(utils.licensing, name, fake)
+        monkeypatch.setattr(utils.licensing, name, fake)  # pyright: ignore[reportAttributeAccessIssue]
     monkeypatch.setattr(pl, "_fingerprint", lambda: "deadbeef")
 
 

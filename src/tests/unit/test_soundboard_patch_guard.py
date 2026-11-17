@@ -102,8 +102,8 @@ async def test_patch_route_does_not_reload_sound_for_guard(monkeypatch):
     result = await update_sound(
         "555",
         "10",
-        SoundUpdateRequest(name="updated"),
-        current_user=SimpleNamespace(user_id=7),
+        SoundUpdateRequest(name="updated"),  # pyright: ignore[reportCallIssue]
+        current_user=SimpleNamespace(user_id=7),  # pyright: ignore[reportArgumentType]
     )
 
     assert result.id == "10"
