@@ -7,10 +7,21 @@ All auth-related errors inherit from AuthError for easy catching.
 from typing import Optional, List
 
 
+# Auth exception messages are surfaced in logs and, for validation errors,
+# echoed to clients (see the registration handler). Several messages embed
+# untrusted input (e.g. "Unknown permission: <key>", "Invalid: <issues>").
+# Cap the stored length so a single oversized input cannot turn into an
+# unbounded log line or error body. 4096 is well above any legitimate
+# validation message.
+MAX_AUTH_ERROR_MESSAGE_LENGTH = 4096
+
+
 class AuthError(Exception):
     """Base exception for all authentication errors."""
 
     def __init__(self, message: str, field: Optional[str] = None):
+        if isinstance(message, str) and len(message) > MAX_AUTH_ERROR_MESSAGE_LENGTH:
+            message = message[:MAX_AUTH_ERROR_MESSAGE_LENGTH]
         super().__init__(message)
         self.field = field
 

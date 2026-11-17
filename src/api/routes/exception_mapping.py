@@ -82,6 +82,31 @@ _INVALID_EXC = (
 # Retry-After hint for clients.
 RATE_LIMIT_RETRY_AFTER_SECONDS = 60
 
+# Upper bound for the Retry-After hint. A throttling window longer than a
+# day is not a useful client backoff and an unbounded value can be used to
+# mislead clients (or bloat downstream tooling that parses the header).
+_MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60
+
+
+def _safe_retry_after_seconds(exc: BaseException) -> int:
+    """Return a bounded, integer ``Retry-After`` value for a rate-limit exc.
+
+    The value is derived from the exception's ``retry_after_seconds``
+    attribute, which is ultimately fed from configuration and is not
+    guaranteed to be an int at runtime (Python does not enforce the
+    annotation). Coercing it here ensures the header is always a plain
+    integer: no CR/LF header-injection payload, no negative or astronomically
+    large value. Anything malformed falls back to the documented constant.
+    """
+    raw = getattr(exc, "retry_after_seconds", RATE_LIMIT_RETRY_AFTER_SECONDS)
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return RATE_LIMIT_RETRY_AFTER_SECONDS
+    if value < 0:
+        return 0
+    return min(value, _MAX_RETRY_AFTER_SECONDS)
+
 
 def is_rate_limited(exc: BaseException) -> bool:
     return isinstance(exc, (wh.RateLimitError, srv.InviteRateLimitedError))
@@ -126,13 +151,11 @@ def raise_mapped(
         # 429 with Retry-After semantics so clients can back off instead
         # of treating the throttle as a server fault (previous behavior
         # surfaced a generic 500).
-        retry_after = getattr(
-            exc, "retry_after_seconds", RATE_LIMIT_RETRY_AFTER_SECONDS
-        )
         raise HTTPException(
             status_code=429,
             detail={"error": {"code": 429, "message": "Rate limit exceeded"}},
-            headers={"Retry-After": str(retry_after)},
+            # Bounded integer -> never an injectable/unbounded header value.
+            headers={"Retry-After": str(_safe_retry_after_seconds(exc))},
         )
     if is_invalid_request(exc):
         raise _http(400, invalid_message)

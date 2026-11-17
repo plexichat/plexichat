@@ -236,10 +236,14 @@ class AuthResult:
     """Result of an authentication attempt."""
 
     status: AuthStatus
-    token: Optional[str] = None
+    # Live session / 2FA challenge tokens are secrets. Keep them out of
+    # repr()/str() so an incidental log line, debugger view, or traceback
+    # that renders the result cannot exfiltrate them (sibling Session/Bot/
+    # EmailToken models already mark their token fields repr=False).
+    token: Optional[str] = field(default=None, repr=False)
     user: Optional[User] = None
     session: Optional[Session] = None
-    challenge_token: Optional[str] = None
+    challenge_token: Optional[str] = field(default=None, repr=False)
     methods: Optional[List[str]] = None
     expires_in: Optional[int] = None
     message: Optional[str] = None
@@ -249,9 +253,12 @@ class AuthResult:
 class TwoFactorSetup:
     """2FA setup information."""
 
-    secret: str
-    qr_uri: str
-    backup_codes: List[str]
+    # The TOTP seed (secret), the otpauth URI that embeds it, and the
+    # one-time backup codes are all credential material. Never render them
+    # in repr()/str(); only the non-sensitive issuer/username remain visible.
+    secret: str = field(repr=False)
+    qr_uri: str = field(repr=False)
+    backup_codes: List[str] = field(repr=False)
     issuer: str
     username: str
 
