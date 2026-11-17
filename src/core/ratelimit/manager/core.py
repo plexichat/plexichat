@@ -34,6 +34,7 @@ from .constants import MAX_ROUTE_KEY_LENGTH
 from .counters import apply_custom_increment
 from .keys import generate_bucket_id, generate_bucket_key
 from .principals import normalise_principal, normalise_resource_id
+from .route_keys import canonicalize_route
 from .results import bucket_from_state, build_result, create_bypass_result
 from .validation import (
     normalise_amount,
@@ -247,6 +248,11 @@ class RateLimitManager:
         user_id, ip_address = normalise_principal(user_id, ip_address)
         resource_id = normalise_resource_id(resource_id)
         webhook_id = normalise_resource_id(webhook_id)
+        # SECURITY: callers do not always pass a canonical route pattern. The
+        # auth middleware forwards a raw URL path and the decorator embeds
+        # concrete path ids. Normalize here too so a varying path cannot mint a
+        # fresh bucket per request and so the strict route config is found.
+        route = canonicalize_route(route)
         if self._check_bypass(user_id, is_admin, is_internal):
             return self._create_bypass_result(route, unix_now)
 
@@ -500,6 +506,11 @@ class RateLimitManager:
         user_id, ip_address = normalise_principal(user_id, ip_address)
         resource_id = normalise_resource_id(resource_id)
         webhook_id = normalise_resource_id(webhook_id)
+        # SECURITY: callers do not always pass a canonical route pattern. The
+        # auth middleware forwards a raw URL path and the decorator embeds
+        # concrete path ids. Normalize here too so a varying path cannot mint a
+        # fresh bucket per request and so the strict route config is found.
+        route = canonicalize_route(route)
         if self._check_bypass(user_id, is_admin, is_internal):
             return self._create_bypass_result(route, unix_now)
 
