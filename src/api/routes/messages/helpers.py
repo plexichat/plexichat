@@ -412,6 +412,13 @@ def _message_to_response(
         embeds_out = []
         metadata = dict(metadata) if isinstance(metadata, dict) else {}
         metadata["embeds_suppressed"] = True
+        # SECURITY: clients render the embed payload out of ``metadata["embeds"]``
+        # (that is the surface the embed pipeline writes to), not just the
+        # top-level ``embeds`` field. Dropping only ``embeds_out`` left the
+        # suppressed link preview/chat card fully intact for every client and
+        # made moderation suppression a no-op. Remove the metadata copy too so
+        # a suppressed message cannot carry its embed content to viewers.
+        metadata.pop("embeds", None)
 
     # Mention parity: clients (notifications.js) read ``mentions`` to
     # decide mention vs plain-message notifications. Parse user-mention
