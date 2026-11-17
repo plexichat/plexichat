@@ -158,7 +158,7 @@ def reject_weak_renegotiation(context: ssl.SSLContext) -> None:
 
 def build_ssl_context(
     certfile: str,
-    keyfile: str,
+    keyfile: Optional[str] = None,
     *,
     min_version: Any = None,
     ciphers: Optional[str] = None,
