@@ -126,10 +126,16 @@ async def search_messages(
         # are_embeds_suppressed() query per hit, and each media attachment
         # without a file_id triggered its own get_file_by_filename() query.
         # Both are now resolved for the whole result set in one query each.
-        await run_in_threadpool(batch_attachment_file_ids, messages, media_mod=media_mod)
+        await run_in_threadpool(
+            batch_attachment_file_ids, messages, media_mod=media_mod
+        )
         suppressed_ids = await run_in_threadpool(
             batch_embed_suppressed_ids,
-            [mid for mid in (getattr(m, "id", None) for m in messages) if mid is not None],
+            [
+                mid
+                for mid in (getattr(m, "id", None) for m in messages)
+                if mid is not None
+            ],
             embeds_mod=api.get_embeds(),
         )
 

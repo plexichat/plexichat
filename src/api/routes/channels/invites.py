@@ -44,7 +44,9 @@ _INVITE_META_MAXSIZE = 256
 class _InviteMetadataCache:
     """Small, bounded, thread-safe TTL cache keyed by (user_id, server_id)."""
 
-    def __init__(self, maxsize: int = _INVITE_META_MAXSIZE, ttl: float = _INVITE_META_TTL_SECONDS):
+    def __init__(
+        self, maxsize: int = _INVITE_META_MAXSIZE, ttl: float = _INVITE_META_TTL_SECONDS
+    ):
         self._maxsize = max(1, int(maxsize))
         self._ttl = max(0.0, float(ttl))
         self._entries: "OrderedDict[Tuple[int, int], Tuple[float, str]]" = OrderedDict()
