@@ -7,8 +7,9 @@ Supports both SQLite and PostgreSQL via the Database abstraction.
 # Database class uses mixins which pyright's protocol checking doesn't fully recognize
 import time
 import json
-from typing import Optional, List, Dict, Any
+from typing import Callable, Optional, List, Dict, Any
 from src.core.database import Database
+from ..exceptions import RateLimitStoreUnavailable
 from .base import RateLimitStorage
 
 
@@ -26,6 +27,12 @@ class DatabaseStorage(RateLimitStorage):
     # beyond this cap are evicted oldest-first on the write path.
     MAX_BUCKET_ROWS = 50000
     DEFAULT_BUCKET_TTL = 86400.0
+    # Optimistic-concurrency retries for ``update_bucket``. A lost CAS race
+    # simply re-reads and re-applies the mutation against the newer state.
+    # Enough rounds for a busy bucket with many concurrent writers; combined
+    # with the backoff below a contended spend converges instead of exhausting
+    # its retries and failing closed.
+    MAX_CAS_ATTEMPTS = 128
     # Class-level default so instances built via ``__new__`` (as some
     # tests do) still have the counter before ``__init__`` runs.
     _write_count = 0
@@ -150,6 +157,114 @@ class DatabaseStorage(RateLimitStorage):
         # F8: TTL is always set (expires_at above) and the row cap is
         # enforced on the write path.
         self._maybe_enforce_cap()
+
+    def update_bucket(
+        self,
+        key: str,
+        mutate_fn: Callable[[Dict[str, Any]], None],
+        ttl: Optional[float] = None,
+    ) -> None:
+        """Atomically apply ``mutate_fn`` using optimistic concurrency (CAS).
+
+        SECURITY: this backend has no real cross-process lock —
+        :meth:`acquire_lock` hands out a constant token that cannot serialise
+        two workers. Inheriting the base get->mutate->set therefore lost
+        updates: two workers could read the same counter (e.g. ``request_count``
+        for a fixed/sliding window, or the hourly/daily quota) and both write
+        it back, spending one unit of quota twice. Serialise on the exact row
+        values we read instead: a concurrent writer changes one of them and
+        makes our conditional UPDATE affect zero rows, forcing a re-read and
+        retry against the newer state. This is the same compare-and-set
+        strategy :meth:`_eval_token_bucket_once` uses for token spends.
+        """
+        for attempt in range(self.MAX_CAS_ATTEMPTS):
+            now = time.time()
+            expires_at = now + (ttl if ttl is not None else self.DEFAULT_BUCKET_TTL)
+
+            # Ensure the row exists first (idempotent); two racers then both
+            # CAS against the same row and only one wins each round.
+            self._db.insert_or_ignore(
+                "ratelimit_buckets",
+                ["key", "tokens", "last_update", "expires_at"],
+                (key, 0.0, now, expires_at),
+            )
+            row = self._db.fetch_one(
+                "SELECT tokens, last_update, data FROM ratelimit_buckets WHERE key = ?",
+                (key,),
+            )
+            if not row:
+                # Vanished between insert and select (cleanup race): retry.
+                continue
+
+            old_tokens = row["tokens"]
+            old_last_update = row["last_update"]
+            old_data = row["data"]
+            if old_tokens is None or old_last_update is None:
+                # Normalize legacy NULL clocks under an exact-key guard, then
+                # retry so the CAS compares concrete values (portable COALESCE).
+                self._db.execute(
+                    """UPDATE ratelimit_buckets
+                       SET tokens = COALESCE(tokens, 0), last_update = COALESCE(last_update, ?)
+                       WHERE key = ?""",
+                    (now, key),
+                )
+                continue
+
+            try:
+                data = (
+                    json.loads(old_data)
+                    if old_data is not None and str(old_data).strip()
+                    else {}
+                )
+            except (json.JSONDecodeError, TypeError):
+                data = {}
+            state: Dict[str, Any] = dict(data) if isinstance(data, dict) else {}
+            state["tokens"] = old_tokens
+            state["last_update"] = old_last_update
+
+            mutate_fn(state)
+
+            tokens = state.pop("tokens", 0.0)
+            last_update = state.pop("last_update", now)
+            bucket_type = state.get("bucket_type", "route")
+            new_data = json.dumps(state)
+
+            where = "key = ? AND tokens = ? AND last_update = ?"
+            where_params: List[Any] = [key, old_tokens, old_last_update]
+            if old_data is None:
+                where += " AND data IS NULL"
+            else:
+                where += " AND data = ?"
+                where_params.append(old_data)
+
+            set_params: List[Any] = [
+                float(tokens),
+                float(last_update),
+                float(expires_at),
+                bucket_type,
+                new_data,
+            ]
+            cursor = self._db.execute(
+                """UPDATE ratelimit_buckets
+                   SET tokens = ?, last_update = ?, expires_at = ?, bucket_type = ?, data = ?
+                   WHERE """
+                + where,
+                tuple(set_params + where_params),
+            )
+            if cursor.rowcount == 0:
+                # Another worker changed this bucket after our read: re-read
+                # and re-apply rather than clobber its deduction. A short
+                # backoff spreads tightly-contending writers so they do not
+                # keep colliding on the same optimistic round.
+                time.sleep(min(0.005, 0.0005 * (attempt + 1)))
+                continue
+
+            self._maybe_enforce_cap()
+            return
+
+        raise RateLimitStoreUnavailable(
+            f"could not atomically update rate-limit bucket {key!r}"
+        )
 
     def delete_bucket(self, key: str) -> bool:
         """Delete a bucket."""

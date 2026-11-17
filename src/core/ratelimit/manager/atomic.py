@@ -12,7 +12,7 @@ explicit bypass decision, which never touches storage and is handled by the
 manager before reaching this module.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from ..models import BucketType, RateLimitAlgorithm, RateLimitConfig, RateLimitResult
 from ..storage import RateLimitStorage
@@ -53,17 +53,26 @@ def check_atomic_sync(
             return create_store_unavailable_result(config, unix_now, key)
 
         if allowed and (config.hourly_limit or config.daily_limit):
-            secondary_outcome: Dict[str, Optional[float]] = {}
+            # SECURITY: a backend that silently skips the mutation (unreachable
+            # store, unacquirable lock, swallowed error) must not leave the
+            # secondary limits unchecked. Track whether the callback actually
+            # ran; a missing outcome means "cannot verify quota" == deny. This
+            # mirrors the legacy path's ``"result" not in legacy_outcome`` guard.
+            secondary_outcome: Dict[str, Any] = {"applied": False}
 
             def apply_secondary(state: Dict[str, Any]) -> None:
                 secondary_outcome["denied"] = apply_secondary_limits(
                     state, config, cost, unix_now
                 )
+                secondary_outcome["applied"] = True
 
             try:
                 storage.update_bucket(key, apply_secondary, ttl=86400)
             except Exception as exc:
                 _log_store_failure(exc)
+                return create_store_unavailable_result(config, unix_now, key)
+
+            if not secondary_outcome.get("applied"):
                 return create_store_unavailable_result(config, unix_now, key)
 
             denied_reset = secondary_outcome.get("denied")
@@ -134,17 +143,23 @@ async def check_atomic_async(
             return create_store_unavailable_result(config, unix_now, key)
 
         if allowed and (config.hourly_limit or config.daily_limit):
-            secondary_outcome: Dict[str, Optional[float]] = {}
+            # See check_atomic_sync: a silent backend skip must fail closed
+            # instead of leaving the hourly/daily quota unverified.
+            secondary_outcome: Dict[str, Any] = {"applied": False}
 
             def apply_secondary(state: Dict[str, Any]) -> None:
                 secondary_outcome["denied"] = apply_secondary_limits(
                     state, config, cost, unix_now
                 )
+                secondary_outcome["applied"] = True
 
             try:
                 await storage.aupdate_bucket(key, apply_secondary, ttl=86400)
             except Exception as exc:
                 _log_store_failure(exc)
+                return create_store_unavailable_result(config, unix_now, key)
+
+            if not secondary_outcome.get("applied"):
                 return create_store_unavailable_result(config, unix_now, key)
 
             denied_reset = secondary_outcome.get("denied")
