@@ -1,4 +1,4 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear client-test client-lint fmt clean version test-quiet check
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear client-test client-lint fmt clean version test-quiet audit check
 
 COMPOSE ?= docker-compose.yml
 REPORTS ?= test-results-*.xml
@@ -36,6 +36,7 @@ help:
 	@echo "  version              Print the server version"
 	@echo "  test-quiet           Run pytest quietly"
 	@echo "  clean                Remove caches and test artifacts"
+	@echo "  audit                High-severity bandit scan over the API"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -74,6 +75,9 @@ client-test:
 
 client-lint:
 	@if [ -d ../plexichat-client ]; then cd ../plexichat-client && npm run lint; else echo "plexichat-client not present"; fi
+
+audit:
+	$(PYTHON) -m bandit -r src/api -q -lll
 
 version:
 	$(PYTHON) main.py version
