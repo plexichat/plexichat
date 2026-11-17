@@ -88,6 +88,51 @@ class TestRateLimitSelfTest:
         assert result["status_code"] == 429
         assert result["status_codes"] == [429]
 
+    def test_bypassed_self_test_traffic_is_skipped_not_failed(self):
+        """The suite's own traffic is exempt; a bypass must not count as a failure.
+
+        Self-test requests are treated as internal and bypass rate limiting by
+        design. The limiter reports ``X-RateLimit-Scope: bypass`` with a fixed
+        ``999999`` remaining sentinel that cannot decrement. That is the bypass
+        working, so the check is recorded as skipped rather than failed.
+        """
+        FakeResponse = self._FakeResponse
+        _, result = self._run(
+            [
+                FakeResponse(
+                    200,
+                    {
+                        "X-RateLimit-Scope": "bypass",
+                        "X-RateLimit-Remaining": "999999",
+                    },
+                ),
+                FakeResponse(
+                    200,
+                    {
+                        "X-RateLimit-Scope": "bypass",
+                        "X-RateLimit-Remaining": "999999",
+                    },
+                ),
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["skipped"] is True
+        assert "bypass" in result["skip_reason"]
+
+    def test_constant_unlimited_sentinel_alone_is_skipped(self):
+        """A fixed unlimited counter also signals the bypass (no scope header)."""
+        FakeResponse = self._FakeResponse
+        _, result = self._run(
+            [
+                FakeResponse(200, {"X-RateLimit-Remaining": "999999"}),
+                FakeResponse(200, {"X-RateLimit-Remaining": "999999"}),
+            ]
+        )
+
+        assert result["skipped"] is True
+        assert result["success"] is True
+
     class _FakeResponse:
         """Minimal requests.Response stand-in (status_code + headers)."""
 
