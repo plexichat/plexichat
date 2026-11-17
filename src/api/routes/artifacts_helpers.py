@@ -254,6 +254,7 @@ def _validate_artifact_scope(
     conversation_id: Optional[int],
     channel_id: Optional[int],
     server_id: Optional[int],
+    cache: Optional[_AuthCache] = None,
 ) -> tuple[Optional[int], Optional[int], Optional[int]]:
     """Validate and normalize the artifact's conversation/server/channel scope."""
     db = api.get_db()
@@ -292,6 +293,15 @@ def _validate_artifact_scope(
                 metadata = parsed
         expected_server = metadata.get("server_id")
         expected_channel = metadata.get("channel_id")
+        # _authorize_scope will ask for this same value shortly; hand it the
+        # row we already read instead of issuing a second DB query.
+        if cache is not None:
+            try:
+                cache.conversation_servers[conversation_id] = (
+                    int(expected_server) if expected_server is not None else None
+                )
+            except (TypeError, ValueError):
+                pass
         if expected_server is None and (
             server_id is not None or channel_id is not None
         ):

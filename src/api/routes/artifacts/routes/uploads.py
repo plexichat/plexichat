@@ -220,7 +220,7 @@ async def _convert_upload_impl(
             int(source_channel_id) if source_channel_id is not None else channel_id
         )
         conversation_id, channel_id, server_id = _validate_artifact_scope(
-            conversation_id, channel_id, server_id
+            conversation_id, channel_id, server_id, auth_cache
         )
         # Re-run authorization against the actual source scope after deriving
         # it from the database, rather than authorizing an omitted target scope.

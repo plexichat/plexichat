@@ -63,8 +63,9 @@ async def create_artifact(
         channel_id = int(body.channel_id) if body.channel_id is not None else None
         server_id = int(body.server_id) if body.server_id is not None else None
 
+        auth_cache = _AuthCache()
         conversation_id, channel_id, server_id = _validate_artifact_scope(
-            conversation_id, channel_id, server_id
+            conversation_id, channel_id, server_id, auth_cache
         )
         _authorize_scope(
             current_user.user_id,
@@ -72,6 +73,7 @@ async def create_artifact(
             server_id,
             "artifact.create",
             author_id=current_user.user_id,
+            cache=auth_cache,
         )
 
         manager = _get_manager()
@@ -105,7 +107,7 @@ async def create_artifact(
         }
         _emit_artifact_message(ArtifactResponse.model_validate(artifact), author)
 
-        return _artifact_response(current_user.user_id, artifact)
+        return _artifact_response(current_user.user_id, artifact, auth_cache=auth_cache)
     except HTTPException:
         raise
     except Exception as e:
@@ -159,9 +161,10 @@ async def list_artifacts(
         # Every list request is subject to the base artifacts capability,
         # including untyped listings.
         _require_artifact_capability(ArtifactType.UPLOAD)
+        auth_cache = _AuthCache()
         if conv_id is not None or chan_id is not None or srv_id is not None:
             conv_id, chan_id, srv_id = _validate_artifact_scope(
-                conv_id, chan_id, srv_id
+                conv_id, chan_id, srv_id, auth_cache
             )
 
         # An unscoped request is explicitly the caller's personal scope. Do
@@ -171,7 +174,6 @@ async def list_artifacts(
             if auth_id is not None
             else (current_user.user_id if conv_id is None and srv_id is None else None)
         )
-        auth_cache = _AuthCache()
         _authorize_scope(
             current_user.user_id,
             conv_id,

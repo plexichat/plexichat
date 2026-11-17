@@ -19,6 +19,7 @@ from src.api.routes.artifacts_helpers import (
     _conversation_server_id,
     _is_conversation_member,
     _require_server_permission,
+    _validate_artifact_scope,
 )
 
 
@@ -40,6 +41,24 @@ def test_conversation_server_id_caches_misses_too():
         assert _conversation_server_id(99, cache) is None
         assert _conversation_server_id(99, cache) is None
     assert db.fetch_one.call_count == 1
+
+
+def test_scope_validation_seeds_the_conversation_server_cache():
+    """The metadata row read for scope validation is not queried twice."""
+    cache = _AuthCache()
+    db = MagicMock()
+    db.fetch_one.side_effect = [
+        {"metadata": json.dumps({"server_id": 777})},
+        {"id": 777},
+    ]
+    with patch.object(api, "get_db", return_value=db):
+        scope = _validate_artifact_scope(42, None, None, cache)
+    assert scope == (42, None, 777)
+    assert cache.conversation_servers[42] == 777
+    # Authorization reuses the seeded value instead of re-reading the row.
+    with patch.object(api, "get_db", return_value=db):
+        assert _conversation_server_id(42, cache) == 777
+    assert db.fetch_one.call_count == 2
 
 
 def test_permission_and_membership_results_are_reused():
