@@ -1,4 +1,4 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear client-test client-lint fmt clean version test-quiet audit check
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security selftest openapi-clear client-test client-lint fmt clean version test-quiet audit deps check
 
 COMPOSE ?= docker-compose.yml
 REPORTS ?= test-results-*.xml
@@ -37,6 +37,7 @@ help:
 	@echo "  test-quiet           Run pytest quietly"
 	@echo "  clean                Remove caches and test artifacts"
 	@echo "  audit                High-severity bandit scan over the API"
+	@echo "  deps                 Verify installed dependencies resolve"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -78,6 +79,9 @@ client-lint:
 
 audit:
 	$(PYTHON) -m bandit -r src/api -q -lll
+
+deps:
+	$(PYTHON) -m pip check
 
 version:
 	$(PYTHON) main.py version
