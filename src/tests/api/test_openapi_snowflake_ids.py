@@ -123,6 +123,10 @@ _ALLOWED_FREEFORM_RESPONSES: dict[tuple[str, str], str] = {
         "get",
         "/api/v1/artifacts/{artifact_id}/ops",
     ): "artifact_id emitted as str; ops carry no snowflakes",
+    (
+        "get",
+        "/api/v1/storage/files",
+    ): "list_user_files stringifies the media id; no other snowflakes",
     ("get", "/api/v1/public/license/challenge"): "license challenge: no ids",
     ("get", "/api/v1/public/license/export"): "license document: no snowflakes",
     ("get", "/api/v1/public/license/info"): "license info: no snowflakes",

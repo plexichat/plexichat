@@ -495,8 +495,16 @@ class StorageQuotaManager:
             f"FROM media_files WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
             tuple(params) + (limit, offset),
         )
+        # Ids cross the API boundary as strings like every other snowflake;
+        # never leak a bare int from a free-form response.
+        files = []
+        for row in rows:
+            item = dict(row)
+            if "id" in item and item["id"] is not None:
+                item["id"] = str(item["id"])
+            files.append(item)
         return {
-            "files": [dict(row) for row in rows],
+            "files": files,
             "limit": limit,
             "offset": offset,
         }

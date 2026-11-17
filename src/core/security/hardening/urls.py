@@ -32,3 +32,13 @@ def require_https_url(value: Any, field: str = "url") -> str:
 def require_http_url(value: Any, field: str = "url") -> str:
     """Return ``value`` if it is an absolute HTTP(S) URL without credentials."""
     return _require_absolute(value, field, ("http", "https"))
+
+
+def require_ws_url(value: Any, field: str = "url") -> str:
+    """Return ``value`` if it is an absolute WS(S) URL without credentials.
+
+    Voice/signaling endpoints are WebSocket URLs, not HTTP URLs. They carry the
+    same injection risk (javascript:/data:/credential smuggling) so apply the
+    identical absolute-scheme and no-credentials checks with the ws/wss schemes.
+    """
+    return _require_absolute(value, field, ("ws", "wss"))

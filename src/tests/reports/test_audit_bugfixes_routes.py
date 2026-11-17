@@ -9,6 +9,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 import src.api as api
 from src.api.routes.reports import report_message, report_user
@@ -88,16 +89,12 @@ def test_report_message_invalid_category_rejected(monkeypatch):
     msg = SimpleNamespace(id=5, author_id=9, content="hi")
     messaging = SimpleNamespace(get_message=lambda uid, mid: msg)
     _patch(monkeypatch, _fake_reports(), messaging, None)
-    with pytest.raises(Exception) as exc:
-        asyncio.run(
-            report_message(
-                MessageReportRequest(
-                    message_id="5", channel_id="1", reason="x", category="bogus"
-                ),
-                _User(2),
-            )
+    # An invalid category is now rejected at the request boundary, before the
+    # route runs: model construction raises a pydantic ValidationError.
+    with pytest.raises(ValidationError):
+        MessageReportRequest(
+            message_id="5", channel_id="1", reason="x", category="bogus"
         )
-    assert exc.value.status_code == 400
 
 
 def test_report_message_dedupe_returns_existing(monkeypatch):
@@ -160,31 +157,22 @@ def test_report_user_not_found_rejected(monkeypatch):
 def test_report_user_invalid_evidence_rejected(monkeypatch):
     db = SimpleNamespace(fetch_one=lambda q, p: {"id": 123})
     _patch(monkeypatch, _fake_reports(), None, db)
-    with pytest.raises(Exception) as exc:
-        asyncio.run(
-            report_user(
-                UserReportRequest(
-                    user_id="123",
-                    reason="x",
-                    category=CATEGORY,
-                    evidence_message_ids=["not-a-number"],
-                ),
-                _User(2),
-            )
+    # Non-snowflake evidence ids are rejected at the request boundary now.
+    with pytest.raises(ValidationError):
+        UserReportRequest(
+            user_id="123",
+            reason="x",
+            category=CATEGORY,
+            evidence_message_ids=["not-a-number"],
         )
-    assert exc.value.status_code == 400
 
 
 def test_report_user_invalid_category_rejected(monkeypatch):
     db = SimpleNamespace(fetch_one=lambda q, p: {"id": 123})
     _patch(monkeypatch, _fake_reports(), None, db)
-    with pytest.raises(Exception) as exc:
-        asyncio.run(
-            report_user(
-                UserReportRequest(user_id="123", reason="x", category="weird"), _User(2)
-            )
-        )
-    assert exc.value.status_code == 400
+    # Invalid categories are rejected at the request boundary now.
+    with pytest.raises(ValidationError):
+        UserReportRequest(user_id="123", reason="x", category="weird")
 
 
 def test_report_user_dedupe_returns_existing(monkeypatch):

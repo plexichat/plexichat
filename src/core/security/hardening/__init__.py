@@ -25,7 +25,7 @@ from .identifiers import is_identifier, require_identifier
 from .numbers import SNOWFLAKE_MAX, bounded_int, parse_id
 from .paths import safe_join
 from .text import reject_control_characters
-from .urls import require_http_url, require_https_url
+from .urls import require_http_url, require_https_url, require_ws_url
 
 __all__ = [
     "HardeningViolation",
@@ -37,6 +37,7 @@ __all__ = [
     "reject_control_characters",
     "require_http_url",
     "require_https_url",
+    "require_ws_url",
     "require_identifier",
     "safe_join",
     "sanitize_header_filename",

@@ -15,7 +15,7 @@ from src.core.security.hardening import (
     HardeningViolation,
     bounded_int,
     parse_id,
-    require_http_url,
+    require_ws_url,
 )
 
 #: A client only needs a handful of ICE endpoints; cap the fan-out.
@@ -77,12 +77,17 @@ def filter_ice_urls(urls: Iterable[object]) -> List[str]:
 
 
 def validate_server_endpoint(value: object, field: str = "endpoint") -> str:
-    """Return ``value`` only if it is a bounded absolute http(s) URL."""
+    """Return ``value`` only if it is a bounded absolute ws(s) URL.
+
+    The media-plane endpoint is a WebSocket URL (the SFU's ``ws_url``), so
+    ws/wss are the legitimate schemes here. The absolute-scheme and
+    no-credentials checks are the same as for HTTP URLs.
+    """
     text = str(value or "").strip()
     if len(text) > MAX_ENDPOINT_URL_LENGTH:
         raise ValueError(f"{field} is too long")
     try:
-        return require_http_url(text, field)
+        return require_ws_url(text, field)
     except HardeningViolation as exc:
         raise ValueError(str(exc)) from exc
 

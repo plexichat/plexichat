@@ -55,11 +55,12 @@ class TestIceUrls:
 
 
 class TestServerEndpoint:
-    def test_https_accepted(self):
-        assert validate_server_endpoint("https://voice.example.com/ws")
+    def test_websocket_schemes_accepted(self):
+        assert validate_server_endpoint("wss://voice.example.com:4443/ws")
+        assert validate_server_endpoint("ws://localhost:4443/")
 
     def test_unsafe_schemes_rejected(self):
-        for value in ("javascript:alert(1)", "ws://x", "//x", "http://user:pw@x"):
+        for value in ("javascript:alert(1)", "https://x", "//x", "wss://user:pw@x"):
             with pytest.raises(ValueError):
                 validate_server_endpoint(value)
 

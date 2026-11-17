@@ -17,8 +17,13 @@ class TestTracker:
     def test_get_applied_migrations(self, migration_manager):
         """The template DB has all migrations recorded as applied."""
         migration_manager.tracker.ensure_table_exists()
+        expected = sorted(
+            p.name.split("_", 1)[0]
+            for p in migration_manager.migrations_dir.glob("[0-9][0-9][0-9]_*.py")
+        )
+        assert expected, "no template migrations discovered"
         applied = migration_manager.tracker.get_applied_migrations()
-        assert applied == ["000", "001", "002", "003", "004", "005"]
+        assert applied == expected
 
     def test_record_migration_start(self, migration_manager):
         """Test recording migration start."""
