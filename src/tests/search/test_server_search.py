@@ -34,12 +34,15 @@ class TestServerSearchBasic:
         assert isinstance(results, list)
 
     def test_search_servers_empty_query(self, db_and_modules):
-        """Test search with empty query."""
+        """Empty queries are rejected, as in message/user search (F16)."""
+        import pytest
+
+        from src.core.search.exceptions import InvalidQuerySyntaxError
+
         db, auth, messaging, servers, search = db_and_modules
 
-        results = search.search_servers(1, "")
-
-        assert results == []
+        with pytest.raises(InvalidQuerySyntaxError):
+            search.search_servers(1, "")
 
     def test_search_servers_result_type(self, db_and_modules):
         """Test search results are ServerSearchResult."""

@@ -220,20 +220,20 @@ def get_thread_member_user_ids(thread_id: int) -> List[int]:
     private-thread events from being broadcast to every member of the server.
     Must never be wired to a client-facing route.
     """
-    if not _setup_complete or _manager is None:
+    if not is_setup():
         return []
-    return _manager.get_all_member_user_ids(thread_id)
+    return _get_manager().get_all_member_user_ids(thread_id)
 
 
-def get_thread_type_value(thread_id: int) -> Optional[int]:
+def get_thread_type_value(thread_id: int) -> Optional[Any]:
     """Internal-only: thread_type value for a thread row (incl. tombstones).
 
     Used by gateway emitters to decide whether a delete event must be scoped
     to thread members. Must never be wired to a client-facing route.
     """
-    if not _setup_complete or _manager is None:
+    if not is_setup():
         return None
-    return _manager.get_thread_type_value(thread_id)
+    return _get_manager().get_thread_type_value(thread_id)
 
 
 # === Thread Messages ===
