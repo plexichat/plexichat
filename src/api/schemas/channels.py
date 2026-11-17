@@ -5,7 +5,16 @@ Channel schemas - Request/response models for channel endpoints.
 from typing import Optional, Dict
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-from .common import SnowflakeID, _reject_ui_text_chars
+from .common import SnowflakeID, reject_unsafe_ui_text
+
+# Mirror the caps enforced by ``require_invite_limits`` in the channel route.
+# The schema is the first line of defence: without these ceilings a client may
+# ask for a lifetime of ``2**70`` seconds, which flows into
+# ``expires_at = now + (max_age * 1000)`` and into the invite table as an
+# unbounded integer. test_schema_owned_hardening_regression asserts these stay
+# in sync with the route constants so the two layers cannot drift apart.
+MAX_INVITE_AGE_SECONDS = 30 * 24 * 3600
+MAX_INVITE_USES = 10_000
 
 
 class ChannelCreateRequest(BaseModel):
@@ -34,7 +43,7 @@ class ChannelCreateRequest(BaseModel):
     def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
         if value is None:
             return value
-        return _reject_ui_text_chars(value, info.field_name)
+        return reject_unsafe_ui_text(value, info.field_name)
 
 
 class RecipientResponse(BaseModel):
@@ -85,10 +94,16 @@ class ChannelInviteCreateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
     max_age: int = Field(
-        default=86400, ge=0, description="Duration of invite in seconds (0 = never)"
+        default=86400,
+        ge=0,
+        le=MAX_INVITE_AGE_SECONDS,
+        description="Duration of invite in seconds (0 = never)",
     )
     max_uses: int = Field(
-        default=0, ge=0, description="Max number of uses (0 = unlimited)"
+        default=0,
+        ge=0,
+        le=MAX_INVITE_USES,
+        description="Max number of uses (0 = unlimited)",
     )
     temporary: bool = Field(
         default=False, description="Whether this invite grants temporary membership"

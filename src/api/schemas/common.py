@@ -13,6 +13,8 @@ from pydantic_core import CoreSchema, core_schema
 from src.core.security.policies import HTML_META_CHARS, RejectUICharacters
 from src.core.security.hardening.numbers import SNOWFLAKE_MAX
 
+from .policy_types import reject_unsafe_unicode
+
 # A snowflake is a non-negative 64-bit identifier. Python ints are unbounded,
 # so an unvalidated ``"999999999999999999999999"`` used to sail through and
 # reach lookups, cache keys and offset arithmetic. The lower bound stays at 0
@@ -334,3 +336,21 @@ def _reject_ui_text_chars(value: str, field_name: str) -> str:
     ``except ValueError`` handlers keep working.
     """
     return _UI_TEXT_POLICY.check(value, field_name)
+
+
+def reject_unsafe_ui_text(value: str, field_name: str) -> str:
+    """Stricter text rule for request schemas that echo text back to clients.
+
+    ``_reject_ui_text_chars`` only covers HTML metacharacters and C0/DEL
+    controls (the legacy rule shared with routes). It still lets C1 controls
+    and Unicode bidirectional/invisible overrides through -- characters that
+    reorder how a string renders without changing the stored bytes, i.e. a
+    stored-display spoof no output encoder can undo. Request models use this
+    helper so they also apply the shared text policy's unicode rule.
+
+    Nothing is relaxed: the legacy check still runs first, then the unicode
+    rule. Both raise ``ValueError`` subclasses, which Pydantic turns into a
+    validation error (a 422 at the HTTP boundary).
+    """
+    checked = _reject_ui_text_chars(value, field_name)
+    return reject_unsafe_unicode(checked, field_name)

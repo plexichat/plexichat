@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Literal, Optional, List
 
-from .common import SnowflakeID, _reject_ui_text_chars
+from .common import SnowflakeID, reject_unsafe_ui_text
 
 #: Categories the report store knows how to bucket (``ReportCategory``). The
 #: routes already reject anything else at runtime; declaring the set here moves
@@ -37,7 +37,7 @@ class MessageReportRequest(BaseModel):
     def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
         if value is None:
             return value
-        return _reject_ui_text_chars(value, info.field_name)
+        return reject_unsafe_ui_text(value, info.field_name)
 
 
 class UserReportRequest(BaseModel):
@@ -60,7 +60,7 @@ class UserReportRequest(BaseModel):
     def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
         if value is None:
             return value
-        return _reject_ui_text_chars(value, info.field_name)
+        return reject_unsafe_ui_text(value, info.field_name)
 
 
 class ReportResponse(BaseModel):
