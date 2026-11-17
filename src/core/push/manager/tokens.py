@@ -177,6 +177,23 @@ class TokenMixin(PushManagerBase):
                 f"Unsupported platform: {platform}. Use: {self.SUPPORTED_PLATFORMS}"
             )
 
+        # SECURITY: bound EVERY caller-supplied credential at the registration
+        # boundary, before encryption, blind-indexing and persistence. The
+        # length constants and ``_bounded_credential`` above existed but were
+        # never actually applied here, so any authenticated caller could submit
+        # a multi-megabyte "token" / subscription blob and force unbounded CPU,
+        # memory and row growth (plus an oversized blind-index input) before
+        # the per-user token limit ever came into play. A token is mandatory;
+        # the Web Push keying material and device metadata are optional but
+        # bounded when present. Fail closed on anything oversized.
+        token = _bounded_credential(token, "token", MAX_TOKEN_LENGTH, required=True)
+        p256dh = _bounded_credential(p256dh, "p256dh", MAX_P256DH_LENGTH)
+        auth = _bounded_credential(auth, "auth", MAX_AUTH_LENGTH)
+        device_id = _bounded_credential(device_id, "device_id", MAX_DEVICE_ID_LENGTH)
+        app_version = _bounded_credential(
+            app_version, "app_version", MAX_APP_VERSION_LENGTH
+        )
+
         now = self._get_timestamp()
         # SECURITY: credentials are encrypted at rest (ENC:v1 envelope);
         # lookups go through a keyed blind index over the plaintext.

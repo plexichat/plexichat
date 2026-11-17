@@ -125,6 +125,72 @@ class TestPushCredentialBounds:
         assert _bounded_credential("abc", "token", 100) == "abc"
 
 
+class TestPushRegistrationBounds:
+    """The credential length constants/helper must actually be applied by
+    ``register_token`` -- defining them without wiring them in leaves the
+    registration endpoint open to oversized-token memory/CPU abuse.
+    """
+
+    @staticmethod
+    def _bare_manager_with_db():
+        from src.core.push.manager import PushManager
+
+        class _Result:
+            rowcount = 1
+
+        class _FakeDB:
+            def __init__(self):
+                self.executed = []
+
+            def fetch_one(self, query, params=()):
+                if "COUNT(*)" in query:
+                    return {"count": 0}
+                return None
+
+            def fetch_all(self, query, params=()):
+                return []
+
+            def execute(self, query, params=()):
+                self.executed.append((query, params))
+                return _Result()
+
+        mgr = object.__new__(PushManager)
+        mgr._db = _FakeDB()
+        return mgr
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"token": "x" * 2049},
+            {"token": "ok", "p256dh": "x" * 513},
+            {"token": "ok", "auth": "x" * 513},
+            {"token": "ok", "device_id": "x" * 257},
+            {"token": "ok", "app_version": "x" * 65},
+            {"token": ""},
+        ],
+    )
+    def test_oversized_or_empty_credentials_are_refused_before_storage(self, kwargs):
+        mgr = self._bare_manager_with_db()
+        with pytest.raises(ValueError):
+            mgr.register_token(user_id=1, platform="android", **kwargs)
+        # Nothing may reach the database when a credential is rejected.
+        assert mgr._db.executed == []
+
+    def test_in_range_credentials_are_accepted(self):
+        mgr = self._bare_manager_with_db()
+        mgr.register_token(
+            user_id=1,
+            token="device-token",
+            platform="android",
+            device_id="d" * 256,
+            app_version="a" * 64,
+        )
+        # The INSERT reached the database (the fake DB does not echo rows
+        # back, so an empty sanitized return is expected here).
+        assert len(mgr._db.executed) == 1
+        assert "INSERT INTO push_tokens" in mgr._db.executed[0][0]
+
+
 class TestPushTextBounds:
     def test_overlong_title_is_refused_before_fanout(self):
         from src.core.push.manager.delivery import MAX_TITLE_LENGTH, _bounded_text

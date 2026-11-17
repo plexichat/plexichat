@@ -90,6 +90,42 @@ def test_legacy_unkeyed_entries_still_verify_with_keys_configured(tmp_path):
     assert keyed.verify_chain() == (True, 1, None)
 
 
+def test_keyless_entry_appended_after_keyed_entry_is_rejected(tmp_path):
+    """An attacker with write access to the log cannot downgrade an HMAC
+    chain to the legacy unkeyed SHA-256 path by appending an entry without a
+    ``key_id``. Such an entry's checksum is computable with only public data,
+    so the verifier must treat "keyless after keyed" as a chain break.
+    """
+    path = tmp_path / "dsar_audit.jsonl"
+    log = DSARLog(file_path=str(path), chain_key="secret-k1", chain_key_id="k1")
+    log.log_event(1, "EXPORTED", "dsar_request:1")
+    assert log.verify_chain() == (True, 1, None)
+
+    rows = _rows(path)
+    prev_hash = rows[-1]["checksum"]
+
+    # Forge a keyless entry the way an attacker with file-write access would:
+    # the unkeyed SHA-256 needs no secret because prev_hash is in the file.
+    forged = {
+        "timestamp": 2,
+        "user_id": 1,
+        "identifier_hash": "0" * 64,
+        "action": "APPROVED",
+        "metadata": {"request_id": 999, "admin_id": 1},
+        "prev_hash": prev_hash,
+    }
+    content = json.dumps(forged, sort_keys=True)
+    forged["checksum"] = __import__("hashlib").sha256(
+        (prev_hash + content).encode("utf-8")
+    ).hexdigest()
+    _write_rows(path, rows + [forged])
+
+    valid, count, error = log.verify_chain()
+    assert valid is False
+    assert count == 1
+    assert "downgrade" in error
+
+
 def test_rotate_chain_key_rejects_empty_values(tmp_path):
     log = DSARLog(file_path=str(tmp_path / "dsar_audit.jsonl"))
     with pytest.raises(ValueError):

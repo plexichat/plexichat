@@ -387,6 +387,10 @@ class DSARLog:
 
         count = 0
         expected_prev_hash = "0" * 64
+        # SECURITY: track whether the chain has transitioned to HMAC-keyed
+        # entries. Unkeyed SHA-256 records are only legitimate as the legacy
+        # PREFIX written before keying was enabled (see the fallback below).
+        keyed_seen = False
 
         try:
             with open(self.file_path, "r") as f:
@@ -422,10 +426,27 @@ class DSARLog:
                                 f"Chain broken at line {line_num}: "
                                 f"unknown chain key id {entry_key_id!r}",
                             )
+                        keyed_seen = True
                         calculated_checksum = hmac.new(
                             key.encode("utf-8"), data, hashlib.sha256
                         ).hexdigest()
                     else:
+                        # SECURITY: a keyless entry is only valid in the legacy
+                        # prefix written BEFORE HMAC keying was enabled. Once
+                        # any keyed entry exists, a later entry with no key_id
+                        # is an algorithm-downgrade forgery: an attacker with
+                        # write access to the log can compute an unkeyed
+                        # SHA-256 over (prev_hash + content) themselves --
+                        # prev_hash is public in the file -- and append a fake
+                        # event that the "legacy" fallback would accept. Refuse
+                        # it so keying cannot be silently downgraded.
+                        if keyed_seen:
+                            return (
+                                False,
+                                count,
+                                f"Chain broken at line {line_num}: unkeyed entry "
+                                f"appended after keyed entries (chain downgrade)",
+                            )
                         # Legacy unkeyed entries remain verifiable verbatim.
                         calculated_checksum = hashlib.sha256(data).hexdigest()
 
