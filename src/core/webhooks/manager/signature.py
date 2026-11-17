@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import threading
 import time
 from typing import Dict, Any, Optional
 
@@ -44,6 +45,16 @@ _REPLAY_CACHE_TTL_SECONDS = WEBHOOK_REPLAY_WINDOW_SECONDS * 2
 # without leaking which byte differed.
 ED25519_SIGNATURE_LENGTH = 64
 _REPLAY_MARKER = "1"
+
+# cache_get() / cache_set() are two separate, non-atomic operations. Without a
+# guard, two threads handling the SAME captured (signature, timestamp) pair can
+# both observe a cache miss, both verify successfully, and both be accepted
+# inside the replay window -- a replay bypass under concurrency. This lock
+# makes the "already seen?" check and the "mark as seen" store a single atomic
+# critical section for every delivery thread in this process. Multi-process
+# deployments still rely on the shared cache tier for cross-process exclusion;
+# this closes the in-process race that the default in-memory fallback exposes.
+_replay_check_lock = threading.Lock()
 
 
 def _signature_length_is_valid(signature: bytes) -> bool:
@@ -295,27 +306,6 @@ class SignatureMixin(WebhookManagerTrait):
         from src.core.database.cache import cache_get, cache_set
 
         replay_key = _replay_cache_key(webhook_id, signature)
-        try:
-            consumed = cache_get(replay_key)
-            if consumed is not None:
-                # Validate the stored marker in constant time. Any unexpected
-                # value is logged but STILL treated as a replay: a corrupted
-                # cache entry must never downgrade to "fresh" and let the
-                # signature through a second time.
-                if not hmac.compare_digest(str(consumed), _REPLAY_MARKER):
-                    logger.error(
-                        f"Unexpected webhook replay-cache marker for {webhook_id}"
-                    )
-                logger.warning(
-                    f"Webhook signature rejected as REPLAY for {webhook_id} "
-                    f"(signature/timestamp pair already used within the "
-                    f"{WEBHOOK_REPLAY_WINDOW_SECONDS}s window)"
-                )
-                return False
-        except Exception as e:  # cache failure must not bypass the check silently
-            logger.error(f"Replay-cache lookup failed for webhook {webhook_id}: {e}")
-            return False
-
         payload_bytes = json.dumps(
             payload, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
@@ -323,10 +313,42 @@ class SignatureMixin(WebhookManagerTrait):
             f"{SIGNATURE_VERSION}.{timestamp}.".encode("utf-8") + payload_bytes
         )
 
-        try:
-            Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
-                signature, signed_data
-            )
+        # The lookup, the signature verification and the "consumed" write must
+        # be one atomic step: otherwise two concurrent deliveries carrying the
+        # same captured signature can both see a miss and both be accepted.
+        with _replay_check_lock:
+            try:
+                consumed = cache_get(replay_key)
+                if consumed is not None:
+                    # Validate the stored marker in constant time. Any unexpected
+                    # value is logged but STILL treated as a replay: a corrupted
+                    # cache entry must never downgrade to "fresh" and let the
+                    # signature through a second time.
+                    if not hmac.compare_digest(str(consumed), _REPLAY_MARKER):
+                        logger.error(
+                            f"Unexpected webhook replay-cache marker for {webhook_id}"
+                        )
+                    logger.warning(
+                        f"Webhook signature rejected as REPLAY for {webhook_id} "
+                        f"(signature/timestamp pair already used within the "
+                        f"{WEBHOOK_REPLAY_WINDOW_SECONDS}s window)"
+                    )
+                    return False
+            except Exception as e:  # cache failure must not bypass the check silently
+                logger.error(f"Replay-cache lookup failed for webhook {webhook_id}: {e}")
+                return False
+
+            try:
+                Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
+                    signature, signed_data
+                )
+            except InvalidSignature:
+                logger.warning(f"Webhook signature mismatch for {webhook_id}")
+                return False
+            except Exception as e:
+                logger.error(f"Webhook signature verification error for {webhook_id}: {e}")
+                return False
+
             # Mark this (webhook_id, signature) pair as consumed BEFORE
             # reporting success so a racing duplicate cannot slip through.
             try:
@@ -335,9 +357,3 @@ class SignatureMixin(WebhookManagerTrait):
                 logger.error(f"Replay-cache store failed for webhook {webhook_id}: {e}")
                 return False
             return True
-        except InvalidSignature:
-            logger.warning(f"Webhook signature mismatch for {webhook_id}")
-            return False
-        except Exception as e:
-            logger.error(f"Webhook signature verification error for {webhook_id}: {e}")
-            return False

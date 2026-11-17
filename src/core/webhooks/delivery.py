@@ -230,13 +230,31 @@ class WebhookDeliverer:
         self._allow_private_network = allow_private_network
         self._follow_redirects = follow_redirects
 
+        # SECURITY (SSRF on redirect): every 3xx is handled manually in
+        # deliver() so the target is re-validated through the full SSRF gate
+        # and the connection re-pinned to the newly approved IP. If the HTTP
+        # client follows redirects itself, those 3xx responses never reach
+        # that gate -- a public -> internal redirect would be followed by the
+        # transport with no validation at all. Disable client-side auto-follow
+        # on an INJECTED client too (the testing seam), not just on the client
+        # we create in _session(), so the manual gate can never be bypassed by
+        # a caller handing us an httpx.Client(follow_redirects=True).
+        if self._client is not None and hasattr(self._client, "follow_redirects"):
+            try:
+                self._client.follow_redirects = False
+            except Exception:  # best effort: non-httpx seams may be read-only
+                logger.debug(
+                    "Could not disable follow_redirects on injected webhook client"
+                )
+
     def _session(self) -> Any:
         """Return the HTTP client used for delivery."""
         if self._client is not None:
             return self._client
         if httpx is None:  # pragma: no cover
             raise WebhookDeliveryError("httpx is not installed")
-        return httpx.Client(timeout=self._timeout)
+        # Explicit rather than implicit: redirect handling is ours alone.
+        return httpx.Client(timeout=self._timeout, follow_redirects=False)
 
     def _effective_signing_headers(
         self, webhook_id: Any, payload: Dict[str, Any], stored: Dict[str, str]
