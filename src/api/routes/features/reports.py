@@ -119,6 +119,51 @@ VALID_REPORT_CATEGORIES = {
 }
 
 
+def _message_report_context(conversation_id) -> tuple[Optional[int], Optional[int]]:
+    """Resolve the authoritative ``(channel_id, server_id)`` for a message report.
+
+    ``EnhancedReportRequest.channel_id`` / ``server_id`` are caller-supplied and
+    therefore untrusted. Proving the reporter can view a message (via
+    ``get_message``) says nothing about which channel/server the report should
+    be attributed to. Persisting the client values verbatim let a reporter
+    attribute a report to an arbitrary channel or server — including one they
+    are not a member of — poisoning moderation-queue context and misleading
+    moderators. The context is resolved from the server-authoritative
+    conversation the reported message actually lives in; if it cannot be
+    resolved (DMs, missing servers module), both values are NULL.
+
+    This never raises on malformed server data: a bad row must fail closed to
+    "no context" rather than block a legitimate report or leak internals.
+    """
+    if conversation_id is None:
+        return None, None
+    try:
+        servers_mod = api.get_servers()
+    except Exception:
+        servers_mod = None
+    if servers_mod is None:
+        return None, None
+    lookup = getattr(servers_mod, "get_channel_by_conversation", None)
+    if lookup is None:
+        return None, None
+    try:
+        info = lookup(int(conversation_id))
+    except Exception:
+        return None, None
+    if not isinstance(info, dict):
+        return None, None
+
+    def _valid_id(value) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return parse_id(str(value), "report context ID")
+        except HTTPException:
+            return None
+
+    return _valid_id(info.get("id")), _valid_id(info.get("server_id"))
+
+
 def _check_enhanced_report_rate_limit(user_id: int) -> None:
     """Atomically cap enhanced reports per user in the shared cache tier."""
     try:
@@ -385,7 +430,10 @@ async def submit_enhanced_report(
     if body.evidence_urls:
         for url in body.evidence_urls:
             if not await _is_safe_url_async(url):
-                raise_bad_request(f"Invalid evidence URL: {url}")
+                # Never reflect the rejected URL into the error body: it is
+                # untrusted input that may later be rendered verbatim in a
+                # moderation UI (reflected-content / XSS sink).
+                raise_bad_request("Invalid evidence URL")
 
     now = int(time.time() * 1000)
     report_id = generate_snowflake_id()
@@ -396,10 +444,15 @@ async def submit_enhanced_report(
     server_id = None
 
     if body.target_type == "message":
-        channel_id = (
-            parse_id(body.channel_id, "channel ID") if body.channel_id else None
-        )
-        server_id = parse_id(body.server_id, "server ID") if body.server_id else None
+        # REP-7: channel_id/server_id are derived from the server-side
+        # conversation, never from the request body. The reporter only proves
+        # they can view the message; the client values were previously stored
+        # verbatim, allowing a report to be planted in any moderation context.
+        # Validate any supplied values for strictness, but do not persist them.
+        if body.channel_id is not None:
+            parse_id(body.channel_id, "channel ID")
+        if body.server_id is not None:
+            parse_id(body.server_id, "server ID")
         messaging = api.get_messaging()
         msg = None
         if messaging:
@@ -409,6 +462,9 @@ async def submit_enhanced_report(
                 logger.warning("Failed to fetch message %s for report", target_id)
         if not msg:
             raise_bad_request("Message not found")
+        channel_id, server_id = _message_report_context(
+            getattr(msg, "conversation_id", None)
+        )
         reported_user_id = msg.author_id
         # REP-3: reporters may not report their own content
         if reported_user_id == current_user.user_id:
