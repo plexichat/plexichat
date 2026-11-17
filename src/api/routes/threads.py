@@ -10,7 +10,7 @@ from src.core.security.hardening import parse_id
 
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, Query
 from pydantic import BaseModel, Field
 
 import src.api as api
@@ -869,7 +869,7 @@ async def list_my_threads(
 )
 async def get_thread_messages(
     thread_id: str,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=100),
     before_id: Optional[str] = None,
     after_id: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
