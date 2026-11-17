@@ -82,14 +82,22 @@ class ThreadListingMixin(ThreadProtocol):
 
         now = self._get_timestamp()
         active_threads = []
+        auto_archived_ids = []
         for thread in possible_threads:
             if _check_auto_archive(thread, now):
-                self._db.execute(
-                    "UPDATE thread_threads SET state = ?, archived_at = ? WHERE id = ?",
-                    (ThreadState.ARCHIVED.value, now, thread.id),
-                )
+                auto_archived_ids.append(thread.id)
                 continue
             active_threads.append(thread)
+        # One UPDATE for the whole expired batch instead of one per row. All
+        # rows share the same ``now``, so the effect is identical while a
+        # backlog of stale threads no longer issues a write per thread.
+        if auto_archived_ids:
+            placeholders = ",".join("?" * len(auto_archived_ids))
+            self._db.execute(
+                "UPDATE thread_threads SET state = ?, archived_at = ? "
+                f"WHERE id IN ({placeholders})",
+                (ThreadState.ARCHIVED.value, now, *auto_archived_ids),
+            )
 
         if not active_threads:
             return []

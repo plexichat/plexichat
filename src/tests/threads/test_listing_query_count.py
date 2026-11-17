@@ -20,7 +20,14 @@ pytestmark = pytest.mark.unit
 _FUTURE = 9_999_999_999_999
 
 
-def _thread_row(thread_id, thread_type, membership_user_id, state=ThreadState.ACTIVE):
+def _thread_row(
+    thread_id,
+    thread_type,
+    membership_user_id,
+    state=ThreadState.ACTIVE,
+    last_message_at=_FUTURE,
+    duration=AutoArchiveDuration.SEVEN_DAYS.value,
+):
     return {
         "id": thread_id,
         "channel_id": 1,
@@ -31,12 +38,12 @@ def _thread_row(thread_id, thread_type, membership_user_id, state=ThreadState.AC
         "thread_type": thread_type,
         "state": state.value,
         "parent_message_id": None,
-        "auto_archive_duration": AutoArchiveDuration.SEVEN_DAYS.value,
+        "auto_archive_duration": duration,
         "message_count": 0,
         "member_count": 1,
         "created_at": _FUTURE,
         "archived_at": None,
-        "last_message_at": _FUTURE,
+        "last_message_at": last_message_at,
         "conversation_id": None,
         "locked": 0,
         "membership_user_id": membership_user_id,
@@ -112,6 +119,24 @@ def test_archived_before_cursor_stays_one_query():
     assert len(db.fetch_all_calls) == 1
     _sql, params = db.fetch_all_calls[0]
     assert params == (42, 1, ThreadState.ARCHIVED.value, 9_000_000_000_000, 25)
+
+
+def test_auto_archive_updates_are_batched_into_one_write():
+    rows = [
+        _thread_row(301, ThreadType.PUBLIC.value, None, last_message_at=1, duration=60),
+        _thread_row(302, ThreadType.PUBLIC.value, None, last_message_at=1, duration=60),
+        _thread_row(303, ThreadType.PUBLIC.value, None, last_message_at=1, duration=60),
+    ]
+    mgr, db = _manager(rows)
+
+    result = mgr.get_active_threads(42, 1)
+
+    assert result == []
+    assert len(db.executed) == 1
+    sql, params = db.executed[0]
+    assert "UPDATE thread_threads SET state = ?" in sql
+    assert params[0] == ThreadState.ARCHIVED.value
+    assert set(params[2:]) == {301, 302, 303}
 
 
 def test_no_view_permission_still_hides_public_threads():
