@@ -13,6 +13,7 @@ These tests pin the translation and the error containment.
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 import json
 from unittest.mock import AsyncMock, Mock
@@ -183,7 +184,7 @@ async def test_quality_mixin_failure_does_not_propagate():
 
 @pytest.mark.asyncio
 async def test_unwired_quality_mixin_is_a_noop():
-    adapter = _adapter(None)
+    adapter = _adapter(cast(Any, None))
 
     await adapter._handle_notification(
         _connection(), {"method": "producerScore", "data": {"score": 1}}

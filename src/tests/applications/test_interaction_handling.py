@@ -1,4 +1,5 @@
 """Tests for application interaction handling."""
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -179,7 +180,7 @@ class TestInteractionHandling:
         from src.api.routes import applications as application_routes
 
         body = application_routes.InteractionCallbackRequest(
-            application_id=42,
+            application_id=cast(Any, 42),
             type=InteractionResponseType.PONG,
         )
         with patch.object(
@@ -204,7 +205,7 @@ class TestInteractionHandling:
         from src.api.routes import applications as application_routes
 
         body = application_routes.InteractionCallbackRequest(
-            application_id=42,
+            application_id=cast(Any, 42),
             type=InteractionResponseType.PONG,
         )
         with patch.object(
@@ -220,7 +221,7 @@ class TestInteractionHandling:
                     )
 
         assert error.value.status_code == 429
-        assert error.value.headers["Retry-After"] == "60"
+        assert cast(Any, error.value).headers["Retry-After"] == "60"
         create_response.assert_not_called()
 
     @pytest.mark.asyncio
@@ -229,7 +230,7 @@ class TestInteractionHandling:
         from src.api.routes import applications as application_routes
 
         body = application_routes.InteractionCallbackRequest(
-            application_id=99,
+            application_id=cast(Any, 99),
             type=InteractionResponseType.PONG,
         )
         with patch.object(

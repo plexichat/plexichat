@@ -23,6 +23,7 @@ These tests pin the delivery in both directions:
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -61,7 +62,7 @@ async def test_state_update_delivers_a_granted_consent(monkeypatch) -> None:
     handler, record, revoke = _handler(monkeypatch)
 
     result = await handler.handle_voice_state_update(
-        _connection(), {"channel_id": 55, "consented": True}
+        cast(Any, _connection()), {"channel_id": 55, "consented": True}
     )
 
     assert result == (None, None, None)
@@ -75,7 +76,7 @@ async def test_state_update_accepts_the_string_form(monkeypatch) -> None:
     handler, record, _revoke = _handler(monkeypatch)
 
     await handler.handle_voice_state_update(
-        _connection(), {"channel_id": 55, "consented": "true"}
+        cast(Any, _connection()), {"channel_id": 55, "consented": "true"}
     )
 
     record.assert_called_once_with(7, 55)
@@ -86,7 +87,7 @@ async def test_state_update_ignores_an_absent_consent(monkeypatch) -> None:
     """No field is not a decision: neither grant nor revoke fires."""
     handler, record, revoke = _handler(monkeypatch)
 
-    result = await handler.handle_voice_state_update(_connection(), {"channel_id": 55})
+    result = await handler.handle_voice_state_update(cast(Any, _connection()), {"channel_id": 55})
 
     assert result == (None, None, None)
     record.assert_not_called()
@@ -107,7 +108,7 @@ async def test_state_update_delivers_a_declined_consent_as_a_revoke(
     handler, record, revoke = _handler(monkeypatch)
 
     result = await handler.handle_voice_state_update(
-        _connection(), {"channel_id": 55, "consented": declined}
+        cast(Any, _connection()), {"channel_id": 55, "consented": declined}
     )
 
     assert result == (None, None, None)
@@ -125,7 +126,7 @@ async def test_consent_is_scoped_to_the_authoritative_channel(monkeypatch) -> No
     handler, record, _revoke = _handler(monkeypatch, in_channel=55)
 
     await handler.handle_voice_state_update(
-        _connection(), {"channel_id": 999, "consented": True}
+        cast(Any, _connection()), {"channel_id": 999, "consented": True}
     )
 
     record.assert_called_once_with(7, 55)
@@ -142,7 +143,7 @@ async def test_a_consent_failure_does_not_fail_the_state_update(monkeypatch) -> 
     )
 
     result = await handler.handle_voice_state_update(
-        _connection(), {"channel_id": 55, "consented": True}
+        cast(Any, _connection()), {"channel_id": 55, "consented": True}
     )
 
     assert result == (None, None, None)
@@ -173,7 +174,7 @@ async def test_a_consent_only_frame_does_not_reset_audio_toggles(monkeypatch) ->
     handler._dispatch_voice_state_update = AsyncMock()
 
     await handler.handle_voice_state_update(
-        _connection(), {"channel_id": 55, "consented": True}
+        cast(Any, _connection()), {"channel_id": 55, "consented": True}
     )
 
     assert captured["self_mute"] is None
@@ -199,7 +200,7 @@ async def test_an_explicit_audio_toggle_is_still_forwarded(monkeypatch) -> None:
     handler._dispatch_voice_state_update = AsyncMock()
 
     await handler.handle_voice_state_update(
-        _connection(),
+        cast(Any, _connection()),
         {
             "channel_id": 55,
             "self_mute": True,

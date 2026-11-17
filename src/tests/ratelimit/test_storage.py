@@ -1,6 +1,7 @@
 """
 Tests for memory storage operations.
 """
+from typing import Any, cast
 
 import time
 import threading
@@ -382,7 +383,7 @@ class TestDatabaseStorageRetry:
 
         db = _FakeLockingDb(lock_failures=2)
         storage = DatabaseStorage.__new__(DatabaseStorage)
-        storage._db = db
+        cast(Any, storage)._db = db
 
         # Two failures then success: the third attempt should be allowed.
         allowed, remaining, _reset = storage.eval_token_bucket(
@@ -397,7 +398,7 @@ class TestDatabaseStorageRetry:
 
         db = _FakeLockingDb(lock_failures=100)
         storage = DatabaseStorage.__new__(DatabaseStorage)
-        storage._db = db
+        cast(Any, storage)._db = db
 
         allowed, remaining, reset = storage.eval_token_bucket(
             "key", capacity=10, refill_rate=0.1, cost=1, ttl=60

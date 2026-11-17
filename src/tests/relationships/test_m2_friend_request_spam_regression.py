@@ -6,6 +6,7 @@ Covers ``POST /friends/requests`` (``FriendRequestMixin.create_relationship``):
 - Privacy: a recipient with ``allow_friend_requests`` disabled gets a 403
   denial; the default (flag unset) still allows the request.
 """
+from typing import Any, cast
 
 import asyncio
 import time
@@ -45,8 +46,8 @@ def _patched_route(send_return=None, settings_value=None):
     settings.get.return_value = settings_value
 
     handler = FriendRequestMixin()
-    handler._dispatch_relationship_event = AsyncMock()
-    handler._invalidate_relationship_list_cache = MagicMock()
+    cast(Any, handler)._dispatch_relationship_event = AsyncMock()
+    cast(Any, handler)._invalidate_relationship_list_cache = MagicMock()
 
     patches = (
         patch(
@@ -94,14 +95,14 @@ class TestFriendRequestRateLimitM2:
         )
         with patches[0], patches[1], patches[2]:
             for i in range(FRIEND_REQUEST_RATE_LIMIT):
-                body = FriendRequestCreate(user_id=900000000 + i)
+                body = FriendRequestCreate(user_id=cast(Any, 900000000 + i))
                 resp = _run_route(handler, body, current_user)
                 assert resp.status == "pending_outgoing"
 
             with pytest.raises(HTTPException) as exc_info:
                 _run_route(
                     handler,
-                    FriendRequestCreate(user_id=900099999),
+                    FriendRequestCreate(user_id=cast(Any, 900099999)),
                     current_user,
                 )
         assert exc_info.value.status_code == 429
@@ -125,7 +126,7 @@ class TestFriendRequestPrivacyFlagM2:
             with pytest.raises(HTTPException) as exc_info:
                 _run_route(
                     handler,
-                    FriendRequestCreate(user_id=910000001),
+                    FriendRequestCreate(user_id=cast(Any, 910000001)),
                     current_user,
                 )
         assert exc_info.value.status_code == 403
@@ -147,7 +148,7 @@ class TestFriendRequestPrivacyFlagM2:
             ),
         ):
             resp = _run_route(
-                handler, FriendRequestCreate(user_id=910000002), current_user
+                handler, FriendRequestCreate(user_id=cast(Any, 910000002)), current_user
             )
         assert resp.status == "pending_outgoing"
         relationships.send_friend_request.assert_called_once()

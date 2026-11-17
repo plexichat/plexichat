@@ -7,6 +7,7 @@ shared helpers, the poller, and both adapters' collection paths.
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -185,7 +186,7 @@ async def test_mediasoup_collect_quality_parses_stats():
     assert samples == [
         ("voice_1", "user_2", {"bitrate": 80000, "packet_loss": 3.0, "jitter": 8.0})
     ]
-    assert "/rooms/voice_1/peers/user_2/stats" in adapter._request.await_args.args[1]
+    assert "/rooms/voice_1/peers/user_2/stats" in cast(Any, adapter._request).await_args.args[1]
 
 
 @pytest.mark.asyncio
@@ -247,7 +248,7 @@ async def test_janus_collect_quality_reports_metric_bearing_participants():
     samples = await adapter.collect_quality()
 
     assert samples == [("voice_9", "user_2", {"bitrate": 70000})]
-    body = adapter._send_message.await_args.args[2]
+    body = cast(Any, adapter._send_message).await_args.args[2]
     assert body["request"] == "listparticipants"
 
 

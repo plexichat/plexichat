@@ -4,6 +4,7 @@ It used to fetch and convert every incoming request just to find the sender,
 then discard all but one id. The direct (sender, recipient) lookup keeps the
 same 404 behaviour and the manager's ownership/block re-validation.
 """
+from typing import Any, cast
 
 import asyncio
 from types import SimpleNamespace
@@ -28,8 +29,8 @@ def _build(pending_row):
     presence.get_visible_presence.return_value = None
 
     handler = FriendRequestMixin()
-    handler._dispatch_relationship_event = AsyncMock()
-    handler._invalidate_relationship_list_cache = MagicMock()
+    cast(Any, handler)._dispatch_relationship_event = AsyncMock()
+    cast(Any, handler)._invalidate_relationship_list_cache = MagicMock()
     return handler, relationships
 
 

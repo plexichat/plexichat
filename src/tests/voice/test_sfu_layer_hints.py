@@ -21,6 +21,7 @@ peer with nothing to change still gets an honest ``False``.
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 from unittest.mock import AsyncMock
 
@@ -57,8 +58,8 @@ async def test_rest_resolves_consumers_for_an_empty_id() -> None:
     applied = await adapter.set_preferred_layers("voice_9", "user_5", "", 0, 0)
 
     assert applied is True
-    assert adapter._request.await_count == 1
-    method, url, payload = adapter._request.await_args.args
+    assert cast(Any, adapter._request).await_count == 1
+    method, url, payload = cast(Any, adapter._request).await_args.args
     assert method == "POST"
     assert url.endswith("consumers/c-video/preferredLayers")
     assert payload == {"spatialLayer": 0, "temporalLayer": 0}
@@ -72,7 +73,7 @@ async def test_rest_prefers_video_consumers() -> None:
 
     await adapter.set_preferred_layers("voice_9", "user_5", "", 2, 2)
 
-    urls = [call.args[1] for call in adapter._request.await_args_list]
+    urls = [call.args[1] for call in cast(Any, adapter._request).await_args_list]
     assert urls == ["/rooms/voice_9/peers/user_5/consumers/c-video/preferredLayers"]
 
 
@@ -81,7 +82,7 @@ async def test_rest_reports_false_with_no_tracked_consumers() -> None:
     adapter = _rest_adapter(room="voice_9")
 
     assert await adapter.set_preferred_layers("voice_9", "user_5", "", 0, 0) is False
-    adapter._request.assert_not_awaited()
+    cast(Any, adapter._request).assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -91,7 +92,7 @@ async def test_rest_still_honours_an_explicit_consumer_id() -> None:
     applied = await adapter.set_preferred_layers("voice_9", "user_5", "explicit", 1, 1)
 
     assert applied is True
-    assert adapter._request.await_args.args[1].endswith(
+    assert cast(Any, adapter._request).await_args.args[1].endswith(
         "consumers/explicit/preferredLayers"
     )
 
@@ -127,7 +128,7 @@ async def test_ws_resolves_consumers_for_an_empty_id() -> None:
     applied = await adapter.set_preferred_layers("voice_9", "user_5", "", 0, 0)
 
     assert applied is True
-    _connection, method, payload = adapter._request.await_args.args
+    _connection, method, payload = cast(Any, adapter._request).await_args.args
     assert method == "setConsumerPreferredLayers"
     assert payload == {"consumerId": "c-video", "spatialLayer": 0, "temporalLayer": 0}
 
@@ -140,7 +141,7 @@ async def test_ws_prefers_video_consumers() -> None:
 
     await adapter.set_preferred_layers("voice_9", "user_5", "", 2, 2)
 
-    payloads = [call.args[2] for call in adapter._request.await_args_list]
+    payloads = [call.args[2] for call in cast(Any, adapter._request).await_args_list]
     assert [payload["consumerId"] for payload in payloads] == ["c-video"]
 
 
@@ -149,7 +150,7 @@ async def test_ws_reports_false_with_no_consumers() -> None:
     adapter = _ws_adapter(room="voice_9")
 
     assert await adapter.set_preferred_layers("voice_9", "user_5", "", 0, 0) is False
-    adapter._request.assert_not_awaited()
+    cast(Any, adapter._request).assert_not_awaited()
 
 
 @pytest.mark.asyncio

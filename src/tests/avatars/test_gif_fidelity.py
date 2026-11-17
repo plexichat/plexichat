@@ -7,6 +7,7 @@ Covers:
 - M4: a static transparent GIF keeps its GIF container and transparency, and
   the stored content_type stays image/gif (never silently image/jpeg).
 """
+from typing import Any, cast
 
 import io
 
@@ -42,7 +43,7 @@ def _make_transparent_static_gif(size=(32, 32)):
     pixels = img.load()
     for y in range(size[1]):
         for x in range(size[0]):
-            pixels[x, y] = 0 if (x + y) % 2 == 0 else 1
+            cast(Any, pixels)[x, y] = 0 if (x + y) % 2 == 0 else 1
     img.info["transparency"] = 0
     buf = io.BytesIO()
     img.save(buf, format="GIF")

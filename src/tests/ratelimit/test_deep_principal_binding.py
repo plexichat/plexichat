@@ -6,7 +6,7 @@ rotating the value. These tests pin the normalization boundary introduced in
 ``manager.principals`` for both the sync and async check paths.
 """
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -41,7 +41,7 @@ class TestPrincipalBinding:
         # A raw string id containing ':' used to be interpolated verbatim,
         # creating a key that looked like it contained a 'u:2' segment.
         result = manager.check_rate_limit(
-            user_id="1:u:2", ip_address="10.0.0.1", route="GET /t"
+            user_id=cast(Any, "1:u:2"), ip_address="10.0.0.1", route="GET /t"
         )
         assert ":u:" not in result.bucket_key
         assert "u:1%3Au:2" not in result.bucket_key
@@ -49,7 +49,7 @@ class TestPrincipalBinding:
         # Even the low-level key builder escapes forged id strings, so a
         # direct caller cannot smuggle segments through either.
         forged = manager._generate_bucket_key(
-            BucketType.ROUTE, user_id="1:u:2", route="GET /t"
+            BucketType.ROUTE, user_id=cast(Any, "1:u:2"), route="GET /t"
         )
         assert "u:1%3Au%3A2" in forged
         assert len(forged) <= MAX_TOTAL_KEY_LENGTH
@@ -57,7 +57,7 @@ class TestPrincipalBinding:
     def test_digit_string_and_int_are_the_same_principal(self, memory_storage):
         manager = _manager(memory_storage)
 
-        as_string = manager.check_rate_limit(user_id="007", route="GET /t")
+        as_string = manager.check_rate_limit(user_id=cast(Any, "007"), route="GET /t")
         as_int = manager.check_rate_limit(user_id=7, route="GET /t")
 
         assert as_string.bucket_key == as_int.bucket_key
@@ -112,7 +112,7 @@ class TestPrincipalBinding:
         manager = _manager(memory_storage)
 
         forged = await manager.acheck_rate_limit(
-            user_id="1:u:2", ip_address="10.0.0.1", route="GET /t"
+            user_id=cast(Any, "1:u:2"), ip_address="10.0.0.1", route="GET /t"
         )
         normal = await manager.acheck_rate_limit(
             user_id=42, ip_address="10.0.0.1", route="GET /t"

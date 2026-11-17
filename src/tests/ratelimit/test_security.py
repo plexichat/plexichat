@@ -4,7 +4,6 @@ Comprehensive security tests for rate limiting system.
 Tests bypass attempts, distributed attacks, bucket manipulation,
 header spoofing, and integration with all API endpoints and WebSocket operations.
 """
-
 import pytest
 import time
 from unittest.mock import AsyncMock
@@ -52,6 +51,7 @@ class TestBypassAttempts:
             route="GET /test",
             is_admin=False,
         )
+        assert result is not None
         assert not result.allowed
 
     def test_internal_header_spoofing(self, memory_storage):
@@ -93,6 +93,7 @@ class TestBypassAttempts:
         result = manager.check_rate_limit(user_id=111, route="GET /test")
         assert result.allowed
         result = manager.check_rate_limit(user_id=111, route="GET /test")
+        assert result is not None
         assert not result.allowed
         result = manager.check_rate_limit(user_id=222, route="GET /test")
         assert result.allowed
@@ -122,6 +123,7 @@ class TestBypassAttempts:
             route="GET /test",
             cost=1,
         )
+        assert result is not None
         assert not result.allowed
 
     def test_zero_cost_requests(self, memory_storage, test_user_id):
@@ -194,6 +196,7 @@ class TestBypassAttempts:
             route="GET /test",
             is_admin=True,
         )
+        assert result is not None
         assert not result.allowed
 
 
@@ -242,6 +245,7 @@ class TestDistributedAttacks:
             enable_global_limit=False,
         )
         attacker_id = 99999
+        result = None
         for target_user in range(1, 100):
             result = manager.check_rate_limit(
                 user_id=attacker_id,
@@ -249,6 +253,7 @@ class TestDistributedAttacks:
             )
             if not result.allowed:
                 break
+        assert result is not None
         assert not result.allowed
 
     def test_distributed_channel_spam(self, memory_storage):
@@ -266,6 +271,7 @@ class TestDistributedAttacks:
             enable_global_limit=False,
         )
         channel_id = 12345
+        result = None
         for user_id in range(1, 10):
             for _ in range(5):
                 result = manager.check_rate_limit(
@@ -273,6 +279,7 @@ class TestDistributedAttacks:
                     route="POST /channels/{id}/messages",
                     resource_id=channel_id,
                 )
+            assert result is not None
             if not result.allowed:
                 break
 
@@ -302,6 +309,7 @@ class TestDistributedAttacks:
         )
         routes = ["GET /route1", "GET /route2", "GET /route3"]
         blocked = False
+        i = -1
         for i in range(100):
             route = routes[i % 3]
             result = manager.check_rate_limit(
@@ -365,6 +373,7 @@ class TestBucketManipulation:
         manager.check_rate_limit(user_id=111, route="GET /test")
         manager.check_rate_limit(user_id=111, route="GET /test")
         result = manager.check_rate_limit(user_id=111, route="GET /test")
+        assert result is not None
         assert not result.allowed
         result = manager.check_rate_limit(user_id=222, route="GET /test")
         assert result.allowed
@@ -385,8 +394,10 @@ class TestBucketManipulation:
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert result.allowed
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
+        assert result is not None
         assert not result.allowed
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
+        assert result is not None
         assert not result.allowed
 
     def test_token_bucket_underflow(self, memory_storage, test_user_id):
@@ -409,6 +420,7 @@ class TestBucketManipulation:
                 cost=1,
             )
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
+        assert result is not None
         assert not result.allowed
 
     def test_sliding_window_timestamp_overflow(self, memory_storage, test_user_id):
@@ -428,6 +440,7 @@ class TestBucketManipulation:
             result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
             assert result.allowed, f"Request {i + 1} should be allowed"
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
+        assert result is not None
         assert not result.allowed
 
     def test_fixed_window_boundary_manipulation(
@@ -449,6 +462,7 @@ class TestBucketManipulation:
             result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
             assert result.allowed
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
+        assert result is not None
         assert not result.allowed
         rate_limit_clock.advance(1.1)
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
@@ -843,6 +857,7 @@ class TestRateLimitEvasionTechniques:
             user_id=test_user_id,
             route="POST /test",
         )
+        assert result is not None
         assert not result.allowed
 
     def test_timing_attack_protection(self, memory_storage, test_user_id):
@@ -882,6 +897,7 @@ class TestRateLimitEvasionTechniques:
         for _ in range(5):
             manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
+        assert result is not None
         assert not result.allowed
 
     def test_cache_poisoning_prevention(self, memory_storage):
@@ -942,6 +958,7 @@ class TestResourceExhaustionAttacks:
         for _ in range(1000):
             manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
+        assert result is not None
         assert not result.allowed
 
     def test_high_cost_request_handling(self, memory_storage, test_user_id):
@@ -974,6 +991,7 @@ class TestResourceExhaustionAttacks:
             route="POST /test",
             cost=10,
         )
+        assert result is not None
         assert not result.allowed
 
 
@@ -1004,6 +1022,7 @@ class TestEdgeCaseSecurity:
             ip_address="192.168.1.1",
             route="GET /test",
         )
+        assert result is not None
         assert not result.allowed
 
     def test_empty_route_handling(self, memory_storage, test_user_id):

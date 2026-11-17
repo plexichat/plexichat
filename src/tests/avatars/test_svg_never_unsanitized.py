@@ -14,6 +14,7 @@ Covers:
 These tests FAIL on the pre-fix code (validator honoured operator config,
 no upload sniffing, ``get_*_data`` returned poisoned rows verbatim).
 """
+from typing import Any, cast
 
 import hashlib
 import io
@@ -65,7 +66,8 @@ def avatar_manager(db):
 @pytest.fixture
 def svg_allowed_config():
     """Simulate an operator adding SVG to the avatar allow-list."""
-    from utils.config import _config_instance as loader
+    from utils.config import _config_instance as _config_for_test
+    loader = cast(Any, _config_for_test)
 
     loader.config["avatars"] = {
         "allowed_types": [
@@ -307,7 +309,7 @@ class TestServingNeverReturnsRawScriptSvg:
                 return_value='<svg width="128" height="128"></svg>',
             ),
         ):
-            response = await get_user_avatar(test_user.id, request)
+            response = await get_user_avatar(test_user.id, cast(Any, request))
         assert b"<script" not in response.body
         assert b"onload" not in response.body
 
@@ -331,6 +333,6 @@ class TestServingNeverReturnsRawScriptSvg:
                 return_value='<svg width="128" height="128"></svg>',
             ),
         ):
-            response = await get_server_icon(server.id, request)
+            response = await get_server_icon(server.id, cast(Any, request))
         assert b"<script" not in response.body
         assert b"onload" not in response.body

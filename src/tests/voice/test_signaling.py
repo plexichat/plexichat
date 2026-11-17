@@ -1,6 +1,7 @@
 """
 Tests for voice signaling module.
 """
+from typing import Any, cast
 
 import pytest
 import time
@@ -238,8 +239,8 @@ class TestTURNCredentials:
         creds1 = get_turn_credentials(member1.id)
         creds2 = get_turn_credentials(member2.id)
 
-        assert creds1.username != creds2.username
-        assert creds1.credential != creds2.credential
+        assert cast(Any, creds1).username != cast(Any, creds2).username
+        assert cast(Any, creds1).credential != cast(Any, creds2).credential
 
 
 class TestConnectionQuality:

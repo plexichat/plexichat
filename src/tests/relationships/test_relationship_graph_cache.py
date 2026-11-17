@@ -5,6 +5,7 @@ The manager's ``_invalidate_all_relationships_cache`` used to call
 every relationship mutation. The cache key produced by ``get_all_relationships``
 is deterministic, so a targeted delete is both cheaper and more precise.
 """
+from typing import Any, cast
 
 import pytest
 
@@ -24,7 +25,7 @@ class TestTargetedAggregateInvalidation:
             db_mod, "invalidate_pattern", lambda pattern: patterns.append(pattern)
         )
 
-        RelationshipHelpersMixin._invalidate_all_relationships_cache(None, 1, 2, 1)
+        RelationshipHelpersMixin._invalidate_all_relationships_cache(cast(Any, None), 1, 2, 1)
 
         assert deleted == ["all_relationships:int:1", "all_relationships:int:2"]
         assert patterns == []

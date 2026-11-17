@@ -5,6 +5,7 @@ Covers:
 - REL-1: relationship list cache-invalidation pattern matches generated keys
 - REL-3: friend-request message length is enforced
 """
+from typing import Any, cast
 
 import fnmatch
 
@@ -31,7 +32,7 @@ class TestRel1CacheInvalidationPattern:
         monkeypatch.setattr(base_mod, "invalidate_pattern", fake_invalidate)
 
         # _invalidate_relationship_list_cache is a plain method; self is unused.
-        RelationshipsBase._invalidate_relationship_list_cache(None, 1, 2)
+        RelationshipsBase._invalidate_relationship_list_cache(cast(Any, None), 1, 2)
 
         assert captured["patterns"] == [
             "relationships_api:*:current_user:TokenInfo:1:*",

@@ -1,4 +1,5 @@
 """Tests for application components (buttons, select menus, text inputs)."""
+from typing import Any, cast
 
 import pytest
 
@@ -79,7 +80,7 @@ class TestComponents:
             placeholder="Choose a color",
         )
         assert menu.custom_id == "sel_color"
-        assert len(menu.options) == 2
+        assert len(cast(Any, menu.options)) == 2
         assert menu.placeholder == "Choose a color"
 
     def test_select_menu_min_max_values(self):

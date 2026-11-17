@@ -8,6 +8,7 @@ Covers:
 - AV-4: default SVG escapes user-controlled initials.
 - AV-5: default SVG colour matches the client djb2 algorithm.
 """
+from typing import Any, cast
 
 import io
 import re
@@ -71,12 +72,12 @@ class TestAvatarAuditFixes:
         assert fill == expected
 
     def test_default_svg_color_is_deterministic(self, avatar_manager):
-        a = re.search(
+        a = cast(Any, re.search(
             r'fill="([^"]+)"', avatar_manager.generate_default_svg("bob", "BO")
-        ).group(1)
-        b = re.search(
+        )).group(1)
+        b = cast(Any, re.search(
             r'fill="([^"]+)"', avatar_manager.generate_default_svg("bob", "BO")
-        ).group(1)
+        )).group(1)
         assert a == b
 
     # ---- AV-1 (manager + Valkey layer) ------------------------------------

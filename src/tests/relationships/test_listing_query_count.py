@@ -5,6 +5,7 @@ relationship graph: user profiles and visible presences are fetched in one
 bulk call each. A regression back to per-friend lookups blows this budget as
 soon as the graph holds more than a couple of users.
 """
+from typing import Any, cast
 
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -58,7 +59,7 @@ def test_listing_hydration_query_count_is_bounded(
             rel_manager, "get_all_blocked_ids", wraps=rel_manager.get_all_blocked_ids
         ) as all_blocked,
     ):
-        result = ListingMixin.get_relationships.__wrapped__(
+        result = cast(Any, ListingMixin.get_relationships).__wrapped__(
             ListingMixin(),
             current_user=SimpleNamespace(user_id=me.id),
             limit=100,

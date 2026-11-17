@@ -4,6 +4,7 @@ Exercises the HTTP layer with mocked ``api`` dependencies so the validation
 and de-duplication logic runs without a full app bootstrap. The route handlers
 are async coroutines, so they are driven via ``asyncio.run``.
 """
+from typing import Any, cast
 
 import asyncio
 from types import SimpleNamespace
@@ -62,12 +63,13 @@ def test_report_message_self_report_rejected(monkeypatch):
         asyncio.run(
             report_message(
                 MessageReportRequest(
-                    message_id="5", channel_id="1", reason="x", category=CATEGORY
+                    message_id=cast(Any, "5"), channel_id=cast(Any, "1"), reason="x", category=CATEGORY,
+                details=None, server_id=None,
                 ),
-                _User(1),
+                cast(Any, _User(1)),
             )
         )
-    assert exc.value.status_code == 400
+    assert cast(Any, exc.value).status_code == 400
 
 
 def test_report_message_inaccessible_rejected(monkeypatch):
@@ -77,12 +79,13 @@ def test_report_message_inaccessible_rejected(monkeypatch):
         asyncio.run(
             report_message(
                 MessageReportRequest(
-                    message_id="5", channel_id="1", reason="x", category=CATEGORY
+                    message_id=cast(Any, "5"), channel_id=cast(Any, "1"), reason="x", category=CATEGORY,
+                details=None, server_id=None,
                 ),
-                _User(2),
+                cast(Any, _User(2)),
             )
         )
-    assert exc.value.status_code == 400
+    assert cast(Any, exc.value).status_code == 400
 
 
 def test_report_message_invalid_category_rejected(monkeypatch):
@@ -93,7 +96,8 @@ def test_report_message_invalid_category_rejected(monkeypatch):
     # route runs: model construction raises a pydantic ValidationError.
     with pytest.raises(ValidationError):
         MessageReportRequest(
-            message_id="5", channel_id="1", reason="x", category="bogus"
+            message_id=cast(Any, "5"), channel_id=cast(Any, "1"), reason="x", category=cast(Any, "bogus"),
+        details=None, server_id=None,
         )
 
 
@@ -105,9 +109,10 @@ def test_report_message_dedupe_returns_existing(monkeypatch):
     result = asyncio.run(
         report_message(
             MessageReportRequest(
-                message_id="5", channel_id="1", reason="x", category=CATEGORY
+                message_id=cast(Any, "5"), channel_id=cast(Any, "1"), reason="x", category=CATEGORY,
+            details=None, server_id=None,
             ),
-            _User(2),
+            cast(Any, _User(2)),
         )
     )
     assert result.report_id == str(777)
@@ -120,9 +125,10 @@ def test_report_message_success(monkeypatch):
     result = asyncio.run(
         report_message(
             MessageReportRequest(
-                message_id="5", channel_id="1", reason="x", category=CATEGORY
+                message_id=cast(Any, "5"), channel_id=cast(Any, "1"), reason="x", category=CATEGORY,
+            details=None, server_id=None,
             ),
-            _User(2),
+            cast(Any, _User(2)),
         )
     )
     assert result.success is True
@@ -133,10 +139,10 @@ def test_report_user_self_rejected(monkeypatch):
     with pytest.raises(Exception) as exc:
         asyncio.run(
             report_user(
-                UserReportRequest(user_id="2", reason="x", category=CATEGORY), _User(2)
+                UserReportRequest(user_id=cast(Any, "2"), reason="x", category=CATEGORY, details=None, evidence_message_ids=None), cast(Any, _User(2))
             )
         )
-    assert exc.value.status_code == 400
+    assert cast(Any, exc.value).status_code == 400
 
 
 def test_report_user_not_found_rejected(monkeypatch):
@@ -147,11 +153,11 @@ def test_report_user_not_found_rejected(monkeypatch):
     with pytest.raises(Exception) as exc:
         asyncio.run(
             report_user(
-                UserReportRequest(user_id="123", reason="x", category=CATEGORY),
-                _User(2),
+                UserReportRequest(user_id=cast(Any, "123"), reason="x", category=CATEGORY, details=None, evidence_message_ids=None),
+                cast(Any, _User(2)),
             )
         )
-    assert exc.value.status_code == 400
+    assert cast(Any, exc.value).status_code == 400
 
 
 def test_report_user_invalid_evidence_rejected(monkeypatch):
@@ -160,10 +166,11 @@ def test_report_user_invalid_evidence_rejected(monkeypatch):
     # Non-snowflake evidence ids are rejected at the request boundary now.
     with pytest.raises(ValidationError):
         UserReportRequest(
-            user_id="123",
+            user_id=cast(Any, "123"),
             reason="x",
             category=CATEGORY,
-            evidence_message_ids=["not-a-number"],
+            evidence_message_ids=[cast(Any, "not-a-number")],
+        details=None,
         )
 
 
@@ -172,7 +179,7 @@ def test_report_user_invalid_category_rejected(monkeypatch):
     _patch(monkeypatch, _fake_reports(), None, db)
     # Invalid categories are rejected at the request boundary now.
     with pytest.raises(ValidationError):
-        UserReportRequest(user_id="123", reason="x", category="weird")
+        UserReportRequest(user_id=cast(Any, "123"), reason="x", category=cast(Any, "weird"), details=None, evidence_message_ids=None)
 
 
 def test_report_user_dedupe_returns_existing(monkeypatch):
@@ -181,7 +188,7 @@ def test_report_user_dedupe_returns_existing(monkeypatch):
     _patch(monkeypatch, _fake_reports(find_user=existing), None, db)
     result = asyncio.run(
         report_user(
-            UserReportRequest(user_id="123", reason="x", category=CATEGORY), _User(2)
+            UserReportRequest(user_id=cast(Any, "123"), reason="x", category=CATEGORY, details=None, evidence_message_ids=None), cast(Any, _User(2))
         )
     )
     assert result.report_id == str(42)
@@ -192,7 +199,7 @@ def test_report_user_success(monkeypatch):
     _patch(monkeypatch, _fake_reports(), None, db)
     result = asyncio.run(
         report_user(
-            UserReportRequest(user_id="123", reason="x", category=CATEGORY), _User(2)
+            UserReportRequest(user_id=cast(Any, "123"), reason="x", category=CATEGORY, details=None, evidence_message_ids=None), cast(Any, _User(2))
         )
     )
     assert result.success is True

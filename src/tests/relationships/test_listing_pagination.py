@@ -5,6 +5,7 @@ relationship graph before slicing to the requested page. Hydration must be
 limited to the page that is actually returned, while preserving order and
 per-status fields.
 """
+from typing import Any, cast
 
 from types import SimpleNamespace
 
@@ -50,10 +51,10 @@ def _setup(monkeypatch, *, friend_ids, incoming, outgoing, blocked):
     )
 
     def fake_bulk(viewer, ids):
-        fake_bulk.calls.append((viewer, set(ids)))
+        cast(Any, fake_bulk).calls.append((viewer, set(ids)))
         return {int(uid): _presence("online") for uid in ids}
 
-    fake_bulk.calls = []
+    cast(Any, fake_bulk).calls = []
     presence = SimpleNamespace(get_visible_presences_bulk=fake_bulk)
 
     monkeypatch.setattr(api, "get_relationships", lambda: relationships)
@@ -81,12 +82,12 @@ def test_page_only_hydrates_visible_ids(monkeypatch):
 
     token = SimpleNamespace(user_id=1)
     # Bypass the @cached wrapper to exercise the route body directly.
-    result = ListingMixin.get_relationships.__wrapped__(
+    result = cast(Any, ListingMixin.get_relationships).__wrapped__(
         ListingMixin(), current_user=token, limit=2, offset=2
     )
 
     assert user_calls == [{12, 13}]
-    assert fake_bulk.calls == [(1, {12, 13})]
+    assert cast(Any, fake_bulk).calls == [(1, {12, 13})]
     assert [item.user_id for item in result] == ["12", "13"]
     assert [item.status for item in result] == ["friend", "friend"]
 
@@ -101,7 +102,7 @@ def test_full_page_preserves_status_message_and_blocked_offline(monkeypatch):
     )
 
     token = SimpleNamespace(user_id=1)
-    result = ListingMixin.get_relationships.__wrapped__(
+    result = cast(Any, ListingMixin.get_relationships).__wrapped__(
         ListingMixin(), current_user=token, limit=100, offset=0
     )
 

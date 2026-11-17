@@ -1,4 +1,5 @@
 """Tests for transcription recording-reference normalization."""
+from typing import Any, cast
 
 import os
 from types import SimpleNamespace
@@ -103,13 +104,13 @@ def test_resolve_recording_segments_materializes_every_multi_segment_file(
     assert len(segments) == 2
     assert [ref for ref, _ in segments] == [tmp for _, tmp in segments]
     try:
-        with open(segments[0][0], "rb") as handle:
+        with open(cast(Any, segments[0][0]), "rb") as handle:
             assert handle.read() == b"segment-one-bytes"
-        with open(segments[1][0], "rb") as handle:
+        with open(cast(Any, segments[1][0]), "rb") as handle:
             assert handle.read() == b"segment-two-bytes"
     finally:
         for ref, tmp in segments:
-            os.unlink(tmp)
+            os.unlink(cast(Any, tmp))
     assert media.get_file_data.call_args_list == [
         ((11,),),
         ((12,),),
@@ -134,10 +135,10 @@ def test_resolve_recording_segments_single_entry_matches_single_resolver(tmp_pat
     assert len(segments) == 1
     try:
         assert segments[0][0] == segments[0][1]
-        with open(segments[0][0], "rb") as handle:
+        with open(cast(Any, segments[0][0]), "rb") as handle:
             assert handle.read() == b"audio-bytes"
     finally:
-        os.unlink(segments[0][1])
+        os.unlink(cast(Any, segments[0][1]))
     media.get_file_data.assert_called_once_with(42)
 
 

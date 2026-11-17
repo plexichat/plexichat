@@ -18,6 +18,7 @@ sender holds ``None`` and delivers no frames at all.
 """
 
 from __future__ import annotations
+from typing import Any
 
 import asyncio
 
@@ -46,7 +47,7 @@ class _StubVideoTrack(MediaStreamTrack):
 
     kind = "video"
 
-    async def recv(self):  # pragma: no cover - the SFU never pulls this
+    async def recv(self) -> Any:  # pragma: no cover - the SFU never pulls this
         await asyncio.sleep(3600)
         raise RuntimeError("stopped")
 
@@ -56,7 +57,7 @@ class _StubAudioTrack(MediaStreamTrack):
 
     kind = "audio"
 
-    async def recv(self):  # pragma: no cover - the SFU never pulls this
+    async def recv(self) -> Any:  # pragma: no cover - the SFU never pulls this
         await asyncio.sleep(3600)
         raise RuntimeError("stopped")
 
@@ -72,7 +73,7 @@ class _ScriptedVideoTrack(MediaStreamTrack):
         self.read = 0
         self.ended = False
 
-    async def recv(self):
+    async def recv(self) -> Any:
         if self.read >= self.total:
             return None
         self.read += 1

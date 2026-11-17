@@ -7,6 +7,7 @@ invalidation makes the next request re-check storage.
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -50,8 +51,8 @@ async def test_user_default_skips_repeated_storage_and_profile_lookups():
         patch.object(api, "get_auth", return_value=auth),
         patch("src.core.avatars.generate_default_svg", return_value=SVG) as gen_svg,
     ):
-        first = await get_user_avatar(UID, request)
-        second = await get_user_avatar(UID, request)
+        first = await get_user_avatar(cast(Any, UID), cast(Any, request))
+        second = await get_user_avatar(cast(Any, UID), cast(Any, request))
 
     assert first.body == second.body == SVG.encode()
     assert fake_avatars.get_user_avatar_checksum.call_count == 1
@@ -72,9 +73,9 @@ async def test_user_invalidation_forces_a_fresh_lookup():
         patch.object(api, "get_auth", return_value=None),
         patch("src.core.avatars.generate_default_svg", return_value=SVG),
     ):
-        await get_user_avatar(UID, request)
+        await get_user_avatar(cast(Any, UID), cast(Any, request))
         avatar_routes._invalidate_user_avatar_cache(UID)
-        await get_user_avatar(UID, request)
+        await get_user_avatar(cast(Any, UID), cast(Any, request))
 
     assert fake_avatars.get_user_avatar_checksum.call_count == 2
     assert fake_avatars.get_user_avatar_data.call_count == 2
@@ -93,8 +94,8 @@ async def test_server_default_skips_repeated_name_lookups():
         patch.object(api, "get_db", return_value=db),
         patch("src.core.avatars.generate_default_svg", return_value=SVG),
     ):
-        await get_server_icon(SID, request)
-        await get_server_icon(SID, request)
+        await get_server_icon(cast(Any, SID), cast(Any, request))
+        await get_server_icon(cast(Any, SID), cast(Any, request))
 
     assert fake_avatars.get_server_icon_checksum.call_count == 1
     assert fake_avatars.get_server_icon_data.call_count == 1

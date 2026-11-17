@@ -8,6 +8,7 @@ Covers:
 - icon_url passed through on server creation
 - ban/unban refusals answer 403/409 instead of a generic 500
 """
+from typing import Any, cast
 
 import pytest
 
@@ -152,7 +153,7 @@ class TestCreateServerIcon:
             icon_url="/api/v1/avatars/servers/1",
         )
         with patch("src.api.get_servers", return_value=fake_servers):
-            await create_server(body, current_user)
+            await create_server(cast(Any, body), cast(Any, current_user))
 
         call_kwargs = fake_servers.create_server.call_args.kwargs
         assert call_kwargs["owner_id"] == 7
@@ -190,9 +191,9 @@ class TestBanRouteErrorMapping:
         with patch("src.api.get_servers", return_value=servers_mod):
             try:
                 if manager_method == "ban_member":
-                    asyncio.run(bans_route.ban_member("7", "42", None, current_user))
+                    asyncio.run(bans_route.ban_member("7", "42", None, cast(Any, current_user)))
                 else:
-                    asyncio.run(bans_route.unban_member("7", "42", current_user))
+                    asyncio.run(bans_route.unban_member("7", "42", cast(Any, current_user)))
             except HTTPException as http_exc:
                 return http_exc
         raise AssertionError(

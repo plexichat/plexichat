@@ -6,6 +6,7 @@ rather than the server's local time, and an explicit offset in the value must
 always win. The previous implementation resolved naive values with the host's
 local time zone, so the same request filtered differently on different hosts.
 """
+from typing import Any, cast
 
 from src.core.messaging.services.export import TranscriptExportService
 
@@ -38,7 +39,7 @@ def _svc_at(created_at_ms):
             "created_at": created_at_ms,
         }
     ]
-    return TranscriptExportService(None, _StubMessages(msgs), _StubParticipants())
+    return TranscriptExportService(None, cast(Any, _StubMessages(msgs)), cast(Any, _StubParticipants()))
 
 
 def test_naive_date_defaults_to_utc():

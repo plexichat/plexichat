@@ -8,6 +8,7 @@ AttributeError and answered 500. The module now delegates to the manager.
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 import asyncio
 from unittest.mock import Mock
@@ -23,7 +24,7 @@ def test_module_exposes_the_pending_request_lookup(monkeypatch):
 
     row = relationships_module._get_pending_request(7, 9)
 
-    assert row["id"] == 42
+    assert cast(Any, row)["id"] == 42
     manager._get_pending_request.assert_called_once_with(7, 9)
 
 

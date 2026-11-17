@@ -8,6 +8,7 @@ Proves the residual fixes on top of test_export_ids_m4.py:
 - auth failure stores NO bookkeeping entry and consumes NO rate budget
 - concurrent burst respects the rate limit with zero lost/duplicate entries
 """
+from typing import Any, cast
 
 import os
 import stat
@@ -80,13 +81,13 @@ def export_env(tmp_path, monkeypatch):
 
 def _make_svc(allowed=True, n_msgs=2):
     return TranscriptExportService(
-        None, _StubMessages(_sample_messages(n_msgs)), _StubParticipants(allowed)
+        None, cast(Any, _StubMessages(_sample_messages(n_msgs))), cast(Any, _StubParticipants(allowed))
     )
 
 
 def test_ids_are_256bit_unique(export_env):
     svc = _make_svc()
-    ids = [svc.request_export("42", "7", "json")["export_id"] for _ in range(10)]
+    ids = [svc.request_export(cast(Any, "42"), cast(Any, "7"), "json")["export_id"] for _ in range(10)]
     assert len(set(ids)) == 10
     for eid in ids:
         assert eid.startswith("export_")
@@ -98,7 +99,7 @@ def test_ids_are_256bit_unique(export_env):
 
 def test_exclusive_create_no_overwrite_window(export_env):
     svc = _make_svc()
-    result = svc.request_export("42", "7", "json")
+    result = svc.request_export(cast(Any, "42"), cast(Any, "7"), "json")
     assert result["status"] == "ready"
     fpath = result["file_path"]
     assert stat.S_IMODE(os.stat(fpath).st_mode) == 0o600
@@ -112,7 +113,7 @@ def test_exclusive_create_no_overwrite_window(export_env):
 
 def test_record_files_private_no_predictable_tmp(export_env, tmp_path):
     svc = _make_svc()
-    result = svc.request_export("42", "7", "json")
+    result = svc.request_export(cast(Any, "42"), cast(Any, "7"), "json")
     assert result["status"] == "ready"
     records = list((tmp_path / "records").glob("*.json"))
     assert len(records) == 1
@@ -140,15 +141,15 @@ def test_malformed_ids_rejected(export_env):
 def test_auth_failure_tracks_nothing_consumes_nothing(export_env, tmp_path):
     export_env["limit"] = 2
     bad = _make_svc(allowed=False)
-    r1 = bad.request_export("99", "7", "json")
-    r2 = bad.request_export("99", "7", "json")
+    r1 = bad.request_export(cast(Any, "99"), cast(Any, "7"), "json")
+    r2 = bad.request_export(cast(Any, "99"), cast(Any, "7"), "json")
     assert r1["status"] == "failed" and r2["status"] == "failed"
     # No bookkeeping entries, no disk artifacts, no rate budget consumed.
     assert TranscriptExportService._exports == {}
     assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
     good = _make_svc(allowed=True)
-    ok1 = good.request_export("99", "7", "json")
-    ok2 = good.request_export("99", "7", "json")
+    ok1 = good.request_export(cast(Any, "99"), cast(Any, "7"), "json")
+    ok2 = good.request_export(cast(Any, "99"), cast(Any, "7"), "json")
     assert ok1["status"] == "ready" and ok2["status"] == "ready"
 
 
@@ -158,7 +159,7 @@ def test_concurrent_burst_atomic_limit(export_env):
     n = 20
     with ThreadPoolExecutor(max_workers=10) as pool:
         results = list(
-            pool.map(lambda i: svc.request_export("42", "7", "json"), range(n))
+            pool.map(lambda i: svc.request_export(cast(Any, "42"), cast(Any, "7"), "json"), range(n))
         )
     ready = [r for r in results if r["status"] == "ready"]
     limited = [r for r in results if r["status"] == "failed"]

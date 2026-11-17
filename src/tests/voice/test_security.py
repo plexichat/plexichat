@@ -8,6 +8,7 @@ Covers:
 - Media stream hijacking
 - SFU security for Janus and MediaSoup
 """
+from typing import Any, cast
 
 import pytest
 import json
@@ -135,7 +136,7 @@ a=candidate:1 1 udp 2130706431 malicious.attacker.com 9999 typ host
     def test_invalid_sdp_type_rejection(self):
         """Test that invalid SDP types are rejected."""
         with pytest.raises((ValueError, AttributeError)):
-            SDPMessage(sdp_type="invalid_type", sdp="v=0")
+            SDPMessage(sdp_type=cast(Any, "invalid_type"), sdp="v=0")
 
     def test_malformed_media_line(self):
         """Test rejection of malformed media lines in SDP."""
@@ -221,8 +222,8 @@ class TestSignalingManipulation:
         time.sleep(1)
         creds2 = get_turn_credentials(member1.id)
 
-        assert creds1.username != creds2.username
-        assert creds1.credential != creds2.credential
+        assert cast(Any, creds1).username != cast(Any, creds2).username
+        assert cast(Any, creds1).credential != cast(Any, creds2).credential
 
     def test_unauthorized_connection_attempt(self, server_with_voice, security_setup):
         """Test that unauthorized users cannot create connections."""
@@ -938,8 +939,8 @@ class TestCrossProtocolAttacks:
         creds1 = get_turn_credentials(member1.id)
         creds2 = get_turn_credentials(member2.id)
 
-        assert creds1.credential != creds2.credential
-        assert creds1.username.split(":")[1] != creds2.username.split(":")[1]
+        assert cast(Any, creds1).credential != cast(Any, creds2).credential
+        assert cast(Any, creds1).username.split(":")[1] != cast(Any, creds2).username.split(":")[1]
 
     @pytest.mark.asyncio
     async def test_concurrent_connection_exhaustion(self, mock_mediasoup_session):

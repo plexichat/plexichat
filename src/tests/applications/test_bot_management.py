@@ -1,4 +1,5 @@
 """Tests for bot approval and request management."""
+from typing import Any, cast
 
 import pytest
 from unittest.mock import patch
@@ -201,10 +202,10 @@ class TestBotManagement:
             (secret_hash, app.id),
         )
         token = flow.exchange_code(
-            app.id, client_secret, code.code, "https://example.com/callback"
+            app.id, client_secret, cast(Any, code.code), "https://example.com/callback"
         )
 
-        flow.verify_access_token(token.access_token)
+        flow.verify_access_token(cast(Any, token.access_token))
 
         row = app_manager._db.fetch_one(
             "SELECT last_used_at FROM app_oauth_tokens WHERE id = ?",
@@ -243,7 +244,7 @@ class TestAuthorizedAppsExpiryFiltering:
             (secret_hash, app.id),
         )
         return flow.exchange_code(
-            app.id, client_secret, code.code, "https://example.com/callback"
+            app.id, client_secret, cast(Any, code.code), "https://example.com/callback"
         )
 
     def test_valid_token_is_listed(self, app_manager, test_user):

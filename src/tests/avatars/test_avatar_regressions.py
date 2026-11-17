@@ -7,6 +7,7 @@ Covers:
 - Invalid-image uploads map to a consistent 400 on every upload endpoint
 - Avatar/icon changes reach connected clients via gateway events
 """
+from typing import Any, cast
 
 import io
 from types import SimpleNamespace
@@ -109,7 +110,8 @@ class TestAnimatedFramePreservation:
         assert getattr(out, "n_frames", 1) == 3
 
     def test_animated_gif_resized_keeps_all_frames(self, avatar_manager):
-        from utils.config import _config_instance as loader
+        from utils.config import _config_instance as _config_for_test
+        loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_size": 8}
         loader._invalidate_cache()
@@ -164,7 +166,7 @@ class TestConsistentInvalidImageErrors:
         current_user = SimpleNamespace(user_id=1)
         with patch("src.api.get_avatars", return_value=fake_avatars):
             with pytest.raises(HTTPException) as exc:
-                await upload_my_avatar(file, current_user)
+                await upload_my_avatar(cast(Any, file), cast(Any, current_user))
         assert exc.value.status_code == 400
         assert "Invalid image file" in str(exc.value.detail)
 
@@ -180,7 +182,7 @@ class TestConsistentInvalidImageErrors:
         current_user = SimpleNamespace(user_id=1)
         with patch("src.api.get_avatars", return_value=fake_avatars):
             with pytest.raises(HTTPException) as exc:
-                await AvatarMixin().upload_avatar(file, current_user)
+                await AvatarMixin().upload_avatar(cast(Any, file), cast(Any, current_user))
         assert exc.value.status_code == 400
         assert "Invalid image file" in str(exc.value.detail)
 
@@ -234,7 +236,7 @@ class TestGatewayEmitParity:
             patch("src.api.get_avatars", return_value=fake_avatars),
             patch("src.core.events.gateway_emit.emit_user_update") as emit,
         ):
-            await upload_my_avatar(file, current_user)
+            await upload_my_avatar(cast(Any, file), cast(Any, current_user))
 
         emit.assert_called_once()
         payload = emit.call_args.args[0]
@@ -264,7 +266,7 @@ class TestGatewayEmitParity:
             patch("src.api.get_servers", return_value=fake_servers),
             patch("src.core.events.gateway_emit.emit_guild_update") as emit,
         ):
-            await upload_server_icon("9", file, current_user)
+            await upload_server_icon("9", cast(Any, file), cast(Any, current_user))
 
         emit.assert_called_once()
         assert emit.call_args.args[0] == 9

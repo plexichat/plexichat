@@ -9,6 +9,7 @@ Covers:
 - Block-status oracle closed (M3): a friend request to a user who blocked
   the sender is indistinguishable from a request to a nonexistent user.
 """
+from typing import Any, cast
 
 import asyncio
 from types import SimpleNamespace
@@ -90,10 +91,10 @@ class TestBlockOracleM3:
         relationships.send_friend_request.side_effect = send_side_effect
 
         handler = FriendRequestMixin()
-        handler._dispatch_relationship_event = AsyncMock()
-        handler._invalidate_relationship_list_cache = MagicMock()
+        cast(Any, handler)._dispatch_relationship_event = AsyncMock()
+        cast(Any, handler)._invalidate_relationship_list_cache = MagicMock()
 
-        body = FriendRequestCreate(user_id=target_id)
+        body = FriendRequestCreate(user_id=cast(Any, target_id))
         current_user = SimpleNamespace(user_id=123456789)
 
         with (
@@ -112,7 +113,7 @@ class TestBlockOracleM3:
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(handler.create_relationship(body, current_user))
+                asyncio.run(cast(Any, handler).create_relationship(body, current_user))
         return exc_info.value.status_code, exc_info.value.detail
 
     def test_blocked_and_missing_produce_same_response(self, rel_manager, two_users):

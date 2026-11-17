@@ -1,6 +1,7 @@
 """
 Tests for complete voice connection flow.
 """
+from typing import Any, cast
 
 import asyncio
 import pytest
@@ -124,7 +125,7 @@ def signaling_setup(db_and_modules):
     # Replace the lazily-created adapter with one that yields real transport
     # parameters, so the flow exercises the production code path (and proves
     # the manager no longer needs to fabricate credentials to answer).
-    signaling_module._get_manager()._sfu = _StubSfu()
+    cast(Any, signaling_module._get_manager())._sfu = _StubSfu()
 
     yield voice
 

@@ -15,6 +15,7 @@ sharing a single temp-file sqlite Database and asserts no over-admit.
 
 Would FAIL on pre-fix code (allowed > capacity) and PASSES after.
 """
+from typing import Any, cast
 
 import threading
 
@@ -51,7 +52,7 @@ class TestF6BucketAtomicRegression:
         assert all(t.is_alive() is False for t in threads)
         assert all(r is not None for r in out)
 
-        allowed = sum(1 for r in out if r[0] is True)
+        allowed = sum(1 for r in out if cast(Any, r)[0] is True)
         # No refill: exactly `capacity` admits. ``<=`` keeps the test
         # robust: fail-closed denies on transient lock errors may only
         # *reduce* admits, never inflate them (the unsafe direction).
@@ -108,6 +109,6 @@ class TestF6BucketAtomicRegression:
         for t in threads:
             t.join(timeout=60)
         assert all(r is not None for r in out)
-        allowed = sum(1 for r in out if r[0] is True)
+        allowed = sum(1 for r in out if cast(Any, r)[0] is True)
         # 5 tokens afford exactly one cost-3 spend (3 spent, 2 left < 3).
         assert allowed == 1

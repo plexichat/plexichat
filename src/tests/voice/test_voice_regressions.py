@@ -9,6 +9,7 @@ Covers:
 - ICE bootstrap endpoint returning configured servers without session minting
 - ICE candidate handling transitioning state without a tautological gate
 """
+from typing import Any, cast
 
 import asyncio
 import time
@@ -183,7 +184,7 @@ class TestVoiceHandlerErrorSurfacing:
         handler = VoiceHandler()
         with patch("src.core.voice.join_channel", side_effect=RuntimeError("boom")):
             result = await handler.handle_voice_connect(
-                self._connection(), {"channel_id": 5}
+                cast(Any, self._connection()), {"channel_id": 5}
             )
 
         assert result == (None, None, int(GatewayCloseCode.UNKNOWN_ERROR))
@@ -196,7 +197,7 @@ class TestVoiceHandlerErrorSurfacing:
             side_effect=RuntimeError("boom"),
         ):
             result = await handler.handle_voice_state_update(
-                self._connection(), {"channel_id": 5}
+                cast(Any, self._connection()), {"channel_id": 5}
             )
 
         assert result == (None, None, int(GatewayCloseCode.UNKNOWN_ERROR))
@@ -205,7 +206,7 @@ class TestVoiceHandlerErrorSurfacing:
     async def test_voice_disconnect_failure_returns_close_code(self):
         handler = VoiceHandler()
         with patch("src.core.voice.leave_channel", side_effect=RuntimeError("boom")):
-            result = await handler.handle_voice_disconnect(self._connection(), None)
+            result = await handler.handle_voice_disconnect(cast(Any, self._connection()), None)
 
         assert result == (None, None, int(GatewayCloseCode.UNKNOWN_ERROR))
 

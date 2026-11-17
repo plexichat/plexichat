@@ -14,6 +14,7 @@ signaling states that made the original path fail.
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 from types import SimpleNamespace
 
@@ -130,7 +131,7 @@ async def test_on_track_keeps_the_raw_track_when_processing_fails(monkeypatch):
 
     monkeypatch.setattr(mod, "AudioProcessingTrack", boom)
 
-    adapter = AiortcAdapter(acoustic_defense=AcousticDefenseConfig(enabled=True))
+    adapter = AiortcAdapter(acoustic_defense=cast(Any, AcousticDefenseConfig(enabled=True)))
     room_id, peer_id = "voice_77", "user_88"
     await adapter.join_room(room_id, peer_id)
     try:

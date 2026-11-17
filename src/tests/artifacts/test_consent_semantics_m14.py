@@ -10,6 +10,7 @@ consent; these tests pin that agreement.
 Each test here FAILS on the pre-fix transcription semantics (>=1 consent
 allows a mixed roster) and PASSES on the unanimous rule.
 """
+from typing import Any, cast
 
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -65,7 +66,7 @@ def test_recording_fails_closed_without_verifiable_roster():
     ):
         assert bool(_recorder(Mock())._call_consent_allows(5, 1)) is False
     # Call without a channel cannot resolve the live roster: fail closed.
-    assert _recording_allows([1], [1], channel_id=None) is False
+    assert _recording_allows([1], [1], channel_id=cast(Any, None)) is False
 
 
 def test_transcription_refuses_mixed_consent_roster():

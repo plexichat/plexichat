@@ -1,4 +1,5 @@
 """Regression tests for voice-call consent and recording lifecycle."""
+from typing import Any, cast
 
 from unittest.mock import AsyncMock, Mock
 
@@ -79,7 +80,7 @@ def test_rejoin_after_departure_is_treated_as_new_membership(db):
 
     lifecycle = CallLifecycleMixin.__new__(CallLifecycleMixin)
     lifecycle._voice_call_manager = manager
-    lifecycle.get_channel_members = lambda channel_id: manager._current_participant_ids(
+    cast(Any, lifecycle).get_channel_members = lambda channel_id: manager._current_participant_ids(
         channel_id
     )
     lifecycle._get_channel_user_count = lambda channel_id: len(
@@ -243,7 +244,7 @@ def test_distinct_participant_roster_persisted_and_churn_proof(db, monkeypatch):
     )
     manager = VoiceCallManager(
         db,
-        artifact_manager=FakeArtifactManager(),
+        artifact_manager=cast(Any, FakeArtifactManager()),
         config={"voice": {"allow_recording": True}},
     )
 
@@ -405,8 +406,8 @@ def test_revoke_everywhere_clears_every_active_call_the_user_is_live_in(db):
     touched = manager.revoke_consent_everywhere(33)
 
     assert set(touched) == {older.id, newer.id}
-    assert get_voice_call_uncached(db, older.id).consented_participants == []
-    assert get_voice_call_uncached(db, newer.id).consented_participants == []
+    assert cast(Any, get_voice_call_uncached(db, older.id)).consented_participants == []
+    assert cast(Any, get_voice_call_uncached(db, newer.id)).consented_participants == []
 
 
 def test_revoke_everywhere_ignores_calls_the_user_is_not_live_in(db):
@@ -416,7 +417,7 @@ def test_revoke_everywhere_ignores_calls_the_user_is_not_live_in(db):
     manager.add_consent(call.id, 44)
 
     assert manager.revoke_consent_everywhere(33) == []
-    assert get_voice_call_uncached(db, call.id).consented_participants == [44]
+    assert cast(Any, get_voice_call_uncached(db, call.id)).consented_participants == [44]
 
 
 def test_revoke_everywhere_survives_a_call_that_refuses(db, monkeypatch):
@@ -439,7 +440,7 @@ def test_revoke_everywhere_survives_a_call_that_refuses(db, monkeypatch):
     touched = manager.revoke_consent_everywhere(33)
 
     assert touched == [newer.id]
-    assert get_voice_call_uncached(db, newer.id).consented_participants == []
+    assert cast(Any, get_voice_call_uncached(db, newer.id)).consented_participants == []
 
 
 def _recorder(db, tmp_path):

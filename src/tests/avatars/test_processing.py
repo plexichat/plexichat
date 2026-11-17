@@ -10,6 +10,7 @@ Covers:
 - Default SVG placeholder generation
 - Config-driven limits (max size, max file size, allowed types)
 """
+from typing import Any, cast
 
 import hashlib
 import io
@@ -104,7 +105,8 @@ class TestImageProcessing:
     def test_oversized_image_resized(self, avatar_manager):
         """Images larger than max_size must be downscaled."""
         # Build a large PNG and shrink max_size via config
-        from utils.config import _config_instance as loader
+        from utils.config import _config_instance as _config_for_test
+        loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_size": 32}
         loader._invalidate_cache()
@@ -179,8 +181,8 @@ class TestImageProcessing:
         decoded = Image.open(io.BytesIO(processed))
         assert decoded.format == "JPEG", decoded.format
         # Left half opaque black; formerly transparent half is white.
-        assert decoded.getpixel((2, 2))[0] < 60, decoded.getpixel((2, 2))
-        right = decoded.getpixel((decoded.width - 3, 2))
+        assert cast(Any, decoded.getpixel((2, 2)))[0] < 60, decoded.getpixel((2, 2))
+        right = cast(Any, decoded.getpixel((decoded.width - 3, 2)))
         assert right[0] > 200 and right[1] > 200 and right[2] > 200, right
 
     def test_invalid_image_rejected(self, avatar_manager):
@@ -190,7 +192,8 @@ class TestImageProcessing:
 
     def test_oversized_pixel_count_rejected(self, avatar_manager):
         """Images exceeding max_pixels must be rejected."""
-        from utils.config import _config_instance as loader
+        from utils.config import _config_instance as _config_for_test
+        loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_pixels": 100}
         loader._invalidate_cache()
@@ -295,7 +298,8 @@ class TestUserAvatarLifecycle:
 
     def test_upload_rejects_oversized_file(self, avatar_manager, test_user):
         """Uploading a file over max_file_size must raise ValueError."""
-        from utils.config import _config_instance as loader
+        from utils.config import _config_instance as _config_for_test
+        loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_file_size": 100}
         loader._invalidate_cache()

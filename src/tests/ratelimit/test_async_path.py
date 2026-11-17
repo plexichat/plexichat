@@ -11,7 +11,7 @@ actually use their native async client.
 
 import asyncio
 import fnmatch
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, cast
 
 import pytest
 from starlette.requests import Request
@@ -81,6 +81,7 @@ class TestManagerAsyncParity:
         sync_manager = _manager(limit=3)
         async_manager = _manager(limit=3)
 
+        sync_result = None
         for _ in range(5):
             sync_result = sync_manager.check_rate_limit(user_id=7, route="GET /x")
             async_result = await async_manager.acheck_rate_limit(
@@ -97,6 +98,7 @@ class TestManagerAsyncParity:
             )
 
         # The limiter actually engaged (otherwise parity is vacuous).
+        assert sync_result is not None
         assert sync_result.allowed is False
 
     @pytest.mark.asyncio
@@ -144,7 +146,7 @@ class TestManagerAsyncParity:
         def token_buckets():
             return [
                 state
-                for state in manager._storage._buckets.values()
+                for state in cast(Any, manager._storage)._buckets.values()
                 if "tokens" in state
             ]
 
@@ -472,7 +474,7 @@ class TestEventLoopCallersUseAsyncPath:
 
         async def _fake_acheck(**_kwargs):
             denied = _Denied(allowed=False, retry_after=5)
-            denied.response_body = {"error": "limited"}
+            cast(Any, denied).response_body = {"error": "limited"}
             return denied
 
         monkeypatch.setattr(rl, "is_setup", lambda: True)
@@ -715,7 +717,7 @@ class _DeadlockFakeValkey(_LockingFakeValkey):
 
     async def aacquire_lock(self, key, timeout=5.0):
         self.acquire_failures += 1
-        return None
+        return cast(Any, None)
 
 
 class TestValkeyStorageConcurrency:

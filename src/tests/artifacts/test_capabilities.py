@@ -13,6 +13,7 @@ Covers:
   capability_allows_artifact helpers
 - Never-raises guarantees
 """
+from typing import Any, cast
 
 from src.core.artifacts.capabilities import (
     CapabilityState,
@@ -441,7 +442,8 @@ class TestConfigLoading:
     def test_load_from_global(self):
         """Without a supplied config, the global config must be read."""
         from src.core.artifacts.capabilities import _load_config
-        from utils.config import _config_instance as loader
+        from utils.config import _config_instance as _config_for_test
+        loader = cast(Any, _config_for_test)
 
         loader.config["artifacts"] = {"enabled": False}
         loader._invalidate_cache()
@@ -454,7 +456,8 @@ class TestConfigLoading:
     def test_load_handles_missing(self):
         """A missing artifacts section must yield an empty dict."""
         from src.core.artifacts.capabilities import _load_config
-        from utils.config import _config_instance as loader
+        from utils.config import _config_instance as _config_for_test
+        loader = cast(Any, _config_for_test)
 
         loader.config.pop("artifacts", None)
         loader._invalidate_cache()

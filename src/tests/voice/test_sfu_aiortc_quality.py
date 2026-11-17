@@ -12,6 +12,7 @@ jitter in codec clock-rate units, not milliseconds) and the source preference
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 from types import SimpleNamespace
 
@@ -135,7 +136,7 @@ class _FakePC:
 def _adapter_with_peer(records):
     adapter = AiortcAdapter()
     pc = _FakePC(records)
-    adapter._rooms["voice_7"] = {"user_3": SimpleNamespace(pc=pc)}
+    adapter._rooms["voice_7"] = cast(Any, {"user_3": SimpleNamespace(pc=pc)})
     return adapter, pc
 
 
@@ -214,7 +215,7 @@ async def test_reported_samples_reach_the_canonical_store():
     channel_id, user_id, metrics = sink.calls[0]
     assert (channel_id, user_id) == (7, 3)
     assert metrics["jitter"] == pytest.approx(20.0)
-    adapter._quality_reporter.stop()
+    cast(Any, adapter)._quality_reporter.stop()
 
 
 @pytest.mark.asyncio

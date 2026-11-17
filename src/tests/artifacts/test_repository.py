@@ -5,6 +5,7 @@ Covers the persistence path added for the realtime ``ARTIFACT_OP`` relay:
 ``append_artifact_op`` / ``list_artifact_ops``, transient-op filtering, and
 the cascade delete of ``artifact_ops`` / ``voice_calls`` rows.
 """
+from typing import Any, cast
 
 import json
 
@@ -152,12 +153,12 @@ def test_search_escapes_like_wildcards(db, artifact_builder):
 
 def test_new_artifact_starts_at_rev_zero(db, artifact_builder):
     artifact = _seed_artifact(db, artifact_builder)
-    assert get_artifact(db, artifact.id).rev == 0
+    assert cast(Any, get_artifact(db, artifact.id)).rev == 0
 
 
 def test_create_seeds_rev_from_payload_rev(db, artifact_builder):
     artifact = _seed_artifact(db, artifact_builder, payload={"content": "x", "rev": 4})
-    assert get_artifact(db, artifact.id).rev == 4
+    assert cast(Any, get_artifact(db, artifact.id)).rev == 4
 
 
 def test_update_with_expected_rev_advances_atomically(db, artifact_builder):
@@ -182,8 +183,8 @@ def test_update_with_stale_expected_rev_returns_none(db, artifact_builder):
         update_artifact(db, artifact.id, expected_rev=0, payload={"content": "stale"})
         is None
     )
-    assert get_artifact(db, artifact.id).rev == 1
-    assert get_artifact(db, artifact.id).payload == {"content": "a"}
+    assert cast(Any, get_artifact(db, artifact.id)).rev == 1
+    assert cast(Any, get_artifact(db, artifact.id)).payload == {"content": "a"}
 
 
 def test_update_without_expected_rev_does_not_move_rev(db, artifact_builder):
@@ -198,6 +199,7 @@ def test_rev_not_writable_directly_through_fields(db, artifact_builder):
     # ``rev`` in fields is immutable-by-direct-set: only the expected_rev path
     # moves it, so a caller can never rewind or forge the chain.
     updated = update_artifact(db, artifact.id, rev=99, title="x")
+    assert updated is not None
     assert updated.rev == 0
 
 

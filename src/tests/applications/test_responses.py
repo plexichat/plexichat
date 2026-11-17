@@ -1,4 +1,5 @@
 """Tests for application interaction responses."""
+from typing import Any, cast
 
 import pytest
 
@@ -61,7 +62,7 @@ class TestResponses:
                 {"name": "Option B", "value": "b"},
             ],
         )
-        assert len(response.choices) == 2
+        assert len(cast(Any, response.choices)) == 2
 
     def test_modal_response(self):
         """Test creating a modal response."""
@@ -92,7 +93,7 @@ class TestResponses:
             content="Embedded content",
             embeds=[{"title": "Test", "description": "An embed"}],
         )
-        assert len(response.embeds) == 1
+        assert len(cast(Any, response.embeds)) == 1
 
     def test_response_with_components(self):
         """Test creating a response with components."""
@@ -113,7 +114,7 @@ class TestResponses:
                 }
             ],
         )
-        assert len(response.components) == 1
+        assert len(cast(Any, response.components)) == 1
 
     def test_response_with_tts(self):
         """Test creating a TTS response."""

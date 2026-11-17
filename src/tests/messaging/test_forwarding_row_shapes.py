@@ -8,6 +8,7 @@ docs/admin-hardening.md). These tests pin the tuple shape for
 
 Run with: pytest src/tests/messaging/test_forwarding_row_shapes.py -q
 """
+from typing import Any, cast
 
 import pytest
 
@@ -144,7 +145,7 @@ class TestForwardingTupleRows:
             )
         )
         service._generate_id = lambda: 99
-        service._safe_send_via_messaging = lambda *a: {"id": 100}
+        cast(Any, service)._safe_send_via_messaging = lambda *a: {"id": 100}
 
         result = service.forward_message(5, 20, 2)
 

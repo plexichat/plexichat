@@ -13,6 +13,7 @@ while preserving the sync method's record-only behaviour.
 """
 
 from __future__ import annotations
+from typing import Any, cast
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -62,7 +63,7 @@ async def test_add_ice_candidate_maps_fields_onto_the_peer_connection():
 
     assert accepted is True
     pc.addIceCandidate.assert_awaited_once()
-    candidate = pc.addIceCandidate.await_args.args[0]
+    candidate = cast(Any, pc.addIceCandidate.await_args).args[0]
     assert candidate.foundation == "2"
     assert candidate.component == 1
     assert candidate.ip == "203.0.113.50"

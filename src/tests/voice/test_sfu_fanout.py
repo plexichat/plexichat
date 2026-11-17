@@ -11,6 +11,7 @@ which sees the whole stream and whose ``stop()`` detaches that sender alone.
 This one suite covers both halves: the relay's delivery contract, and the
 adapter wiring that puts a view on each sender.
 """
+from typing import Any, cast
 
 import asyncio
 
@@ -433,7 +434,7 @@ def _stub_pc(monkeypatch):
 class TestForwardedTrackViews:
     @pytest.mark.asyncio
     async def test_sender_view_is_a_fanout_view_over_the_produced_track(self):
-        adapter = AiortcAdapter(acoustic_defense=ENABLED)
+        adapter = AiortcAdapter(acoustic_defense=cast(Any, ENABLED))
         wrapped = AudioProcessingTrack(_SourceTrack([]), ENABLED)
 
         view = adapter._sender_view(wrapped)
@@ -446,7 +447,7 @@ class TestForwardedTrackViews:
 
     @pytest.mark.asyncio
     async def test_each_sender_gets_its_own_view(self):
-        adapter = AiortcAdapter(acoustic_defense=ENABLED)
+        adapter = AiortcAdapter(acoustic_defense=cast(Any, ENABLED))
         first, _, producer = await self._produced_room(adapter)
 
         p2 = adapter._rooms["room"]["p2"]
@@ -465,7 +466,7 @@ class TestForwardedTrackViews:
 
     @pytest.mark.asyncio
     async def test_one_sender_leaving_does_not_stop_the_room_s_audio(self):
-        adapter = AiortcAdapter(acoustic_defense=ENABLED)
+        adapter = AiortcAdapter(acoustic_defense=cast(Any, ENABLED))
         first, source, producer = await self._produced_room(adapter)
         p2 = adapter._rooms["room"]["p2"]
         p3 = adapter._rooms["room"]["p3"]
@@ -483,7 +484,7 @@ class TestForwardedTrackViews:
 
     @pytest.mark.asyncio
     async def test_ghost_sender_sweep_finds_views_through_the_relay(self):
-        adapter = AiortcAdapter(acoustic_defense=ENABLED)
+        adapter = AiortcAdapter(acoustic_defense=cast(Any, ENABLED))
         first, _, producer = await self._produced_room(adapter)
         p2 = adapter._rooms["room"]["p2"]
         view2 = p2.pc.added_tracks[0]
@@ -496,7 +497,7 @@ class TestForwardedTrackViews:
 
     @pytest.mark.asyncio
     async def test_joining_peer_receives_a_view_not_the_shared_track(self):
-        adapter = AiortcAdapter(acoustic_defense=ENABLED)
+        adapter = AiortcAdapter(acoustic_defense=cast(Any, ENABLED))
         await adapter.join_room("room", "p1")
         first = adapter._rooms["room"]["p1"]
         wrapper = AudioProcessingTrack(_SourceTrack([_speech(), _speech()]), ENABLED)

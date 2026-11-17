@@ -5,6 +5,7 @@ Focuses on the two behaviors that were fixed: personal/notes-scope
 authorization (previously always 403'd) and PATCH-style payload merging on
 ``update_artifact`` (previously a whole-column replace).
 """
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -22,7 +23,7 @@ from src.api.schemas.artifacts import ArtifactCreateRequest, ArtifactUpdateReque
 
 def test_literal_artifact_routes_precede_dynamic_route():
     """Literal artifact subpaths must be declared before the base id route."""
-    names = [route.name for route in router.routes]
+    names = [cast(Any, route).name for route in router.routes]
     dynamic_index = names.index("get_artifact")
     assert names.index("_convert_upload_impl") < dynamic_index
     assert names.index("_export_artifact_impl") < dynamic_index
@@ -75,7 +76,7 @@ def test_personal_scope_string_ids_normalized():
             conversation_id=None,
             server_id=None,
             permission="artifact.edit",
-            author_id="42",
+            author_id=cast(Any, "42"),
         )
         is None
     )
@@ -144,7 +145,7 @@ def test_payload_revision_none_when_absent_or_non_numeric():
     assert payload_revision({"rev": "seven"}) is None
     assert payload_revision({"rev": None}) is None
     assert payload_revision(None) is None
-    assert payload_revision("not a dict") is None
+    assert payload_revision(cast(Any, "not a dict")) is None
 
 
 def test_payload_revision_rejects_bool():
@@ -180,18 +181,18 @@ def test_stale_write_first_write_always_allowed():
 def test_create_payload_over_1mb_is_rejected():
     oversized = {"content": "x" * (1024 * 1024 + 1)}
     with pytest.raises(ValidationError) as exc:
-        ArtifactCreateRequest(artifact_type="upload", title="big", payload=oversized)
+        ArtifactCreateRequest(artifact_type=cast(Any, "upload"), title="big", payload=oversized, conversation_id=None, channel_id=None, server_id=None, summary=None, status=None, recorded=False, has_transcript=False, license_feature=None, retention_policy=None)
     assert "payload exceeds maximum size" in str(exc.value)
 
 
 def test_update_payload_over_1mb_is_rejected():
     oversized = {"content": "x" * (1024 * 1024 + 1)}
     with pytest.raises(ValidationError) as exc:
-        ArtifactUpdateRequest(payload=oversized)
+        ArtifactUpdateRequest(payload=oversized, title=None, summary=None, status=None, recorded=False, has_transcript=False, rev=None, retention_policy=None)
     assert "payload exceeds maximum size" in str(exc.value)
 
 
 def test_create_payload_under_limit_is_accepted():
     ok = {"content": "x" * 1024}
-    body = ArtifactCreateRequest(artifact_type="upload", title="ok", payload=ok)
-    assert body.payload["content"] == "x" * 1024
+    body = ArtifactCreateRequest(artifact_type=cast(Any, "upload"), title="ok", payload=ok, conversation_id=None, channel_id=None, server_id=None, summary=None, status=None, recorded=False, has_transcript=False, license_feature=None, retention_policy=None)
+    assert cast(Any, body.payload)["content"] == "x" * 1024

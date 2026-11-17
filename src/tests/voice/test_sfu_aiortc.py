@@ -6,6 +6,7 @@ semantics, capabilities, and recording. The real ``aiortc`` package is
 installed, but all tests stub ``RTCPeerConnection`` so no network or
 event-loop stack is exercised.
 """
+from typing import Any, cast
 
 import os
 
@@ -681,8 +682,8 @@ class TestRoomInfo:
         await adapter.join_room("room-info", "peer-2")
         await adapter.produce("room-info", "peer-1", "t", MediaKind.AUDIO, {})
         info = await adapter.get_room_info("room-info")
-        assert sorted(info.peers) == ["peer-1", "peer-2"]
-        assert len(info.producers) == 1
+        assert sorted(cast(Any, info).peers) == ["peer-1", "peer-2"]
+        assert len(cast(Any, info).producers) == 1
 
     @pytest.mark.asyncio
     async def test_set_preferred_layers_reports_not_applied(self):
