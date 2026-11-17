@@ -8,13 +8,15 @@ Provides endpoints for:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
-from typing import Optional
+from typing import Any, Dict, Optional
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 
 import utils.logger as logger
 import src.api as api
+from src.api.lru_cache import LRUCache
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.core.config.snapshot import VersionedConfigSnapshot, file_version
 from src.api.schemas.media import (
     HashReportRequest,
     HashReportResponse,
@@ -35,6 +37,71 @@ from src.core.media.exceptions import (
 )
 
 router = APIRouter(prefix="/media", tags=["Media"])
+
+
+# === Proxy request policy (parsed once per config version) ===
+
+
+def _proxy_config_version() -> tuple:
+    """Cheap version token for the cached proxy policy.
+
+    A new loader instance (``config.setup`` in tests/reload paths), an
+    on-disk edit, or a direct in-place change to the small
+    ``proxy_rate_limit`` mapping all produce a new token, so the parsed
+    integers below are rebuilt on the next request instead of being served
+    stale. The ``repr`` of that tiny mapping is enough to observe in-memory
+    edits that bypass the loader's ``set``/reload APIs.
+    """
+    import utils.config as _config
+
+    loader = getattr(_config, "_config_instance", None)
+    path = getattr(loader, "config_path", None)
+    try:
+        rate_cfg = _config.get("media", {}).get("proxy_rate_limit", {})
+    except Exception:
+        rate_cfg = {}
+    return (id(loader), file_version(path), repr(rate_cfg))
+
+
+def _load_proxy_policy() -> Dict[str, Any]:
+    """Read and validate the proxy rate-limit settings once per version."""
+    import utils.config as _config
+
+    rate_cfg = _config.get("media", {}).get("proxy_rate_limit", {})
+    return {
+        "requests_per_window": int(rate_cfg.get("requests_per_window", 120)),
+        "window_seconds": int(rate_cfg.get("window_seconds", 60)),
+    }
+
+
+_proxy_policy_snapshot = VersionedConfigSnapshot(
+    _load_proxy_policy, version_fn=_proxy_config_version
+)
+
+
+def _proxy_rate_limit_params() -> tuple[int, int]:
+    """Return ``(requests_per_window, window_seconds)`` from the snapshot."""
+    policy = _proxy_policy_snapshot.snapshot()
+    return policy["requests_per_window"], policy["window_seconds"]
+
+
+# The route-level scheme check is a pure function of the URL string. Cache its
+# verdict so repeated renders of the same remote image do not re-run urlparse
+# on the event loop. The core proxy still performs its full SSRF validation on
+# every fetch; this cache only short-circuits the cheap early-reject check.
+_proxy_url_verdict_cache = LRUCache(maxsize=2048)
+
+
+def _is_allowed_proxy_url(url: str) -> bool:
+    """Whether ``url`` uses an http(s) scheme (memoised by exact URL)."""
+    cached = _proxy_url_verdict_cache.get(url)
+    if cached is not None:
+        return cached
+    from urllib.parse import urlparse
+
+    verdict = urlparse(url).scheme in ("http", "https")
+    _proxy_url_verdict_cache[url] = verdict
+    return verdict
 
 
 # === Content Reporting ===
@@ -500,10 +567,7 @@ async def get_proxied_content(
             detail={"error": {"code": 400, "message": "Invalid URL"}},
         )
 
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
+    if not _is_allowed_proxy_url(url):
         raise HTTPException(
             status_code=400,
             detail={
@@ -521,11 +585,7 @@ async def get_proxied_content(
     # traffic is unaffected.
     from src.core.database.cache import check_rate_limit
 
-    import utils.config as _config
-
-    _proxy_cfg = _config.get("media", {}).get("proxy_rate_limit", {})
-    _limit = int(_proxy_cfg.get("requests_per_window", 120))
-    _window = int(_proxy_cfg.get("window_seconds", 60))
+    _limit, _window = _proxy_rate_limit_params()
 
     allowed, _remaining = check_rate_limit(
         f"media:proxy:user:{user.user_id}", _limit, _window

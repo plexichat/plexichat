@@ -25,6 +25,60 @@ from .schemas.common import ErrorResponse
 # Local in-memory cache for media file metadata to avoid redundant DB lookups
 _media_metadata_cache = LRUCache(maxsize=1024)
 
+# Derived, request-independent metadata (sanitised header name, inline-safety
+# verdict, attachment disposition). These depend only on stable per-file
+# values (storage filename, original filename and the resolved content type),
+# so recomputing the unicode normalisation, regex sanitisation and content-type
+# verdict on every range/chunk request is pure waste.
+_media_response_meta_cache = LRUCache(maxsize=1024)
+
+
+def _cors_headers(
+    origin: Optional[str], allowed_origins: frozenset[str], allow_any_origin: bool
+) -> dict[str, str]:
+    """Build the manual CORS headers from a policy precomputed at registration.
+
+    Kept identical to the old inline logic: an explicit origin (or a wildcard
+    policy with a request Origin) echoes the origin and sends credentials;
+    a wildcard policy with no Origin sends ``*`` alone.
+    """
+    cors_headers: dict[str, str] = {}
+    if origin and (origin in allowed_origins or allow_any_origin):
+        cors_headers["Access-Control-Allow-Origin"] = origin
+        cors_headers["Access-Control-Allow-Credentials"] = "true"
+    elif allow_any_origin:
+        cors_headers["Access-Control-Allow-Origin"] = "*"
+    return cors_headers
+
+
+def _response_metadata(
+    filename: str, original_filename: Optional[str], content_type: Optional[str]
+) -> tuple[str, bool, str]:
+    """Return ``(safe_name, inline_safe, attachment_disposition)``.
+
+    The result is memoised by the stable per-file values it derives from. The
+    security-relevant verdict is unchanged: only browser-renderable
+    image/video/audio types (never SVG) are eligible for inline rendering;
+    everything else is forced to an attachment download.
+    """
+    key = (filename, original_filename, content_type)
+    cached = _media_response_meta_cache.get(key)
+    if cached is not None:
+        return cached
+
+    safe_name = sanitize_header_filename(
+        unicodedata.normalize("NFKD", original_filename or "")
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    ct_lower = (content_type or "").lower()
+    inline_safe = ct_lower.startswith(("image/", "video/", "audio/")) and not (
+        ct_lower.startswith("image/svg")
+    )
+    result = (safe_name, inline_safe, content_disposition(safe_name))
+    _media_response_meta_cache[key] = result
+    return result
+
 
 def _parse_byte_range(range_header: Optional[str], size: int) -> tuple[int, int, bool]:
     """Parse a single ``bytes=`` Range header into ``(start, end, is_partial)``.
@@ -63,6 +117,10 @@ def _parse_byte_range(range_header: Optional[str], size: int) -> tuple[int, int,
 def register_attachment_route(app: FastAPI) -> None:
     """Register the attachment-serving endpoint on ``app``."""
     config = get_api_config()
+    # The config snapshot is already captured once at registration; freeze the
+    # origin policy too so request handling does no config/list work at all.
+    allowed_origins = frozenset(config.cors_origins)
+    allow_any_origin = "*" in allowed_origins
 
     @app.get(
         "/api/v1/media/attachments/{filename:path}",
@@ -368,13 +426,11 @@ def register_attachment_route(app: FastAPI) -> None:
                     row["storage_path"], row["content_type"], row["storage_backend"]
                 )
 
-                # Normalised to ASCII for legacy clients, then handed to the
-                # shared helper: control characters and path separators cannot
-                # reach the header, and the header name is the only source.
-                safe_name = sanitize_header_filename(
-                    unicodedata.normalize("NFKD", original_filename or "")
-                    .encode("ascii", "ignore")
-                    .decode("ascii")
+                # Derived, request-independent response metadata. The inline
+                # verdict is intentionally based on ``ct`` -- the type the
+                # storage layer actually returns -- not the DB row value.
+                _, inline_safe, attachment_disposition = _response_metadata(
+                    filename, original_filename, ct
                 )
 
                 # Generate ETag from file_id and size
@@ -394,26 +450,17 @@ def register_attachment_route(app: FastAPI) -> None:
                 content_length = end - start + 1
                 status_code = 206 if is_partial else 200
 
-                # Add CORS headers manually for maximum reliability
-                origin = request.headers.get("Origin")
-                cors_headers = {}
-                allowed_origins = config.cors_origins
-                if origin and (origin in allowed_origins or "*" in allowed_origins):
-                    cors_headers["Access-Control-Allow-Origin"] = origin
-                    cors_headers["Access-Control-Allow-Credentials"] = "true"
-                elif "*" in allowed_origins:
-                    cors_headers["Access-Control-Allow-Origin"] = "*"
+                # Add CORS headers from the policy frozen at registration.
+                cors_headers = _cors_headers(
+                    request.headers.get("Origin"), allowed_origins, allow_any_origin
+                )
 
-                # Only serve browser-renderable media types inline; everything
-                # else (documents, unknown/other, text/*) is forced to
+                # Only browser-renderable media types are served inline (the
+                # verdict is cached per file); everything else is forced to an
                 # attachment so a mis-declared HTML/SVG payload cannot render
                 # under our origin.
-                ct_lower = (ct or "").lower()
-                inline_safe = ct_lower.startswith(
-                    ("image/", "video/", "audio/")
-                ) and not ct_lower.startswith("image/svg")
                 disposition = (
-                    content_disposition(safe_name)
+                    attachment_disposition
                     if (download or not inline_safe)
                     else "inline"
                 )

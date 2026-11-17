@@ -30,13 +30,18 @@ DEFAULT_CHUNK_SIZE = 64 * 1024
 MIN_CHUNK_SIZE = 4 * 1024
 MAX_CHUNK_SIZE = 1024 * 1024
 
-Chunk = Union[bytes, bytearray, memoryview]
+# Keep this aligned with Starlette's ``Content`` (str | bytes | memoryview) so
+# the chunks can be handed straight to ``StreamingResponse``. ``bytearray`` is
+# deliberately excluded: Starlette does not accept it as a response body.
+Chunk = Union[bytes, memoryview]
 
 
 def bounded_chunk_size(requested: Optional[object] = None) -> int:
     """Return a read chunk size clamped to ``[MIN_CHUNK_SIZE, MAX_CHUNK_SIZE]``."""
     if requested is None:
-        requested = DEFAULT_CHUNK_SIZE
+        # DEFAULT_CHUNK_SIZE is a module constant already clamped to the
+        # allowed range; skip the validation call on every streamed response.
+        return DEFAULT_CHUNK_SIZE
     return bounded_int(
         requested,
         "media response chunk size",
