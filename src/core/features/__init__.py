@@ -185,7 +185,9 @@ def get_tier_limits(tier: str) -> TierLimits:
             return DEFAULT_TIER_LIMITS[tier]
         raise InvalidTierError(f"Unknown tier: {tier}")
 
-    tier_config = validate_tier_limits(tiers_config[tier])
+    # Tier limits come from trusted operator YAML; -1 is the documented
+    # "unlimited" sentinel used by the staff tier for several fields.
+    tier_config = validate_tier_limits(tiers_config[tier], allow_unlimited=True)
     return TierLimits(
         name=tier,
         multiplier=tier_config.get("multiplier", 1.0),

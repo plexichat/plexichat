@@ -45,6 +45,23 @@ TIER_LIMIT_BOUNDS = {
     "custom_emoji_slots": (0, 100_000),
 }
 
+# ``-1`` is the documented "unlimited" sentinel in trusted operator config for
+# these fields (see TierLimits and config_defaults.py). The config-loading path
+# opts into accepting it; the generic validator stays strict for any other
+# caller, so arbitrary -1 values are still rejected.
+TIER_UNLIMITED_FIELDS = frozenset(
+    {
+        "max_voice_minutes_per_day",
+        "max_video_minutes_per_day",
+        "max_file_uploads_per_day",
+        "max_storage_mb",
+        "max_servers",
+        "max_reactions_per_message",
+        "max_pins_per_channel",
+        "custom_emoji_slots",
+    }
+)
+
 # Attribute names that must never be reachable through a dynamic lookup.
 RESERVED_FLAG_KEYS = frozenset(
     {
@@ -148,8 +165,15 @@ def feature_enabled_for(
     return bucket < int(percentage * ROLLOUT_BUCKETS / 100)
 
 
-def validate_tier_limits(config: Any) -> Dict[str, Any]:
-    """Bound each numeric tier limit from configuration."""
+def validate_tier_limits(
+    config: Any, *, allow_unlimited: bool = False
+) -> Dict[str, Any]:
+    """Bound each numeric tier limit from configuration.
+
+    ``allow_unlimited`` permits the documented ``-1`` sentinel on trusted
+    operator config for the fields that use it; all other callers keep the
+    strict bounds (a negative limit is rejected).
+    """
     if not isinstance(config, dict):
         raise HardeningViolation("tier configuration must be a mapping")
     result: Dict[str, Any] = {}
@@ -160,5 +184,14 @@ def validate_tier_limits(config: Any) -> Dict[str, Any]:
             result[key] = validate_rollout_percentage(raw, field=key)
             continue
         minimum, maximum = TIER_LIMIT_BOUNDS[key]
+        if (
+            allow_unlimited
+            and key in TIER_UNLIMITED_FIELDS
+            and isinstance(raw, int)
+            and not isinstance(raw, bool)
+            and raw == -1
+        ):
+            result[key] = -1
+            continue
         result[key] = bounded_int(raw, key, minimum=minimum, maximum=maximum)
     return result
