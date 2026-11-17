@@ -4,7 +4,7 @@ Health check endpoint.
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, status, HTTPException
+from fastapi import APIRouter, status, HTTPException, Response
 from pydantic import BaseModel
 
 import utils.version as version
@@ -22,7 +22,7 @@ router = APIRouter(tags=["Health"])
         200: {"description": "Server is alive and accepting requests"},
     },
 )
-async def readiness_probe() -> dict:
+async def readiness_probe(response: Response) -> dict:
     """Minimal readiness probe for container orchestrators.
 
     Returns 200 as soon as the HTTP server is bound.  No database,
@@ -30,6 +30,9 @@ async def readiness_probe() -> dict:
     Docker / Kubernetes can route traffic to the pod.  For deeper
     health checks (DB, events, cross-worker listener) use ``/health``.
     """
+    # Orchestrators poll this continuously; a cached "ready" could outlive a
+    # failing dependency, so never store it.
+    response.headers["Cache-Control"] = "no-store"
     return {"status": "ready"}
 
 
