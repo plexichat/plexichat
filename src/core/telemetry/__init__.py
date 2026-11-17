@@ -25,7 +25,12 @@ from .audit import (
     record_privileged_action,
     missing_privileged_actions,
 )
-from .scrubbing import REDACTED, redact_secrets, scrub_text
+from .scrubbing import (
+    REDACTED,
+    redact_secrets,
+    scrub_control_characters,
+    scrub_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -432,7 +437,15 @@ def submit_response_times(
                 )
             )
         except Exception as sample_error:
-            logger.debug(f"telemetry sample dropped: {sample_error}")
+            # A dropped sample's exception message can carry raw control
+            # characters from a hostile value. Logged verbatim, those would
+            # forge new lines / escape sequences in the file the admin viewer
+            # later reads. Keep secrets and controls out of the log sink just
+            # as they are kept out of the stored metrics.
+            logger.debug(
+                "telemetry sample dropped: %s",
+                scrub_control_characters(redact_secrets(str(sample_error))),
+            )
             continue
 
     if not batch_data:

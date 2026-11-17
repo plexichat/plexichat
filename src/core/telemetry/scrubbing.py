@@ -71,6 +71,29 @@ _PEM_RE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"
 )
 
+# Log/audit text is untrusted free form input. A user whose value reached a log
+# line can embed an ANSI CSI/OSC sequence or a raw C0/DEL control character and
+# repaint, clear or forge entries in any terminal or browser log viewer. Strip
+# escape sequences and render the remaining controls as visible ``\xNN`` so the
+# information is preserved for forensics but is never executable.
+_ESCAPE_SEQUENCE_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))"
+)
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def scrub_control_characters(value: Any) -> str:
+    """Return log text with escape sequences and control characters neutralised.
+
+    Unlike :func:`scrub_text` (which redacts *secrets*), this is a presentation
+    guard: it is applied to already-redacted free text just before it is handed
+    to a log viewer or a logger, so an embedded newline, carriage return,
+    backspace or ANSI escape cannot alter the surrounding display.
+    """
+    text = "" if value is None else str(value)
+    text = _ESCAPE_SEQUENCE_RE.sub("", text)
+    return _CONTROL_CHARACTER_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+
 
 def _is_sensitive_key(key: Any) -> bool:
     tokens = [token for token in _KEY_TOKENS.split(str(key).lower()) if token]
@@ -159,4 +182,4 @@ def redact_secrets(
     return scrub_text(repr(value), _budget)
 
 
-__all__ = ["REDACTED", "redact_secrets", "scrub_text"]
+__all__ = ["REDACTED", "redact_secrets", "scrub_text", "scrub_control_characters"]

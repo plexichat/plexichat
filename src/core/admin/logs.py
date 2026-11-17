@@ -15,7 +15,7 @@ import utils.config as config
 import zstandard
 
 from src.core.config.snapshot import file_version
-from src.core.telemetry.scrubbing import redact_secrets
+from src.core.telemetry.scrubbing import redact_secrets, scrub_control_characters
 
 _COMPRESSED_LOG_SUFFIXES = (".log.zst", ".log.zip")
 
@@ -181,15 +181,20 @@ def _read_filtered(
                     continue
 
                 total_count += 1
-                # Log lines are untrusted free text: a token pasted into a
-                # message must not reach the admin log viewer. Search still
-                # runs on the raw line; neither served field leaks the secret.
+                # Log lines are untrusted free text: redact secrets first, then
+                # neutralise embedded newlines, carriage returns and ANSI escape
+                # sequences so a low-privileged user whose input reached a log
+                # cannot repaint, clear or forge entries in the admin viewer.
+                # Search still runs on the raw line; neither served field leaks
+                # a secret or a control sequence.
                 processed_lines.append(
                     {
                         "timestamp": timestamp,
                         "level": level,
-                        "message": redact_secrets(message),
-                        "raw": redact_secrets(line),
+                        "message": scrub_control_characters(
+                            redact_secrets(message)
+                        ),
+                        "raw": scrub_control_characters(redact_secrets(line)),
                     }
                 )
 
