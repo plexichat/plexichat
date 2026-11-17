@@ -45,14 +45,16 @@ class _CountingDB:
 def _hierarchy_row(
     current=100, target=50, exists=1, role_pos=10, system=0, tuple_row=False
 ):
+    permissions = "{}"
     if tuple_row:
-        return (current, target, exists, role_pos, system)
+        return (current, target, exists, role_pos, system, permissions)
     return {
         "current_pos": current,
         "target_pos": target,
         "admin_exists": exists,
         "role_pos": role_pos,
         "role_is_system": system,
+        "role_permissions": permissions,
     }
 
 
@@ -73,13 +75,14 @@ def test_load_hierarchy_uses_one_query_and_maps_both_row_shapes():
         result = role_routes._load_hierarchy(db, 1, 2, 3)
 
         assert len(db.fetch_calls) == 1
-        assert db.fetch_calls[0][1] == (1, 2, 2, 3, 3)
+        assert db.fetch_calls[0][1] == (1, 2, 2, 3, 3, 3)
         assert result == {
             "current_pos": 100,
             "target_pos": 50,
             "admin_exists": True,
             "role_pos": 10,
             "role_is_system": False,
+            "role_permissions": "{}",
         }
 
 
@@ -176,8 +179,14 @@ def test_assign_role_hierarchy_is_a_single_lookup(monkeypatch):
 
     hierarchy_queries = [c for c in db.fetch_calls if "AS current_pos" in c[0]]
     assert len(hierarchy_queries) == 1
-    # One hierarchy query + one existing-assignment check, nothing else.
-    assert len(db.fetch_calls) == 2
+    # The role's permission payload must NOT trigger a second SELECT; it is
+    # carried by the hierarchy query. Only the actor-scopes lookup and the
+    # existing-assignment check remain.
+    assert not any(
+        sql.strip().startswith("SELECT permissions FROM admin_roles")
+        for sql, _ in db.fetch_calls
+    )
+    assert len(db.fetch_calls) == 3
     assert any(
         "INSERT INTO admin_role_assignments" in sql for sql, _ in db.execute_calls
     )

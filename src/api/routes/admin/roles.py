@@ -2,6 +2,8 @@
 Admin role management routes.
 """
 
+import json
+
 from fastapi import APIRouter, Request, HTTPException
 from src.api.schemas.common import (
     ErrorResponse,
@@ -50,9 +52,10 @@ def _load_hierarchy(db, current_admin_id: int, target_admin_id: int, role_id: in
     """Resolve every hierarchy input for a role mutation in one query.
 
     Returns ``current_pos``, ``target_pos``, ``admin_exists``, ``role_pos``
-    (``None`` when the role does not exist) and ``role_is_system``.  Scalar
-    subqueries keep this a single statement regardless of how many roles or
-    admins exist.
+    (``None`` when the role does not exist), ``role_is_system`` and the raw
+    ``role_permissions`` payload (used by the object-level grant check).
+    Scalar subqueries keep this a single statement regardless of how many
+    roles or admins exist.
     """
     row = db.fetch_one(
         """
@@ -67,9 +70,17 @@ def _load_hierarchy(db, current_admin_id: int, target_admin_id: int, role_id: in
               WHERE a.admin_id = ?) AS target_pos,
             EXISTS(SELECT 1 FROM admin_users WHERE id = ?) AS admin_exists,
             (SELECT position FROM admin_roles WHERE id = ?) AS role_pos,
-            (SELECT is_system FROM admin_roles WHERE id = ?) AS role_is_system
+            (SELECT is_system FROM admin_roles WHERE id = ?) AS role_is_system,
+            (SELECT permissions FROM admin_roles WHERE id = ?) AS role_permissions
         """,
-        (current_admin_id, target_admin_id, target_admin_id, role_id, role_id),
+        (
+            current_admin_id,
+            target_admin_id,
+            target_admin_id,
+            role_id,
+            role_id,
+            role_id,
+        ),
     )
     if not row:
         return {
@@ -78,6 +89,7 @@ def _load_hierarchy(db, current_admin_id: int, target_admin_id: int, role_id: in
             "admin_exists": False,
             "role_pos": None,
             "role_is_system": False,
+            "role_permissions": None,
         }
     if isinstance(row, dict):
         current_pos = row.get("current_pos") or 0
@@ -85,18 +97,21 @@ def _load_hierarchy(db, current_admin_id: int, target_admin_id: int, role_id: in
         admin_exists = row.get("admin_exists", False)
         role_pos = row.get("role_pos")
         role_is_system = row.get("role_is_system", False)
+        role_permissions = row.get("role_permissions")
     else:
         current_pos = row[0] or 0
         target_pos = row[1] or 0
         admin_exists = row[2]
         role_pos = row[3] if len(row) > 3 else None
         role_is_system = row[4] if len(row) > 4 else False
+        role_permissions = row[5] if len(row) > 5 else None
     return {
         "current_pos": int(current_pos),
         "target_pos": int(target_pos),
         "admin_exists": bool(admin_exists),
         "role_pos": None if role_pos is None else int(role_pos),
         "role_is_system": bool(role_is_system),
+        "role_permissions": role_permissions,
     }
 
 
@@ -704,10 +719,23 @@ async def assign_role(request: Request, assignment: RoleAssignment):
 
     # Object-level check on the concrete role being granted: holding
     # ``admin.roles`` and outranking the role is not enough if that role
-    # carries scopes the actor itself does not hold.
-    from src.core.admin.permissions import can_grant_existing_role
+    # carries scopes the actor itself does not hold.  The role's permission
+    # payload came back with the hierarchy query, so only the actor's held
+    # scopes still need resolving (same decision as can_grant_existing_role).
+    from src.core.admin.permissions import can_delegate_permissions
 
-    if not can_grant_existing_role(db, admin_id, target_role_id):
+    raw_permissions = hierarchy["role_permissions"]
+    try:
+        role_permissions = (
+            json.loads(raw_permissions)
+            if isinstance(raw_permissions, str)
+            else raw_permissions
+        )
+    except (TypeError, ValueError):
+        role_permissions = None
+    if not isinstance(role_permissions, dict) or not can_delegate_permissions(
+        db, admin_id, role_permissions
+    ):
         raise HTTPException(
             status_code=403,
             detail={
