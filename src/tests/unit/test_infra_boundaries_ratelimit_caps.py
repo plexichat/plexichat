@@ -6,6 +6,7 @@ sneak past the old "non-negative and finite" checks.
 """
 
 import math
+from typing import Any
 
 import pytest
 
@@ -29,7 +30,7 @@ from src.core.ratelimit.models import RateLimitConfig
 
 
 def _config(**overrides):
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         requests=10,
         window_seconds=60.0,
         burst=5,

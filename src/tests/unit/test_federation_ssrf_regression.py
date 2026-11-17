@@ -13,10 +13,11 @@ and ``validate_redirect_chain``:
 import json
 import socket
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from src.api.routes import federation as mod
 from src.api.routes.federation import (
@@ -180,9 +181,12 @@ async def test_join_request_rejects_url_resolving_to_metadata_ip():
         "instance_id": "remote-1234",
         "remote_url": "https://peer.example/federate",
     }
-    request = SimpleNamespace(
-        headers={"content-type": "application/json"},
-        body=AsyncMock(return_value=json.dumps(payload).encode()),
+    request = cast(
+        Request,
+        SimpleNamespace(
+            headers={"content-type": "application/json"},
+            body=AsyncMock(return_value=json.dumps(payload).encode()),
+        ),
     )
     manager = MagicMock()
     manager.submit_inbound_request.return_value = {"id": 1}

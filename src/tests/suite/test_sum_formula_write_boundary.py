@@ -83,6 +83,23 @@ def test_control_character_formula_rejected(db, two_users, server_manager):
         )
 
 
+def test_non_string_formula_rejected(db, two_users, server_manager):
+    owner, _ = two_users
+    manager = _make_manager(db, server_manager)
+    wb_id, sheet_id = _new_workbook(manager, owner)
+
+    with pytest.raises(SumValidationError):
+        manager.apply_operation(
+            owner.id,
+            wb_id,
+            sheet_id,
+            "non-string-formula",
+            "set_cell",
+            0,
+            [_formula_cell({"not": "a string"})],
+        )
+
+
 def test_valid_formula_still_writes_and_computes(db, two_users, server_manager):
     owner, _ = two_users
     manager = _make_manager(db, server_manager)

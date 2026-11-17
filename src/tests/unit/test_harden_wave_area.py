@@ -36,8 +36,8 @@ def _fake_pywebpush(monkeypatch):
     def webpush(**kwargs):
         calls.append(kwargs)
 
-    fake.WebPushException = WebPushException
-    fake.webpush = webpush
+    setattr(fake, "WebPushException", WebPushException)
+    setattr(fake, "webpush", webpush)
     monkeypatch.setitem(sys.modules, "pywebpush", fake)
     return calls
 

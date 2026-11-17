@@ -7,6 +7,7 @@ not flake on a busy CI worker.
 """
 
 import asyncio
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +16,7 @@ from src.api.websocket.artifacts import ArtifactSubscriptionRegistry
 from src.api.websocket.connection import Connection, ConnectionState
 from src.api.websocket.dispatcher import GatewayDispatcher
 from src.api.websocket.intents import ALL_INTENTS
+from src.api.websocket.session import SessionManager
 from src.core.events.models import Event
 from src.core.events.types import EventType
 
@@ -81,7 +83,7 @@ async def test_burst_fanout_coalesces_writes_without_losing_frames(monkeypatch):
     connections = [_connection(f"c{i}") for i in range(200)]
     for conn in connections:
         await _pause_auto_flush(conn)
-    dispatcher = GatewayDispatcher(_SessionManager(connections))
+    dispatcher = GatewayDispatcher(cast(SessionManager, _SessionManager(connections)))
 
     try:
         for seq in range(20):
@@ -99,7 +101,7 @@ async def test_burst_fanout_coalesces_writes_without_losing_frames(monkeypatch):
 
     # 200 connections x 20 events = 4000 independent WebSocket frames.
     for conn in connections:
-        frames = [call.args[0] for call in conn.websocket.send_json.await_args_list]
+        frames = [call.args[0] for call in cast(AsyncMock, conn.websocket.send_json).await_args_list]
         assert len(frames) == 20
         assert [frame["s"] for frame in frames] == list(range(1, 21))
         assert conn.write_calls == 1  # 20 frames coalesced into one flush
@@ -115,6 +117,7 @@ async def test_slow_consumer_queue_is_bounded_and_counts_shedding():
     conn = _connection("slow", queue_size=8, max_batch=4)
     await _pause_auto_flush(conn)
     batcher = conn.outbound_batcher
+    assert batcher is not None
     try:
         pending_samples = []
         accepted = 0
@@ -128,7 +131,7 @@ async def test_slow_consumer_queue_is_bounded_and_counts_shedding():
         assert batcher.stats()["dropped_frames"] == 92
 
         await conn.flush_outbound()
-        sent = [call.args[0]["s"] for call in conn.websocket.send_json.await_args_list]
+        sent = [call.args[0]["s"] for call in cast(AsyncMock, conn.websocket.send_json).await_args_list]
         assert sent == list(range(8))  # oldest accepted frames, in order
     finally:
         await conn.stop_batching()
@@ -140,7 +143,9 @@ async def test_one_saturated_connection_does_not_block_other_recipients():
     healthy = _connection("healthy")
     await _pause_auto_flush(saturated)
     await _pause_auto_flush(healthy)
-    dispatcher = GatewayDispatcher(_SessionManager([saturated, healthy]))
+    dispatcher = GatewayDispatcher(
+        cast(SessionManager, _SessionManager([saturated, healthy]))
+    )
 
     try:
         # Saturate one connection before the fan-out.
@@ -185,7 +190,7 @@ async def test_identical_presence_burst_renders_once(monkeypatch):
     # Batching is irrelevant to rendering; disable it so every frame is on the
     # wire immediately and the count is deterministic.
     await conn.stop_batching()
-    dispatcher = GatewayDispatcher(_SessionManager([conn]))
+    dispatcher = GatewayDispatcher(cast(SessionManager, _SessionManager([conn])))
 
     for _ in range(500):
         await dispatcher.dispatch_event(
@@ -197,7 +202,7 @@ async def test_identical_presence_burst_renders_once(monkeypatch):
         )
 
     assert len(render_calls) == 1
-    assert len(conn.websocket.send_json.await_args_list) == 500
+    assert len(cast(AsyncMock, conn.websocket.send_json).await_args_list) == 500
 
 
 @pytest.mark.asyncio
@@ -248,4 +253,4 @@ async def test_flush_task_wakes_early_on_burst():
         await conn.stop_batching()
 
     assert conn.write_calls >= 1
-    assert len(conn.websocket.send_json.await_args_list) == 10
+    assert len(cast(AsyncMock, conn.websocket.send_json).await_args_list) == 10

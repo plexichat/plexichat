@@ -62,13 +62,13 @@ def restore_singletons():
 def _guard(nodeid):
     """Return the level guard's generator bound to a stub ``request``."""
     request = SimpleNamespace(node=SimpleNamespace(nodeid=nodeid))
-    return li._app_logger_level_guard.__wrapped__(request)
+    return getattr(li._app_logger_level_guard, "__wrapped__")(request)
 
 
 def _singleton_guard(nodeid):
     """Return the singleton guard's generator bound to a stub ``request``."""
     request = SimpleNamespace(node=SimpleNamespace(nodeid=nodeid))
-    return li._global_singleton_guard.__wrapped__(request)
+    return getattr(li._global_singleton_guard, "__wrapped__")(request)
 
 
 @pytest.mark.unit
@@ -219,7 +219,7 @@ class TestGlobalSingletonGuard:
     def test_detects_changed_version(self, restore_singletons):
         gen = _singleton_guard("demo.py::test_version")
         next(gen)
-        li.version._current_version = object()
+        setattr(li.version, "_current_version", object())
         with pytest.raises(pytest.fail.Exception) as excinfo:
             next(gen)
         assert "utils.version._current_version" in str(excinfo.value)

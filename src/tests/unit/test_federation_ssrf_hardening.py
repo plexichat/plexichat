@@ -8,10 +8,11 @@ URL is persisted, and the re-check applied to every redirect hop.
 
 import json
 import socket
+from typing import cast
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from src.api.routes.federation import (
     FederationEndpointRejected,
@@ -210,7 +211,7 @@ class _RequestStub:
     ["application/json", "application/json; charset=utf-8", "APPLICATION/JSON", "application/vnd.plexichat+json"],
 )
 def test_json_content_types_are_accepted(content_type):
-    _require_json_content_type(_RequestStub(content_type))
+    _require_json_content_type(cast(Request, _RequestStub(content_type)))
 
 
 @pytest.mark.parametrize(
@@ -219,7 +220,7 @@ def test_json_content_types_are_accepted(content_type):
 )
 def test_unexpected_content_types_are_rejected_before_parsing(content_type):
     with pytest.raises(HTTPException) as exc:
-        _require_json_content_type(_RequestStub(content_type))
+        _require_json_content_type(cast(Request, _RequestStub(content_type)))
     assert exc.value.status_code == 415
 
 

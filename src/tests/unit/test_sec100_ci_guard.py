@@ -14,6 +14,8 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 from types import ModuleType
 
 REPO = Path(__file__).resolve().parents[3]
@@ -61,7 +63,11 @@ def _write_allowlist(path: Path, entries: list[dict[str, str]]) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.timeout(300)
 def test_real_tree_has_no_unallowlisted_findings() -> None:
+    # Scanning the whole src/ tree walks ~2.5k files; the global 60s pytest
+    # timeout is too tight on a loaded runner, so this one test opts into a
+    # bound that still fails well before the CI job's 10m ceiling.
     guard = _guard()
     leftover = guard.scan(REPO / "src", ALLOWLIST)
     assert leftover == [], [f.to_dict() for f in leftover]

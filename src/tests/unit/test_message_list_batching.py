@@ -114,4 +114,5 @@ def test_serializer_accepts_precomputed_suppression_without_embeds_lookup(
     )
 
     assert resp.embeds == []
+    assert resp.metadata is not None
     assert resp.metadata["embeds_suppressed"] is True

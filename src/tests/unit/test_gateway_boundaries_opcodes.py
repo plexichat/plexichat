@@ -1,5 +1,7 @@
 """Opcode and intent allowlist boundaries."""
 
+from typing import cast
+
 import pytest
 
 from src.api.websocket.handlers import OpcodeHandler
@@ -55,7 +57,7 @@ def test_intents_allowlist():
     assert validate_intents(ALL_INTENTS + 1) is False
     assert validate_intents(ALL_INTENTS | (1 << 30)) is False
     assert validate_intents(True) is False
-    assert validate_intents("513") is False
+    assert validate_intents(cast(int, "513")) is False
 
 
 @pytest.mark.asyncio

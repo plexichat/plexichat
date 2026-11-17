@@ -5,6 +5,8 @@ a negative count, an overflow, or an unbounded map. These tests pin the
 coercion fallbacks and the LRU bound.
 """
 
+from typing import cast
+
 import pytest
 
 from src.core.ratelimit.config_validation import (
@@ -101,7 +103,7 @@ class TestBoundedBucketMap:
     def test_capacity_validated(self):
         for bad in (0, -1, MAX_BUCKETS + 1, True, 1.5):
             with pytest.raises((TypeError, ValueError)):
-                BoundedBucketMap(capacity=bad)
+                BoundedBucketMap(capacity=cast(int, bad))
 
     def test_key_validated(self):
         m = BoundedBucketMap(capacity=2)

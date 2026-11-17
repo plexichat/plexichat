@@ -7,6 +7,8 @@ with one another, and the guards stay importable from their owning modules so
 no later refactor can silently drop them.
 """
 
+from typing import Any
+
 import pytest
 
 
@@ -77,6 +79,7 @@ class TestGuardImports:
 
         for mod in (ssrf_gate, reaction_bounds, voice_bounds):
             source = mod.__file__
+            assert source is not None
             with open(source, encoding="utf-8") as fh:
                 text = fh.read()
             assert "src.core.security.hardening" in text
@@ -183,7 +186,7 @@ class TestEndToEndRefusals:
     def test_deep_embed_with_bad_url_fails_at_budget_first(self):
         from src.core.embeds.validator import sanitize_message_embeds
 
-        payload = {"title": "ok"}
+        payload: dict[str, Any] = {"title": "ok"}
         for _ in range(40):
             payload = {"child": payload}
         payload["url"] = "javascript:alert(1)"

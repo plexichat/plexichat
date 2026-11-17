@@ -7,6 +7,8 @@ constants and the fail-closed behaviour of both the message sanitizer and the
 embed-data validator.
 """
 
+from typing import Any
+
 import pytest
 
 from src.core.embeds.exceptions import EmbedValidationError
@@ -105,7 +107,7 @@ class TestMessageSanitizerBudget:
             )
 
     def test_many_keys_rejected(self):
-        payload = {"title": "x"}
+        payload: dict[str, Any] = {"title": "x"}
         payload.update({f"k{i}": i for i in range(MAX_EMBED_KEYS_PER_OBJECT + 1)})
         with pytest.raises(EmbedValidationError, match="too many keys"):
             sanitize_message_embeds([payload])
@@ -114,6 +116,7 @@ class TestMessageSanitizerBudget:
         result = sanitize_message_embeds(
             [{"title": "ok", "fields": [{"name": "n", "value": "v"}]}]
         )
+        assert result is not None
         assert result[0]["title"] == "ok"
         assert result[0]["fields"][0]["value"] == "v"
 

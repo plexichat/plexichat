@@ -70,6 +70,7 @@ async def test_invite_info_validates_inviter_only_once():
         resp = await ChannelInvitesMixin()._get_invite_info("CODE1234", _user())
 
     assert calls == ["inviter_id"]
+    assert resp.inviter_id is not None
     assert int(resp.inviter_id) == 888
 
 

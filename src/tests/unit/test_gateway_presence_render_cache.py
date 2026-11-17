@@ -1,5 +1,6 @@
 """Cached rendering of identical outbound presence payloads."""
 
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,6 +9,7 @@ from src.api.websocket.connection import Connection, ConnectionState
 from src.api.websocket.dispatcher import GatewayDispatcher
 from src.api.websocket.intents import ALL_INTENTS
 from src.api.websocket.rendering import PayloadRenderCache
+from src.api.websocket.session import SessionManager
 from src.core.events.models import Event
 from src.core.events.types import EventType
 from src.core.events.snowflakes import stringify_snowflake_ids
@@ -89,7 +91,7 @@ async def test_dispatcher_fanout_renders_presence_payload_once(monkeypatch):
     monkeypatch.setattr(dispatcher_module, "stringify_snowflake_ids", counting_renderer)
 
     conns = [_fake_connection(f"c{i}") for i in range(4)]
-    dispatcher = GatewayDispatcher(_FakeSessionManager(conns))
+    dispatcher = GatewayDispatcher(cast(SessionManager, _FakeSessionManager(conns)))
     event = Event(
         event_type=EventType.PRESENCE_UPDATE,
         data={"user_id": 999, "status": "online", "custom_status": None},
@@ -101,7 +103,7 @@ async def test_dispatcher_fanout_renders_presence_payload_once(monkeypatch):
     assert len(calls) == 1  # rendered once for all four recipients
     assert dispatcher.get_render_cache_stats()["misses"] == 1
     for conn in conns:
-        frame = conn.websocket.send_json.await_args.args[0]
+        frame = cast(AsyncMock, conn.websocket.send_json).await_args.args[0]
         assert frame["d"]["user_id"] == "999"
         assert frame["d"]["status"] == "online"
 
@@ -120,7 +122,7 @@ async def test_dispatcher_reuses_rendering_for_identical_presence_updates(monkey
     monkeypatch.setattr(dispatcher_module, "stringify_snowflake_ids", counting_renderer)
 
     conns = [_fake_connection(f"c{i}") for i in range(3)]
-    dispatcher = GatewayDispatcher(_FakeSessionManager(conns))
+    dispatcher = GatewayDispatcher(cast(SessionManager, _FakeSessionManager(conns)))
     payload = {"user_id": 5, "status": "idle"}
 
     for _ in range(3):

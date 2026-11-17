@@ -1,5 +1,7 @@
 """Boundary tests for security-header auditing (theme 4 follow-up)."""
 
+from typing import cast
+
 from src.api.middleware.security_header_audit import (
     audit_security_headers,
     bound_header_count,
@@ -42,7 +44,7 @@ class TestBoundCount:
     def test_bad_limit(self):
         for bad in (0, -1, True, 1.5):
             try:
-                bound_header_count([], limit=bad)
+                bound_header_count([], limit=cast(int, bad))
             except ValueError:
                 pass
             else:

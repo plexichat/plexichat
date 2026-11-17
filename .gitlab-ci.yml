@@ -65,6 +65,22 @@ supplychain:secrets_baseline:
     - python ci-tooling/check_secrets_baseline.py
   allow_failure: false
 
+# A deterministic static guard against dynamic code execution, shell command
+# construction, embedded credentials and auth-swallowing bare excepts in src/.
+# Reviewed exceptions live in ci-tooling/dangerous_patterns_allowlist.json and
+# must carry a written rationale; a new, unexplained finding blocks the pipeline.
+supplychain:dangerous_patterns:
+  stage: security
+  timeout: 10m
+  image: python:3.14-slim
+  needs: []
+  rules:
+    - if: '$RUN_LIVE_SMOKE != "1"'
+  before_script: []
+  script:
+    - python ci-tooling/check_dangerous_patterns.py
+  allow_failure: false
+
 supplychain:permissions:
   stage: security
   timeout: 10m

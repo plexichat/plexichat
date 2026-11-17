@@ -89,6 +89,18 @@ TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
+# Cheap pre-filter. Only files whose text contains one of these candidate
+# markers are handed to ast.parse; parsing all ~2.5k files takes over a minute
+# and would push the gate past the per-test timeout in CI. The pre-filter is
+# deliberately *broader* than the real rules (it may over-match, never miss).
+PREFILTER = re.compile(
+    r"\beval\b|\bexec\b|\bsystem\s*\(|\bshell\s*=\s*True\b|\bexcept\s*:|"
+    r"AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|AGPA|gh[pousr]_|github_pat_|glpat-|"
+    r"xox[baprs]-|(?:sk|rk)_(?:live|test)_|sk-[A-Za-z0-9_-]{32}|"
+    r"eyJ[A-Za-z0-9_-]{8,}\.|"
+    r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
+)
+
 # A string fed to one of these is a detector pattern, not a credential.
 REGEX_FUNCS = frozenset(
     {
@@ -310,6 +322,8 @@ def find_patterns(root: Path) -> list[Finding]:
         try:
             source = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
+            continue
+        if not PREFILTER.search(source):
             continue
         rel = path.relative_to(root).as_posix()
         findings.extend(_analyse(path, rel, source))

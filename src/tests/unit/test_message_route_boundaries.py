@@ -6,6 +6,10 @@ direct guard call is both faster and more precise than an end-to-end request.
 """
 
 import inspect
+from typing import Any, cast
+
+from src.api.schemas.messages import BulkDeleteRequest
+from src.core.auth.models import TokenInfo
 
 
 def _query_metadata(func, name):
@@ -72,7 +76,10 @@ def test_require_snowflake_rejects_out_of_range_ids():
 def _dummy_user():
     from types import SimpleNamespace
 
-    return SimpleNamespace(user_id=1, username="u", avatar_url=None, badges=[])
+    return cast(
+        TokenInfo,
+        SimpleNamespace(user_id=1, username="u", avatar_url=None, badges=[]),
+    )
 
 
 def _rejects_bad_id(coro, args):
@@ -181,7 +188,7 @@ def test_export_id_is_bounded():
 
     for bad in ("", "A" * 129, "export_abc\ndef", None):
         with pytest.raises(HTTPException) as exc:
-            _validate_export_id(bad)
+            _validate_export_id(cast(Any, bad))
         assert exc.value.status_code == 400
 
 
