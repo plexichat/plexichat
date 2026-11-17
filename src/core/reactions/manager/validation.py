@@ -1,10 +1,12 @@
 import re
 
 from src.core.base import SnowflakeID
+from src.core.security.hardening import HardeningViolation, parse_id
 from ..exceptions import (
     InvalidEmojiError,
     InvalidEmojiNameError,
 )
+from .bounds import MAX_REACTION_EMOJI_LENGTH
 from .protocol import ReactionProtocol
 
 
@@ -22,10 +24,28 @@ class ReactionValidationMixin(ReactionProtocol):
 
         custom_match = CUSTOM_EMOJI_PATTERN.match(emoji)
         if custom_match:
-            emoji_id = int(custom_match.group(2))
+            # Bound the name even though the route guard caps the whole token:
+            # this validator is also a public module API reachable without the
+            # HTTP layer, and an unbounded name is stored verbatim in the
+            # reaction row and echoed in WebSocket events.
+            name = custom_match.group(1)
+            if len(name) > MAX_REACTION_EMOJI_LENGTH:
+                raise InvalidEmojiError("Custom emoji name is too long")
+
+            # ``int()`` accepts an arbitrarily long digit string until Python's
+            # integer-conversion cap (4300 digits) raises an uncaught ValueError
+            # -- a small malformed token could crash the worker with a 500. It
+            # also accepts ids far outside the snowflake range, which later
+            # overflow SQLite's 64-bit INTEGER column. Parse through the shared
+            # range-checked primitive so both cases become a normal validation
+            # error instead.
+            try:
+                emoji_id = parse_id(custom_match.group(2), "custom_emoji_id")
+            except HardeningViolation as exc:
+                raise InvalidEmojiError(f"Invalid custom emoji id: {exc}") from exc
             return (True, emoji_id, emoji)
 
-        if len(emoji) > 32:
+        if len(emoji) > MAX_REACTION_EMOJI_LENGTH:
             raise InvalidEmojiError("Emoji is too long")
 
         # Legacy ":shortcode:" reactions remain valid.

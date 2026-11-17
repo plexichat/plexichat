@@ -15,7 +15,6 @@ from .bounds import (
     EmbedBudget,
     field_string_limit,
 )
-from .color import validate_color
 from .field_policy import validate_color_field
 from .content import sanitize_content
 from .constants import (
@@ -28,13 +27,24 @@ from .schema import _coerce_dimension
 from .ssrf_gate import validate_embed_url
 from .length import validate_string_length
 from .timestamp import validate_timestamp
-from .url_validation import validate_url
 from ..exceptions import (
     EmbedValidationError,
     InvalidColorError,
 )
 
-_MESSAGE_EMBED_URL_KEYS = {"url", "icon_url"}
+# Every string key whose value is rendered into a URL-bearing sink by clients
+# must pass the strict URL gate (scheme, embedded credentials, attribute
+# breakout characters and SSRF). ``proxy_url``/``proxy_icon_url`` are the
+# Discord-style proxy variants of ``url``/``icon_url`` on image, thumbnail,
+# video and author/footer objects; leaving them out let an attacker smuggle an
+# internal/tracking URL or quote characters past the gate: the generic string
+# path only applies the text XSS blocklist, which does not constrain URL shape.
+_MESSAGE_EMBED_URL_KEYS = {
+    "url",
+    "icon_url",
+    "proxy_url",
+    "proxy_icon_url",
+}
 _MESSAGE_EMBED_DIMENSION_KEYS = {"width", "height"}
 
 # Defence-in-depth: the embed dict is ``Dict[str, Any]`` and the sanitizer
@@ -132,7 +142,9 @@ def _sanitize_message_embed(
         elif key == "fields":
             sanitized[key] = _sanitize_message_fields(value, child_path, budget)
         elif isinstance(value, dict):
-            sanitized[key] = _sanitize_message_embed(value, child_path, depth=depth + 1, budget=budget)
+            sanitized[key] = _sanitize_message_embed(
+                value, child_path, depth=depth + 1, budget=budget
+            )
         elif isinstance(value, list):
             if len(value) > MAX_EMBED_LIST_ITEMS:
                 raise EmbedValidationError(
@@ -144,7 +156,11 @@ def _sanitize_message_embed(
                 item_path = f"{child_path}[{j}]"
                 budget.charge_node(item_path)
                 if isinstance(v, dict):
-                    items.append(_sanitize_message_embed(v, item_path, depth=depth + 1, budget=budget))
+                    items.append(
+                        _sanitize_message_embed(
+                            v, item_path, depth=depth + 1, budget=budget
+                        )
+                    )
                 elif isinstance(v, str):
                     budget.charge_text(v, item_path, field_string_limit(key))
                     items.append(sanitize_content(v, item_path))
@@ -157,6 +173,7 @@ def _sanitize_message_embed(
         else:
             sanitized[key] = value
     return sanitized
+
 
 def _sanitize_message_fields(
     fields: Any, path: str, budget: EmbedBudget | None = None
