@@ -156,7 +156,10 @@ def sanitize_selftest_config(config: Any) -> Dict[str, Any]:
         cleaned["excluded_endpoints"] = [
             entry
             for entry in excluded
-            if isinstance(entry, str) and _ROUTE_VALUE_RE.fullmatch(entry)
+            if isinstance(entry, str)
+            and _ROUTE_VALUE_RE.fullmatch(entry)
+            and ".." not in Path(entry).parts
+            and not entry.startswith("//")
         ]
     elif excluded is not None:
         cleaned.pop("excluded_endpoints", None)
