@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass, replace
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import utils.logger as logger
 
@@ -101,7 +101,7 @@ def validate_kdf_params(params: Any = None) -> KDFParams:
 
 
 def pbkdf2_raw(
-    password: bytes,
+    password: Union[bytes, bytearray],
     salt: bytes,
     iterations: int,
     dklen: int,

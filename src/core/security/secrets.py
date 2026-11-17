@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-from typing import Any, Union
+from typing import Any, Literal, Union
 
 MIN_TOKEN_KEY_LENGTH = 16
 MAX_TOKEN_KEY_LENGTH = 256
@@ -103,7 +103,7 @@ class SecretBuffer:
         self._check()
         return self
 
-    def __exit__(self, *exc_info: Any) -> bool:
+    def __exit__(self, *exc_info: Any) -> Literal[False]:
         self.clear()
         return False
 

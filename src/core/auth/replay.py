@@ -12,7 +12,6 @@ import hashlib
 import threading
 import time
 from collections import OrderedDict
-from typing import Dict
 
 
 class BoundedReplayGuard:
@@ -25,7 +24,7 @@ class BoundedReplayGuard:
     def __init__(self, max_entries: int = 4096, ttl_seconds: int = 600) -> None:
         self._max_entries = max(1, int(max_entries))
         self._ttl = max(1, int(ttl_seconds))
-        self._entries: Dict[str, float] = OrderedDict()
+        self._entries: OrderedDict[str, float] = OrderedDict()
         self._lock = threading.Lock()
 
     @staticmethod
