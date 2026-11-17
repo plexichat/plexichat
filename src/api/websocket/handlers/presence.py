@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 import utils.logger as logger
 from starlette.concurrency import run_in_threadpool
 
-from src.api.websocket.boundaries import validate_presence_payload
+from src.api.websocket.boundaries import parse_snowflake, validate_presence_payload
 from src.api.websocket.connection import Connection
 from src.api.websocket.opcodes import GatewayCloseCode
 
@@ -257,8 +257,11 @@ class PresenceHandler:
         if not channel_id:
             return None, None, None
 
+        # A bare int() accepted negatives and arbitrarily large ids, which
+        # then reached the channel/participant lookups and the fan-out. Bound
+        # the id at the gateway boundary like every other snowflake.
         try:
-            channel_id = int(channel_id)
+            channel_id = parse_snowflake(channel_id, "channel_id")
         except (ValueError, TypeError):
             return None, None, None
 
@@ -323,8 +326,11 @@ class PresenceHandler:
         if not channel_id:
             return None, None, None
 
+        # A bare int() accepted negatives and arbitrarily large ids, which
+        # then reached the channel/participant lookups and the fan-out. Bound
+        # the id at the gateway boundary like every other snowflake.
         try:
-            channel_id = int(channel_id)
+            channel_id = parse_snowflake(channel_id, "channel_id")
         except (ValueError, TypeError):
             return None, None, None
 

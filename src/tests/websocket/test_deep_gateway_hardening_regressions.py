@@ -136,3 +136,29 @@ def test_invalid_intent_masks_fail_closed():
     assert filter_event_by_intents(event, int(GatewayIntent.GUILDS)) is True
     for invalid in (-1, True, 1 << 70):
         assert filter_event_by_intents(event, invalid) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_id", [-5, 0, 2**64, "not-an-id"])
+async def test_typing_rejects_out_of_range_channel_ids(monkeypatch, bad_id):
+    """Negative / oversized channel ids must not reach the DB or fan-out."""
+    from unittest.mock import MagicMock
+
+    import src.api as api
+    import src.api.websocket.handlers.presence as hp
+
+    monkeypatch.setattr(api, "get_servers", lambda: None)
+    monkeypatch.setattr(api, "get_messaging", lambda: None)
+    presence = MagicMock()
+    handler = hp.PresenceHandler(presence)
+    handler._dispatch_typing_event = AsyncMock()
+
+    conn = SimpleNamespace(
+        is_authenticated=True, user_id=42, is_selftest=False, connection_id="bad-chan"
+    )
+    await handler.handle_typing_start(conn, {"channel_id": bad_id})
+    await handler.handle_typing_stop(conn, {"channel_id": bad_id})
+
+    presence.start_typing.assert_not_called()
+    presence.stop_typing.assert_not_called()
+    handler._dispatch_typing_event.assert_not_awaited()
