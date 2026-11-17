@@ -11,6 +11,7 @@ import shutil
 import base64
 import hashlib
 import logging
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -327,7 +328,15 @@ class KeyringMigration(KEKMigrationProtocol):
     def _save_migration_metadata(
         self, keyring_data: Dict[str, Any], old_kek: bytes, new_kek: bytes
     ) -> None:
-        """Save migration metadata for rollback and audit purposes."""
+        """Save migration metadata for rollback and audit purposes.
+
+        The metadata carries SHA-256 fingerprints of both KEKs plus the
+        keyring's location and key-version counts. It is written with the same
+        0600 discipline as the re-encrypted keyring itself: a plain
+        ``open(path, "w")`` created it with the process umask (commonly 0644),
+        leaving those key-material fingerprints world-readable on disk. Write
+        to a 0600 temp file in the same directory and atomically swap it in.
+        """
         metadata = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "keyring_path": str(self.keyring_path),
@@ -341,8 +350,25 @@ class KeyringMigration(KEKMigrationProtocol):
             },
         }
 
-        with open(self.metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(self.metadata_path.parent),
+            prefix=f"{self.metadata_path.stem}.",
+            suffix=".tmp",
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
+            try:
+                os.chmod(temp_path, 0o600)
+            except (OSError, AttributeError):
+                pass
+            os.replace(temp_path, self.metadata_path)
+        finally:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
 
         logger.info(f"Migration metadata saved: {self.metadata_path.name}")
 

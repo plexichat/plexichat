@@ -24,6 +24,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _resolve_keyring_path(keyring_name: str) -> Path:
+    """Resolve an operator-supplied keyring *name* inside the Plexichat data dir.
+
+    Every CLI flag that selects a keyring (``--keyring`` / ``--kek-keyring``)
+    is documented as a **bare filename** such as ``message_keyring.json``.
+    Joining that value straight onto the data directory (the previous
+    behaviour) let a path like ``../../etc/passwd`` — or even an absolute
+    path, which ``pathlib`` treats as overriding the base — escape the data
+    directory. The migration tool then reads that file, writes a sibling
+    backup, and finally ``os.replace``s the re-encrypted payload over it;
+    rollback copies the backup back over the same path. A single bad
+    argument could therefore clobber an arbitrary file on the host.
+
+    Fail closed on anything that is not a plain filename resolving directly
+    inside ``~/.plexichat/data``. Symlinks pointing outside are rejected too.
+    """
+    if not isinstance(keyring_name, str) or not keyring_name:
+        raise ValueError("keyring name must be a non-empty filename")
+    if keyring_name in (".", "..") or "/" in keyring_name or "\\" in keyring_name:
+        raise ValueError("keyring name must be a plain filename (no directories)")
+    candidate = Path(keyring_name)
+    if candidate.is_absolute() or candidate.name != keyring_name:
+        raise ValueError("keyring name must be a plain filename (no directories)")
+
+    data_dir = (Path.home() / ".plexichat" / "data").resolve()
+    resolved = (data_dir / keyring_name).resolve()
+    if resolved.parent != data_dir:
+        raise ValueError("keyring name resolves outside the Plexichat data directory")
+    return resolved
+
+
 def migrate_keyring(
     keyring_name: str,
     old_kek_env: str,
@@ -44,6 +75,12 @@ def migrate_keyring(
     Returns:
         True if migration successful, False otherwise
     """
+    try:
+        keyring_path = _resolve_keyring_path(keyring_name)
+    except ValueError as exc:
+        logger.error("Refusing to migrate keyring: %s", exc)
+        return False
+
     logger.info("=== KEK Migration Started ===")
     logger.info(f"Keyring: {keyring_name}")
     logger.info(f"Old KEK env var: {old_kek_env}")
@@ -72,10 +109,6 @@ def migrate_keyring(
 
     logger.info("Old KEK decoded successfully (32 bytes)")
     logger.info("New KEK decoded successfully (32 bytes)")
-
-    # Get keyring path
-    data_dir = Path.home() / ".plexichat" / "data"
-    keyring_path = data_dir / keyring_name
 
     if not keyring_path.exists():
         logger.error(f"Keyring file does not exist: {keyring_path}")
@@ -191,11 +224,14 @@ def rollback_keyring(keyring_name: str) -> bool:
     Returns:
         True if rollback successful, False otherwise
     """
+    try:
+        keyring_path = _resolve_keyring_path(keyring_name)
+    except ValueError as exc:
+        logger.error("Refusing to roll back keyring: %s", exc)
+        return False
+
     logger.info("=== Keyring Rollback Started ===")
     logger.info(f"Keyring: {keyring_name}")
-
-    data_dir = Path.home() / ".plexichat" / "data"
-    keyring_path = data_dir / keyring_name
 
     if not keyring_path.exists():
         logger.error(f"Keyring file does not exist: {keyring_path}")

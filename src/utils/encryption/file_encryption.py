@@ -23,7 +23,14 @@ from .core import Keyring
 # File format constants - Unified streaming format (v2)
 FILE_MAGIC = b"PXENC"  # Legacy format (deprecated for writes, still readable)
 STREAM_MAGIC = b"PXSTR"  # Unified streaming format (v2) - now the default
-FILE_VERSION = 2  # Bumped to v2 for unified format
+FILE_VERSION = 2  # Legacy non-streaming blob version (kept for compatibility)
+# v3 streaming blobs bind the declared total size AND the format version into
+# every chunk's AES-GCM AAD. v2 left the `original_size` header field
+# unauthenticated, so an attacker who could edit the stored blob could lower
+# it and drop trailing chunks: every surviving chunk still authenticated and
+# the shorter plaintext was returned with `verified=True`. v2 blobs remain
+# readable with their legacy AAD; only new writes use v3.
+STREAM_VERSION = 3
 CHUNK_SIZE = 256 * 1024  # 256KB chunks for streaming
 NONCE_SIZE = 12
 TAG_SIZE = 16
@@ -48,6 +55,20 @@ class DecryptionError(RuntimeError):
 # FileEncryptor (and its keyring) instead of constructing a fresh one
 # per call. Tests can override this with a temp-keyring instance.
 _file_encryptor: Optional["FileEncryptor"] = None
+
+
+def _stream_chunk_aad(
+    version: int, original_size: int, chunk_index: int, aad: Optional[bytes]
+) -> bytes:
+    """Build the AAD for one encrypted chunk of a streaming blob.
+
+    Binding ``version`` and ``original_size`` makes the length metadata
+    tamper-evident: changing either in the (unencrypted) header breaks every
+    chunk's GCM tag check. ``version`` is included so an attacker cannot
+    downgrade a v3 blob to the legacy v2 AAD scheme to sidestep the check.
+    """
+    prefix = b"" if aad is None else aad
+    return prefix + struct.pack(">BQQ", version, original_size, chunk_index)
 
 
 def read_exactly(stream: BinaryIO, n: int) -> bytes:
@@ -214,9 +235,10 @@ class FileEncryptor:
         wrap_nonce = os.urandom(NONCE_SIZE)
         wrapped_key = wrap_nonce + kek_cipher.encrypt(wrap_nonce, dek, b"")
 
-        # Write unified v2 header (PXSTR format)
+        # Write unified stream header (PXSTR format). New writes use v3 so
+        # the total size is authenticated; v2 blobs stay readable below.
         output_stream.write(STREAM_MAGIC)
-        output_stream.write(struct.pack(">B", FILE_VERSION))
+        output_stream.write(struct.pack(">B", STREAM_VERSION))
         output_stream.write(struct.pack(">I", version))
         output_stream.write(struct.pack(">H", len(wrapped_key)))
         output_stream.write(wrapped_key)
@@ -232,9 +254,7 @@ class FileEncryptor:
                 break
             checksum.update(chunk)
             chunk_nonce = os.urandom(NONCE_SIZE)
-            chunk_aad = struct.pack(">Q", chunk_index)
-            if aad:
-                chunk_aad = aad + chunk_aad
+            chunk_aad = _stream_chunk_aad(STREAM_VERSION, file_size, chunk_index, aad)
             encrypted_chunk = cipher.encrypt(chunk_nonce, chunk, chunk_aad)
             output_stream.write(chunk_nonce)
             output_stream.write(struct.pack(">I", len(encrypted_chunk)))
@@ -384,7 +404,7 @@ class StreamingFileEncryptor:
         wrapped_key = wrap_nonce + kek_cipher.encrypt(wrap_nonce, dek, b"")
 
         output_stream.write(STREAM_MAGIC)
-        output_stream.write(struct.pack(">B", FILE_VERSION))
+        output_stream.write(struct.pack(">B", STREAM_VERSION))
         output_stream.write(struct.pack(">I", version))
         output_stream.write(struct.pack(">H", len(wrapped_key)))
         output_stream.write(wrapped_key)
@@ -397,9 +417,7 @@ class StreamingFileEncryptor:
             if not chunk:
                 break
             chunk_nonce = os.urandom(NONCE_SIZE)
-            chunk_aad = struct.pack(">Q", chunk_index)
-            if aad:
-                chunk_aad = aad + chunk_aad
+            chunk_aad = _stream_chunk_aad(STREAM_VERSION, file_size, chunk_index, aad)
             encrypted_chunk = cipher.encrypt(chunk_nonce, chunk, chunk_aad)
             output_stream.write(chunk_nonce)
             output_stream.write(struct.pack(">I", len(encrypted_chunk)))
@@ -462,6 +480,12 @@ class StreamingFileEncryptor:
         dek = encryptor._unwrap_key(header.wrapped_key, header.key_version)
         cipher = AESGCM(dek)
 
+        # v3 binds the declared size and format version into every chunk's
+        # AAD. Legacy v2 blobs keep their original AAD so existing encrypted
+        # media remains readable; both reject tampered length metadata (v3
+        # via the GCM tag check, v2 via the final size comparison below).
+        is_v3 = header.version >= STREAM_VERSION
+
         total_decrypted = 0
         chunk_index = 0
 
@@ -481,9 +505,14 @@ class StreamingFileEncryptor:
                 if len(encrypted_chunk) < encrypted_len:
                     break  # Safety
 
-                chunk_aad = struct.pack(">Q", chunk_index)
-                if aad:
-                    chunk_aad = aad + chunk_aad
+                if is_v3:
+                    chunk_aad = _stream_chunk_aad(
+                        header.version, header.original_size, chunk_index, aad
+                    )
+                else:
+                    chunk_aad = struct.pack(">Q", chunk_index)
+                    if aad:
+                        chunk_aad = aad + chunk_aad
 
                 # ``InvalidTag`` (and any other crypto error) is deliberately
                 # NOT caught here — it must propagate so the caller fails
