@@ -8,6 +8,7 @@ Covers:
 - a SELECT_ROLES onboarding whitelist cannot offer roles above the step
   creator's own rank (bulk self-escalation).
 """
+
 import pytest
 
 
@@ -30,18 +31,19 @@ class TestChannelOverrideGrantability:
                     allow=bad,
                 )
 
-    def test_override_allow_cannot_grant_unheld_permission(
-        self, server_with_channels
-    ):
+    def test_override_allow_cannot_grant_unheld_permission(self, server_with_channels):
         server, owner, admin_user, _, _, general, _, _, _, servers = (
             server_with_channels
         )
         # admin_user holds channels.manage but NOT administrator. Granting
         # administrator via a self-target override used to unlock every
         # permission in the channel (apply_channel_overrides honours it).
-        assert servers.has_permission(
-            admin_user.id, server.id, "administrator", general.id
-        ) is False
+        assert (
+            servers.has_permission(
+                admin_user.id, server.id, "administrator", general.id
+            )
+            is False
+        )
 
         with pytest.raises(servers.PermissionDeniedError):
             servers.set_channel_override(

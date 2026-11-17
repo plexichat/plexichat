@@ -26,7 +26,9 @@ class IPBlockingMiddleware:
 
         # Use scope directly or handle per type. The resolved IP is shared
         # with logging/authentication/rate limiting for this request.
-        client_ip = cached_client_ip(cast(Dict[str, Any], scope), resolver=get_client_ip)
+        client_ip = cached_client_ip(
+            cast(Dict[str, Any], scope), resolver=get_client_ip
+        )
 
         # Check if IP is blacklisted
         auth = api.get_auth()

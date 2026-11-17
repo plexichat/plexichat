@@ -47,9 +47,11 @@ def _attachment_endpoint():
     """Register the attachment route on a minimal app and return its callable."""
     app = FastAPI()
     media_serving.register_attachment_route(app)
-    return next(r.endpoint for r in app.routes if getattr(r, "path", "").endswith(
-        "/media/attachments/{filename:path}"
-    ))
+    return next(
+        r.endpoint
+        for r in app.routes
+        if getattr(r, "path", "").endswith("/media/attachments/{filename:path}")
+    )
 
 
 def _request(*, authorization=None, cookie=None, signed_uid=None, range_header=None):

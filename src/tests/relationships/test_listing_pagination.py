@@ -5,6 +5,7 @@ relationship graph before slicing to the requested page. Hydration must be
 limited to the page that is actually returned, while preserving order and
 per-status fields.
 """
+
 from typing import Any, cast
 
 from types import SimpleNamespace

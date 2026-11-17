@@ -7,6 +7,7 @@ Covers:
 - Invalid-image uploads map to a consistent 400 on every upload endpoint
 - Avatar/icon changes reach connected clients via gateway events
 """
+
 from typing import Any, cast
 
 import io
@@ -111,6 +112,7 @@ class TestAnimatedFramePreservation:
 
     def test_animated_gif_resized_keeps_all_frames(self, avatar_manager):
         from utils.config import _config_instance as _config_for_test
+
         loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_size": 8}
@@ -182,7 +184,9 @@ class TestConsistentInvalidImageErrors:
         current_user = SimpleNamespace(user_id=1)
         with patch("src.api.get_avatars", return_value=fake_avatars):
             with pytest.raises(HTTPException) as exc:
-                await AvatarMixin().upload_avatar(cast(Any, file), cast(Any, current_user))
+                await AvatarMixin().upload_avatar(
+                    cast(Any, file), cast(Any, current_user)
+                )
         assert exc.value.status_code == 400
         assert "Invalid image file" in str(exc.value.detail)
 

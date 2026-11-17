@@ -15,6 +15,7 @@ sharing a single temp-file sqlite Database and asserts no over-admit.
 
 Would FAIL on pre-fix code (allowed > capacity) and PASSES after.
 """
+
 from typing import Any, cast
 
 import threading

@@ -279,11 +279,27 @@ def test_typing_emitters_uses_scoped_recipients(dispatch_spy, monkeypatch):
 @pytest.mark.parametrize(
     "emitter,args,kwargs",
     [
-        ("emit_message_delete_bulk", (CHANNEL_ID, [10]), {"guild_id": GUILD_ID, "actor_id": 1}),
-        ("emit_message_reaction_remove_all", (CHANNEL_ID, 10), {"guild_id": GUILD_ID, "actor_id": 1}),
-        ("emit_message_reaction_remove_emoji", (CHANNEL_ID, 10, "x"), {"guild_id": GUILD_ID, "actor_id": 1}),
+        (
+            "emit_message_delete_bulk",
+            (CHANNEL_ID, [10]),
+            {"guild_id": GUILD_ID, "actor_id": 1},
+        ),
+        (
+            "emit_message_reaction_remove_all",
+            (CHANNEL_ID, 10),
+            {"guild_id": GUILD_ID, "actor_id": 1},
+        ),
+        (
+            "emit_message_reaction_remove_emoji",
+            (CHANNEL_ID, 10, "x"),
+            {"guild_id": GUILD_ID, "actor_id": 1},
+        ),
         ("emit_channel_pins_update", (CHANNEL_ID,), {"guild_id": GUILD_ID}),
-        ("emit_poll_update", (9, 10, "vote"), {"actor_id": 1, "channel_id": CHANNEL_ID}),
+        (
+            "emit_poll_update",
+            (9, 10, "vote"),
+            {"actor_id": 1, "channel_id": CHANNEL_ID},
+        ),
     ],
 )
 def test_message_family_emitters_use_scoped_recipients(

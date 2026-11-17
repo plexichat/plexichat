@@ -135,15 +135,28 @@ def sanitize_ice_servers(servers: Iterable[Any]) -> List[dict]:
     return result
 
 
-
 # --- session/participant metadata (commit 6) ---
 MAX_SESSION_ID_LENGTH = 128
 MAX_SFU_ID_LENGTH = 128
 MAX_PARTICIPANTS_PER_CHANNEL = 100
 
 _INVISIBLE_ID_CHARS = frozenset(
-    {0x200B, 0x200C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D,
-     0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF}
+    {
+        0x200B,
+        0x200C,
+        0x200E,
+        0x200F,
+        0x202A,
+        0x202B,
+        0x202C,
+        0x202D,
+        0x202E,
+        0x2066,
+        0x2067,
+        0x2068,
+        0x2069,
+        0xFEFF,
+    }
 )
 
 
@@ -196,9 +209,17 @@ MAX_BITRATE_INPUT = 2**31 - 1
 
 VALID_REGION_IDS = frozenset(
     {
-        "us-west", "us-east", "us-central", "us-south",
-        "eu-west", "eu-central", "singapore", "japan",
-        "brazil", "sydney", "automatic",
+        "us-west",
+        "us-east",
+        "us-central",
+        "us-south",
+        "eu-west",
+        "eu-central",
+        "singapore",
+        "japan",
+        "brazil",
+        "sydney",
+        "automatic",
     }
 )
 MAX_REGION_ID_LENGTH = 64
@@ -285,7 +306,7 @@ def validate_recording_id(value: object, field: str = "recording_id") -> str:
         raise ValueError(f"{field} is empty or too long")
     for ch in text:
         code = ord(ch)
-        if code < 0x20 or code == 0x7F or ch in '/\\..':
+        if code < 0x20 or code == 0x7F or ch in "/\\..":
             raise ValueError(f"{field} contains invalid characters")
     return text
 
@@ -305,9 +326,7 @@ def validate_transcription_config(cfg: object) -> dict:
             result[key] = text
     for key in ("max_duration_seconds", "chunk_seconds", "max_segments"):
         if key in cfg and cfg[key] is not None:
-            result[key] = bounded_int(
-                cfg[key], key, minimum=1, maximum=86_400
-            )
+            result[key] = bounded_int(cfg[key], key, minimum=1, maximum=86_400)
     return result
 
 
@@ -354,9 +373,7 @@ MAX_FRAME_DURATION_MS = 100
 
 def _strict_bounded_int(value: object, field: str, minimum: int, maximum: int) -> int:
     """bounded_int plus rejection of bools and fractional floats."""
-    if isinstance(value, bool) or (
-        isinstance(value, float) and not value.is_integer()
-    ):
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
         raise ValueError(f"{field} must be an integer")
     return bounded_int(value, field, minimum=minimum, maximum=maximum)
 

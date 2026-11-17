@@ -38,7 +38,13 @@ def test_oversized_formula_rejected_and_no_operation_persisted(
     huge = "=" + "1+" * (MAX_FORMULA_LENGTH // 2 + 1)
     with pytest.raises(SumValidationError):
         manager.apply_operation(
-            owner.id, wb_id, sheet_id, "huge-formula", "set_cell", 0, [_formula_cell(huge)]
+            owner.id,
+            wb_id,
+            sheet_id,
+            "huge-formula",
+            "set_cell",
+            0,
+            [_formula_cell(huge)],
         )
 
     # The rejected write must advance neither the revision nor the op log.

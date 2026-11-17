@@ -8,6 +8,7 @@ Covers:
 - REP-5: enhanced reports validate evidence URLs and return 404 for missing reports
 - REP-6: missing enhanced report returns 404, not 400
 """
+
 from typing import Any, cast
 
 import asyncio
@@ -97,12 +98,32 @@ class TestRep345EnhancedReportValidation:
         # An invalid target_type is rejected at the request boundary, before
         # the route runs: model construction raises a pydantic ValidationError.
         with pytest.raises(ValidationError, match="target_type"):
-            EnhancedReportRequest(target_type="server", target_id="5", reason="spam", category="other", priority="medium", details=None, evidence_urls=None, channel_id=None, server_id=None)
+            EnhancedReportRequest(
+                target_type="server",
+                target_id="5",
+                reason="spam",
+                category="other",
+                priority="medium",
+                details=None,
+                evidence_urls=None,
+                channel_id=None,
+                server_id=None,
+            )
 
     def test_self_user_report_rejected(self, monkeypatch):
         db = _FakeDB(user_exists=True)
         _patch_api(monkeypatch, db, None)
-        req = EnhancedReportRequest(target_type="user", target_id="5", reason="spam", category="other", priority="medium", details=None, evidence_urls=None, channel_id=None, server_id=None)
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="5",
+            reason="spam",
+            category="other",
+            priority="medium",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
+        )
         with pytest.raises(Exception) as exc:
             asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(5))))
         assert cast(Any, exc.value).status_code == 400
@@ -110,7 +131,17 @@ class TestRep345EnhancedReportValidation:
     def test_unknown_user_report_rejected(self, monkeypatch):
         db = _FakeDB(user_exists=False)
         _patch_api(monkeypatch, db, None)
-        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam", category="other", priority="medium", details=None, evidence_urls=None, channel_id=None, server_id=None)
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            category="other",
+            priority="medium",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
+        )
         with pytest.raises(Exception) as exc:
             asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(1))))
         assert cast(Any, exc.value).status_code == 400
@@ -126,7 +157,11 @@ class TestRep345EnhancedReportValidation:
                 target_id="999",
                 reason="spam",
                 evidence_urls=["javascript:alert(1)"],
-            category="other", priority="medium", details=None, channel_id=None, server_id=None,
+                category="other",
+                priority="medium",
+                details=None,
+                channel_id=None,
+                server_id=None,
             )
 
     def test_self_message_report_rejected(self, monkeypatch):
@@ -139,7 +174,10 @@ class TestRep345EnhancedReportValidation:
             reason="spam",
             channel_id="1",
             server_id="2",
-        category="other", priority="medium", details=None, evidence_urls=None,
+            category="other",
+            priority="medium",
+            details=None,
+            evidence_urls=None,
         )
         with pytest.raises(Exception) as exc:
             asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(5))))
@@ -155,7 +193,10 @@ class TestRep345EnhancedReportValidation:
             reason="spam",
             channel_id="1",
             server_id="2",
-        category="other", priority="medium", details=None, evidence_urls=None,
+            category="other",
+            priority="medium",
+            details=None,
+            evidence_urls=None,
         )
         with pytest.raises(Exception) as exc:
             asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(5))))
@@ -167,7 +208,17 @@ class TestRep345EnhancedReportValidation:
         monkeypatch.setattr(
             "src.core.database.check_rate_limit", lambda *args: (False, 0)
         )
-        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam", category="other", priority="medium", details=None, evidence_urls=None, channel_id=None, server_id=None)
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            category="other",
+            priority="medium",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
+        )
         with pytest.raises(Exception) as exc:
             asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(1))))
         assert cast(Any, exc.value).status_code == 429
@@ -179,7 +230,17 @@ class TestRep345EnhancedReportValidation:
         monkeypatch.setattr(
             "src.core.database.check_rate_limit", lambda *args: (True, 9)
         )
-        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam", category="other", priority="medium", details=None, evidence_urls=None, channel_id=None, server_id=None)
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            category="other",
+            priority="medium",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
+        )
         result = asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(1))))
         assert result["success"] is True
         assert result["report_id"] == "42"
@@ -202,7 +263,11 @@ class TestRep345EnhancedReportValidation:
             target_id="999",
             reason="spam",
             priority="critical",
-        category="other", details=None, evidence_urls=None, channel_id=None, server_id=None,
+            category="other",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
         )
         result = asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(1))))
         assert result["success"] is True
@@ -223,7 +288,11 @@ class TestRep345EnhancedReportValidation:
             target_id="999",
             reason="spam",
             priority="critical",
-        category="other", details=None, evidence_urls=None, channel_id=None, server_id=None,
+            category="other",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
         )
         result = asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(1))))
         assert result["priority"] == "high"
@@ -248,7 +317,11 @@ class TestRep345EnhancedReportValidation:
             target_id="999",
             reason="spam",
             priority="critical",
-        category="other", details=None, evidence_urls=None, channel_id=None, server_id=None,
+            category="other",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
         )
         result = asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(1))))
         assert result["report_id"] == "7"
@@ -258,7 +331,17 @@ class TestRep345EnhancedReportValidation:
     def test_valid_user_report_accepted(self, monkeypatch):
         db = _FakeDB(user_exists=True)
         _patch_api(monkeypatch, db, None)
-        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam", category="other", priority="medium", details=None, evidence_urls=None, channel_id=None, server_id=None)
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            category="other",
+            priority="medium",
+            details=None,
+            evidence_urls=None,
+            channel_id=None,
+            server_id=None,
+        )
         result = asyncio.run(submit_enhanced_report(req, cast(Any, _FakeUser(1))))
         assert result["success"] is True
         assert "INSERT INTO reports" in db.executed[0][0]
@@ -327,7 +410,9 @@ class TestRepReportDetailsTupleRows:
         _patch_api(monkeypatch, db, None)
         # Viewer is the reporter, so admin-only fields are stripped; assert on
         # the non-admin fields that were previously mislabelled.
-        result = asyncio.run(get_report_details(cast(Any, self.BIG), cast(Any, _FakeUser(1))))["report"]
+        result = asyncio.run(
+            get_report_details(cast(Any, self.BIG), cast(Any, _FakeUser(1)))
+        )["report"]
         assert result["status"] == "investigating"
         assert result["priority"] == "high"
         assert result["updated_at"] == 333
@@ -349,7 +434,9 @@ class TestRepReportDetailsTupleRows:
         )
         db = _TupleReportsDB(message_reports=row)
         _patch_api(monkeypatch, db, None)
-        result = asyncio.run(get_report_details(cast(Any, 9), cast(Any, _FakeUser(1))))["report"]
+        result = asyncio.run(get_report_details(cast(Any, 9), cast(Any, _FakeUser(1))))[
+            "report"
+        ]
         assert result["reported_user_id"] == "5"
         assert isinstance(result["reported_user_id"], str)
         assert result["message_id"] == str(self.BIG)
@@ -370,7 +457,9 @@ class TestRepReportDetailsTupleRows:
         )
         db = _TupleReportsDB(user_reports=row)
         _patch_api(monkeypatch, db, None)
-        result = asyncio.run(get_report_details(cast(Any, 11), cast(Any, _FakeUser(1))))["report"]
+        result = asyncio.run(
+            get_report_details(cast(Any, 11), cast(Any, _FakeUser(1)))
+        )["report"]
         assert result["reported_user_id"] == str(self.BIG)
         assert isinstance(result["reported_user_id"], str)
         assert result["status"] == "pending"

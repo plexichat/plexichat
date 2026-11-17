@@ -98,7 +98,9 @@ def test_public_and_internal_locks_share_namespace(
     ]
 
 
-@pytest.mark.parametrize("method,args", [(name, ("field", 1)) for name, _ in _MUTATOR_PAIRS])
+@pytest.mark.parametrize(
+    "method,args", [(name, ("field", 1)) for name, _ in _MUTATOR_PAIRS]
+)
 def test_memory_mutators_apply_expiring_ttl(
     rate_limit_clock: Any, method: str, args: tuple
 ) -> None:
@@ -114,7 +116,9 @@ def test_memory_mutators_apply_expiring_ttl(
     assert storage.get_stats()["bucket_count"] == 0
 
 
-@pytest.mark.parametrize("method,args", [(name, ("field", 1)) for name, _ in _MUTATOR_PAIRS])
+@pytest.mark.parametrize(
+    "method,args", [(name, ("field", 1)) for name, _ in _MUTATOR_PAIRS]
+)
 def test_memory_mutators_enforce_bucket_cap(method: str, args: tuple) -> None:
     """A flood of distinct keys through a mutator cannot grow the dict past the cap."""
     storage = MemoryStorage(cleanup_interval=10.0, max_buckets=5)

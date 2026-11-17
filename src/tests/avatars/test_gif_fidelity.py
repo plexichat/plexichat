@@ -7,6 +7,7 @@ Covers:
 - M4: a static transparent GIF keeps its GIF container and transparency, and
   the stored content_type stays image/gif (never silently image/jpeg).
 """
+
 from typing import Any, cast
 
 import io

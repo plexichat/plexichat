@@ -339,7 +339,9 @@ class SignatureMixin(WebhookManagerTrait):
             # key written by any version verifies.
             if isinstance(public_key_bytes, str):
                 try:
-                    public_key_bytes = base64.b64decode(public_key_bytes.encode("ascii"))
+                    public_key_bytes = base64.b64decode(
+                        public_key_bytes.encode("ascii")
+                    )
                 except Exception as e:
                     logger.error(
                         f"Failed to decode signing-key for inbound webhook "
@@ -375,7 +377,9 @@ class SignatureMixin(WebhookManagerTrait):
                     )
                     return False
             except Exception as e:  # cache failure must not bypass the check silently
-                logger.error(f"Replay-cache lookup failed for webhook {webhook_id}: {e}")
+                logger.error(
+                    f"Replay-cache lookup failed for webhook {webhook_id}: {e}"
+                )
                 return False
 
             try:
@@ -386,7 +390,9 @@ class SignatureMixin(WebhookManagerTrait):
                 logger.warning(f"Webhook signature mismatch for {webhook_id}")
                 return False
             except Exception as e:
-                logger.error(f"Webhook signature verification error for {webhook_id}: {e}")
+                logger.error(
+                    f"Webhook signature verification error for {webhook_id}: {e}"
+                )
                 return False
 
             # Mark this (webhook_id, signature) pair as consumed BEFORE

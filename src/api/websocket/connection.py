@@ -64,9 +64,7 @@ class Connection:
     # Optional coalescing outbound batcher. Disabled by default so the many
     # callers that construct a bare Connection keep their synchronous
     # write-through behaviour; gateway_endpoint opts in for live sockets.
-    _outbound_batcher: Optional[OutboundFrameBatcher] = field(
-        default=None, repr=False
-    )
+    _outbound_batcher: Optional[OutboundFrameBatcher] = field(default=None, repr=False)
     _batcher_task: Optional[asyncio.Task] = field(default=None, repr=False)
     # Per-connection rendering cache. Frames rendered outside a fan-out (inline
     # ACKs, raw opcodes, resume responses) reuse their snowflake rendering

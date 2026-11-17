@@ -10,6 +10,7 @@ Covers:
 - Default SVG placeholder generation
 - Config-driven limits (max size, max file size, allowed types)
 """
+
 from typing import Any, cast
 
 import hashlib
@@ -106,6 +107,7 @@ class TestImageProcessing:
         """Images larger than max_size must be downscaled."""
         # Build a large PNG and shrink max_size via config
         from utils.config import _config_instance as _config_for_test
+
         loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_size": 32}
@@ -193,6 +195,7 @@ class TestImageProcessing:
     def test_oversized_pixel_count_rejected(self, avatar_manager):
         """Images exceeding max_pixels must be rejected."""
         from utils.config import _config_instance as _config_for_test
+
         loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_pixels": 100}
@@ -299,6 +302,7 @@ class TestUserAvatarLifecycle:
     def test_upload_rejects_oversized_file(self, avatar_manager, test_user):
         """Uploading a file over max_file_size must raise ValueError."""
         from utils.config import _config_instance as _config_for_test
+
         loader = cast(Any, _config_for_test)
 
         loader.config["avatars"] = {"max_file_size": 100}

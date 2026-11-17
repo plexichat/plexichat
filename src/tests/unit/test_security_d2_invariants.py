@@ -54,9 +54,7 @@ def _iter_routes():
             original = getattr(route, "original_router", None)
             if original is not None:
                 ctx = getattr(route, "include_context", None)
-                yield from walk(
-                    original, prefix + (getattr(ctx, "prefix", "") or "")
-                )
+                yield from walk(original, prefix + (getattr(ctx, "prefix", "") or ""))
             elif hasattr(route, "methods") and hasattr(route, "path"):
                 yield prefix + route.path, route
 
@@ -87,7 +85,7 @@ class TestHeadersOnEveryRoute:
                 {"ok": True},
                 headers={
                     "X-Content-Type-Options": "sniff",  # weakened upstream
-                    "Referrer-Policy": "unsafe-url",    # weakened upstream
+                    "Referrer-Policy": "unsafe-url",  # weakened upstream
                     "X-Frame-Options": "ALLOWALL",
                 },
             )

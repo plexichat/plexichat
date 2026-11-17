@@ -16,7 +16,6 @@ import json
 from contextlib import ExitStack
 from unittest.mock import patch
 
-import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
@@ -79,8 +78,12 @@ def _run_update(db):
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(routes, "check_host_restriction"))
-        stack.enter_context(patch.object(routes, "_require_role_manager", return_value=1))
-        stack.enter_context(patch.object(routes, "_load_hierarchy", return_value=_hierarchy()))
+        stack.enter_context(
+            patch.object(routes, "_require_role_manager", return_value=1)
+        )
+        stack.enter_context(
+            patch.object(routes, "_load_hierarchy", return_value=_hierarchy())
+        )
         stack.enter_context(patch("src.api.get_db", return_value=db))
         invalidate = stack.enter_context(
             patch.object(routes, "invalidate_privilege_caches")
@@ -107,8 +110,12 @@ def _run_delete(db):
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(routes, "check_host_restriction"))
-        stack.enter_context(patch.object(routes, "_require_role_manager", return_value=1))
-        stack.enter_context(patch.object(routes, "_load_hierarchy", return_value=_hierarchy()))
+        stack.enter_context(
+            patch.object(routes, "_require_role_manager", return_value=1)
+        )
+        stack.enter_context(
+            patch.object(routes, "_load_hierarchy", return_value=_hierarchy())
+        )
         stack.enter_context(patch("src.api.get_db", return_value=db))
         invalidate = stack.enter_context(
             patch.object(routes, "invalidate_privilege_caches")
@@ -132,7 +139,9 @@ class TestRoleMutationCompareAndSwap:
         exc, _, _ = _run_update(db)
         assert exc is None
 
-        update = next((q, p) for q, p in db.executed if q.startswith("UPDATE admin_roles"))
+        update = next(
+            (q, p) for q, p in db.executed if q.startswith("UPDATE admin_roles")
+        )
         sql, params = update
         assert "is_system = 0" in sql
         assert "position < ?" in sql
@@ -151,7 +160,9 @@ class TestRoleMutationCompareAndSwap:
         exc, _, _ = _run_delete(db)
         assert exc is None
 
-        delete = next((q, p) for q, p in db.executed if q.startswith("DELETE FROM admin_roles"))
+        delete = next(
+            (q, p) for q, p in db.executed if q.startswith("DELETE FROM admin_roles")
+        )
         sql, params = delete
         assert "is_system = 0" in sql
         assert "position < ?" in sql

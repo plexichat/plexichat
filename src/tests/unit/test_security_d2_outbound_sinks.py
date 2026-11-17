@@ -33,7 +33,18 @@ HTTP_MODULES = frozenset(
     {"httpx", "requests", "aiohttp", "urllib.request", "src.utils.outbound"}
 )
 HTTP_METHODS = frozenset(
-    {"get", "post", "put", "patch", "delete", "head", "request", "urlopen", "stream", "send"}
+    {
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete",
+        "head",
+        "request",
+        "urlopen",
+        "stream",
+        "send",
+    }
 )
 GUARD_NAMES = frozenset(
     {
@@ -183,7 +194,11 @@ class TestStaticSinkAudit:
         for relative in DIRECT_VALIDATOR_API_SINKS:
             tree = _parse(ROOT / relative)
             called = _called_names(tree)  # pyright: ignore[reportArgumentType]
-            for companion in ("require_https_url", "pinned_request_target", "is_private_ip"):
+            for companion in (
+                "require_https_url",
+                "pinned_request_target",
+                "is_private_ip",
+            ):
                 assert companion in called, f"{relative} lost its {companion} guard"
 
     def test_direct_validator_allowlist_has_no_stale_entries(self):
@@ -232,9 +247,7 @@ class TestRuntimeGateInvocation:
         with patch("src.api.schemas.servers.resolve_outbound_url") as spy:
             spy.side_effect = lambda value, field: value
             ServerCreateRequest(name="a server", icon_url="https://example.com/i.png")  # pyright: ignore[reportCallIssue]
-            spy.assert_called_once_with(
-                "https://example.com/i.png", "Server icon URL"
-            )
+            spy.assert_called_once_with("https://example.com/i.png", "Server icon URL")
 
     def test_media_schema_delegates_to_resolve_outbound_url(self):
         with patch("src.api.schemas.media.resolve_outbound_url") as spy:
@@ -244,9 +257,7 @@ class TestRuntimeGateInvocation:
                 reason="report",
                 attachment_url="https://example.com/a.png",
             )
-            spy.assert_called_once_with(
-                "https://example.com/a.png", "Attachment URL"
-            )
+            spy.assert_called_once_with("https://example.com/a.png", "Attachment URL")
 
     def test_internal_address_is_rejected_without_echoing_the_ip(self):
         with patch("src.core.security.outbound.URLValidator") as validator:

@@ -186,7 +186,10 @@ async def test_mediasoup_collect_quality_parses_stats():
     assert samples == [
         ("voice_1", "user_2", {"bitrate": 80000, "packet_loss": 3.0, "jitter": 8.0})
     ]
-    assert "/rooms/voice_1/peers/user_2/stats" in cast(Any, adapter._request).await_args.args[1]
+    assert (
+        "/rooms/voice_1/peers/user_2/stats"
+        in cast(Any, adapter._request).await_args.args[1]
+    )
 
 
 @pytest.mark.asyncio

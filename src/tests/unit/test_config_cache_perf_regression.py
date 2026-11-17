@@ -53,7 +53,9 @@ def test_snapshot_edit_triggers_exactly_one_rebuild(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("api:\n  title: Perf\n")
     calls = []
-    snapshot = VersionedConfigSnapshot(lambda: calls.append(1) or {"v": len(calls)}, paths=[config_path])
+    snapshot = VersionedConfigSnapshot(
+        lambda: calls.append(1) or {"v": len(calls)}, paths=[config_path]
+    )
 
     for _ in range(100):
         snapshot.snapshot()

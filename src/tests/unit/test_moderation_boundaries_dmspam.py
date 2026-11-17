@@ -9,7 +9,6 @@ from src.core.antispam.detector import (
     MAX_FILTER_WINDOW_SECONDS,
     DMSpamDetector,
     _bounded_filter_int,
-    _canonical_text,
 )
 
 

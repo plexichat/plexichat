@@ -170,9 +170,7 @@ def validate_password(password: str) -> PasswordValidation:
     score = 0
 
     min_length = pwd_config.get("min_length", 12)
-    max_length = min(
-        pwd_config.get("max_length", 128), _ABSOLUTE_MAX_PASSWORD_LENGTH
-    )
+    max_length = min(pwd_config.get("max_length", 128), _ABSOLUTE_MAX_PASSWORD_LENGTH)
 
     if len(password) < min_length:
         issues.append(f"Password must be at least {min_length} characters")

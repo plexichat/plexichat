@@ -199,12 +199,8 @@ def _has_redos_risk(pattern_str: str) -> bool:
                     # the parent's point of view. Propagate ambiguity upward
                     # (OR, not assignment) so deeper nesting is still caught.
                     stack[-1][0] = True
-                    stack[-1][1] = (
-                        stack[-1][1] or outer_unbounded or inner_unbounded
-                    )
-                    stack[-1][2] = (
-                        stack[-1][2] or inner_variable or (low != high)
-                    )
+                    stack[-1][1] = stack[-1][1] or outer_unbounded or inner_unbounded
+                    stack[-1][2] = stack[-1][2] or inner_variable or (low != high)
                     stack[-1][3] = stack[-1][3] or inner_alternation
                 else:
                     # No outer quantifier: still carry the inner ambiguity up

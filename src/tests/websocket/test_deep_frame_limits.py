@@ -49,9 +49,7 @@ def test_oversized_valid_json_still_raises_size_error():
 
 
 def test_configured_limit_is_honoured_but_clamped(monkeypatch):
-    monkeypatch.setattr(
-        compression, "_get_limits", lambda: (1024, 4096)
-    )
+    monkeypatch.setattr(compression, "_get_limits", lambda: (1024, 4096))
     assert inbound_frame_limit() == 1024
     with pytest.raises(FrameLimitExceeded) as exc:
         enforce_frame_size(b"x" * 1025)

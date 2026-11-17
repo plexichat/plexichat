@@ -211,7 +211,11 @@ _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 def _id_token_segment(segment: str) -> Dict[str, Any]:
     """Decode one bounded base64url JSON segment of an ID token."""
-    if not segment or len(segment) > MAX_ID_TOKEN_LENGTH or not _B64URL_RE.fullmatch(segment):
+    if (
+        not segment
+        or len(segment) > MAX_ID_TOKEN_LENGTH
+        or not _B64URL_RE.fullmatch(segment)
+    ):
         raise ValueError("invalid base64url segment")
     padding = "=" * (-len(segment) % 4)
     raw = base64.urlsafe_b64decode(segment + padding)
@@ -225,7 +229,11 @@ def _id_token_segment(segment: str) -> Dict[str, Any]:
 
 def _decode_id_token(id_token: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Return ``(header, claims)`` for a structurally valid ID token."""
-    if not isinstance(id_token, str) or not id_token or len(id_token) > MAX_ID_TOKEN_LENGTH:
+    if (
+        not isinstance(id_token, str)
+        or not id_token
+        or len(id_token) > MAX_ID_TOKEN_LENGTH
+    ):
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid id_token"}},
@@ -245,7 +253,9 @@ def _decode_id_token(id_token: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         )
 
 
-def _claim_int(claims: Dict[str, Any], name: str, *, required: bool = True) -> Optional[int]:
+def _claim_int(
+    claims: Dict[str, Any], name: str, *, required: bool = True
+) -> Optional[int]:
     value = claims.get(name)
     if value is None:
         if required:
@@ -308,7 +318,9 @@ def _validate_id_token_claims(
         )
 
     oauth_config = config_util.get("oauth", {}) if config_util else {}
-    provider_config = (oauth_config.get(provider, {}) or {}) if isinstance(oauth_config, dict) else {}
+    provider_config = (
+        (oauth_config.get(provider, {}) or {}) if isinstance(oauth_config, dict) else {}
+    )
 
     issuer = claims.get("iss")
     if (
@@ -326,9 +338,13 @@ def _validate_id_token_claims(
     audience = claims.get("aud")
     if isinstance(audience, str):
         audiences = [audience]
-    elif isinstance(audience, list) and 1 <= len(audience) <= 10 and all(
-        isinstance(item, str) and len(item) <= MAX_ID_TOKEN_CLAIM_LENGTH
-        for item in audience
+    elif (
+        isinstance(audience, list)
+        and 1 <= len(audience) <= 10
+        and all(
+            isinstance(item, str) and len(item) <= MAX_ID_TOKEN_CLAIM_LENGTH
+            for item in audience
+        )
     ):
         audiences = audience
     else:
@@ -365,7 +381,11 @@ def _validate_id_token_claims(
         )
 
     subject = claims.get("sub")
-    if not isinstance(subject, str) or not subject or len(subject) > MAX_ID_TOKEN_CLAIM_LENGTH:
+    if (
+        not isinstance(subject, str)
+        or not subject
+        or len(subject) > MAX_ID_TOKEN_CLAIM_LENGTH
+    ):
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid id_token subject"}},

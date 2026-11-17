@@ -63,7 +63,9 @@ class TestCanGrantExistingRole:
             "src.core.admin.permissions.get_admin_granted_permissions",
             return_value=frozenset({"*"}),
         ):
-            assert can_grant_existing_role(_db_with_role_permissions(raw), 1, 7) is False
+            assert (
+                can_grant_existing_role(_db_with_role_permissions(raw), 1, 7) is False
+            )
 
     def test_missing_role_fails_closed(self):
         class EmptyDB:

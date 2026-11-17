@@ -261,5 +261,7 @@ def verify_payload(
             )
         )
     except Exception as exc:
-        logger.error(f"Webhook signature verification unavailable for {webhook_id}: {exc}")
+        logger.error(
+            f"Webhook signature verification unavailable for {webhook_id}: {exc}"
+        )
         return False

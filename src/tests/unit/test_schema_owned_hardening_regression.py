@@ -42,9 +42,7 @@ def test_schema_invite_caps_match_route_guard():
 
 def test_invite_limits_bound_above_and_below():
     ChannelInviteCreateRequest(max_age=0, max_uses=0)
-    ChannelInviteCreateRequest(
-        max_age=MAX_INVITE_AGE_SECONDS, max_uses=MAX_INVITE_USES
-    )
+    ChannelInviteCreateRequest(max_age=MAX_INVITE_AGE_SECONDS, max_uses=MAX_INVITE_USES)
 
     with pytest.raises(ValidationError, match="max_age"):
         ChannelInviteCreateRequest(max_age=MAX_INVITE_AGE_SECONDS + 1)

@@ -26,7 +26,9 @@ def test_policy_is_built_once_and_reused(password_mod, monkeypatch):
     )
 
     with patch.object(
-        password_mod, "_build_password_requirements", wraps=password_mod._build_password_requirements
+        password_mod,
+        "_build_password_requirements",
+        wraps=password_mod._build_password_requirements,
     ) as builder:
         first = asyncio.run(password_mod.get_password_requirements())
         second = asyncio.run(password_mod.get_password_requirements())

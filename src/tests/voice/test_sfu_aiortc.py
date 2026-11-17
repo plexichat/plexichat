@@ -6,6 +6,7 @@ semantics, capabilities, and recording. The real ``aiortc`` package is
 installed, but all tests stub ``RTCPeerConnection`` so no network or
 event-loop stack is exercised.
 """
+
 from typing import Any, cast
 
 import os

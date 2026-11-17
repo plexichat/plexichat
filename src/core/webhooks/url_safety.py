@@ -107,9 +107,7 @@ def validate_delivery_endpoint(
         # loopback target so end-to-end transport tests can bind a local
         # server. Non-loopback hosts stay blocked even with the flag on.
         if hostname.lower() not in _LOOPBACK_HOSTS:
-            raise ValueError(
-                "Private-network testing seam only permits loopback hosts"
-            )
+            raise ValueError("Private-network testing seam only permits loopback hosts")
         return hostname, ""
 
     validator = URLValidator()

@@ -46,6 +46,7 @@ def threads_private(monkeypatch):
     monkeypatch.setattr(
         threads, "get_thread_member_user_ids", lambda tid: list(MEMBERS)
     )
+
     def _thread_type(tid):
         if tid == PRIVATE_THREAD_ID:
             return ThreadType.PRIVATE.value

@@ -24,7 +24,9 @@ def _source(name):
 
 def _route(method, suffix):
     for route in channels_router.routes:
-        if method in getattr(route, "methods", set()) and getattr(route, "path").endswith(suffix):
+        if method in getattr(route, "methods", set()) and getattr(
+            route, "path"
+        ).endswith(suffix):
             return route
     raise AssertionError(f"no {method} route ending in {suffix}")
 

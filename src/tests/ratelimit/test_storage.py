@@ -1,6 +1,7 @@
 """
 Tests for memory storage operations.
 """
+
 from typing import Any, cast
 
 import time

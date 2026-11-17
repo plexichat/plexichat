@@ -78,9 +78,19 @@ def _signature(payload=None, *, version=SIGNATURE_VERSION, timestamp=_TIMESTAMP)
 class TestSignatureFormatInvariants:
     @pytest.mark.parametrize(
         "length,expected",
-        [(0, False), (1, False), (32, False), (63, False), (64, True), (65, False), (128, False)],
+        [
+            (0, False),
+            (1, False),
+            (32, False),
+            (63, False),
+            (64, True),
+            (65, False),
+            (128, False),
+        ],
     )
-    def test_only_full_ed25519_signature_passes_structural_guard(self, length, expected):
+    def test_only_full_ed25519_signature_passes_structural_guard(
+        self, length, expected
+    ):
         assert ED25519_SIGNATURE_LENGTH == 64
         assert _signature_length_is_valid(b"\x00" * length) is expected
 
@@ -95,9 +105,11 @@ class TestSignatureFormatInvariants:
             # Lenient decoders discard whitespace; the replay key must key on
             # bytes, not on the header spelling.
             (
-                lambda raw: base64.b64encode(raw).decode("ascii")[:8]
-                + " "
-                + base64.b64encode(raw).decode("ascii")[8:],
+                lambda raw: (
+                    base64.b64encode(raw).decode("ascii")[:8]
+                    + " "
+                    + base64.b64encode(raw).decode("ascii")[8:]
+                ),
                 lambda text: base64.b64decode(text.replace(" ", "")),
             ),
         ],
@@ -120,9 +132,7 @@ class TestSignatureFormatInvariants:
 class TestEd25519CryptoInvariants:
     def test_valid_signature_verifies(self):
         _private, public = _keypair()
-        assert verify_signature(
-            _signed_bytes(), _signature(), public
-        ) is True
+        assert verify_signature(_signed_bytes(), _signature(), public) is True
 
     @pytest.mark.parametrize(
         "payload",
@@ -134,9 +144,7 @@ class TestEd25519CryptoInvariants:
     )
     def test_tampered_payload_invalidates_signature(self, payload):
         _private, public = _keypair()
-        assert verify_signature(
-            _signed_bytes(payload), _signature(), public
-        ) is False
+        assert verify_signature(_signed_bytes(payload), _signature(), public) is False
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -147,16 +155,16 @@ class TestEd25519CryptoInvariants:
     )
     def test_tampered_version_or_timestamp_invalidates_signature(self, kwargs):
         _private, public = _keypair()
-        assert verify_signature(
-            _signed_bytes(**kwargs), _signature(), public
-        ) is False
+        assert verify_signature(_signed_bytes(**kwargs), _signature(), public) is False
 
     def test_reordered_json_keys_are_canonicalized(self):
         _private, public = _keypair()
-        reordered = {"nested": {"a": [1, 2]}, "channel_id": 42, "event": "message.created"}
-        assert verify_signature(
-            _signed_bytes(reordered), _signature(), public
-        ) is True
+        reordered = {
+            "nested": {"a": [1, 2]},
+            "channel_id": 42,
+            "event": "message.created",
+        }
+        assert verify_signature(_signed_bytes(reordered), _signature(), public) is True
 
     def test_wrong_public_key_invalidates_signature(self):
         other_private = Ed25519PrivateKey.from_private_bytes(bytes(reversed(_SEED)))
@@ -166,12 +174,13 @@ class TestEd25519CryptoInvariants:
         )
         assert verify_signature(_signed_bytes(), _signature(), other_public) is False
 
-    @pytest.mark.parametrize("mutate", [lambda s: s[:-1], lambda s: s[:1], lambda s: bytes([s[0] ^ 1]) + s[1:]])
+    @pytest.mark.parametrize(
+        "mutate",
+        [lambda s: s[:-1], lambda s: s[:1], lambda s: bytes([s[0] ^ 1]) + s[1:]],
+    )
     def test_corrupted_signature_invalidates(self, mutate):
         _private, public = _keypair()
-        assert verify_signature(
-            _signed_bytes(), mutate(_signature()), public
-        ) is False
+        assert verify_signature(_signed_bytes(), mutate(_signature()), public) is False
 
 
 @pytest.fixture

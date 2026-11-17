@@ -55,7 +55,9 @@ def test_get_workbook_stays_on_live_connection(
     assert response["my_permissions"]["can_edit"] is True
 
 
-def test_csv_export_stays_on_live_connection(db, two_users, server_manager, monkeypatch):
+def test_csv_export_stays_on_live_connection(
+    db, two_users, server_manager, monkeypatch
+):
     owner, _ = two_users
     manager = _make_manager(db, server_manager)
     workbook = manager.create_workbook(owner.id, "Export")

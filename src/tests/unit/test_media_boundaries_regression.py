@@ -179,7 +179,10 @@ class TestConstantCoherence:
         assert 0 < MAX_EMBED_TOTAL_TEXT_CHARS < 1_000_000
         assert 0 < MAX_EMBED_KEYS_PER_OBJECT
         assert 0 < MAX_EMBED_LIST_ITEMS
-        assert all(0 < limit <= GENERIC_STRING_MAX_LENGTH for limit in TEXT_FIELD_LIMITS.values())
+        assert all(
+            0 < limit <= GENERIC_STRING_MAX_LENGTH
+            for limit in TEXT_FIELD_LIMITS.values()
+        )
 
 
 class TestEndToEndRefusals:

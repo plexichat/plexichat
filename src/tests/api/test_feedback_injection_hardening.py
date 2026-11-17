@@ -64,7 +64,9 @@ async def test_submit_feedback_rejects_control_characters_before_core(monkeypatc
     monkeypatch.setattr(core_feedback, "submit_feedback", fake_submit)
 
     user = SimpleNamespace(user_id=1)
-    request = type("Request", (), {"state": type("State", (), {"is_internal": False})()})()
+    request = type(
+        "Request", (), {"state": type("State", (), {"is_internal": False})()}
+    )()
 
     with pytest.raises(HTTPException) as exc:
         await feedback_routes.submit_feedback(

@@ -23,8 +23,18 @@ router = APIRouter(prefix="/feedback", tags=["Feedback"])
 #: Feedback categories are a closed set at the HTTP boundary; the
 #: schema also constrains the charset and length.
 KNOWN_FEEDBACK_CATEGORIES = frozenset(
-    {"bug", "feature", "idea", "suggestion", "question",
-     "complaint", "support", "general", "other", "feedback"}
+    {
+        "bug",
+        "feature",
+        "idea",
+        "suggestion",
+        "question",
+        "complaint",
+        "support",
+        "general",
+        "other",
+        "feedback",
+    }
 )
 MAX_FEEDBACK_CONTENT_LENGTH = 2000
 
@@ -45,9 +55,20 @@ MAX_FEEDBACK_CONTENT_LENGTH = 2000
 _FEEDBACK_ALLOWED_CONTROLS = frozenset("\n\t")
 _FEEDBACK_INVISIBLE_CODEPOINTS = frozenset(
     {
-        0x200B, 0x200C, 0x200D, 0x200E, 0x200F,
-        0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
-        0x2066, 0x2067, 0x2068, 0x2069,
+        0x200B,
+        0x200C,
+        0x200D,
+        0x200E,
+        0x200F,
+        0x202A,
+        0x202B,
+        0x202C,
+        0x202D,
+        0x202E,
+        0x2066,
+        0x2067,
+        0x2068,
+        0x2069,
         0xFEFF,
     }
 )

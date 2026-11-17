@@ -15,6 +15,7 @@ from src.core.security.hardening.numbers import SNOWFLAKE_MAX
 
 from .policy_types import reject_unsafe_unicode
 
+
 # A snowflake is a non-negative 64-bit identifier. Python ints are unbounded,
 # so an unvalidated ``"999999999999999999999999"`` used to sail through and
 # reach lookups, cache keys and offset arithmetic. The lower bound stays at 0
@@ -22,9 +23,7 @@ from .policy_types import reject_unsafe_unicode
 # hardening constant shared with path/query id parsing.
 def _check_snowflake_upper_bound(numeric: int) -> None:
     if numeric > SNOWFLAKE_MAX:
-        raise ValueError(
-            f"Invalid snowflake ID: must be at most {SNOWFLAKE_MAX}"
-        )
+        raise ValueError(f"Invalid snowflake ID: must be at most {SNOWFLAKE_MAX}")
 
 
 # One JSON encoder configuration for every hand-built API response.

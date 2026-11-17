@@ -10,6 +10,7 @@ consent; these tests pin that agreement.
 Each test here FAILS on the pre-fix transcription semantics (>=1 consent
 allows a mixed roster) and PASSES on the unanimous rule.
 """
+
 from typing import Any, cast
 
 from types import SimpleNamespace

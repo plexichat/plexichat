@@ -11,7 +11,6 @@ import io
 import json
 import os
 import struct
-from pathlib import Path
 
 import pytest
 from cryptography.exceptions import InvalidTag
@@ -34,9 +33,7 @@ class TestKeyringNamePathTraversal:
     def home(self, tmp_path, monkeypatch):
         data_dir = tmp_path / ".plexichat" / "data"
         data_dir.mkdir(parents=True)
-        monkeypatch.setattr(
-            "pathlib.Path.home", classmethod(lambda cls: tmp_path)
-        )
+        monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))
         return tmp_path, data_dir
 
     @pytest.mark.parametrize(

@@ -466,9 +466,7 @@ def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> 
     """
     # ``migrations.html`` is served by ``admin_migrations_page``; without it in
     # this list the route answered every request with "Access Denied".
-    allowed_templates = frozenset(
-        {"login.html", "dashboard.html", "migrations.html"}
-    )
+    allowed_templates = frozenset({"login.html", "dashboard.html", "migrations.html"})
     if not isinstance(template_name, str) or template_name not in allowed_templates:
         return "<h1>Access Denied</h1>"
 
@@ -489,9 +487,8 @@ def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> 
     # Allowlist AND resolved-path confinement: even if the allowlist grows a
     # name with a traversal sequence, safe_join + is_relative_to keep the read
     # inside the shipped template root (no symlink or sibling-prefix escapes).
-    if (
-        not template_path.is_file()
-        or not template_path.resolve().is_relative_to(template_root.resolve())
+    if not template_path.is_file() or not template_path.resolve().is_relative_to(
+        template_root.resolve()
     ):
         return "<h1>Template Error</h1>"
 

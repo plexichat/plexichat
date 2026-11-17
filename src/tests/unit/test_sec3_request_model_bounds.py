@@ -121,7 +121,9 @@ def test_policy_fields_reject_control_characters_and_html():
     checked = 0
     for model_name, model in MODELS.items():
         for field_name, field in model.model_fields.items():
-            policies = _policy_names(field.annotation, set()) | _policy_names(field.metadata, set())
+            policies = _policy_names(field.annotation, set()) | _policy_names(
+                field.metadata, set()
+            )
             if not policies:
                 continue
             adapter = _adapter(field)
@@ -139,7 +141,12 @@ def test_policy_fields_reject_control_characters_and_html():
         ("src.api.schemas.servers.ServerCreateRequest", {"name": "ok server"}),
         (
             "src.api.schemas.messages.AttachmentRequest",
-            {"filename": "x.txt", "content_type": "text/plain", "url": "https://e.test/x", "size": 1},
+            {
+                "filename": "x.txt",
+                "content_type": "text/plain",
+                "url": "https://e.test/x",
+                "size": 1,
+            },
         ),
     ],
 )

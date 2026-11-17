@@ -101,7 +101,18 @@ class TestApprovedBotListing:
                (id, server_id, application_id, approved_by, permissions,
                 bot_name, bot_avatar_url, status, installed_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (9001, 7001, app.id, test_user.id, "{}", "Approved", None, "approved", 1, 1),
+            (
+                9001,
+                7001,
+                app.id,
+                test_user.id,
+                "{}",
+                "Approved",
+                None,
+                "approved",
+                1,
+                1,
+            ),
         )
 
         real_fetch_all = app_manager._db.fetch_all
@@ -139,13 +150,14 @@ class TestBotPermissionLookups:
         request = app_manager.request_bot(server.id, app.id, requester.id)
 
         real_check = app_manager._require_server_manage_permission
-        with patch(
-            "utils.licensing.has_feature", return_value=True
-        ), patch.object(
-            app_manager,
-            "_require_server_manage_permission",
-            side_effect=real_check,
-        ) as permission_check:
+        with (
+            patch("utils.licensing.has_feature", return_value=True),
+            patch.object(
+                app_manager,
+                "_require_server_manage_permission",
+                side_effect=real_check,
+            ) as permission_check,
+        ):
             app_manager.review_bot_request(
                 server_id=server.id,
                 request_id=request.id,
@@ -162,7 +174,9 @@ class TestBotPermissionLookups:
         user = user_pool.get_user()
         app = app_manager.create_application(user.id, "Bot App")
         with pytest.raises(PermissionDeniedError):
-            app_manager.approve_bot(server_id=7002, application_id=app.id, approved_by=user.id)
+            app_manager.approve_bot(
+                server_id=7002, application_id=app.id, approved_by=user.id
+            )
 
 
 @pytest.mark.applications

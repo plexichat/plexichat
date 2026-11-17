@@ -152,9 +152,7 @@ def validate_redirect_chain(
     lookup is rejected. The hop count and a visited-set bound traffic that tries
     to loop forever.
     """
-    endpoint = resolve_remote_endpoint(
-        initial_url, field, require_https=require_https
-    )
+    endpoint = resolve_remote_endpoint(initial_url, field, require_https=require_https)
     visited = {endpoint.url}
     for index, location in enumerate(locations):
         if index >= MAX_REDIRECTS:
@@ -163,9 +161,7 @@ def validate_redirect_chain(
         if target in visited:
             raise FederationEndpointRejected(f"{field} redirect loop")
         visited.add(target)
-        endpoint = resolve_remote_endpoint(
-            target, field, require_https=require_https
-        )
+        endpoint = resolve_remote_endpoint(target, field, require_https=require_https)
     return endpoint
 
 

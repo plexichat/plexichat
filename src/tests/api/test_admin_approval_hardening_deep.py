@@ -49,7 +49,12 @@ class _FakeDB:
         q = query.lower()
         if "from admin_approvals" in q and "count(*)" not in q:
             # The cancel route's advisory read: a pending request owned by 7.
-            return {"id": 42, "status": "pending", "requested_by": 7, "expires_at": None}
+            return {
+                "id": 42,
+                "status": "pending",
+                "requested_by": 7,
+                "expires_at": None,
+            }
         return {"count": 2}
 
     def execute(self, query, params=None):
@@ -79,7 +84,9 @@ class TestCancelApprovalCompareAndSwap:
     def test_update_is_guarded_on_pending_status(self):
         db = _FakeDB(update_rowcount=1)
         self._run_cancel(db)
-        cancel_sql = " ".join(q for q, _ in db.executed if "UPDATE admin_approvals" in q)
+        cancel_sql = " ".join(
+            q for q, _ in db.executed if "UPDATE admin_approvals" in q
+        )
         assert "SET status = 'cancelled'" in cancel_sql
         # The write must be conditional on the status observed by the read.
         assert "status = 'pending'" in cancel_sql
@@ -96,9 +103,7 @@ class TestCancelApprovalCompareAndSwap:
             patch("src.core.admin.permissions.log_admin_action") as audit,
         ):
             with pytest.raises(HTTPException) as exc:
-                asyncio.run(
-                    routes.cancel_approval(request, SnowflakeIDParam(42))
-                )
+                asyncio.run(routes.cancel_approval(request, SnowflakeIDParam(42)))
         assert exc.value.status_code == 409
         # A cancel that did not happen must not be recorded in the audit log.
         audit.assert_not_called()
@@ -139,9 +144,7 @@ class TestApprovalAuditLogInjection:
             patch.object(routes, "require_admin_permission", return_value=7),
             patch("src.api.get_db", return_value=_FakeDB()),
             patch("utils.config.get", return_value=config),
-            patch(
-                "src.utils.encryption.generate_snowflake_id", return_value=12345
-            ),
+            patch("src.utils.encryption.generate_snowflake_id", return_value=12345),
             patch("src.utils.system_alerts.record_system_alert"),
             patch("src.core.admin.permissions.log_admin_action") as audit,
         ):

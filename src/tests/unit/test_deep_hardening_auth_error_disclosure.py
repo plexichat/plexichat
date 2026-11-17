@@ -84,7 +84,8 @@ def test_rate_limited_retry_after_header_is_bounded_integer():
 def test_rate_limited_retry_after_rejects_invalid_and_negative_values():
     # CRLF-bearing string must never reach the header: fall back to constant.
     injected = srv.InviteRateLimitedError(
-        "slow down", retry_after_seconds="60\r\nX-Injected: 1"  # type: ignore[arg-type]
+        "slow down",
+        retry_after_seconds="60\r\nX-Injected: 1",  # type: ignore[arg-type]
     )
     assert _safe_retry_after_seconds(injected) == RATE_LIMIT_RETRY_AFTER_SECONDS
 

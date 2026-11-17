@@ -1,7 +1,5 @@
 """Regex compile budgets and quantifier bounds."""
 
-import pytest
-
 from src.core.automod.limits import (
     MAX_CODE_LENGTH,
     MAX_PATTERNS_PER_RULE,

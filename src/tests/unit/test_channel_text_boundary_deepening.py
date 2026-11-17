@@ -128,9 +128,7 @@ class TestResponseSideSanitization:
         assert "\r" not in response.topic and "\n" not in response.topic
 
     def test_echoed_text_is_length_bounded(self):
-        response = _channel_to_response(
-            self._channel("x" * 5000, "y" * 5000)
-        )
+        response = _channel_to_response(self._channel("x" * 5000, "y" * 5000))
         assert response.name is not None
         assert response.topic is not None
         assert len(response.name) <= MAX_CHANNEL_NAME_LENGTH

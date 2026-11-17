@@ -56,7 +56,9 @@ async def _run(
     async def downstream(scope, receive, send):
         if error:
             raise RuntimeError("downstream exploded")
-        await send({"type": "http.response.start", "status": 200, "headers": response_headers})
+        await send(
+            {"type": "http.response.start", "status": 200, "headers": response_headers}
+        )
         await send({"type": "http.response.body", "body": b"ok"})
 
     async def receive():
@@ -68,7 +70,9 @@ async def _run(
         messages.append(message)
 
     await SecurityHeadersMiddleware(downstream)(_scope(path), receive, send)
-    start = next(message for message in messages if message["type"] == "http.response.start")
+    start = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
     return list(start["headers"])
 
 
@@ -89,7 +93,9 @@ class TestResponsePolicyEnforcement:
         )
 
         assert _values(final, b"x-content-type-options") == [b"nosniff"]
-        assert _values(final, b"referrer-policy") == [b"strict-origin-when-cross-origin"]
+        assert _values(final, b"referrer-policy") == [
+            b"strict-origin-when-cross-origin"
+        ]
         assert _values(final, b"x-frame-options") == [b"SAMEORIGIN"]
         assert _values(final, b"content-security-policy") == [CSP_API]
         assert _values(final, b"strict-transport-security") == [HSTS_VALUE]

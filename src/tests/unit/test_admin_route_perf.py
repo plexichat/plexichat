@@ -167,7 +167,9 @@ class TestDataExportMutationErrors:
         monkeypatch.setattr(data_export_routes, "_get_request_or_404", _no_preflight)
         monkeypatch.setattr(data_export_routes, "approve_request", lambda *a: {})
 
-        result = asyncio.run(data_export_routes.approve_data_export(_request(), SnowflakeIDParam(42)))
+        result = asyncio.run(
+            data_export_routes.approve_data_export(_request(), SnowflakeIDParam(42))
+        )
         assert result.success is True
 
     def test_not_found_from_core_still_returns_404(self, monkeypatch):
@@ -183,7 +185,9 @@ class TestDataExportMutationErrors:
 
         monkeypatch.setattr(data_export_routes, "approve_request", _missing)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(data_export_routes.approve_data_export(_request(), SnowflakeIDParam(42)))
+            asyncio.run(
+                data_export_routes.approve_data_export(_request(), SnowflakeIDParam(42))
+            )
         assert exc.value.status_code == 404
 
 

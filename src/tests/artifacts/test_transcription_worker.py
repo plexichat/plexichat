@@ -1,4 +1,5 @@
 """Tests for transcription recording-reference normalization."""
+
 from typing import Any, cast
 
 import os

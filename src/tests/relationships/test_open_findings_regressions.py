@@ -9,6 +9,7 @@ Covers:
 - Block-status oracle closed (M3): a friend request to a user who blocked
   the sender is indistinguishable from a request to a nonexistent user.
 """
+
 from typing import Any, cast
 
 import asyncio

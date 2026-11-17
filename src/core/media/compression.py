@@ -113,9 +113,7 @@ def _bounded_image_quality(value: object) -> int:
 # Quality presets are module constants. Bound them once here instead of
 # re-validating the same literals on every compress() call.
 _BOUNDED_IMAGE_QUALITY_PRESETS = {
-    preset: {
-        target: _bounded_image_quality(value) for target, value in targets.items()
-    }
+    preset: {target: _bounded_image_quality(value) for target, value in targets.items()}
     for preset, targets in IMAGE_QUALITY_PRESETS.items()
 }
 
@@ -446,7 +444,9 @@ class VideoCompressor:
         if not self.is_available():
             return self._compress_uncached(video_data, quality, codec)
 
-        settings = tuple((key, str(value)) for key, value in sorted(self._config.items()))
+        settings = tuple(
+            (key, str(value)) for key, value in sorted(self._config.items())
+        )
         key = (
             "transcode",
             content_hash(video_data),

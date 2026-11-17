@@ -1,7 +1,5 @@
 """Keyword and domain lists have finite, bounded sizes."""
 
-import pytest
-
 from src.core.automod.limits import (
     MAX_DOMAIN_LENGTH,
     MAX_KEYWORD_LENGTH,

@@ -32,7 +32,9 @@ def _ini_text():
 
 def test_performance_marker_is_registered(pytestconfig):
     """The marker these guards rely on must be known to pytest."""
-    registered = [line.split(":", 1)[0].strip() for line in pytestconfig.getini("markers")]
+    registered = [
+        line.split(":", 1)[0].strip() for line in pytestconfig.getini("markers")
+    ]
     assert "performance" in registered, "the performance marker is not registered"
 
 
@@ -45,9 +47,7 @@ def test_default_run_deselects_performance():
     """A plain pytest run must not execute the performance guards."""
     text = _ini_text()
     deselect_lines = [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip().startswith('-m "')
+        line.strip() for line in text.splitlines() if line.strip().startswith('-m "')
     ]
     assert deselect_lines, "no default -m deselection expression found"
     assert any("not performance" in line for line in deselect_lines), (

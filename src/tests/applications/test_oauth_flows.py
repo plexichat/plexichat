@@ -1,4 +1,5 @@
 """Tests for application OAuth2 flows."""
+
 from typing import Any, cast
 
 import pytest
@@ -114,10 +115,15 @@ class TestOAuthFlows:
             (hash_b, other_user.id),
         )
         token_b = flow.exchange_code(
-            other_user.id, secret_b, cast(Any, code_b.code), "https://example.com/callback"
+            other_user.id,
+            secret_b,
+            cast(Any, code_b.code),
+            "https://example.com/callback",
         )
         assert (
-            app_manager.revoke_token(cast(Any, token_b.access_token) + "x", user_id=test_user.id)
+            app_manager.revoke_token(
+                cast(Any, token_b.access_token) + "x", user_id=test_user.id
+            )
             is False
         )
         assert app_manager.revoke_token(token_b.access_token, user_id=999999) is False
@@ -238,7 +244,10 @@ class TestOAuthFlows:
 
         with pytest.raises(InvalidGrantError, match="already used"):
             flow.exchange_code(
-                app.id, client_secret, cast(Any, code.code), "https://example.com/callback"
+                app.id,
+                client_secret,
+                cast(Any, code.code),
+                "https://example.com/callback",
             )
 
     def test_expires_in_is_in_seconds(self, app_manager, test_user):

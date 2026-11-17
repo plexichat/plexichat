@@ -103,9 +103,7 @@ def test_generate_manual_resolves_dsar_config_once(gen_env, monkeypatch):
     )
 
 
-def test_generation_still_enforces_quota_with_reused_snapshot(
-    gen_env, monkeypatch
-):
+def test_generation_still_enforces_quota_with_reused_snapshot(gen_env, monkeypatch):
     """Threading the config snapshot must not bypass the quota gate."""
     from src.core.dsar.privacy import ExportQuotaExceeded
     import src.core.dsar.manager as manager_module
@@ -170,14 +168,11 @@ def test_password_verify_uses_a_single_query(monkeypatch):
     db = _OneRowDB({"password_hash": "hash-for-test"})
     monkeypatch.setattr(api, "get_auth", lambda: object())
     monkeypatch.setattr(api, "get_db", lambda: db)
-    monkeypatch.setattr(
-        "src.utils.encryption.verify_password", lambda pw, hashed: True
-    )
+    monkeypatch.setattr("src.utils.encryption.verify_password", lambda pw, hashed: True)
 
     assert DataExportMixin()._verify_password(42, "pw") is True
     assert len(db.queries) == 1, (
-        "password verification must issue one auth_users query, "
-        f"got {len(db.queries)}"
+        f"password verification must issue one auth_users query, got {len(db.queries)}"
     )
     assert "password_hash" in db.queries[0][0]
     assert db.queries[0][1] == (42,)

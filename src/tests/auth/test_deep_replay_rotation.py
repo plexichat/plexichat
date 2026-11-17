@@ -46,9 +46,7 @@ def test_guard_is_bounded_hashed_and_one_shot():
     assert guard.contains("first") is False
 
 
-def test_reusing_rotated_token_revokes_session(
-    auth_manager, db, test_user_with_token
-):
+def test_reusing_rotated_token_revokes_session(auth_manager, db, test_user_with_token):
     result = _login(
         auth_manager,
         test_user_with_token["username"],

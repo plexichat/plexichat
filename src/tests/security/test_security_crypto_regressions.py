@@ -145,13 +145,17 @@ class TestBadCertificateChains:
         )
         with pytest.raises(TLSChainError, match="valid"):
             validate_certificate_bundle(_pem(expired), hostname="expired.example")
-        ca_leaf = _make_cert("ca", "ca", key.public_key(), key, ca=True, dns=["ca.example"])
+        ca_leaf = _make_cert(
+            "ca", "ca", key.public_key(), key, ca=True, dns=["ca.example"]
+        )
         with pytest.raises(TLSChainError, match="CA"):
             validate_certificate_bundle(_pem(ca_leaf))
 
     def test_wrong_pin_fails_closed(self, tmp_path):
         leaf, _, bundle = _make_chain(tmp_path)
-        good_pin = hashlib.sha256(leaf.public_bytes(serialization.Encoding.DER)).hexdigest()
+        good_pin = hashlib.sha256(
+            leaf.public_bytes(serialization.Encoding.DER)
+        ).hexdigest()
         validate_certificate_bundle(bundle, pins=[good_pin])
         with pytest.raises(TLSChainError, match="pin"):
             validate_certificate_bundle(bundle, pins=["b" * 64])
@@ -186,7 +190,11 @@ class TestTamperedTokens:
         with generate_token_key() as key:
             good = sign_token("payload", key)
             for index in range(32):
-                candidate = good[:index] + ("0" if good[index] != "0" else "1") + good[index + 1 :]
+                candidate = (
+                    good[:index]
+                    + ("0" if good[index] != "0" else "1")
+                    + good[index + 1 :]
+                )
                 assert verify_token("payload", candidate, key) is False
 
 
@@ -213,7 +221,17 @@ def _pem(cert) -> bytes:
     return cert.public_bytes(serialization.Encoding.PEM)
 
 
-def _make_cert(common_name, issuer_name, public_key, signing_key, *, ca, dns=(), before=None, after=None):
+def _make_cert(
+    common_name,
+    issuer_name,
+    public_key,
+    signing_key,
+    *,
+    ca,
+    dns=(),
+    before=None,
+    after=None,
+):
     now = datetime.now(timezone.utc)
     return (
         x509.CertificateBuilder()

@@ -5,6 +5,7 @@ relationship graph: user profiles and visible presences are fetched in one
 bulk call each. A regression back to per-friend lookups blows this budget as
 soon as the graph holds more than a couple of users.
 """
+
 from typing import Any, cast
 
 from types import SimpleNamespace

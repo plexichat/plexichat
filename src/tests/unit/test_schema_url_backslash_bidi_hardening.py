@@ -56,7 +56,9 @@ def test_percent_encoded_backslash_and_normal_urls_still_accepted():
         validate_http_url("https://example.tld/a%5Cb", "url")
         == "https://example.tld/a%5Cb"
     )
-    assert validate_http_url("https://example.tld/a/b?x=1#f", "url").endswith("a/b?x=1#f")
+    assert validate_http_url("https://example.tld/a/b?x=1#f", "url").endswith(
+        "a/b?x=1#f"
+    )
 
 
 # ---------------------------------------------------------------------------

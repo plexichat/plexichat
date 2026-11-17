@@ -137,10 +137,14 @@ class ThreadListingMixin(ThreadProtocol):
                    ORDER BY t.archived_at DESC, t.id DESC LIMIT ?"""
         if before_timestamp:
             rows = self._db.fetch_all(
-                _listing_sql.format(
-                    archived_clause="AND t.archived_at < ?"
+                _listing_sql.format(archived_clause="AND t.archived_at < ?"),
+                (
+                    user_id,
+                    channel_id,
+                    ThreadState.ARCHIVED.value,
+                    before_timestamp,
+                    limit,
                 ),
-                (user_id, channel_id, ThreadState.ARCHIVED.value, before_timestamp, limit),
             )
         else:
             rows = self._db.fetch_all(

@@ -109,7 +109,9 @@ class OAuth2Flow:
                 raise InvalidScopeError(str(exc)) from exc
         return sorted(VALID_SCOPES)
 
-    def _require_scopes_for_app(self, application_id: int, scopes: List[str]) -> List[str]:
+    def _require_scopes_for_app(
+        self, application_id: int, scopes: List[str]
+    ) -> List[str]:
         """Reject any scope the application is not configured to grant."""
         allowed = self._application_allowed_scopes(application_id)
         if not scopes_are_subset(scopes, allowed):
@@ -738,7 +740,9 @@ class OAuth2Flow:
         # Last line of defence: no token may ever carry a scope the owning
         # application is not permitted to grant, even if a caller reached this
         # helper with a hand-crafted scope list.
-        scopes = self._require_scopes_for_app(application_id, self._require_scopes(scopes))
+        scopes = self._require_scopes_for_app(
+            application_id, self._require_scopes(scopes)
+        )
         token_id = generate_snowflake_id()
         now = self._current_time()
         expires_at = now + int(self._config.get("token_expiry_seconds", 604800)) * 1000

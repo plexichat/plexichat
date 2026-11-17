@@ -1,4 +1,5 @@
 """The DM channel listing must not re-query recipients the bulk call covered."""
+
 from typing import Any, cast
 
 from types import SimpleNamespace

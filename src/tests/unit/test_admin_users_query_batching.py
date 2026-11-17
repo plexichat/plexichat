@@ -206,7 +206,9 @@ def test_role_decision_matches_core_helper(monkeypatch, current_pos, role_pos, s
         def fetch_one(self, sql, params=()):
             return row
 
-    monkeypatch.setattr(perm_core, "get_admin_max_position", lambda db, aid: current_pos)
+    monkeypatch.setattr(
+        perm_core, "get_admin_max_position", lambda db, aid: current_pos
+    )
     expected = perm_core.can_manage_role(_Db(), 1, 3)
     assert au._can_manage_role_at(current_pos, role_pos, system) is expected
 
@@ -260,7 +262,9 @@ def test_update_role_change_batches_role_lookup_with_hierarchy(monkeypatch):
     monkeypatch.setattr(api, "get_auth", lambda: object())
 
     asyncio.run(
-        _Router().update_admin_user(_request(), "2", au.AdminUserUpdate(role="moderator"))
+        _Router().update_admin_user(
+            _request(), "2", au.AdminUserUpdate(role="moderator")
+        )
     )
 
     role_calls = [c for c in db.fetch_calls if "AS role_id" in c[0]]

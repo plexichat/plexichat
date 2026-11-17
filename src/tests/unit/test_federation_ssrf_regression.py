@@ -134,9 +134,7 @@ def test_relative_redirect_to_loopback_is_rejected():
         return_value=_addresses(PUBLIC),
     ):
         with pytest.raises(FederationEndpointRejected):
-            validate_redirect_chain(
-                "https://peer.example/start", ["//127.0.0.1/steal"]
-            )
+            validate_redirect_chain("https://peer.example/start", ["//127.0.0.1/steal"])
 
 
 def test_cross_host_public_redirect_is_re_resolved():
@@ -191,11 +189,15 @@ async def test_join_request_rejects_url_resolving_to_metadata_ip():
     manager = MagicMock()
     manager.submit_inbound_request.return_value = {"id": 1}
 
-    with patch.object(mod, "_get_plexijoin_manager", return_value=manager), patch.object(
-        mod, "_authenticate", return_value={"remote_url": "https://peer.example/"}
-    ), patch(
-        "src.utils.security.socket.getaddrinfo",
-        return_value=_addresses("169.254.169.254"),
+    with (
+        patch.object(mod, "_get_plexijoin_manager", return_value=manager),
+        patch.object(
+            mod, "_authenticate", return_value={"remote_url": "https://peer.example/"}
+        ),
+        patch(
+            "src.utils.security.socket.getaddrinfo",
+            return_value=_addresses("169.254.169.254"),
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await mod.join_request_inbound(request)

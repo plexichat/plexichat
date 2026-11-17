@@ -36,9 +36,7 @@ def _denied(call, *exc):
 
 class TestTokenConfusion:
     @pytest.mark.parametrize("factory", ["email", "2fa", "wst"])
-    def test_other_token_families_not_accepted_as_session(
-        self, auth_manager, factory
-    ):
+    def test_other_token_families_not_accepted_as_session(self, auth_manager, factory):
         secret = tokens.generate_token_secret(32)
         factories = {
             "email": lambda: tokens.create_email_token(999)[0],
@@ -48,7 +46,9 @@ class TestTokenConfusion:
         token = factories[factory]()
         _denied(lambda: auth_manager.verify_token(token), TokenInvalidError)
 
-    def test_prefix_swap_on_live_session_denied(self, auth_manager, test_user_with_token):
+    def test_prefix_swap_on_live_session_denied(
+        self, auth_manager, test_user_with_token
+    ):
         result = _login(auth_manager, test_user_with_token)
         sid, secret = result.token.split(".", 1)
         for prefix in ("bot", "email", "2fa", "wst"):
@@ -64,13 +64,9 @@ class TestTokenConfusion:
         assert parsed is not None
 
         wrong = dict(parsed, token_type="bot")
-        _denied(
-            lambda: manager._verify_session_token(wrong, None), TokenInvalidError
-        )
+        _denied(lambda: manager._verify_session_token(wrong, None), TokenInvalidError)
         _denied(lambda: manager._verify_bot_token(parsed, None), TokenInvalidError)
-        _denied(
-            lambda: manager._verify_ws_ticket(parsed, None), TokenInvalidError
-        )
+        _denied(lambda: manager._verify_ws_ticket(parsed, None), TokenInvalidError)
 
 
 class TestFormatAndAlgConfusion:
@@ -122,9 +118,7 @@ class TestExpiredAndUsedReuse:
             "UPDATE auth_sessions SET expires_at = ? WHERE id = ?",
             (1, parsed["id"]),
         )
-        _denied(
-            lambda: auth_manager.verify_token(result.token), TokenExpiredError
-        )
+        _denied(lambda: auth_manager.verify_token(result.token), TokenExpiredError)
         assert auth_manager.refresh_session(result.token) is None
 
     def test_expired_and_reused_ws_ticket_denied(
@@ -132,7 +126,9 @@ class TestExpiredAndUsedReuse:
     ):
         result = _login(auth_manager, test_user_with_token)
         user = auth_manager.get_user_by_username(test_user_with_token["username"])
-        ticket, _ = auth_manager.create_ws_ticket_for_session(user.id, result.session.id)
+        ticket, _ = auth_manager.create_ws_ticket_for_session(
+            user.id, result.session.id
+        )
         parsed = tokens.parse_token(ticket)
         assert parsed is not None
 

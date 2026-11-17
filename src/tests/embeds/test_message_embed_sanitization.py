@@ -145,9 +145,7 @@ class TestSanitizeMessageEmbeds:
                 [{"description": [["hi <script>alert(1)</script>"]]}]
             )
         with pytest.raises(EmbedSanitizationError):
-            sanitize_message_embeds(
-                [{"custom": [[["<img src=x onerror=alert(1)>"]]]}]
-            )
+            sanitize_message_embeds([{"custom": [[["<img src=x onerror=alert(1)>"]]]}])
 
     def test_safe_nested_list_strings_preserved(self):
         result = sanitize_message_embeds([{"custom": [["ok", "also ok"]]}])

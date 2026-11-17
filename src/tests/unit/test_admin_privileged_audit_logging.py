@@ -28,11 +28,7 @@ class _Logger:
 
 
 def _use_file_only_logging(monkeypatch):
-    cfg = {
-        "admin_ui": {
-            "audit": {"log_to_file": False, "log_to_database": False}
-        }
-    }
+    cfg = {"admin_ui": {"audit": {"log_to_file": False, "log_to_database": False}}}
     monkeypatch.setattr(
         "utils.config.get", lambda key, default=None: cfg.get(key, default)
     )

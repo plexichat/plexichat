@@ -8,6 +8,7 @@ Covers:
 - Media stream hijacking
 - SFU security for Janus and MediaSoup
 """
+
 from typing import Any, cast
 
 import pytest
@@ -940,7 +941,10 @@ class TestCrossProtocolAttacks:
         creds2 = get_turn_credentials(member2.id)
 
         assert cast(Any, creds1).credential != cast(Any, creds2).credential
-        assert cast(Any, creds1).username.split(":")[1] != cast(Any, creds2).username.split(":")[1]
+        assert (
+            cast(Any, creds1).username.split(":")[1]
+            != cast(Any, creds2).username.split(":")[1]
+        )
 
     @pytest.mark.asyncio
     async def test_concurrent_connection_exhaustion(self, mock_mediasoup_session):

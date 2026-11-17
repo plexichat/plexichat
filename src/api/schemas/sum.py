@@ -8,7 +8,9 @@ from .policy_types import UIText
 from .common import SnowflakeID
 
 
-def _check_cell_range(row_start: int, row_end: int, column_start: int, column_end: int) -> None:
+def _check_cell_range(
+    row_start: int, row_end: int, column_start: int, column_end: int
+) -> None:
     """Reject a range whose upper bound is not strictly above its lower bound.
 
     A permission, validation or format rule over rows ``5..2`` or columns
@@ -19,6 +21,7 @@ def _check_cell_range(row_start: int, row_end: int, column_start: int, column_en
         raise ValueError("row_end must be greater than row_start")
     if column_start >= column_end:
         raise ValueError("column_end must be greater than column_start")
+
 
 #: Base64 payload ceiling shared by the workbook/XLSX upload routes (70M
 #: encoded characters ~ 50 MiB decoded). Declaring it on the field rejects an
@@ -317,7 +320,9 @@ class SumRangePermissionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _ranges_are_ordered(self) -> "SumRangePermissionRequest":
-        _check_cell_range(self.row_start, self.row_end, self.column_start, self.column_end)
+        _check_cell_range(
+            self.row_start, self.row_end, self.column_start, self.column_end
+        )
         return self
 
 
@@ -386,7 +391,9 @@ class SumValidationRequest(BaseModel):
 
     @model_validator(mode="after")
     def _ranges_are_ordered(self) -> "SumValidationRequest":
-        _check_cell_range(self.row_start, self.row_end, self.column_start, self.column_end)
+        _check_cell_range(
+            self.row_start, self.row_end, self.column_start, self.column_end
+        )
         return self
 
 
@@ -420,7 +427,9 @@ class SumConditionalFormatRequest(BaseModel):
 
     @model_validator(mode="after")
     def _ranges_are_ordered(self) -> "SumConditionalFormatRequest":
-        _check_cell_range(self.row_start, self.row_end, self.column_start, self.column_end)
+        _check_cell_range(
+            self.row_start, self.row_end, self.column_start, self.column_end
+        )
         return self
 
 

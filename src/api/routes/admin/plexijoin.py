@@ -165,7 +165,9 @@ def _get_plexijoin_manager(request):
 )
 async def list_connections(
     request: Request,
-    status: Optional[str] = Query(None, max_length=32, description="Filter by connection status"),
+    status: Optional[str] = Query(
+        None, max_length=32, description="Filter by connection status"
+    ),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
 ):
@@ -384,7 +386,9 @@ async def test_connection(request: Request, connection_id: SnowflakeIDParam):
 )
 async def list_requests(
     request: Request,
-    status: Optional[str] = Query(None, max_length=32, description="Filter by request status"),
+    status: Optional[str] = Query(
+        None, max_length=32, description="Filter by request status"
+    ),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
 ):

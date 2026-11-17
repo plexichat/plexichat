@@ -21,7 +21,9 @@ def _manager(db, server_manager, media_manager):
 
 
 class TestBoundedMetadata:
-    def test_create_rejects_oversized_metadata(self, db, two_users, server_manager, media_manager):
+    def test_create_rejects_oversized_metadata(
+        self, db, two_users, server_manager, media_manager
+    ):
         owner, _ = two_users
         manager = _manager(db, server_manager, media_manager)
         with pytest.raises(StashValidationError):
@@ -32,7 +34,9 @@ class TestBoundedMetadata:
                 metadata={"blob": "x" * 100_000},
             )
 
-    def test_create_rejects_deeply_nested_metadata(self, db, two_users, server_manager, media_manager):
+    def test_create_rejects_deeply_nested_metadata(
+        self, db, two_users, server_manager, media_manager
+    ):
         owner, _ = two_users
         manager = _manager(db, server_manager, media_manager)
         nested = {"k": "leaf"}
@@ -84,7 +88,11 @@ class TestBoundedMetadata:
     ):
         owner, _ = two_users
         manager = _manager(db, server_manager, media_manager)
-        metadata = {"content_type": "text/plain", "size": 12, "url": "https://example.com"}
+        metadata = {
+            "content_type": "text/plain",
+            "size": 12,
+            "url": "https://example.com",
+        }
         item = manager.create_item(
             owner.id, item_type="link", title="Link", metadata=metadata
         )

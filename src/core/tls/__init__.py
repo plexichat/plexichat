@@ -554,7 +554,9 @@ def get_tls_config() -> dict:
     except TLSHardeningError as exc:
         raise TLSConfigError(str(exc)) from exc
 
-    return get_ssl_context(cert_path, key_path, min_version=min_version, ciphers=ciphers)
+    return get_ssl_context(
+        cert_path, key_path, min_version=min_version, ciphers=ciphers
+    )
 
 
 __all__ = [

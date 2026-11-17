@@ -8,7 +8,6 @@
 """
 
 import threading
-import time
 
 import pytest
 
@@ -137,7 +136,9 @@ class TestCanonicalTimestampHeader:
 
 
 class TestRotationVerificationSerialization:
-    def test_rotation_waits_for_inflight_verification(self, webhook_with_token, monkeypatch):
+    def test_rotation_waits_for_inflight_verification(
+        self, webhook_with_token, monkeypatch
+    ):
         """The public-key fetch, Ed25519 check and rotation UPDATE must be
         mutually exclusive. Without the shared lock, a rotation can commit
         between the fetch and the verify, leaving a signature made with the

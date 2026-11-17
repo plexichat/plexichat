@@ -68,7 +68,7 @@ def test_gate_is_wired_into_ci() -> None:
     ci = (REPO / ".gitlab-ci.yml").read_text(encoding="utf-8")
     assert "supplychain:dangerous_patterns" in ci
     assert "ci-tooling/check_dangerous_patterns.py" in ci
-    assert 'if: \'$RUN_LIVE_SMOKE != "1"\'' in ci
+    assert "if: '$RUN_LIVE_SMOKE != \"1\"'" in ci
 
 
 @pytest.mark.timeout(300)

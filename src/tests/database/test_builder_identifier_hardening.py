@@ -92,7 +92,9 @@ class _FakeDB:
     "name", ["users; DROP TABLE users", "users' --", "users/*x*/", "üsers"]
 )
 def test_cloner_validates_table_name_before_any_statement(name):
-    cloner = DataCloner(cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db")))
+    cloner = DataCloner(
+        cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db"))
+    )
     with pytest.raises(HardeningViolation):
         cloner.clone_table(name)
 
@@ -100,7 +102,9 @@ def test_cloner_validates_table_name_before_any_statement(name):
 def test_cloner_identifier_paths_share_the_rule(monkeypatch):
     spy = _Spy(sql_safety.require_identifier)
     monkeypatch.setattr(sql_safety, "require_identifier", spy)
-    cloner = DataCloner(cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db")))
+    cloner = DataCloner(
+        cast(Database, _FakeDB("/tmp/a.db")), cast(Database, _FakeDB("/tmp/b.db"))
+    )
 
     with pytest.raises(HardeningViolation):
         cloner.clone_table("users; --")

@@ -108,9 +108,7 @@ def auth_stack(monkeypatch):
 def test_chained_dependencies_verify_token_and_ip_once(auth_stack):
     client, fake_auth, ip_calls = auth_stack
 
-    response = client.get(
-        "/api/v1/users/@me", headers={"Authorization": "Bearer good"}
-    )
+    response = client.get("/api/v1/users/@me", headers={"Authorization": "Bearer good"})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -129,9 +127,7 @@ def test_account_lock_still_enforced_after_caching(auth_stack):
     client, fake_auth, _ = auth_stack
     fake_auth.info.account_locked = True
 
-    response = client.get(
-        "/api/v1/users/@me", headers={"Authorization": "Bearer good"}
-    )
+    response = client.get("/api/v1/users/@me", headers={"Authorization": "Bearer good"})
 
     assert response.status_code == 403
     # The minimal app has no custom exception handler, so the detail may be

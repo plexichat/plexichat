@@ -85,16 +85,12 @@ class TestJournalReconcileScope:
         journal.reconcile(db)
 
         # Real admin is completely untouched.
-        assert db.fetch_one(
-            "SELECT permissions FROM auth_users WHERE id = 1"
-        ) == ('{"admin.*": true}',)
-        assert (
-            db.fetch_one("SELECT id FROM admin_users WHERE id = 1") is not None
+        assert db.fetch_one("SELECT permissions FROM auth_users WHERE id = 1") == (
+            '{"admin.*": true}',
         )
+        assert db.fetch_one("SELECT id FROM admin_users WHERE id = 1") is not None
         assert (
-            db.fetch_one(
-                "SELECT 1 FROM admin_role_assignments WHERE admin_id = 1"
-            )
+            db.fetch_one("SELECT 1 FROM admin_role_assignments WHERE admin_id = 1")
             is not None
         )
 
@@ -211,7 +207,9 @@ class TestApiTokenOrphanCleanup:
         with patch("src.core.erasure._media_manager", lambda: None):
             CleanupService(ctx).delete_all_for_user(db, 1, purge_sum=False)
 
-        token_deletes = [sql for sql, _ in db.statements if "auth_api_access_token" in sql]
+        token_deletes = [
+            sql for sql, _ in db.statements if "auth_api_access_token" in sql
+        ]
         assert any(
             sql.startswith("DELETE FROM auth_api_access_tokens WHERE created_by = ?")
             for sql in token_deletes
@@ -245,9 +243,10 @@ class TestInternalSecretNotLogged:
         session = SimpleNamespace(headers={})
         ctx = SimpleNamespace(make_session=lambda: session)
 
-        with patch("src.api.get_internal_secret", return_value=secret), patch.object(
-            docs_mod.logger, "debug"
-        ) as debug:
+        with (
+            patch("src.api.get_internal_secret", return_value=secret),
+            patch.object(docs_mod.logger, "debug") as debug,
+        ):
             DocsTester(ctx)._add_internal_secret_header(session)
 
         assert session.headers["X-Plexichat-Internal-Secret"] == secret

@@ -1,4 +1,5 @@
 """Regression tests for voice-call consent and recording lifecycle."""
+
 from typing import Any, cast
 
 from unittest.mock import AsyncMock, Mock
@@ -80,8 +81,8 @@ def test_rejoin_after_departure_is_treated_as_new_membership(db):
 
     lifecycle = CallLifecycleMixin.__new__(CallLifecycleMixin)
     lifecycle._voice_call_manager = manager
-    cast(Any, lifecycle).get_channel_members = lambda channel_id: manager._current_participant_ids(
-        channel_id
+    cast(Any, lifecycle).get_channel_members = lambda channel_id: (
+        manager._current_participant_ids(channel_id)
     )
     lifecycle._get_channel_user_count = lambda channel_id: len(
         manager._current_participant_ids(channel_id)
@@ -417,7 +418,9 @@ def test_revoke_everywhere_ignores_calls_the_user_is_not_live_in(db):
     manager.add_consent(call.id, 44)
 
     assert manager.revoke_consent_everywhere(33) == []
-    assert cast(Any, get_voice_call_uncached(db, call.id)).consented_participants == [44]
+    assert cast(Any, get_voice_call_uncached(db, call.id)).consented_participants == [
+        44
+    ]
 
 
 def test_revoke_everywhere_survives_a_call_that_refuses(db, monkeypatch):

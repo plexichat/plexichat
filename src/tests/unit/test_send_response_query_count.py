@@ -79,9 +79,7 @@ async def test_send_response_does_not_query_embed_suppression(monkeypatch):
     async def _no_broadcast(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(
-        MessagesCRUDRouter, "_broadcast_message_create", _no_broadcast
-    )
+    monkeypatch.setattr(MessagesCRUDRouter, "_broadcast_message_create", _no_broadcast)
 
     body = SimpleNamespace(
         content="hello",

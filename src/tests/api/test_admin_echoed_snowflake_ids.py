@@ -14,7 +14,9 @@ from fastapi import Request
 
 from src.api.schemas.common import SnowflakeIDParam
 
-BIG = SnowflakeIDParam(9007199254740993)  # past 2^53: a JSON number would lose precision
+BIG = SnowflakeIDParam(
+    9007199254740993
+)  # past 2^53: a JSON number would lose precision
 
 
 def test_reindex_conversation_stringifies_conversation_id(monkeypatch):

@@ -131,9 +131,7 @@ def _build_delegable_permissions() -> frozenset:
     is an explicit, delegable leaf scope.
     """
     return frozenset(
-        key
-        for key in PERMISSION_SCOPES
-        if key != "*" and not key.endswith(".*")
+        key for key in PERMISSION_SCOPES if key != "*" and not key.endswith(".*")
     )
 
 
@@ -380,9 +378,7 @@ def can_grant_existing_role(db, admin_id: int, role_id: int) -> bool:
     Returns False when the role cannot be read or its permission payload is
     malformed, so a broken row can never fail open.
     """
-    row = db.fetch_one(
-        "SELECT permissions FROM admin_roles WHERE id = ?", (role_id,)
-    )
+    row = db.fetch_one("SELECT permissions FROM admin_roles WHERE id = ?", (role_id,))
     if not row:
         return False
     raw = row["permissions"] if isinstance(row, dict) else row[0]

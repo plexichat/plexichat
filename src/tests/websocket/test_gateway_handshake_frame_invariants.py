@@ -112,9 +112,7 @@ def test_validate_handshake_rejects_forged_origin_and_malformed_ticket(monkeypat
     with pytest.raises(HandshakeRejected):
         validate_handshake(_FakeWebSocket({"origin": "https://evil.example"}))
     with pytest.raises(HandshakeRejected):
-        validate_handshake(
-            _FakeWebSocket(query={"token": "bad token\nwith control"})
-        )
+        validate_handshake(_FakeWebSocket(query={"token": "bad token\nwith control"}))
     # A well-formed ticket and an allowlisted origin pass the boundary gate.
     validate_handshake(
         _FakeWebSocket(

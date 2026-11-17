@@ -54,9 +54,7 @@ def _issue_token(app_manager, test_user):
     app = _app(app_manager, test_user)
     secret = _with_secret(app_manager, app)
     flow = _flow(app_manager._db)
-    code = flow.create_authorization_code(
-        app.id, test_user.id, REDIRECT, ["identify"]
-    )
+    code = flow.create_authorization_code(app.id, test_user.id, REDIRECT, ["identify"])
     token = flow.exchange_code(app.id, secret, code.code, REDIRECT)
     return app, secret, token
 

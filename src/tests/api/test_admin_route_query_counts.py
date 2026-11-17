@@ -131,8 +131,9 @@ def test_ticket_status_uses_cheap_existence_probe():
     from src.api.routes.admin import tickets as routes
 
     db = _CountingDB(fetch_one_result={"1": 1})
-    with _client(routes, db) as client, patch(
-        "src.core.admin.update_ticket_status", return_value=True
+    with (
+        _client(routes, db) as client,
+        patch("src.core.admin.update_ticket_status", return_value=True),
     ):
         resp = client.patch(
             f"/api/v1/admin/tickets/{BIG}/status", json={"status": "open"}

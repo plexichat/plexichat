@@ -89,7 +89,8 @@ def test_auth_sources_mask_credentials_before_logging():
             if not (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"debug", "info", "warning", "error", "critical", "exception"}
+                and node.func.attr
+                in {"debug", "info", "warning", "error", "critical", "exception"}
             ):
                 continue
             for arg in ast.walk(node):

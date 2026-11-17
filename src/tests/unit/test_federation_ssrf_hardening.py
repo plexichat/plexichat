@@ -34,9 +34,7 @@ from src.api.routes.federation import (
 
 def _addresses(*ips):
     """Build getaddrinfo-shaped results for the supplied IPv4 literals."""
-    return [
-        (socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443)) for ip in ips
-    ]
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443)) for ip in ips]
 
 
 def test_public_https_endpoint_is_resolved_and_approved():
@@ -114,9 +112,7 @@ def test_dns_rebinding_on_redirect_is_rejected():
         _addresses("93.184.216.34"),
         _addresses("127.0.0.1"),
     ]
-    with patch(
-        "src.utils.security.socket.getaddrinfo", side_effect=answers
-    ) as resolve:
+    with patch("src.utils.security.socket.getaddrinfo", side_effect=answers) as resolve:
         with pytest.raises(FederationEndpointRejected):
             validate_redirect_chain(
                 "https://peer.example/start", ["https://peer.example/next"]
@@ -203,12 +199,19 @@ def test_tls_verification_cannot_be_disabled():
 
 class _RequestStub:
     def __init__(self, content_type):
-        self.headers = {"content-type": content_type} if content_type is not None else {}
+        self.headers = (
+            {"content-type": content_type} if content_type is not None else {}
+        )
 
 
 @pytest.mark.parametrize(
     "content_type",
-    ["application/json", "application/json; charset=utf-8", "APPLICATION/JSON", "application/vnd.plexichat+json"],
+    [
+        "application/json",
+        "application/json; charset=utf-8",
+        "APPLICATION/JSON",
+        "application/vnd.plexichat+json",
+    ],
 )
 def test_json_content_types_are_accepted(content_type):
     _require_json_content_type(cast(Request, _RequestStub(content_type)))
@@ -266,7 +269,16 @@ def test_valid_remote_ids_accepted(value):
 
 @pytest.mark.parametrize(
     "value",
-    ["", "has spaces", "bad\nnewline", "semi;colon", "a" * 129, 123, None, "/etc/passwd"],
+    [
+        "",
+        "has spaces",
+        "bad\nnewline",
+        "semi;colon",
+        "a" * 129,
+        123,
+        None,
+        "/etc/passwd",
+    ],
 )
 def test_invalid_remote_ids_rejected(value):
     with pytest.raises(HTTPException) as exc:

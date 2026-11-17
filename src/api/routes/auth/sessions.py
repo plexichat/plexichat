@@ -331,9 +331,7 @@ async def revoke_all_sessions(
             revoked = bulk_revoke(
                 current_user.user_id,
                 [s.id for s in sessions],
-                except_session_id=(
-                    current_user.session_id if except_current else None
-                ),
+                except_session_id=(current_user.session_id if except_current else None),
             )
         else:  # pragma: no cover - fallback for alternate auth providers
             revoked = 0

@@ -4,6 +4,7 @@ Fails on pre-fix code where export IDs were guessable, temp files were
 world-readable, bookkeeping was unlocked, or limits were enforced after
 artifact creation.
 """
+
 from typing import Any, cast
 
 import os
@@ -78,7 +79,9 @@ def export_env(tmp_path, monkeypatch):
 
 def _make_svc(allowed=True, n_msgs=3):
     return TranscriptExportService(
-        None, cast(Any, _StubMessages(_sample_messages(n_msgs))), cast(Any, _StubParticipants(allowed))
+        None,
+        cast(Any, _StubMessages(_sample_messages(n_msgs))),
+        cast(Any, _StubParticipants(allowed)),
     )
 
 
@@ -88,7 +91,10 @@ def _all_files(root):
 
 def test_export_ids_unguessable_and_unique(export_env):
     svc = _make_svc()
-    ids = [svc.request_export(cast(Any, "42"), cast(Any, "7"), "json")["export_id"] for _ in range(20)]
+    ids = [
+        svc.request_export(cast(Any, "42"), cast(Any, "7"), "json")["export_id"]
+        for _ in range(20)
+    ]
     assert len(set(ids)) == 20
     for eid in ids:
         assert eid.startswith("export_")
@@ -126,7 +132,10 @@ def test_concurrent_exports_all_tracked(export_env):
     n = 12
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(
-            pool.map(lambda i: svc.request_export(cast(Any, "42"), cast(Any, "7"), "json"), range(n))
+            pool.map(
+                lambda i: svc.request_export(cast(Any, "42"), cast(Any, "7"), "json"),
+                range(n),
+            )
         )
     assert all(r["status"] == "ready" for r in results)
     ids = [r["export_id"] for r in results]

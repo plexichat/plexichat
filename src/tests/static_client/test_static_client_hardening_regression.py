@@ -119,12 +119,16 @@ def test_planted_file_forces_quarantine_and_redownload() -> None:
         parsed, asset = _make_asset(tag)
         with patch("src.static_client.manager.get_signing_key", return_value=key):
             with patch.object(
-                StaticClientManager, "_candidate_releases", return_value=[(parsed, asset)]
+                StaticClientManager,
+                "_candidate_releases",
+                return_value=[(parsed, asset)],
             ):
                 with patch.object(
                     StaticClientManager,
                     "_fetch_and_install",
-                    return_value=InstallResult(installed_version=tag, already_current=False),
+                    return_value=InstallResult(
+                        installed_version=tag, already_current=False
+                    ),
                 ) as fetch:
                     mgr.ensure_active()
                     assert fetch.call_count == 1, "planted file must force re-download"

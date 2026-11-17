@@ -5,6 +5,7 @@ Covers:
 - REL-1: relationship list cache-invalidation pattern matches generated keys
 - REL-3: friend-request message length is enforced
 """
+
 from typing import Any, cast
 
 import fnmatch

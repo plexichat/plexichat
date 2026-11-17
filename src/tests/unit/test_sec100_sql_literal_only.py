@@ -97,9 +97,9 @@ def _scan():
             sql = _first_sql_argument(node)
             if sql is None:
                 continue
-            is_fixed = (isinstance(sql, ast.Constant) and isinstance(sql.value, str)) or (
-                isinstance(sql, ast.Name) and sql.id in fixed_names
-            )
+            is_fixed = (
+                isinstance(sql, ast.Constant) and isinstance(sql.value, str)
+            ) or (isinstance(sql, ast.Name) and sql.id in fixed_names)
             if is_fixed:
                 literal_count += 1
             else:

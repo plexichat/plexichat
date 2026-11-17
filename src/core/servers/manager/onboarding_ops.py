@@ -251,9 +251,7 @@ class OnboardingManager:
 
             server = self._server_manager.get_server(server_id, user_id)
             is_owner = server is not None and server.owner_id == user_id
-            user_roles = self._server_manager._get_member_role_rows(
-                server_id, user_id
-            )
+            user_roles = self._server_manager._get_member_role_rows(server_id, user_id)
             for role_id in role_ids:
                 role = self._server_manager.get_role(role_id, user_id)
                 if not role or role.server_id != server_id:

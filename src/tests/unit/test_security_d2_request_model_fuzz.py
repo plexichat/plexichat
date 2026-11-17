@@ -35,16 +35,16 @@ from src.api.websocket.boundaries import parse_snowflake
 from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
 
 CONTROL_CHAR_VALUES = (
-    "bad\x00name",          # NUL truncation
+    "bad\x00name",  # NUL truncation
     "bad\r\nX-Injected: 1",  # header/log splitting
-    "bad\x7fname",          # DEL
+    "bad\x7fname",  # DEL
 )
 
 # Bidirectional/invisible controls are rejected by the shared text policy;
 # fields that only filter C0/DEL (channel names) are tested separately above.
 BIDI_VALUES = (
-    "bad\u202ename",        # bidi override (spoofed display name)
-    "bad\u200fname",        # invisible directional mark
+    "bad\u202ename",  # bidi override (spoofed display name)
+    "bad\u200fname",  # invisible directional mark
 )
 
 BAD_SCHEME_URL_VALUES = (
@@ -59,15 +59,15 @@ BAD_SCHEME_URL_VALUES = (
 # SSRF gate. Browser-only links (webhook avatars) are scheme-checked but not
 # resolved; those are covered by BAD_SCHEME_URL_VALUES only.
 SSRF_URL_VALUES = (
-    "http://127.0.0.1:8080/admin",        # loopback
-    "http://[::1]/admin",                  # IPv6 loopback
+    "http://127.0.0.1:8080/admin",  # loopback
+    "http://[::1]/admin",  # IPv6 loopback
     "http://169.254.169.254/latest/meta-data/",  # cloud metadata
 )
 
 HOSTILE_INT_VALUES = (
     -1,
     0,
-    2**63,          # just past the signed 64-bit snowflake ceiling
+    2**63,  # just past the signed 64-bit snowflake ceiling
     2**70,
     "not-an-int",
     "1; DROP TABLE users",
@@ -80,11 +80,11 @@ HOSTILE_INT_NON_DECIMAL = (-1, 0, "not-an-int", "1; DROP TABLE users", "12.5")
 
 # Values with extra format constraints that a generic generator cannot infer.
 _BENIGN_BY_FIELD = {
-    "hash_value": "a" * 32,   # HashReportRequest: min_length=16
-    "item_type": "file",      # StashItemCreateRequest: enum pattern
-    "target_type": "user",    # EnhancedReportRequest: 'message'|'user'
-    "target_id": "1",         # EnhancedReportRequest: bounded id validator
-    "channel_id": "1",        # SnowflakeID, not a plain str
+    "hash_value": "a" * 32,  # HashReportRequest: min_length=16
+    "item_type": "file",  # StashItemCreateRequest: enum pattern
+    "target_type": "user",  # EnhancedReportRequest: 'message'|'user'
+    "target_id": "1",  # EnhancedReportRequest: bounded id validator
+    "channel_id": "1",  # SnowflakeID, not a plain str
 }
 
 
@@ -125,7 +125,9 @@ def _payload(model: type[BaseModel], field: str, value) -> dict:
 def _assert_model_rejects(model: type[BaseModel], field: str, value):
     # First prove the un-fuzzed payload is valid, so a rejection is genuinely
     # caused by the hostile value and not by a badly constructed base payload.
-    baseline = _payload(model, field, _benign(field, model.model_fields[field].annotation))
+    baseline = _payload(
+        model, field, _benign(field, model.model_fields[field].annotation)
+    )
     model(**baseline)
     with pytest.raises(ValidationError):
         model(**_payload(model, field, value))
@@ -158,7 +160,9 @@ class TestControlCharacterFuzz:
         ],
     )
     @pytest.mark.parametrize("value", BIDI_VALUES)
-    def test_bidirectional_controls_are_refused_by_text_policy(self, model, field, value):
+    def test_bidirectional_controls_are_refused_by_text_policy(
+        self, model, field, value
+    ):
         if field == "tags":
             value = [value]
         _assert_model_rejects(model, field, value)

@@ -131,7 +131,9 @@ def validate_min_tls_version(value: Any = None) -> ssl.TLSVersion:
     else:
         raise TLSHardeningError("TLS minimum version must be a version name")
     if version.value < MIN_TLS_VERSION.value:
-        raise TLSHardeningError(f"TLS version {version.name} is below the TLS 1.2 floor")
+        raise TLSHardeningError(
+            f"TLS version {version.name} is below the TLS 1.2 floor"
+        )
     return version
 
 
@@ -139,8 +141,12 @@ def validate_cipher_string(value: Any) -> str:
     """Validate an operator-supplied cipher list, refusing weak enabled ciphers."""
     if not isinstance(value, str) or not value.strip():
         raise TLSHardeningError("tls.ciphers must be a non-empty string")
-    if len(value) > 1024 or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
-        raise TLSHardeningError("tls.ciphers contains control characters or is too long")
+    if len(value) > 1024 or any(
+        ord(char) < 0x20 or ord(char) == 0x7F for char in value
+    ):
+        raise TLSHardeningError(
+            "tls.ciphers contains control characters or is too long"
+        )
     text = value.strip()
     # OpenSSL "at" directives act on the whole context, not one cipher.
     # "@SECLEVEL=0" lowers the security level and re-enables weak key sizes /
@@ -227,7 +233,9 @@ def uvicorn_ssl_context_factory(
         # No certificate on the config: keep uvicorn's own (failing) behaviour
         # instead of inventing a context with no identity.
         return default_factory()
-    return build_ssl_context(certfile, keyfile, min_version=min_version, ciphers=ciphers)
+    return build_ssl_context(
+        certfile, keyfile, min_version=min_version, ciphers=ciphers
+    )
 
 
 def hardened_ssl_kwargs(

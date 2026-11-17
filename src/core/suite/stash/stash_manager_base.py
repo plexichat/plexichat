@@ -148,8 +148,7 @@ class StashManagerBase(StashManagerProtocol):
                 if len(value) > MAX_METADATA_STRING_LENGTH:
                     raise StashValidationError("metadata string is too long")
                 if any(
-                    ord(char) < 32 and char not in ("\t", "\n", "\r")
-                    for char in value
+                    ord(char) < 32 and char not in ("\t", "\n", "\r") for char in value
                 ):
                     raise StashValidationError(
                         "metadata contains disallowed control characters"
@@ -177,15 +176,16 @@ class StashManagerBase(StashManagerProtocol):
                     walk(child, depth + 1)
             elif isinstance(value, float):
                 if not math.isfinite(value):
-                    raise StashValidationError(
-                        "metadata contains a non-finite number"
-                    )
+                    raise StashValidationError("metadata contains a non-finite number")
             elif value is not None and not isinstance(value, (bool, int)):
                 raise StashValidationError("metadata contains an unsupported value")
 
         walk(metadata, 0)
         # ``_json`` rejects non-serializable values; also cap the on-disk size.
-        if len(json.dumps(metadata, separators=(",", ":"))) > MAX_METADATA_SERIALIZED_LENGTH:
+        if (
+            len(json.dumps(metadata, separators=(",", ":")))
+            > MAX_METADATA_SERIALIZED_LENGTH
+        ):
             raise StashValidationError("metadata is too large")
         return metadata
 

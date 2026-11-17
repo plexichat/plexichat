@@ -368,8 +368,7 @@ class ArtifactManager(BaseManager):
             messaging = api_mod.get_messaging()
             if messaging is not None:
                 return [
-                    int(uid)
-                    for uid in messaging.get_participant_ids(conversation_id)
+                    int(uid) for uid in messaging.get_participant_ids(conversation_id)
                 ]
         except Exception as exc:  # pragma: no cover - best-effort
             logger.debug("Artifact event participant lookup failed: %s", exc)
@@ -746,9 +745,7 @@ class ArtifactManager(BaseManager):
         by_id = get_artifacts_by_ids(self._db, created_ids)
         converted = [by_id[int(artifact_id)] for artifact_id in created_ids]
         for artifact in converted:
-            self._emit_lifecycle_event(
-                "create", artifact, user_ids=event_user_ids
-            )
+            self._emit_lifecycle_event("create", artifact, user_ids=event_user_ids)
         return converted
 
     def get_feature_settings(

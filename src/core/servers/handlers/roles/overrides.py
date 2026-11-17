@@ -77,9 +77,7 @@ class RoleOverrideMixin(RoleHandlerProtocol):
                 is_owner=is_owner,
             )
             if not decision:
-                raise RoleHierarchyError(
-                    "Cannot override a role at or above your own"
-                )
+                raise RoleHierarchyError("Cannot override a role at or above your own")
             return
 
         if target_type == "member":

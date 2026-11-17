@@ -7,6 +7,7 @@ Covers:
 - src.api.routes.users.avatar.AvatarMixin.upload_avatar (composer variant)
 - src.api.routes.servers.icon_upload.upload_server_icon (servers variant)
 """
+
 from typing import Any, cast
 
 from types import SimpleNamespace
@@ -42,7 +43,9 @@ async def test_avatars_route_user_avatar_maps_valueerror_and_typeerror():
         fake_avatars.upload_user_avatar.side_effect = exc_cls(secret)
         with patch("src.api.get_avatars", return_value=fake_avatars):
             with pytest.raises(HTTPException) as ei:
-                await upload_my_avatar(cast(Any, _upload_file()), cast(Any, SimpleNamespace(user_id=1)))
+                await upload_my_avatar(
+                    cast(Any, _upload_file()), cast(Any, SimpleNamespace(user_id=1))
+                )
         _assert_honest_400(ei.value, secret)
 
 
@@ -64,7 +67,9 @@ async def test_avatars_route_server_icon_maps_valueerror_and_typeerror():
         ):
             with pytest.raises(HTTPException) as ei:
                 await upload_server_icon(
-                    "9", cast(Any, _upload_file()), cast(Any, SimpleNamespace(user_id=1))
+                    "9",
+                    cast(Any, _upload_file()),
+                    cast(Any, SimpleNamespace(user_id=1)),
                 )
         _assert_honest_400(ei.value, secret)
 
@@ -111,6 +116,8 @@ async def test_servers_icon_upload_route_maps_valueerror_and_typeerror():
             mock_api.get_avatars.return_value = fake_avatars
             with pytest.raises(HTTPException) as ei:
                 await servers_icon_upload(
-                    "9", cast(Any, _upload_file()), cast(Any, SimpleNamespace(user_id=1))
+                    "9",
+                    cast(Any, _upload_file()),
+                    cast(Any, SimpleNamespace(user_id=1)),
                 )
         _assert_honest_400(ei.value, secret)

@@ -64,9 +64,7 @@ def test_invalid_image_bounds_fail_at_init(monkeypatch):
     for bad in ({"quality": 999}, {"max_dimension": 10**9}):
         image_cfg = {"format": "webp"}
         image_cfg.update(bad)
-        _patch_config(
-            monkeypatch, {"compression": {"image": image_cfg}}, calls
-        )
+        _patch_config(monkeypatch, {"compression": {"image": image_cfg}}, calls)
         with pytest.raises(HardeningViolation):
             ImageCompressor()
 

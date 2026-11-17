@@ -11,6 +11,7 @@ which sees the whole stream and whose ``stop()`` detaches that sender alone.
 This one suite covers both halves: the relay's delivery contract, and the
 adapter wiring that puts a view on each sender.
 """
+
 from typing import Any, cast
 
 import asyncio

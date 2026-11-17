@@ -4,6 +4,7 @@ It used to fetch and convert every incoming request just to find the sender,
 then discard all but one id. The direct (sender, recipient) lookup keeps the
 same 404 behaviour and the manager's ownership/block re-validation.
 """
+
 from typing import Any, cast
 
 import asyncio

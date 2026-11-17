@@ -51,7 +51,7 @@ def test_context_enforces_tls12_floor_and_modern_ciphers(cert_pair):
         name = entry["name"].upper()
         assert not any(marker in name for marker in _WEAK_CIPHER_MARKERS), name
         # Every enabled suite is TLS 1.2 AEAD or a TLS 1.3 suite.
-        assert ("GCM" in name or "CHACHA20" in name or name.startswith("TLS_")), name
+        assert "GCM" in name or "CHACHA20" in name or name.startswith("TLS_"), name
 
 
 @pytest.mark.skipif(not getattr(ssl, "OP_NO_RENEGOTIATION", 0), reason="old OpenSSL")
@@ -82,7 +82,9 @@ def test_weak_cipher_string_rejected(bad):
 
 
 def test_valid_cipher_string_with_exclusions_accepted():
-    assert validate_cipher_string("ECDHE+AESGCM:!RC4:!3DES") == "ECDHE+AESGCM:!RC4:!3DES"
+    assert (
+        validate_cipher_string("ECDHE+AESGCM:!RC4:!3DES") == "ECDHE+AESGCM:!RC4:!3DES"
+    )
     # The shipped list itself must validate under the same rules.
     assert validate_cipher_string(SECURE_CIPHERS) == SECURE_CIPHERS
 
@@ -94,9 +96,7 @@ def test_ssl_context_kwargs_use_hardened_factory(cert_pair):
     assert result["ssl_keyfile"] == key
     assert result["ssl_ciphers"] == SECURE_CIPHERS
     factory = result["ssl_context_factory"]
-    context = factory(
-        SimpleNamespace(ssl_certfile=cert, ssl_keyfile=key), lambda: None
-    )
+    context = factory(SimpleNamespace(ssl_certfile=cert, ssl_keyfile=key), lambda: None)
     assert context.minimum_version == MIN_TLS_VERSION
 
 

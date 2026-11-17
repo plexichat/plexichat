@@ -87,7 +87,9 @@ def _pem(cert) -> bytes:
 @pytest.fixture
 def chain():
     root_key = _key()
-    root = _cert(_name("Test Root"), _name("Test Root"), root_key.public_key(), root_key, ca=True)
+    root = _cert(
+        _name("Test Root"), _name("Test Root"), root_key.public_key(), root_key, ca=True
+    )
     leaf_key = _key()
     leaf = _cert(
         _name("leaf.example.com"),
@@ -108,7 +110,14 @@ def test_valid_chain_and_hostname(chain):
 
 
 @pytest.mark.parametrize(
-    "bad", [b"", b"not a certificate", b"-----BEGIN CERTIFICATE-----\ntrash\n-----END CERTIFICATE-----", b"\xff\xfe\x00", b"a" * 2_000_000]
+    "bad",
+    [
+        b"",
+        b"not a certificate",
+        b"-----BEGIN CERTIFICATE-----\ntrash\n-----END CERTIFICATE-----",
+        b"\xff\xfe\x00",
+        b"a" * 2_000_000,
+    ],
 )
 def test_parse_errors_fail_closed(bad):
     with pytest.raises(TLSChainError):

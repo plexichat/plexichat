@@ -128,7 +128,9 @@ def _enforce_cors(
 
     if valid:
         return entries
-    return [(name, value) for name, value in entries if name.lower() not in _CORS_HEADERS]
+    return [
+        (name, value) for name, value in entries if name.lower() not in _CORS_HEADERS
+    ]
 
 
 def enforce_response_policy(
@@ -150,7 +152,9 @@ def enforce_response_policy(
     result = merge_security_headers(result, include_frame=not is_media)
 
     csp = CSP_MEDIA if is_media else (CSP_API if is_api else CSP_SPA)
-    result = _replace_header(result, b"content-security-policy", b"Content-Security-Policy", csp)
+    result = _replace_header(
+        result, b"content-security-policy", b"Content-Security-Policy", csp
+    )
     result = _replace_header(
         result, b"strict-transport-security", b"Strict-Transport-Security", HSTS_VALUE
     )

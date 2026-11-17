@@ -45,6 +45,7 @@ def _parse_webhook_id(raw, field: str = "webhook_id") -> int:
     except HardeningViolation as exc:
         raise ValueError(str(exc)) from exc
 
+
 # NOTE: the webhook write routes used to call ``invalidate_pattern("webhooks:*")``
 # after every create/update/delete/regenerate. Nothing in the codebase ever
 # caches under a ``webhooks:`` key (the core webhook manager is uncached), so

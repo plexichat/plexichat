@@ -136,7 +136,9 @@ async def apply_all_migrations(
     # Elevated scope + explicit confirmation on top of the approval gate.
     require_admin_permission(request, "maintenance")
     require_approved_request("migrations.apply_all")
-    require_destructive_confirmation("migrations.apply_all", confirmation, dry_run=dry_run)
+    require_destructive_confirmation(
+        "migrations.apply_all", confirmation, dry_run=dry_run
+    )
     db = api.get_db()
     if not db:
         raise HTTPException(

@@ -59,9 +59,7 @@ class TestWeakenedSecurityHeadersCorrected:
 
     def test_xss_protection_strong_value_is_preserved(self):
         assert is_weakened(b"X-XSS-Protection", b"1; mode=block") is False
-        merged = dict(
-            merge_security_headers([(b"X-XSS-Protection", b"1; MODE=BLOCK")])
-        )
+        merged = dict(merge_security_headers([(b"X-XSS-Protection", b"1; MODE=BLOCK")]))
         assert merged[b"X-XSS-Protection"] == b"1; MODE=BLOCK"
 
     def test_permitted_cross_domain_all_is_weakened_and_replaced(self):

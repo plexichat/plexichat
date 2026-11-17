@@ -140,7 +140,10 @@ async def test_f6_sibling_invite_errors_map_honestly():
     with pytest.raises(HTTPException) as ei:
         map_invite_join_error(srv.InviteNotFoundError("Invite not found"))
     assert ei.value.status_code == 404
-    assert cast(dict[str, Any], ei.value.detail)["error"]["message"] == "Invite not found or expired"
+    assert (
+        cast(dict[str, Any], ei.value.detail)["error"]["message"]
+        == "Invite not found or expired"
+    )
 
     with pytest.raises(HTTPException) as ei:
         map_invite_join_error(

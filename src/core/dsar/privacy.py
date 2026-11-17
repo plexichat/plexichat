@@ -80,9 +80,9 @@ SUBJECT_ID_FIELDS: FrozenSet[str] = frozenset(
         # WHERE predicate returns foreign rows that carry NO recognised
         # subject field at all, so ``verify_export_scope`` treated them as
         # "no owner information" and let them straight into the export.
-        "target_id",       # automod_exemptions (target_type='user')
-        "installer_id",    # app_installations
-        "uploaded_by",     # media_files
+        "target_id",  # automod_exemptions (target_type='user')
+        "installer_id",  # app_installations
+        "uploaded_by",  # media_files
     }
 )
 

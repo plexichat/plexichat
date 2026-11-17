@@ -12,7 +12,9 @@ def test_allowlist_uses_passed_snapshot_without_rereading_config(monkeypatch):
     snapshot = {"github": {"allowed_redirect_uris": ["https://app.example.com/cb"]}}
 
     def forbidden_get(key, default=None):
-        raise AssertionError("oauth config must not be re-read when a snapshot is passed")
+        raise AssertionError(
+            "oauth config must not be re-read when a snapshot is passed"
+        )
 
     monkeypatch.setattr(mod.config_util, "get", forbidden_get)
 

@@ -30,7 +30,9 @@ class MessageReportRequest(BaseModel):
     details: Optional[str] = Field(
         None, max_length=2000, description="Additional details"
     )
-    server_id: Optional[SnowflakeID] = Field(None, description="Server ID if applicable")
+    server_id: Optional[SnowflakeID] = Field(
+        None, description="Server ID if applicable"
+    )
 
     @field_validator("reason", "details")
     @classmethod

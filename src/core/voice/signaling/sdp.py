@@ -340,7 +340,9 @@ class SDPValidator:
         """Validate every DTLS fingerprint (session and media, incl. duplicates)."""
         for attrs in self._all_attributes(parsed_sdp):
             for value in self._attribute_values(attrs, "fingerprint"):
-                if not isinstance(value, str) or not SDP_FINGERPRINT_PATTERN.match(value):
+                if not isinstance(value, str) or not SDP_FINGERPRINT_PATTERN.match(
+                    value
+                ):
                     raise SDPValidationError(
                         "Invalid fingerprint format",
                         field="fingerprint",

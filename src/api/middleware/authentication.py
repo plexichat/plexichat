@@ -171,8 +171,7 @@ class AuthenticationMiddleware:
 
             docs_path = policy.docs_path
             is_docs_path = bool(
-                docs_path
-                and (path == docs_path or path.startswith(f"{docs_path}/"))
+                docs_path and (path == docs_path or path.startswith(f"{docs_path}/"))
             )
 
             path_parts = path.split("/")
@@ -629,7 +628,8 @@ class AuthenticationMiddleware:
             )
             result = await ratelimit.acheck_rate_limit(
                 user_id=None,
-                ip_address=cached_client_ip(request, resolver=get_client_ip) or "unknown",
+                ip_address=cached_client_ip(request, resolver=get_client_ip)
+                or "unknown",
                 route=route,
                 resource_id=resource_id,
                 is_webhook=webhook_id is not None,

@@ -100,5 +100,7 @@ class TestRoleRoutesEnforceScopeHierarchy:
             patch("src.api.get_db"),
         ):
             with pytest.raises(HTTPException) as exc:
-                asyncio.run(role_routes.update_role(_request("PUT"), SnowflakeIDParam(1), body))
+                asyncio.run(
+                    role_routes.update_role(_request("PUT"), SnowflakeIDParam(1), body)
+                )
         assert exc.value.status_code == 403

@@ -51,7 +51,9 @@ def test_malformed_cookie_expiry_fails_closed():
     )
 
 
-def test_missing_binding_context_is_denied(auth_manager, test_user_with_token, monkeypatch):
+def test_missing_binding_context_is_denied(
+    auth_manager, test_user_with_token, monkeypatch
+):
     manager = auth_manager._manager
     monkeypatch.setattr(
         manager,
@@ -75,9 +77,12 @@ def test_missing_binding_context_is_denied(auth_manager, test_user_with_token, m
     with pytest.raises(TokenInvalidError):
         auth_manager.verify_token(result.token, ip_address="203.0.113.10")
     # With a full context the same token verifies.
-    assert auth_manager.verify_token(
-        result.token, ip_address="203.0.113.10", user_agent="test-agent/1.0"
-    ).valid is True
+    assert (
+        auth_manager.verify_token(
+            result.token, ip_address="203.0.113.10", user_agent="test-agent/1.0"
+        ).valid
+        is True
+    )
 
 
 def test_empty_bearer_and_bad_cookie_denied_at_route(auth_manager):

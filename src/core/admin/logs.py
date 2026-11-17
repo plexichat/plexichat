@@ -124,9 +124,7 @@ def _open_log_text(log_path: Path, filename: str):
             raise
         text = io.TextIOWrapper(reader, encoding="utf-8", errors="replace")
         return _ArchiveStream(text, raw)
-    return _ArchiveStream(
-        open(log_path, "r", encoding="utf-8", errors="replace"), None
-    )
+    return _ArchiveStream(open(log_path, "r", encoding="utf-8", errors="replace"), None)
 
 
 class _ArchiveStream:
@@ -191,9 +189,7 @@ def _read_filtered(
                     {
                         "timestamp": timestamp,
                         "level": level,
-                        "message": scrub_control_characters(
-                            redact_secrets(message)
-                        ),
+                        "message": scrub_control_characters(redact_secrets(message)),
                         "raw": scrub_control_characters(redact_secrets(line)),
                     }
                 )

@@ -166,7 +166,12 @@ def _load_role_for_delegation(db, name: str, admin_id: int) -> dict:
         (name, name, name, admin_id),
     )
     if not row:
-        return {"role_id": None, "role_pos": None, "role_system": False, "current_pos": 0}
+        return {
+            "role_id": None,
+            "role_pos": None,
+            "role_system": False,
+            "current_pos": 0,
+        }
     if isinstance(row, dict):
         role_id = row.get("role_id")
         role_pos = row.get("role_pos")
@@ -460,9 +465,7 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                             }
                         },
                     )
-                role_id = _required_row_value(
-                    {"id": role_ctx["role_id"]}, "id", 0, int
-                )
+                role_id = _required_row_value({"id": role_ctx["role_id"]}, "id", 0, int)
                 if not _can_manage_role_at(
                     role_ctx["current_pos"],
                     role_ctx["role_pos"],

@@ -43,8 +43,11 @@ def _s256(verifier: str) -> str:
 def _make_flow(app_manager, *, pkce_enabled: bool = False) -> OAuth2Flow:
     return OAuth2Flow(
         app_manager._db,
-        {"code_expiry_seconds": 600, "token_expiry_seconds": 604800,
-         "pkce_enabled": pkce_enabled},
+        {
+            "code_expiry_seconds": 600,
+            "token_expiry_seconds": 604800,
+            "pkce_enabled": pkce_enabled,
+        },
     )
 
 
@@ -68,15 +71,21 @@ def _with_secret(app_manager, app) -> str:
 
 
 class TestAuthorizationCodeInterception:
-    def test_intercepted_code_without_verifier_is_rejected(self, app_manager, test_user):
+    def test_intercepted_code_without_verifier_is_rejected(
+        self, app_manager, test_user
+    ):
         """An attacker who steals ``code`` still cannot redeem it."""
         app = _app(app_manager, test_user)
         secret = _with_secret(app_manager, app)
         flow = _make_flow(app_manager)
         verifier = "v" * 43
         code = flow.create_authorization_code(
-            app.id, test_user.id, REDIRECT, ["identify"],
-            code_challenge=_s256(verifier), code_challenge_method="S256",
+            app.id,
+            test_user.id,
+            REDIRECT,
+            ["identify"],
+            code_challenge=_s256(verifier),
+            code_challenge_method="S256",
         )
 
         with pytest.raises(InvalidGrantError, match="verifier"):
@@ -100,18 +109,28 @@ class TestAuthorizationCodeInterception:
         assert verify_pkce_challenge("!" * 43, challenge) is False  # bad charset
         assert verify_pkce_challenge("a" * 43, "short") is False  # bad stored value
 
-    def test_plain_method_and_malformed_challenge_rejected(self, app_manager, test_user):
+    def test_plain_method_and_malformed_challenge_rejected(
+        self, app_manager, test_user
+    ):
         app = _app(app_manager, test_user)
         flow = _make_flow(app_manager)
         with pytest.raises(InvalidPKCEError):
             flow.create_authorization_code(
-                app.id, test_user.id, REDIRECT, ["identify"],
-                code_challenge=_s256("a" * 43), code_challenge_method="plain",
+                app.id,
+                test_user.id,
+                REDIRECT,
+                ["identify"],
+                code_challenge=_s256("a" * 43),
+                code_challenge_method="plain",
             )
         with pytest.raises(InvalidPKCEError):
             flow.create_authorization_code(
-                app.id, test_user.id, REDIRECT, ["identify"],
-                code_challenge="not-a-challenge", code_challenge_method="S256",
+                app.id,
+                test_user.id,
+                REDIRECT,
+                ["identify"],
+                code_challenge="not-a-challenge",
+                code_challenge_method="S256",
             )
 
     def test_required_pkce_cannot_be_skipped(self, app_manager, test_user):
@@ -122,7 +141,9 @@ class TestAuthorizationCodeInterception:
 
 
 class TestRedirectBypass:
-    def test_unregistered_and_lookalike_redirects_rejected(self, app_manager, test_user):
+    def test_unregistered_and_lookalike_redirects_rejected(
+        self, app_manager, test_user
+    ):
         app = _app(app_manager, test_user)
         flow = _make_flow(app_manager)
         for candidate in (
@@ -134,14 +155,21 @@ class TestRedirectBypass:
             with pytest.raises(InvalidRedirectUriError):
                 flow.validate_authorization_request(app.id, candidate, ["identify"])
 
-    def test_code_cannot_be_exchanged_to_a_different_redirect(self, app_manager, test_user):
+    def test_code_cannot_be_exchanged_to_a_different_redirect(
+        self, app_manager, test_user
+    ):
         app = _app(app_manager, test_user)
         secret = _with_secret(app_manager, app)
         flow = _make_flow(app_manager)
-        code = flow.create_authorization_code(app.id, test_user.id, REDIRECT, ["identify"])
+        code = flow.create_authorization_code(
+            app.id, test_user.id, REDIRECT, ["identify"]
+        )
         with pytest.raises(InvalidGrantError, match="Redirect URI mismatch"):
             flow.exchange_code(
-                app.id, secret, code.code, "https://attacker.example.com/cb"  # pyright: ignore[reportArgumentType]
+                app.id,
+                secret,
+                code.code,
+                "https://attacker.example.com/cb",  # pyright: ignore[reportArgumentType]
             )
         # The code was not consumed by the failed attempt.
         assert flow.exchange_code(app.id, secret, code.code, REDIRECT).access_token  # pyright: ignore[reportArgumentType]
@@ -152,7 +180,9 @@ class TestRedirectBypass:
 
 
 class TestScopeEscalation:
-    def test_cannot_request_or_tokenize_scopes_the_app_lacks(self, app_manager, test_user):
+    def test_cannot_request_or_tokenize_scopes_the_app_lacks(
+        self, app_manager, test_user
+    ):
         app = _app(app_manager, test_user, allowed_scopes=["identify"])
         flow = _make_flow(app_manager)
         assert app.allowed_scopes == ["identify"]
@@ -167,10 +197,14 @@ class TestScopeEscalation:
         with pytest.raises(InvalidScopeError):
             flow._create_token(app.id, test_user.id, ["guilds.members.read"])
 
-        code = flow.create_authorization_code(app.id, test_user.id, REDIRECT, ["identify"])
+        code = flow.create_authorization_code(
+            app.id, test_user.id, REDIRECT, ["identify"]
+        )
         assert code.scopes == ["identify"]
 
-    def test_explicit_scope_ceiling_cannot_contain_unknown_scopes(self, app_manager, test_user):
+    def test_explicit_scope_ceiling_cannot_contain_unknown_scopes(
+        self, app_manager, test_user
+    ):
         with pytest.raises(ValueError):
             _app(app_manager, test_user, allowed_scopes=["identify", "admin.all"])
 

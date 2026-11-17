@@ -17,7 +17,11 @@ from __future__ import annotations
 import pytest
 
 from src.core.admin import logs as admin_logs
-from src.core.telemetry.scrubbing import REDACTED, redact_secrets, scrub_control_characters
+from src.core.telemetry.scrubbing import (
+    REDACTED,
+    redact_secrets,
+    scrub_control_characters,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -31,9 +35,9 @@ def test_c1_control_characters_are_neutralised():
     # U+009B (CSI), U+009D (OSC), U+009C (ST) and U+0085 (NEL) are all C1
     # controls that viewers interpret as formatting/line breaks.
     hostile = (
-        "ok\u009b31mFORGED\u009b0m"       # C1 SGR colour
-        "\u009d0;FORGED TITLE\u009c"     # C1 OSC title terminated by C1 ST
-        "line1\u0085FORGED - ERROR"      # C1 NEL forges a new log line
+        "ok\u009b31mFORGED\u009b0m"  # C1 SGR colour
+        "\u009d0;FORGED TITLE\u009c"  # C1 OSC title terminated by C1 ST
+        "line1\u0085FORGED - ERROR"  # C1 NEL forges a new log line
     )
     cleaned = scrub_control_characters(hostile)
     for c1 in ("\u009b", "\u009c", "\u009d", "\u0085"):
@@ -50,8 +54,16 @@ def test_c1_controls_do_not_hide_esc_sequences():
 
 @pytest.mark.parametrize(
     "key",
-    ["clientSecret", "accessToken", "refreshToken", "passwordHash", "apiKey",
-     "idToken", "AUTH_TOKEN", "APIKey"],
+    [
+        "clientSecret",
+        "accessToken",
+        "refreshToken",
+        "passwordHash",
+        "apiKey",
+        "idToken",
+        "AUTH_TOKEN",
+        "APIKey",
+    ],
 )
 def test_camelcase_sensitive_keys_are_redacted(key):
     secret = "camelcase-secret-value"

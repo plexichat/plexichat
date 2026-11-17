@@ -57,10 +57,16 @@ class TestEveryDeclaredPiiFieldIsRedacted:
 
     def test_all_fields_and_inline_mentions_in_one_payload(self):
         rows = [{**{f: _SENTINELS[f] for f in THIRD_PARTY_PII_FIELDS}}]
-        mention = "hi @" + _SENTINELS["friend_username"] + " cc " + _SENTINELS["friend_email"]
+        mention = (
+            "hi @" + _SENTINELS["friend_username"] + " cc " + _SENTINELS["friend_email"]
+        )
         payload = {
             "user_id": _SUBJECT,
-            "identity": {"id": _SUBJECT, "username": "subject_user", "email": "subject@example.test"},
+            "identity": {
+                "id": _SUBJECT,
+                "username": "subject_user",
+                "email": "subject@example.test",
+            },
             "relationships": {"friends": rows},
             "messages": {"messages": [{"author_id": _SUBJECT, "content": mention}]},
         }
@@ -90,7 +96,9 @@ class TestEveryDeclaredPiiFieldIsRedacted:
         assert "Alex" not in content
         assert "[redacted] and [redacted]" in content
 
-    @pytest.mark.parametrize("field", ["friend_username", "friend_email", "sender_username"])
+    @pytest.mark.parametrize(
+        "field", ["friend_username", "friend_email", "sender_username"]
+    )
     def test_legally_required_is_opt_in_and_narrow(self, field):
         payload = _payload_with(field)
         kept = scrub_third_party_pii(payload, legally_required=[field])

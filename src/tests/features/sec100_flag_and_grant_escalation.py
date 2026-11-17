@@ -145,7 +145,16 @@ def test_rollout_percentage_accepts_valid_values(percentage):
 
 @pytest.mark.parametrize(
     "targets",
-    [[-1], [0], [SNOWFLAKE_MAX + 1], ["abc"], [123, "not-an-id"], ["1.5"], [[1]], [None]],
+    [
+        [-1],
+        [0],
+        [SNOWFLAKE_MAX + 1],
+        ["abc"],
+        [123, "not-an-id"],
+        ["1.5"],
+        [[1]],
+        [None],
+    ],
 )
 def test_rollout_targets_must_be_valid_snowflakes(targets):
     with pytest.raises(HardeningViolation):

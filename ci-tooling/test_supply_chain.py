@@ -220,7 +220,6 @@ class RegressionFixtures(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("sha256 mismatch", result.stderr)
 
-
     def test_wildcard_id_token_audience_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -275,7 +274,7 @@ class RegressionFixtures(unittest.TestCase):
             (root / ".gitlab-ci.yml").write_text(
                 "stages:\n  - test\n"
                 "install:\n  stage: test\n  script:\n"
-                '    - curl -sSLo tool.sh https://example.invalid/tool.sh\n'
+                "    - curl -sSLo tool.sh https://example.invalid/tool.sh\n"
                 '    - echo "checksum verified"\n'
                 "    - sh tool.sh\n",
                 encoding="utf-8",
@@ -294,7 +293,7 @@ class RegressionFixtures(unittest.TestCase):
             (root / ".gitlab-ci.yml").write_text(
                 "stages:\n  - test\n"
                 "install:\n  stage: test\n  script:\n"
-                '    - curl -sSLo tool.sh https://example.invalid/tool.sh\n'
+                "    - curl -sSLo tool.sh https://example.invalid/tool.sh\n"
                 "    - sha256sum -c tool.sh.sha256\n",
                 encoding="utf-8",
             )

@@ -21,7 +21,9 @@ def test_mistune_renderer_is_built_once(monkeypatch):
     monkeypatch.setattr(renderer.mistune, "create_markdown", counting)
 
     for _ in range(3):
-        renderer.markdown_to_html("| a | b |\n|---|---|\n| 1 | 2 |\n", "T", DocsConfig())
+        renderer.markdown_to_html(
+            "| a | b |\n|---|---|\n| 1 | 2 |\n", "T", DocsConfig()
+        )
 
     assert len(calls) == 1
 

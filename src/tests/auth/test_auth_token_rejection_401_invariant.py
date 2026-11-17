@@ -76,7 +76,9 @@ def _protected_auth_routes() -> tuple[tuple[str, str], ...]:
                     and isinstance(dec.args[0], ast.Constant)
                 ):
                     continue
-                found.append((dec.func.attr.upper(), "/api/v1/auth" + dec.args[0].value))
+                found.append(
+                    (dec.func.attr.upper(), "/api/v1/auth" + dec.args[0].value)
+                )
     return tuple(sorted(set(found)))
 
 
@@ -140,7 +142,9 @@ def test_token_primitives_deny_malformed_input_as_autherror(auth_manager, bad):
 
 @pytest.mark.security
 @pytest.mark.unit
-@pytest.mark.parametrize("bad", [None, b"token", 12345, "", "a" * (tokens.MAX_TOKEN_LENGTH + 1)])
+@pytest.mark.parametrize(
+    "bad", [None, b"token", 12345, "", "a" * (tokens.MAX_TOKEN_LENGTH + 1)]
+)
 def test_malformed_context_is_flagged_before_hashing(bad):
     assert tokens.is_malformed_token_input(bad) is True
 
@@ -154,7 +158,10 @@ def test_middleware_keeps_401_vs_500_mapping():
 
     def segment(name: str) -> str:
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == name
+            ):
                 text = ast.get_source_segment(source, node)
                 assert text is not None
                 return text
@@ -181,10 +188,14 @@ def test_middleware_keeps_401_vs_500_mapping():
 @pytest.mark.api
 @pytest.mark.parametrize("bad_name,bad_header", sorted(_BAD_HEADERS.items()))
 @pytest.mark.parametrize("method,path", _PROTECTED_AUTH_ROUTES)
-def test_every_protected_auth_route_returns_401_not_500(test_client, method, path, bad_name, bad_header):
+def test_every_protected_auth_route_returns_401_not_500(
+    test_client, method, path, bad_name, bad_header
+):
     """A bad credential on any protected auth route is a 401, never a 500."""
     route = re.sub(r"\{[^}]+\}", "1", path)
-    response = getattr(test_client, method.lower())(route, headers={"Authorization": bad_header})
+    response = getattr(test_client, method.lower())(
+        route, headers={"Authorization": bad_header}
+    )
     assert response.status_code == 401, (
         f"{method} {route} with {bad_name} returned {response.status_code}: {response.text}"
     )

@@ -32,9 +32,7 @@ from src.core.security.hardening import HardeningViolation, require_identifier
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src"
 
-EXEC_METHODS = frozenset(
-    {"execute", "executemany", "executescript", "exec_driver_sql"}
-)
+EXEC_METHODS = frozenset({"execute", "executemany", "executescript", "exec_driver_sql"})
 GUARD_CALLS = frozenset(
     {"require_identifier", "is_identifier", "sql_identifier", "safe_identifier"}
 )
@@ -62,16 +60,46 @@ IDENTIFIER_RE = re.compile(
 # (not from a request) but does not call the guard inline. Keyed by
 # (relative path, interpolated expression).
 FIXED_DDL_IDENTIFIER_SITES: dict[tuple[str, str], str] = {
-    ("src/core/automod/schema.py", "col"): "column from internal catalogue, regex-checked",
-    ("src/core/automod/schema.py", "table"): "table from internal allowlist, existence-checked",
-    ("src/core/messaging/schema.py", "definition"): "column type from the internal runtime_columns catalogue",
-    ("src/core/migrations/migrations/000_initial_schema.py", "cascade"): "literal '' or ' CASCADE' chosen by engine",
-    ("src/core/migrations/migrations/000_initial_schema.py", "table"): "table name from DB introspection during rollback",
-    ("src/core/migrations/migrations/004_id_identity_defaults.py", "table"): "table from DB introspection",
-    ("src/core/migrations/migrations/006_report_queue_indexes.py", "columns"): "column list from the literal INDEXES catalogue",
-    ("src/core/migrations/migrations/006_report_queue_indexes.py", "name"): "index name from the literal INDEXES catalogue",
-    ("src/core/migrations/migrations/007_hot_lookup_composite_indexes.py", "columns"): "column list from the literal INDEXES catalogue",
-    ("src/core/migrations/migrations/007_hot_lookup_composite_indexes.py", "name"): "index name from the literal INDEXES catalogue",
+    (
+        "src/core/automod/schema.py",
+        "col",
+    ): "column from internal catalogue, regex-checked",
+    (
+        "src/core/automod/schema.py",
+        "table",
+    ): "table from internal allowlist, existence-checked",
+    (
+        "src/core/messaging/schema.py",
+        "definition",
+    ): "column type from the internal runtime_columns catalogue",
+    (
+        "src/core/migrations/migrations/000_initial_schema.py",
+        "cascade",
+    ): "literal '' or ' CASCADE' chosen by engine",
+    (
+        "src/core/migrations/migrations/000_initial_schema.py",
+        "table",
+    ): "table name from DB introspection during rollback",
+    (
+        "src/core/migrations/migrations/004_id_identity_defaults.py",
+        "table",
+    ): "table from DB introspection",
+    (
+        "src/core/migrations/migrations/006_report_queue_indexes.py",
+        "columns",
+    ): "column list from the literal INDEXES catalogue",
+    (
+        "src/core/migrations/migrations/006_report_queue_indexes.py",
+        "name",
+    ): "index name from the literal INDEXES catalogue",
+    (
+        "src/core/migrations/migrations/007_hot_lookup_composite_indexes.py",
+        "columns",
+    ): "column list from the literal INDEXES catalogue",
+    (
+        "src/core/migrations/migrations/007_hot_lookup_composite_indexes.py",
+        "name",
+    ): "index name from the literal INDEXES catalogue",
 }
 
 

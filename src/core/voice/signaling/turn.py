@@ -151,9 +151,7 @@ class ICEServerBuilder:
             turn_username: Static TURN username (for services like metered.ca)
             turn_credential: Static TURN credential/password
         """
-        self._stun_urls = filter_ice_urls(
-            stun_urls or ["stun:stun.l.google.com:19302"]
-        )
+        self._stun_urls = filter_ice_urls(stun_urls or ["stun:stun.l.google.com:19302"])
         self._turn_urls = []
         for _u in turn_urls or ():
             try:

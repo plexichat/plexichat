@@ -101,7 +101,10 @@ async def test_burst_fanout_coalesces_writes_without_losing_frames(monkeypatch):
 
     # 200 connections x 20 events = 4000 independent WebSocket frames.
     for conn in connections:
-        frames = [call.args[0] for call in cast(AsyncMock, conn.websocket.send_json).await_args_list]
+        frames = [
+            call.args[0]
+            for call in cast(AsyncMock, conn.websocket.send_json).await_args_list
+        ]
         assert len(frames) == 20
         assert [frame["s"] for frame in frames] == list(range(1, 21))
         assert conn.write_calls == 1  # 20 frames coalesced into one flush
@@ -131,7 +134,10 @@ async def test_slow_consumer_queue_is_bounded_and_counts_shedding():
         assert batcher.stats()["dropped_frames"] == 92
 
         await conn.flush_outbound()
-        sent = [call.args[0]["s"] for call in cast(AsyncMock, conn.websocket.send_json).await_args_list]
+        sent = [
+            call.args[0]["s"]
+            for call in cast(AsyncMock, conn.websocket.send_json).await_args_list
+        ]
         assert sent == list(range(8))  # oldest accepted frames, in order
     finally:
         await conn.stop_batching()

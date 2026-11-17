@@ -59,8 +59,8 @@ class SelfTestRunner:
         # The selftest config is admin/operator supplied. Normalize it at the
         # boundary so no template payload, code-execution marker or arbitrary
         # journal path can reach the runner's path/body/worker sinks.
-        selftest_cfg = {} if status_only else sanitize_selftest_config(
-            config.get("selftest", {})
+        selftest_cfg = (
+            {} if status_only else sanitize_selftest_config(config.get("selftest", {}))
         )
         self.status_only = status_only
         # Opt-in check, run on its own (``run_purge_residue``) rather than as

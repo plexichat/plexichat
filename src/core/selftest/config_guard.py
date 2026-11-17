@@ -166,7 +166,11 @@ def sanitize_selftest_config(config: Any) -> Dict[str, Any]:
 
     workers = cleaned.get("parallel_get_workers")
     if workers is not None:
-        if not isinstance(workers, int) or isinstance(workers, bool) or not 1 <= workers <= 64:
+        if (
+            not isinstance(workers, int)
+            or isinstance(workers, bool)
+            or not 1 <= workers <= 64
+        ):
             cleaned.pop("parallel_get_workers", None)
 
     # The journal path is the one config value that becomes a filesystem

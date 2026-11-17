@@ -84,7 +84,6 @@ def test_validated_response_skips_fastapi_serialization(monkeypatch):
 
 def test_model_response_uses_pydantic_core_not_json_dumps(monkeypatch):
     """The default response class keeps FastAPI's dump_json fast path."""
-    import starlette.responses as starlette_responses
 
     calls = []
     real_dumps = json_module.dumps

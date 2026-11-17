@@ -201,9 +201,7 @@ def is_malformed_token_input(token: Any) -> bool:
     context is denied cleanly instead of raising deep in a cache key builder
     (which previously turned a bad header into a 500 instead of a 401).
     """
-    return (
-        not isinstance(token, str) or not token or len(token) > MAX_TOKEN_LENGTH
-    )
+    return not isinstance(token, str) or not token or len(token) > MAX_TOKEN_LENGTH
 
 
 def safe_token_cache_key(token: Any) -> str:

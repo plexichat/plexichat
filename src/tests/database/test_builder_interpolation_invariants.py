@@ -212,7 +212,7 @@ def audit_source(source, label):
 
 
 def test_audit_detects_a_fresh_raw_interpolation():
-    bad = 'sql = f"SELECT * FROM users WHERE name = \'{name}\'"'
+    bad = "sql = f\"SELECT * FROM users WHERE name = '{name}'\""
     offenders = audit_source(bad, "synthetic")
     assert len(offenders) == 1, offenders
     assert "name" in offenders[0]
@@ -263,9 +263,9 @@ def test_update_and_delete_bind_values_and_require_a_where():
     with pytest.raises(ValueError):
         DeleteQuery(None, "users").build()
 
-    sql, params = UpdateQuery(None, "users", {"name": "safe"}).where(
-        "name", "=", EVIL
-    ).build()
+    sql, params = (
+        UpdateQuery(None, "users", {"name": "safe"}).where("name", "=", EVIL).build()
+    )
     assert "UPDATE" in sql and "WHERE" in sql and EVIL not in sql
     assert EVIL in _values(params)
 

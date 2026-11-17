@@ -12,10 +12,8 @@ Run with: pytest -m unit src/tests/unit/test_admin_session_role_batching.py
 """
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 from starlette.requests import Request
 
 from src.api.schemas.common import SnowflakeIDParam
@@ -208,7 +206,9 @@ def test_cached_roles_are_not_reused_for_a_different_admin_or_db():
     _validate(db)
 
     assert perm_core.check_permission(999, "admin.read", db).has_permission is False
-    assert perm_core.check_permission(42, "admin.read", other_db).has_permission is False
+    assert (
+        perm_core.check_permission(42, "admin.read", other_db).has_permission is False
+    )
     # The fallback paths each issue exactly one role query.
     assert len(db.calls) == 2
     assert len(other_db.calls) == 1
@@ -225,7 +225,9 @@ def _patch_auth(monkeypatch, db):
         lambda token: _validate(db, token),
     )
     monkeypatch.setattr(api, "get_db", lambda: db)
-    monkeypatch.setattr(admin_utils, "is_authenticated_self_test", lambda request: False)
+    monkeypatch.setattr(
+        admin_utils, "is_authenticated_self_test", lambda request: False
+    )
     for module in (admin_users_routes, approvals_routes, audit_routes, roles_routes):
         monkeypatch.setattr(module, "check_host_restriction", lambda request: None)
 
@@ -255,7 +257,9 @@ def test_target_read_paths_issue_auth_plus_one_query(monkeypatch):
     def make_db(data_fragment, data_rows):
         db = _session_db(payload)
         # Endpoint data rows are returned for the matching table fragment.
-        db.responses.append((data_fragment, data_rows, data_rows[0] if data_rows else None))
+        db.responses.append(
+            (data_fragment, data_rows, data_rows[0] if data_rows else None)
+        )
         return db
 
     admin_row = {
@@ -307,12 +311,16 @@ def test_target_read_paths_issue_auth_plus_one_query(monkeypatch):
         (
             "get_admin_roles",
             make_db("FROM admin_role_assignments ra", []),
-            lambda: asyncio.run(roles_routes.get_admin_roles(_request(), SnowflakeIDParam(42))),
+            lambda: asyncio.run(
+                roles_routes.get_admin_roles(_request(), SnowflakeIDParam(42))
+            ),
         ),
         (
             "get_approval",
             make_db("FROM admin_approvals", [approval_row]),
-            lambda: asyncio.run(approvals_routes.get_approval(_request(), SnowflakeIDParam(7))),
+            lambda: asyncio.run(
+                approvals_routes.get_approval(_request(), SnowflakeIDParam(7))
+            ),
         ),
         (
             "export_audit_logs",

@@ -470,9 +470,7 @@ class DSARLog:
                     if isinstance(metadata, dict) and "integrity_hash" in metadata:
                         stored_integrity = metadata["integrity_hash"]
                         payload = {
-                            k: v
-                            for k, v in metadata.items()
-                            if k != "integrity_hash"
+                            k: v for k, v in metadata.items() if k != "integrity_hash"
                         }
                         expected_integrity = self._integrity_hash(payload)
                         if not (

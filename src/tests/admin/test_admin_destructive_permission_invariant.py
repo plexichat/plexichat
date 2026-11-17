@@ -41,16 +41,17 @@ _READ_ONLY_SCOPES = {"admin.read"}
 
 def _call_names(node: ast.AST) -> set[str]:
     return {
-        ast.unparse(call.func)
-        for call in ast.walk(node)
-        if isinstance(call, ast.Call)
+        ast.unparse(call.func) for call in ast.walk(node) if isinstance(call, ast.Call)
     }
 
 
 def _permission_scopes(node: ast.AST) -> list[str]:
     scopes: list[str] = []
     for call in ast.walk(node):
-        if isinstance(call, ast.Call) and ast.unparse(call.func) == "require_admin_permission":
+        if (
+            isinstance(call, ast.Call)
+            and ast.unparse(call.func) == "require_admin_permission"
+        ):
             for arg in call.args:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     scopes.append(arg.value)
@@ -77,9 +78,7 @@ def _handlers() -> list[tuple[str, ast.AST]]:
 
 _ALL_HANDLERS = _handlers()
 _DESTRUCTIVE = [
-    (name, node)
-    for name, node in _ALL_HANDLERS
-    if _APPROVAL_GATES & _call_names(node)
+    (name, node) for name, node in _ALL_HANDLERS if _APPROVAL_GATES & _call_names(node)
 ]
 _CONFIRMATION_GATED = [
     (name, node)
@@ -104,7 +103,11 @@ def test_destructive_handler_inventory_is_nonvacuous():
 @pytest.mark.unit
 def test_every_destructive_handler_requires_admin_permission():
     """An approval/confirmation gate alone must never authorize a destructive op."""
-    offenders = [n for n, node in _DESTRUCTIVE if "require_admin_permission" not in _call_names(node)]
+    offenders = [
+        n
+        for n, node in _DESTRUCTIVE
+        if "require_admin_permission" not in _call_names(node)
+    ]
     assert offenders == [], offenders
 
 
@@ -113,7 +116,9 @@ def test_every_destructive_handler_requires_admin_permission():
 def test_confirmation_gated_ops_require_elevated_maintenance_scope():
     """Irreversible operations need the elevated 'maintenance' scope on top."""
     offenders = [
-        n for n, node in _CONFIRMATION_GATED if "maintenance" not in _permission_scopes(node)
+        n
+        for n, node in _CONFIRMATION_GATED
+        if "maintenance" not in _permission_scopes(node)
     ]
     assert offenders == [], offenders
 
@@ -126,7 +131,9 @@ def test_approval_gates_never_sit_on_read_only_permissions():
     for name, node in _DESTRUCTIVE:
         scopes = _permission_scopes(node)
         assert scopes, name
-        elevated = [s for s in scopes if s not in _READ_ONLY_SCOPES and not s.endswith(".read")]
+        elevated = [
+            s for s in scopes if s not in _READ_ONLY_SCOPES and not s.endswith(".read")
+        ]
         if not elevated:
             offenders.append(f"{name}: {scopes}")
     assert offenders == [], offenders
@@ -136,7 +143,10 @@ def _utils_function_source(name: str) -> str:
     source = _UTILS.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(_UTILS))
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             text = ast.get_source_segment(source, node)
             assert text is not None
             return text

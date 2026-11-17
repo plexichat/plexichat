@@ -38,7 +38,8 @@ def _clean(text):
         if ord(c) < 0x20
         or ord(c) == 0x7F
         or 0x80 <= ord(c) <= 0x9F
-        or c in "\u200b\u200c\u200d\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff\u061c\u00ad"
+        or c
+        in "\u200b\u200c\u200d\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff\u061c\u00ad"
     ]
 
 

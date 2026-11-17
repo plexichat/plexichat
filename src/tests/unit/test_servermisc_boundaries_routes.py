@@ -33,7 +33,10 @@ class TestSearchBoundaries:
         from src.api.routes.search import search_messages
 
         assert _has_constraint(_param(search_messages, "query"), "MaxLen")
-        assert _constraint_value(_param(search_messages, "query"), "MaxLen", "max_length") <= 256
+        assert (
+            _constraint_value(_param(search_messages, "query"), "MaxLen", "max_length")
+            <= 256
+        )
         assert _has_constraint(_param(search_messages, "limit"), "Le")
 
     def test_every_search_cursor_is_length_bounded(self):
@@ -43,9 +46,9 @@ class TestSearchBoundaries:
             func = getattr(search, name)
             cursor = _param(func, "cursor")
             assert _has_constraint(cursor, "MaxLen"), f"{name} cursor unbounded"
-            assert (
-                _constraint_value(cursor, "MaxLen", "max_length") <= 512
-            ), f"{name} cursor cap too high"
+            assert _constraint_value(cursor, "MaxLen", "max_length") <= 512, (
+                f"{name} cursor cap too high"
+            )
 
 
 class TestThreadAndStickerBoundaries:

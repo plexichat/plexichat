@@ -1,4 +1,5 @@
 """Tests for bot approval and request management."""
+
 from typing import Any, cast
 
 import pytest

@@ -48,7 +48,11 @@ def test_quoted_secret_value_redacted():
 
 def test_noncanonical_secret_key_redacted_in_audit_record():
     record = sanitise_audit_entry(
-        {"session_cookie": "abcdef0123456789", "auth_cookie": "deadbeefcafe", "user": "alice"}
+        {
+            "session_cookie": "abcdef0123456789",
+            "auth_cookie": "deadbeefcafe",
+            "user": "alice",
+        }
     )
     assert record["user"] == "alice"
     assert record["session_cookie"] == REDACTED

@@ -177,8 +177,7 @@ def invalidate_user_servers(user_id: int) -> int:
     uid = _glob_safe_id(user_id)
     if uid is None:
         logger.warning(
-            "Refusing to build cache invalidation pattern from non-numeric "
-            "user id %r",
+            "Refusing to build cache invalidation pattern from non-numeric user id %r",
             user_id,
         )
         return 0

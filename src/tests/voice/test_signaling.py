@@ -1,6 +1,7 @@
 """
 Tests for voice signaling module.
 """
+
 from typing import Any, cast
 
 import pytest

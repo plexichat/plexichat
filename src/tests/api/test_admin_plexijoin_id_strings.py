@@ -129,7 +129,9 @@ async def test_admin_list_connections_keeps_rowid_numeric(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_get_connection_keeps_rowid_numeric(monkeypatch):
     _patch_admin(monkeypatch, _FakeManager(connection=_connection_row()))
-    result = await admin_plexijoin.get_connection(cast(Request, _FakeRequest()), connection_id=ROWID)
+    result = await admin_plexijoin.get_connection(
+        cast(Request, _FakeRequest()), connection_id=ROWID
+    )
     assert result["id"] == ROWID
     assert result["created_by"] == str(BIG_ADMIN)
 
@@ -218,7 +220,9 @@ async def test_federation_join_request_inbound_keeps_rowid_numeric(monkeypatch):
     monkeypatch.setattr(
         federation_module, "_authenticate", lambda *args, **kwargs: {"id": 1}
     )
-    result = await federation_module.join_request_inbound(cast(Request, _InboundRequest()))
+    result = await federation_module.join_request_inbound(
+        cast(Request, _InboundRequest())
+    )
     assert result["ok"] is True
     assert result["request_id"] == ROWID
     assert submitted["remote_instance_id"] == "remote:example"

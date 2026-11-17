@@ -1,4 +1,5 @@
 """Tests for application components (buttons, select menus, text inputs)."""
+
 from typing import Any, cast
 
 import pytest

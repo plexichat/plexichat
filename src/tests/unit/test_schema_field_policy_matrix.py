@@ -36,9 +36,7 @@ SNOWFLAKE_TYPES = frozenset({"SnowflakeID", "SnowflakeIDParam"})
 RELATIVE_URL_FIELDS = frozenset({"avatar_url"})
 
 #: Identifiers that are not snowflakes (challenge tokens, operation ids, hashes).
-NON_SNOWFLAKE_ID_FIELDS = frozenset(
-    {"challenge_id", "operation_id", "media_object_id"}
-)
+NON_SNOWFLAKE_ID_FIELDS = frozenset({"challenge_id", "operation_id", "media_object_id"})
 
 #: Debt in route modules (not owned by the schema tree). New entries are
 #: rejected by ``test_no_new_policyless_fields``; this list only shrinks.

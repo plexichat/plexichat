@@ -365,11 +365,9 @@ def get_setting(
     },
 )
 async def set_setting(
-    key: str = Path(
-        ..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$"
-    ),
+    key: str = Path(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$"),
     body: SettingValue = Body(...),
-    current_user: TokenInfo = Depends(get_current_user)
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SettingResponse:
     """
     Set a setting value.

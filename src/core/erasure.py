@@ -521,8 +521,10 @@ def purge_user_personal_rows(db: Any, user_id: int) -> int:
         "msg_scheduled",
         "msg_forwarded",
     ):
-        column = "author_id" if table == "msg_scheduled" else (
-            "forwarded_by" if table == "msg_forwarded" else "user_id"
+        column = (
+            "author_id"
+            if table == "msg_scheduled"
+            else ("forwarded_by" if table == "msg_forwarded" else "user_id")
         )
         try:
             cursor = db.execute(f"DELETE FROM {table} WHERE {column} = ?", (uid,))

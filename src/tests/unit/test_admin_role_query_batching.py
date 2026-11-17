@@ -209,9 +209,7 @@ def test_revoke_role_hierarchy_is_a_single_lookup(monkeypatch):
     monkeypatch.setattr(api, "get_db", lambda: db)
 
     asyncio.run(
-        role_routes.revoke_role(
-            _request(), SnowflakeIDParam(2), SnowflakeIDParam(3)
-        )
+        role_routes.revoke_role(_request(), SnowflakeIDParam(2), SnowflakeIDParam(3))
     )
 
     hierarchy_queries = [c for c in db.fetch_calls if "AS current_pos" in c[0]]

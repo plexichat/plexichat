@@ -68,7 +68,9 @@ async def test_request_join_create_serves_string_ids(monkeypatch):
     _patch(monkeypatch, manager)
     request = cast(Request, _FakeRequest({"remote_url": "https://remote.example"}))
 
-    result = await join_module.request_join(request, current_user=cast(TokenInfo, object()))
+    result = await join_module.request_join(
+        request, current_user=cast(TokenInfo, object())
+    )
 
     assert result["success"] is True
     assert result["Join_id"] == "1234567890123456789"
@@ -83,7 +85,9 @@ async def test_request_join_existing_serves_string_ids(monkeypatch):
     _patch(monkeypatch, manager)
     request = cast(Request, _FakeRequest({"remote_url": "https://remote.example"}))
 
-    result = await join_module.request_join(request, current_user=cast(TokenInfo, object()))
+    result = await join_module.request_join(
+        request, current_user=cast(TokenInfo, object())
+    )
 
     assert result["success"] is True
     assert result["existing"] is True

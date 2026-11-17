@@ -8,6 +8,7 @@ Proves the residual fixes on top of test_export_ids_m4.py:
 - auth failure stores NO bookkeeping entry and consumes NO rate budget
 - concurrent burst respects the rate limit with zero lost/duplicate entries
 """
+
 from typing import Any, cast
 
 import os
@@ -81,13 +82,18 @@ def export_env(tmp_path, monkeypatch):
 
 def _make_svc(allowed=True, n_msgs=2):
     return TranscriptExportService(
-        None, cast(Any, _StubMessages(_sample_messages(n_msgs))), cast(Any, _StubParticipants(allowed))
+        None,
+        cast(Any, _StubMessages(_sample_messages(n_msgs))),
+        cast(Any, _StubParticipants(allowed)),
     )
 
 
 def test_ids_are_256bit_unique(export_env):
     svc = _make_svc()
-    ids = [svc.request_export(cast(Any, "42"), cast(Any, "7"), "json")["export_id"] for _ in range(10)]
+    ids = [
+        svc.request_export(cast(Any, "42"), cast(Any, "7"), "json")["export_id"]
+        for _ in range(10)
+    ]
     assert len(set(ids)) == 10
     for eid in ids:
         assert eid.startswith("export_")
@@ -159,7 +165,10 @@ def test_concurrent_burst_atomic_limit(export_env):
     n = 20
     with ThreadPoolExecutor(max_workers=10) as pool:
         results = list(
-            pool.map(lambda i: svc.request_export(cast(Any, "42"), cast(Any, "7"), "json"), range(n))
+            pool.map(
+                lambda i: svc.request_export(cast(Any, "42"), cast(Any, "7"), "json"),
+                range(n),
+            )
         )
     ready = [r for r in results if r["status"] == "ready"]
     limited = [r for r in results if r["status"] == "failed"]

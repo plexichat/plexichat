@@ -53,9 +53,7 @@ def _csv_cell(value) -> str:
     # Quote when either the raw cell or its first non-whitespace character
     # begins with a spreadsheet formula trigger. Leading tab/CR are unsafe
     # because spreadsheets strip them before evaluating the remainder.
-    if text[0] in _CSV_FORMULA_LEADS or (
-        probe and probe[0] in _CSV_FORMULA_LEADS
-    ):
+    if text[0] in _CSV_FORMULA_LEADS or (probe and probe[0] in _CSV_FORMULA_LEADS):
         return "'" + text
     return text
 

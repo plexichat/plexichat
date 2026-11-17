@@ -194,7 +194,9 @@ def _private_thread_recipients(thread_id: Optional[int], is_private: bool):
         return []
 
 
-def _thread_audience(thread_id: Optional[int], claimed_type: Any) -> Optional[List[int]]:
+def _thread_audience(
+    thread_id: Optional[int], claimed_type: Any
+) -> Optional[List[int]]:
     """Explicit member ids for a private-thread event; None for public routing."""
     if not _thread_privacy(thread_id, claimed_type):
         return None
@@ -650,8 +652,11 @@ def emit_thread_create(thread: Dict[str, Any]) -> None:
     tid = _coerce_routing_id(thread.get("id"))
     recipients = _thread_audience(tid, thread.get("thread_type"))
     if recipients is not None:
-        _emit(EventType.THREAD_CREATE, stringify_snowflake_ids(thread),
-              user_ids=recipients)
+        _emit(
+            EventType.THREAD_CREATE,
+            stringify_snowflake_ids(thread),
+            user_ids=recipients,
+        )
         return
     _emit(
         EventType.THREAD_CREATE,
@@ -666,8 +671,11 @@ def emit_thread_update(thread: Dict[str, Any]) -> None:
     tid = _coerce_routing_id(thread.get("id"))
     recipients = _thread_audience(tid, thread.get("thread_type"))
     if recipients is not None:
-        _emit(EventType.THREAD_UPDATE, stringify_snowflake_ids(thread),
-              user_ids=recipients)
+        _emit(
+            EventType.THREAD_UPDATE,
+            stringify_snowflake_ids(thread),
+            user_ids=recipients,
+        )
         return
     _emit(
         EventType.THREAD_UPDATE,

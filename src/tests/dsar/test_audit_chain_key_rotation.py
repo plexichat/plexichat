@@ -115,9 +115,9 @@ def test_keyless_entry_appended_after_keyed_entry_is_rejected(tmp_path):
         "prev_hash": prev_hash,
     }
     content = json.dumps(forged, sort_keys=True)
-    forged["checksum"] = __import__("hashlib").sha256(
-        (prev_hash + content).encode("utf-8")
-    ).hexdigest()
+    forged["checksum"] = (
+        __import__("hashlib").sha256((prev_hash + content).encode("utf-8")).hexdigest()
+    )
     _write_rows(path, rows + [forged])
 
     valid, count, error = log.verify_chain()

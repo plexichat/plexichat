@@ -52,7 +52,9 @@ def test_apply_all_dispatches_migration_work_off_loop(monkeypatch):
     calls = _capture_threadpool(monkeypatch, database_routes, {"applied": 1})
 
     result = asyncio.run(
-        database_routes.apply_all_migrations(cast(Request, SimpleNamespace()), dry_run=True)
+        database_routes.apply_all_migrations(
+            cast(Request, SimpleNamespace()), dry_run=True
+        )
     )
 
     assert result == {"applied": 1}
@@ -71,7 +73,9 @@ def test_rollback_dispatches_migration_work_off_loop(monkeypatch):
     )
     calls = _capture_threadpool(monkeypatch, database_routes, {"success": True})
 
-    result = asyncio.run(database_routes.rollback_migration(cast(Request, SimpleNamespace()), "001"))
+    result = asyncio.run(
+        database_routes.rollback_migration(cast(Request, SimpleNamespace()), "001")
+    )
 
     assert result == {"success": True}
     assert len(calls) == 1
@@ -91,7 +95,9 @@ def test_reindex_conversation_dispatches_off_loop(monkeypatch):
 
     result = asyncio.run(
         reindex_routes.reindex_conversation(
-            request=cast(Request, SimpleNamespace()), conversation_id=SnowflakeIDParam(42), body=None
+            request=cast(Request, SimpleNamespace()),
+            conversation_id=SnowflakeIDParam(42),
+            body=None,
         )
     )
 
@@ -117,7 +123,9 @@ def test_reindex_conversation_still_maps_failures_to_500(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             reindex_routes.reindex_conversation(
-                request=cast(Request, SimpleNamespace()), conversation_id=SnowflakeIDParam(42), body=None
+                request=cast(Request, SimpleNamespace()),
+                conversation_id=SnowflakeIDParam(42),
+                body=None,
             )
         )
     assert exc.value.status_code == 500

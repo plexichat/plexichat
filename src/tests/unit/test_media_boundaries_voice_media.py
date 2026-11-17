@@ -76,6 +76,4 @@ class TestTranscriptionPayload:
 
     def test_invalid_recording_id_rejected(self):
         with pytest.raises(ValueError):
-            validate_transcription_payload(
-                {"recording_id": "../evil", "segments": []}
-            )
+            validate_transcription_payload({"recording_id": "../evil", "segments": []})

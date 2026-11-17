@@ -41,6 +41,7 @@ def authenticated_cache_key(prefix: str):
     keyed on the bot account id; user credentials keep the legacy layout so
     existing invalidation helpers continue to match.
     """
+
     def _builder(*args, **kwargs):
         token = kwargs.get("current_user")
         if token is None:

@@ -25,11 +25,11 @@ class _User:
 
 
 BAD_IDS = [
-    "-1",      # negative
-    "0",       # zero is not a snowflake
+    "-1",  # negative
+    "0",  # zero is not a snowflake
     "9223372036854775808",  # 2**63, past the snowflake envelope
     "9" * 40,  # oversized / integer-churning blob
-    "1_2",     # non-canonical integer form
+    "1_2",  # non-canonical integer form
 ]
 
 
@@ -171,7 +171,5 @@ def test_suggestions_rate_limited(monkeypatch):
     monkeypatch.setattr(db, "check_rate_limit", lambda *a, **k: (False, 0))
     _expect_status(
         429,
-        search_route.get_search_suggestions(
-            q="a", limit=10, current_user=_User()
-        ),
+        search_route.get_search_suggestions(q="a", limit=10, current_user=_User()),
     )

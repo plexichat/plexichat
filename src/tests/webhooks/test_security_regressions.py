@@ -102,7 +102,9 @@ def _signed_headers(manager, webhook_id, content):
 
 
 class TestInboundSignatureEnforcement:
-    def test_unsigned_delivery_rejected_when_required(self, test_client, modules, test_server):
+    def test_unsigned_delivery_rejected_when_required(
+        self, test_client, modules, test_server
+    ):
         webhook = _make_webhook(modules, test_server[0], require_signed=True)
         response = test_client.post(
             f"/api/v1/webhooks/{webhook.id}/{webhook.token}",
@@ -110,7 +112,9 @@ class TestInboundSignatureEnforcement:
         )
         assert response.status_code == 401
 
-    def test_partial_signature_pair_is_rejected(self, test_client, modules, test_server):
+    def test_partial_signature_pair_is_rejected(
+        self, test_client, modules, test_server
+    ):
         """Supplying only one of the two headers must never downgrade to unsigned."""
         webhook = _make_webhook(modules, test_server[0], require_signed=False)
         url = f"/api/v1/webhooks/{webhook.id}/{webhook.token}"
@@ -160,12 +164,26 @@ class TestInboundSignatureEnforcement:
         headers = _signed_headers(modules.webhooks, webhook.id, content)
         url = f"/api/v1/webhooks/{webhook.id}/{webhook.token}"
 
-        assert test_client.post(url, json={"content": content}, headers=headers).status_code == 200
+        assert (
+            test_client.post(
+                url, json={"content": content}, headers=headers
+            ).status_code
+            == 200
+        )
         # Same (signature, timestamp) pair a second time -> replay cache hit.
-        assert test_client.post(url, json={"content": content}, headers=headers).status_code == 401
+        assert (
+            test_client.post(
+                url, json={"content": content}, headers=headers
+            ).status_code
+            == 401
+        )
 
     def test_module_verify_wrapper_fails_closed_without_manager(self, monkeypatch):
-        monkeypatch.setattr(webhooks_module, "_get_manager", lambda: (_ for _ in ()).throw(RuntimeError("unwired")))
+        monkeypatch.setattr(
+            webhooks_module,
+            "_get_manager",
+            lambda: (_ for _ in ()).throw(RuntimeError("unwired")),
+        )
         assert webhooks_module.verify_payload(1, {"a": 1}, "sig", _fresh_ts()) is False
 
 
@@ -250,7 +268,9 @@ class TestSSRFGate:
 
     def test_private_network_seam_is_loopback_only(self):
         with pytest.raises(ValueError, match="loopback"):
-            validate_delivery_endpoint("http://10.0.0.5/hook", allow_private_network=True)
+            validate_delivery_endpoint(
+                "http://10.0.0.5/hook", allow_private_network=True
+            )
         assert validate_delivery_endpoint(
             "http://127.0.0.1:9/hook", allow_private_network=True
         ) == ("127.0.0.1", "")
@@ -258,7 +278,9 @@ class TestSSRFGate:
     def test_redirect_to_internal_target_is_refused(self):
         client = _Client(
             [
-                _Response(302, {"Location": "http://169.254.169.254/latest/meta-data/"}),
+                _Response(
+                    302, {"Location": "http://169.254.169.254/latest/meta-data/"}
+                ),
             ]
         )
         with pytest.raises(WebhookDeliveryError, match="redirect target refused"):

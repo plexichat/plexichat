@@ -63,9 +63,7 @@ def validate_http_url(
     # anomalous and must be percent-encoded (``%5C``) by the caller, so refuse
     # it outright rather than trusting two parsers to agree.
     if "\\" in text:
-        raise OutboundUrlRejected(
-            f"{field} must not contain backslashes", field=field
-        )
+        raise OutboundUrlRejected(f"{field} must not contain backslashes", field=field)
     # require_http_url enforces absolute http(s) + no embedded credentials.
     require_http_url(text, field)
     if allowed_hosts is not None:

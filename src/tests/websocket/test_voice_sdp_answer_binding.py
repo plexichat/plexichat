@@ -46,7 +46,8 @@ async def test_applies_the_answer_for_the_bound_channel(monkeypatch) -> None:
     _wire(monkeypatch, connection=conn, sfu=sfu)
 
     result = await VoiceHandler().handle_voice_sdp_answer(
-        _connection(), {"channel_id": 55, "sdp": "v=0"}  # pyright: ignore[reportArgumentType]
+        _connection(),
+        {"channel_id": 55, "sdp": "v=0"},  # pyright: ignore[reportArgumentType]
     )
 
     assert result == (None, None, None)
@@ -61,7 +62,8 @@ async def test_refuses_an_answer_that_names_another_channel(monkeypatch) -> None
     _wire(monkeypatch, connection=conn, sfu=sfu)
 
     result = await VoiceHandler().handle_voice_sdp_answer(
-        _connection(), {"channel_id": 999, "sdp": "v=0"}  # pyright: ignore[reportArgumentType]
+        _connection(),
+        {"channel_id": 999, "sdp": "v=0"},  # pyright: ignore[reportArgumentType]
     )
 
     assert result == (None, None, int(GatewayCloseCode.UNKNOWN_ERROR))
@@ -90,7 +92,8 @@ async def test_refuses_an_answer_with_no_session(monkeypatch) -> None:
     _wire(monkeypatch, connection=None, sfu=sfu)
 
     result = await VoiceHandler().handle_voice_sdp_answer(
-        _connection(), {"channel_id": 55, "sdp": "v=0"}  # pyright: ignore[reportArgumentType]
+        _connection(),
+        {"channel_id": 55, "sdp": "v=0"},  # pyright: ignore[reportArgumentType]
     )
 
     assert result == (None, None, int(GatewayCloseCode.UNKNOWN_ERROR))
@@ -103,7 +106,8 @@ async def test_a_deployment_without_signaling_is_not_an_error(monkeypatch) -> No
     _wire(monkeypatch, manager=False)
 
     result = await VoiceHandler().handle_voice_sdp_answer(
-        _connection(), {"channel_id": 55, "sdp": "v=0"}  # pyright: ignore[reportArgumentType]
+        _connection(),
+        {"channel_id": 55, "sdp": "v=0"},  # pyright: ignore[reportArgumentType]
     )
 
     assert result == (None, None, None)

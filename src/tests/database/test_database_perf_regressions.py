@@ -40,7 +40,9 @@ def perf_db(tmp_path):
     Database.reset()
     db = Database()
     db.connect()
-    getattr(db, "execute")("CREATE TABLE perf_items (id INTEGER PRIMARY KEY, value TEXT)")
+    getattr(db, "execute")(
+        "CREATE TABLE perf_items (id INTEGER PRIMARY KEY, value TEXT)"
+    )
     rows = [(item_id, f"v{item_id}") for item_id in range(1, 301)]
     getattr(db, "execute_many")(
         "INSERT INTO perf_items (id, value) VALUES (?, ?)", rows

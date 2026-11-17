@@ -289,12 +289,10 @@ class VoiceConnection:
             if value is not None:
                 setattr(self, attr, validate_sfu_identifier(value, attr))
         self.sfu_producer_ids = [
-            validate_sfu_identifier(v, "sfu_producer_id")
-            for v in self.sfu_producer_ids
+            validate_sfu_identifier(v, "sfu_producer_id") for v in self.sfu_producer_ids
         ]
         self.sfu_consumer_ids = [
-            validate_sfu_identifier(v, "sfu_consumer_id")
-            for v in self.sfu_consumer_ids
+            validate_sfu_identifier(v, "sfu_consumer_id") for v in self.sfu_consumer_ids
         ]
 
 

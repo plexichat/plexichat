@@ -5,6 +5,7 @@ Focuses on the two behaviors that were fixed: personal/notes-scope
 authorization (previously always 403'd) and PATCH-style payload merging on
 ``update_artifact`` (previously a whole-column replace).
 """
+
 from typing import Any, cast
 
 import pytest
@@ -181,18 +182,53 @@ def test_stale_write_first_write_always_allowed():
 def test_create_payload_over_1mb_is_rejected():
     oversized = {"content": "x" * (1024 * 1024 + 1)}
     with pytest.raises(ValidationError) as exc:
-        ArtifactCreateRequest(artifact_type=cast(Any, "upload"), title="big", payload=oversized, conversation_id=None, channel_id=None, server_id=None, summary=None, status=None, recorded=False, has_transcript=False, license_feature=None, retention_policy=None)
+        ArtifactCreateRequest(
+            artifact_type=cast(Any, "upload"),
+            title="big",
+            payload=oversized,
+            conversation_id=None,
+            channel_id=None,
+            server_id=None,
+            summary=None,
+            status=None,
+            recorded=False,
+            has_transcript=False,
+            license_feature=None,
+            retention_policy=None,
+        )
     assert "payload exceeds maximum size" in str(exc.value)
 
 
 def test_update_payload_over_1mb_is_rejected():
     oversized = {"content": "x" * (1024 * 1024 + 1)}
     with pytest.raises(ValidationError) as exc:
-        ArtifactUpdateRequest(payload=oversized, title=None, summary=None, status=None, recorded=False, has_transcript=False, rev=None, retention_policy=None)
+        ArtifactUpdateRequest(
+            payload=oversized,
+            title=None,
+            summary=None,
+            status=None,
+            recorded=False,
+            has_transcript=False,
+            rev=None,
+            retention_policy=None,
+        )
     assert "payload exceeds maximum size" in str(exc.value)
 
 
 def test_create_payload_under_limit_is_accepted():
     ok = {"content": "x" * 1024}
-    body = ArtifactCreateRequest(artifact_type=cast(Any, "upload"), title="ok", payload=ok, conversation_id=None, channel_id=None, server_id=None, summary=None, status=None, recorded=False, has_transcript=False, license_feature=None, retention_policy=None)
+    body = ArtifactCreateRequest(
+        artifact_type=cast(Any, "upload"),
+        title="ok",
+        payload=ok,
+        conversation_id=None,
+        channel_id=None,
+        server_id=None,
+        summary=None,
+        status=None,
+        recorded=False,
+        has_transcript=False,
+        license_feature=None,
+        retention_policy=None,
+    )
     assert cast(Any, body.payload)["content"] == "x" * 1024

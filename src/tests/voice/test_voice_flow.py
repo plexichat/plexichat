@@ -1,6 +1,7 @@
 """
 Tests for complete voice connection flow.
 """
+
 from typing import Any, cast
 
 import asyncio

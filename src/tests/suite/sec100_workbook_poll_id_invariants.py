@@ -64,7 +64,9 @@ class TestArtifactIdsAreBoundedSnowflakes:
         with pytest.raises(HardeningViolation):
             validate_artifact_id(value)
 
-    @pytest.mark.parametrize("value", [1, "1", 42, "42", SNOWFLAKE_MAX, str(SNOWFLAKE_MAX)])
+    @pytest.mark.parametrize(
+        "value", [1, "1", 42, "42", SNOWFLAKE_MAX, str(SNOWFLAKE_MAX)]
+    )
     def test_real_snowflake_artifact_id_accepted(self, value):
         assert validate_artifact_id(value) == int(value)
 

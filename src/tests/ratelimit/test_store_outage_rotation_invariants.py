@@ -31,7 +31,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.security, pytest.mark.ratelimit]
 
 def _config() -> RateLimitConfig:
     return RateLimitConfig(
-        requests=2, window_seconds=60.0, burst=0, algorithm=RateLimitAlgorithm.FIXED_WINDOW
+        requests=2,
+        window_seconds=60.0,
+        burst=0,
+        algorithm=RateLimitAlgorithm.FIXED_WINDOW,
     )
 
 
@@ -100,7 +103,9 @@ async def test_async_decision_denies_when_store_raises():
 
 @pytest.mark.asyncio
 async def test_middleware_returns_429_and_skips_app_on_store_outage(monkeypatch):
-    monkeypatch.setattr(ratelimit, "_manager", _manager(_OutageStorage()), raising=False)
+    monkeypatch.setattr(
+        ratelimit, "_manager", _manager(_OutageStorage()), raising=False
+    )
     monkeypatch.setattr(ratelimit, "_setup_complete", True, raising=False)
 
     called: List[bool] = []
@@ -191,19 +196,18 @@ async def test_middleware_denies_on_unexpected_decision_error(monkeypatch):
 
 def test_authenticated_principal_survives_ip_rotation(memory_storage):
     manager = _manager(memory_storage)
-    first = manager.check_rate_limit(
-        user_id=7, ip_address="10.0.0.1", route="GET /t"
-    )
-    second = manager.check_rate_limit(
-        user_id=7, ip_address="10.0.0.2", route="GET /t"
-    )
+    first = manager.check_rate_limit(user_id=7, ip_address="10.0.0.1", route="GET /t")
+    second = manager.check_rate_limit(user_id=7, ip_address="10.0.0.2", route="GET /t")
     assert first.bucket_key == second.bucket_key
     assert memory_storage.get_keys_by_prefix("ip:") == []
     # The bucket has a capacity of two; a third request is denied regardless
     # of the IP the client presents.
-    assert manager.check_rate_limit(
-        user_id=7, ip_address="10.0.0.3", route="GET /t"
-    ).allowed is False
+    assert (
+        manager.check_rate_limit(
+            user_id=7, ip_address="10.0.0.3", route="GET /t"
+        ).allowed
+        is False
+    )
 
 
 def test_rotating_garbage_ips_cannot_grow_the_keyspace(memory_storage):

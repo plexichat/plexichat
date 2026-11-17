@@ -107,9 +107,7 @@ def test_response_policy_drops_credentials_when_disabled():
         cors_origins=["https://good.example"],
         cors_allow_credentials=False,
     )
-    assert _values(final, b"access-control-allow-origin") == [
-        b"https://good.example"
-    ]
+    assert _values(final, b"access-control-allow-origin") == [b"https://good.example"]
     assert _values(final, b"access-control-allow-credentials") == []
 
 

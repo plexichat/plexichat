@@ -87,7 +87,9 @@ async def test_state_update_ignores_an_absent_consent(monkeypatch) -> None:
     """No field is not a decision: neither grant nor revoke fires."""
     handler, record, revoke = _handler(monkeypatch)
 
-    result = await handler.handle_voice_state_update(cast(Any, _connection()), {"channel_id": 55})
+    result = await handler.handle_voice_state_update(
+        cast(Any, _connection()), {"channel_id": 55}
+    )
 
     assert result == (None, None, None)
     record.assert_not_called()

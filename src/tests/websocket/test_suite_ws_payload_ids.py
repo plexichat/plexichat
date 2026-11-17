@@ -87,7 +87,10 @@ async def test_relay_sum_op_stringifies_nested_op_ids(monkeypatch) -> None:
     dispatcher = _FakeDispatcher([conn])
 
     sent = await sum_ws.relay_sum_op(
-        dispatcher, BIG, {"sheet_id": BIG + 1, "client_id": BIG + 2}, BIG + 3  # pyright: ignore[reportArgumentType]
+        dispatcher,
+        BIG,
+        {"sheet_id": BIG + 1, "client_id": BIG + 2},
+        BIG + 3,  # pyright: ignore[reportArgumentType]
     )
     assert sent == 1
 
@@ -130,7 +133,10 @@ async def test_send_artifact_sync_stringifies_snapshot_and_ops_ids() -> None:
 async def test_send_artifact_ack_stringifies_nested_op_ids() -> None:
     conn = _FakeConnection(user_id=BIG + 8)
     ok = await art_ws.send_artifact_ack(
-        conn, BIG, {"block_id": BIG + 9, "client_id": "client-1"}, seq=4  # pyright: ignore[reportArgumentType]
+        conn,
+        BIG,
+        {"block_id": BIG + 9, "client_id": "client-1"},
+        seq=4,  # pyright: ignore[reportArgumentType]
     )
     assert ok is True
 
@@ -145,7 +151,10 @@ async def test_send_artifact_ack_stringifies_nested_op_ids() -> None:
 async def test_send_artifact_op_rejected_stringifies_nested_op_ids() -> None:
     conn = _FakeConnection()
     ok = await art_ws.send_artifact_op_rejected(
-        conn, BIG, {"block_id": BIG + 9}, current_rev=2  # pyright: ignore[reportArgumentType]
+        conn,
+        BIG,
+        {"block_id": BIG + 9},
+        current_rev=2,  # pyright: ignore[reportArgumentType]
     )
     assert ok is True
 

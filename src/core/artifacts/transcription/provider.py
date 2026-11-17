@@ -98,9 +98,7 @@ def _require_public_https_endpoint(value: Any, field: str) -> str:
     hostname = (urlparse(url).hostname or "").lower().rstrip(".")
     if not hostname:
         raise HardeningViolation(f"{field} must include a hostname")
-    if hostname in _LOCAL_ENDPOINT_HOSTS or hostname.endswith(
-        _LOCAL_ENDPOINT_SUFFIXES
-    ):
+    if hostname in _LOCAL_ENDPOINT_HOSTS or hostname.endswith(_LOCAL_ENDPOINT_SUFFIXES):
         raise HardeningViolation(f"{field} must not target a local/internal host")
     try:
         address = ipaddress.ip_address(hostname)

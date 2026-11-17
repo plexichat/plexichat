@@ -31,10 +31,7 @@ class VisibilityMixin(PresenceManagerBase):
         The notification path is unaffected because it never goes through the
         ``get_visible_*`` methods.
         """
-        if (
-            presence.current_channel_id is None
-            and presence.current_server_id is None
-        ):
+        if presence.current_channel_id is None and presence.current_server_id is None:
             return presence
         return replace(
             presence,

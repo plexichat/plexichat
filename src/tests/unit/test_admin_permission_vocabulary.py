@@ -42,9 +42,7 @@ class TestDelegableVocabulary:
 
     def test_vocabulary_is_derived_from_declared_scopes(self):
         assert DELEGABLE_PERMISSIONS == frozenset(
-            key
-            for key in PERMISSION_SCOPES
-            if key != "*" and not key.endswith(".*")
+            key for key in PERMISSION_SCOPES if key != "*" and not key.endswith(".*")
         )
         assert "users.read" in DELEGABLE_PERMISSIONS
         assert "admin.roles" in DELEGABLE_PERMISSIONS
@@ -111,5 +109,7 @@ class TestRoleRoutesUseClosedVocabulary:
             patch("src.api.get_db"),
         ):
             with pytest.raises(HTTPException) as exc:
-                asyncio.run(role_routes.update_role(_request("PUT"), SnowflakeIDParam(1), body))
+                asyncio.run(
+                    role_routes.update_role(_request("PUT"), SnowflakeIDParam(1), body)
+                )
         assert exc.value.status_code == 400

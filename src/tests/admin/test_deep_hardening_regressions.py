@@ -47,7 +47,9 @@ class TestMigrationVersionConfinement:
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
                 routes.apply_migration(
-                    SimpleNamespace(), "../../etc/passwd", confirmation="APPLY MIGRATION"
+                    SimpleNamespace(),
+                    "../../etc/passwd",
+                    confirmation="APPLY MIGRATION",
                 )
             )
         assert exc.value.status_code == 400
@@ -134,7 +136,11 @@ class TestDestructiveConfirmation:
 
         monkeypatch.setattr(routes.search_module, "_manager", _Manager(), raising=False)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(routes.reindex_search(SimpleNamespace(), routes.ReindexRequest(force=True)))
+            asyncio.run(
+                routes.reindex_search(
+                    SimpleNamespace(), routes.ReindexRequest(force=True)
+                )
+            )
         assert exc.value.status_code == 400
 
     def test_migration_rollback_without_confirmation_is_blocked(self, monkeypatch):

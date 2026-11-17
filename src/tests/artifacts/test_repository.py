@@ -5,6 +5,7 @@ Covers the persistence path added for the realtime ``ARTIFACT_OP`` relay:
 ``append_artifact_op`` / ``list_artifact_ops``, transient-op filtering, and
 the cascade delete of ``artifact_ops`` / ``voice_calls`` rows.
 """
+
 from typing import Any, cast
 
 import json

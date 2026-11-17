@@ -36,9 +36,9 @@ class SumManagerSnapshots(SumManagerProtocol):
             # database (and replaying additive-schema DDL) just for one COUNT.
             with self._live_connection(workbook_id) as connection:
                 cell_count = int(
-                    connection.execute("SELECT COUNT(*) AS c FROM sum_cells").fetchone()[
-                        "c"
-                    ]
+                    connection.execute(
+                        "SELECT COUNT(*) AS c FROM sum_cells"
+                    ).fetchone()["c"]
                 )
         except (sqlite3.Error, SumStorageError) as exc:
             raise SumStorageError("Snapshot source workbook could not be read") from exc

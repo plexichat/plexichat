@@ -179,7 +179,9 @@ class ApnsMixin(PushManagerBase):
                         or len(key) > MAX_APNS_DATA_KEY_LENGTH
                         or len(payload_dict) >= MAX_APNS_DATA_KEYS
                     ):
-                        logger.debug(f"APNs payload key {k!r} dropped: reserved/invalid")
+                        logger.debug(
+                            f"APNs payload key {k!r} dropped: reserved/invalid"
+                        )
                         continue
                     try:
                         if isinstance(v, str):

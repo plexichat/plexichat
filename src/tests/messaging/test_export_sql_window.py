@@ -8,6 +8,7 @@ service fetched the newest ``max_messages`` rows (``ORDER BY id DESC``) and then
 date-filtered in Python, so an export window older than those rows came back
 empty, and every transcript was newest-first.
 """
+
 from typing import Any, cast
 
 import pytest
@@ -89,7 +90,9 @@ def test_export_of_an_older_window_is_chronological(db):
     _prereqs(db, _CONV_B)
     _seed(db, _CONV_B, _OLD_MS, _OLD_IDS)
     _seed(db, _CONV_B, _NEW_MS, _NEW_IDS)
-    service = TranscriptExportService(None, MessageRepository(db), cast(Any, _StubParticipants()))
+    service = TranscriptExportService(
+        None, MessageRepository(db), cast(Any, _StubParticipants())
+    )
 
     messages = service._get_messages_for_export(
         requester_id=_USER_ID,

@@ -32,9 +32,7 @@ def _assert_budget(db, label, ceiling, call):
     _clear(db)
     result = call()
     count = db.get_request_metrics()["query_count"]
-    assert count <= ceiling, (
-        f"{label} issued {count} queries, budget is {ceiling}"
-    )
+    assert count <= ceiling, f"{label} issued {count} queries, budget is {ceiling}"
     return result
 
 

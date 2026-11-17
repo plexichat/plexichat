@@ -28,6 +28,7 @@ without a session lookup -- behaves exactly as before.
 from contextvars import ContextVar
 from typing import Any, Optional, Tuple
 
+
 def _bound_request_context():
     """The middleware's per-request context, when one is bound.
 

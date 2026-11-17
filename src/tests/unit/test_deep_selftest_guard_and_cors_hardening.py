@@ -56,9 +56,11 @@ class TestWildcardCorsCredentialsGuard:
 
         from src.api import config as api_config
 
-        monkeypatch.setattr(config, "get", lambda key, default=None: (
-            api_conf if key == "api" else default
-        ))
+        monkeypatch.setattr(
+            config,
+            "get",
+            lambda key, default=None: api_conf if key == "api" else default,
+        )
         api_config.clear_api_config_cache()
         return api_config.get_api_config()
 

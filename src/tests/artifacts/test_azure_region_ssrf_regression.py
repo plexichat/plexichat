@@ -37,9 +37,7 @@ def test_hostile_azure_region_is_rejected(region):
 
 
 def test_valid_azure_region_is_normalized():
-    provider = AzureSpeechProvider(
-        {"azure_key": "key", "azure_region": " WestUS2 "}
-    )
+    provider = AzureSpeechProvider({"azure_key": "key", "azure_region": " WestUS2 "})
     assert provider._region == "westus2"
 
 

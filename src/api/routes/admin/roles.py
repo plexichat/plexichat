@@ -49,7 +49,9 @@ def _require_role_manager(request: Request) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _load_hierarchy(db, current_admin_id: int, target_admin_id: int, role_id: int) -> dict:
+def _load_hierarchy(
+    db, current_admin_id: int, target_admin_id: int, role_id: int
+) -> dict:
     """Resolve every hierarchy input for a role mutation in one query.
 
     Returns ``current_pos``, ``target_pos``, ``admin_exists``, ``role_pos``

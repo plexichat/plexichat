@@ -15,14 +15,39 @@ from src.core.embeds.validator import sanitize_message_embeds
 @pytest.mark.parametrize(
     "payload",
     [
-        [{"title": "x", "image": {"url": "https://example.com/a.png",
-                                  "proxy_url": "http://169.254.169.254/latest/meta-data"}}],
-        [{"title": "x", "thumbnail": {"url": "https://example.com/a.png",
-                                      "proxy_url": "http://127.0.0.1/internal"}}],
-        [{"title": "x", "video": {"url": "https://example.com/v.mp4",
-                                  "proxy_url": "http://localhost/admin"}}],
-        [{"title": "x", "author": {"name": "a",
-                                   "proxy_icon_url": "http://[::1]/secret"}}],
+        [
+            {
+                "title": "x",
+                "image": {
+                    "url": "https://example.com/a.png",
+                    "proxy_url": "http://169.254.169.254/latest/meta-data",
+                },
+            }
+        ],
+        [
+            {
+                "title": "x",
+                "thumbnail": {
+                    "url": "https://example.com/a.png",
+                    "proxy_url": "http://127.0.0.1/internal",
+                },
+            }
+        ],
+        [
+            {
+                "title": "x",
+                "video": {
+                    "url": "https://example.com/v.mp4",
+                    "proxy_url": "http://localhost/admin",
+                },
+            }
+        ],
+        [
+            {
+                "title": "x",
+                "author": {"name": "a", "proxy_icon_url": "http://[::1]/secret"},
+            }
+        ],
     ],
 )
 def test_proxy_url_fields_block_ssrf(payload):
@@ -42,14 +67,25 @@ def test_proxy_url_fields_block_ssrf(payload):
 def test_proxy_url_fields_block_unsafe_values(proxy):
     with pytest.raises(Exception):
         sanitize_message_embeds(
-            [{"title": "x", "image": {"url": "https://example.com/a.png",
-                                      "proxy_url": proxy}}]
+            [
+                {
+                    "title": "x",
+                    "image": {"url": "https://example.com/a.png", "proxy_url": proxy},
+                }
+            ]
         )
 
 
 def test_safe_proxy_url_is_preserved():
     result = sanitize_message_embeds(
-        [{"title": "x", "image": {"url": "https://example.com/a.png",
-                                  "proxy_url": "https://cdn.example.com/a.png"}}]
+        [
+            {
+                "title": "x",
+                "image": {
+                    "url": "https://example.com/a.png",
+                    "proxy_url": "https://cdn.example.com/a.png",
+                },
+            }
+        ]
     )
     assert result[0]["image"]["proxy_url"] == "https://cdn.example.com/a.png"

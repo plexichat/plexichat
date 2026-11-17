@@ -294,9 +294,7 @@ class SumManagerOperations(SumManagerProtocol):
                 # into an exported spreadsheet as an attacker-chosen formula.
                 # This is the single normalization choke point for writes.
                 try:
-                    formula = bound_formula_text(
-                        formula, error_cls=SumValidationError
-                    )
+                    formula = bound_formula_text(formula, error_cls=SumValidationError)
                 except HardeningViolation as exc:
                     # reject_control_characters always raises HardeningViolation
                     # (it has no error_cls hook), so normalize it to the

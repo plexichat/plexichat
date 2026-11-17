@@ -116,20 +116,20 @@ def test_validated_evidence_ids_normalises_valid_inputs():
 @pytest.mark.parametrize(
     "bad",
     [
-        ["1,2"],            # comma injection -> extra ids on read
-        ["1\n2"],           # control character / log forging
-        ["123\x00"],        # NUL byte
-        ["1<script>2"],     # markup
-        [" 123"],           # whitespace
-        ["１２３"],          # non-ASCII digit look-alikes
-        ["-1"],             # negative
-        [0],                # zero
+        ["1,2"],  # comma injection -> extra ids on read
+        ["1\n2"],  # control character / log forging
+        ["123\x00"],  # NUL byte
+        ["1<script>2"],  # markup
+        [" 123"],  # whitespace
+        ["１２３"],  # non-ASCII digit look-alikes
+        ["-1"],  # negative
+        [0],  # zero
         [-5],
         [MAX_SNOWFLAKE_ID + 1],
-        [True],             # bool is an int subclass
-        [1.5],              # float
-        [["1"]],            # nested
-        "123",              # a bare string is not a list
+        [True],  # bool is an int subclass
+        [1.5],  # float
+        [["1"]],  # nested
+        "123",  # a bare string is not a list
     ],
 )
 def test_validated_evidence_ids_rejects_injected_or_out_of_range(bad):

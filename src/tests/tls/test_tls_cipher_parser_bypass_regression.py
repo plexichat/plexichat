@@ -62,4 +62,6 @@ def test_hardened_defaults_and_clean_lists_still_accepted():
     assert validate_cipher_string(SECURE_CIPHERS) == SECURE_CIPHERS
     good = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384"
     assert validate_cipher_string(good) == good
-    assert validate_cipher_string("ECDHE+AESGCM,!RC4 !3DES") == "ECDHE+AESGCM,!RC4 !3DES"
+    assert (
+        validate_cipher_string("ECDHE+AESGCM,!RC4 !3DES") == "ECDHE+AESGCM,!RC4 !3DES"
+    )

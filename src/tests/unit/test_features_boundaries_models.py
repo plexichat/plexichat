@@ -80,7 +80,9 @@ class TestFeatureSettingsBoundaries:
             UpdateFeaturesRequest(
                 rate_limit_tier="bad tier!", expires_at=None, notes=None
             ),
-            UpdateFeaturesRequest(rate_limit_tier=None, expires_at=None, notes="a\x00b"),
+            UpdateFeaturesRequest(
+                rate_limit_tier=None, expires_at=None, notes="a\x00b"
+            ),
             UpdateFeaturesRequest(
                 rate_limit_tier=None, expires_at=None, notes="n" * 2001
             ),
@@ -147,7 +149,9 @@ class TestReportBoundaries:
 
     def test_status_update_bounded(self):
         _invalid(reports.ReportStatusUpdateRequest, status="bogus")
-        _invalid(reports.ReportStatusUpdateRequest, status="open", resolution="x" * 2001)
+        _invalid(
+            reports.ReportStatusUpdateRequest, status="open", resolution="x" * 2001
+        )
         _invalid(reports.ReportStatusUpdateRequest, status="open", assigned_to="-1")
 
 
@@ -189,7 +193,9 @@ class TestScheduledMessageBoundaries:
         base = {"conversation_id": "1", "content": "hi", "scheduled_at": 1}
         scheduled_messages.ScheduledMessageRequest(**base)
         _invalid(scheduled_messages.ScheduledMessageRequest, **{**base, "content": " "})
-        _invalid(scheduled_messages.ScheduledMessageRequest, **{**base, "scheduled_at": 0})
+        _invalid(
+            scheduled_messages.ScheduledMessageRequest, **{**base, "scheduled_at": 0}
+        )
         _invalid(
             scheduled_messages.ScheduledMessageRequest,
             **{**base, "scheduled_at": 10**14},

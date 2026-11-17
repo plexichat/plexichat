@@ -8,6 +8,7 @@ docs/admin-hardening.md). These tests pin the tuple shape for
 
 Run with: pytest src/tests/messaging/test_forwarding_row_shapes.py -q
 """
+
 from typing import Any, cast
 
 import pytest

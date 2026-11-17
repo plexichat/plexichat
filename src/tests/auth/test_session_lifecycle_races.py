@@ -137,7 +137,5 @@ def test_concurrent_refresh_of_same_token_cannot_both_rotate(
 
     assert first is not None
     assert second is None
-    row = db.fetch_one(
-        "SELECT revoked FROM auth_sessions WHERE id = ?", (session_id,)
-    )
+    row = db.fetch_one("SELECT revoked FROM auth_sessions WHERE id = ?", (session_id,))
     assert row is not None and row["revoked"] == 1

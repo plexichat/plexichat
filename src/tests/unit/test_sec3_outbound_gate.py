@@ -55,7 +55,11 @@ GATE_TOKENS = (
 def _production_files():
     for path in sorted((ROOT / "src").rglob("*.py")):
         relative = path.relative_to(ROOT).as_posix()
-        if "/tests/" in relative or "/selftest/" in relative or relative.startswith("src/cli/"):
+        if (
+            "/tests/" in relative
+            or "/selftest/" in relative
+            or relative.startswith("src/cli/")
+        ):
             continue
         yield relative, path
 
@@ -84,10 +88,14 @@ def _bounded_http_calls():
             name = _dotted(node.func)
             root = name.split(".")[0] if "." in name else name
             is_http = (
-                root in ("requests", "httpx")
-                and name.count(".") == 1
-                and name.rsplit(".", 1)[1] in HTTP_VERBS
-            ) or name == "urlopen" or name.endswith(".urlopen")
+                (
+                    root in ("requests", "httpx")
+                    and name.count(".") == 1
+                    and name.rsplit(".", 1)[1] in HTTP_VERBS
+                )
+                or name == "urlopen"
+                or name.endswith(".urlopen")
+            )
             if not is_http:
                 continue
             all_calls.append((relative, node.lineno, name))
@@ -150,7 +158,8 @@ def test_no_production_module_imports_the_raw_urlopen():
             if any(alias.name == "urlopen" for alias in node.names):
                 offenders.append(f"{relative}:{node.lineno}")
     assert not offenders, (
-        "import urlopen from src.utils.outbound instead of urllib.request: " + ", ".join(offenders)
+        "import urlopen from src.utils.outbound instead of urllib.request: "
+        + ", ".join(offenders)
     )
 
 

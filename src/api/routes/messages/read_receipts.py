@@ -276,20 +276,26 @@ async def acknowledge_messages(
                     user_ids = []
 
                     if is_server_channel:
-                        # For server channels, we MUST use the servers module
+                        # Scope to members who can actually VIEW the channel —
+                        # a raw server-member list would leak read receipts in
+                        # restricted/private channels. The resolver fails closed.
                         try:
-                            servers = api.get_servers()
-                            if servers and current_server_id:
-                                sid = int(current_server_id)
-                                # Fetch all members of the server
-                                user_ids = servers.get_member_user_ids(sid)
-                                logger.debug(
-                                    f"ACK: Server channel {cid} in server {sid} has {len(user_ids)} members"
-                                )
+                            from src.core.events.gateway_emit import (
+                                resolve_channel_event_recipients,
+                            )
+
+                            sid = int(current_server_id) if current_server_id else None
+                            user_ids = resolve_channel_event_recipients(
+                                cid, guild_id=sid
+                            )
+                            logger.debug(
+                                f"ACK: Server channel {cid} in server {sid} scoped to {len(user_ids)} viewers"
+                            )
                         except Exception as e:
                             logger.debug(
-                                f"Failed to get server member IDs for ACK: {e}"
+                                f"Failed to scope ACK recipients for channel {cid}: {e}"
                             )
+                            user_ids = []
                     else:
                         # For DMs/Groups, messaging module is correct
                         try:
@@ -402,8 +408,16 @@ async def _dispatch_message_ack_broadcast(
                     f"read receipt server channel check failed: {channel_error}"
                 )
         try:
-            if is_server_channel and server_id is not None and servers_mod is not None:
-                user_ids = servers_mod.get_member_user_ids(int(server_id))
+            if is_server_channel and server_id is not None:
+                # Scope to channel viewers only — a raw server-member list
+                # leaks read receipts in restricted/private channels.
+                from src.core.events.gateway_emit import (
+                    resolve_channel_event_recipients,
+                )
+
+                user_ids = resolve_channel_event_recipients(
+                    channel_id, guild_id=int(server_id)
+                )
             elif msg_manager is not None:
                 user_ids = msg_manager.get_manager().get_participant_ids(channel_id)
         except Exception as e:

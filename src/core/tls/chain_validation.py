@@ -25,7 +25,11 @@ from typing import Any, Iterable, Optional, Sequence
 from src.core.security.hardening import bounded_int
 from src.core.security.secrets import constant_time_compare
 
-from .config_validation import TLSConfigValidationError, validate_fingerprint, validate_hostname
+from .config_validation import (
+    TLSConfigValidationError,
+    validate_fingerprint,
+    validate_hostname,
+)
 
 MAX_CHAIN_CERTS = 10
 MAX_CERT_BYTES = 1_000_000
@@ -51,7 +55,9 @@ def _x509():
     try:
         from cryptography import x509
     except ImportError as exc:  # pragma: no cover - cryptography is a dependency
-        raise TLSChainError("cryptography is required for certificate validation") from exc
+        raise TLSChainError(
+            "cryptography is required for certificate validation"
+        ) from exc
     return x509
 
 
@@ -122,7 +128,9 @@ def _require_ca(cert: Any, x509: Any) -> None:
     except x509.ExtensionNotFound as exc:
         raise TLSChainError("issuer certificate has no BasicConstraints") from exc
     except (ValueError, TypeError) as exc:
-        raise TLSChainError("issuer certificate extensions could not be parsed") from exc
+        raise TLSChainError(
+            "issuer certificate extensions could not be parsed"
+        ) from exc
     if not basic.value.ca:
         raise TLSChainError("issuer certificate is not a CA")
     try:
@@ -135,7 +143,9 @@ def _require_ca(cert: Any, x509: Any) -> None:
         raise TLSChainError("issuer certificate may not sign certificates")
 
 
-def verify_chain(certificates: Sequence[Any], *, now: Optional[datetime] = None) -> None:
+def verify_chain(
+    certificates: Sequence[Any], *, now: Optional[datetime] = None
+) -> None:
     """Verify signatures, validity and basic constraints of an ordered chain."""
     x509 = _x509()
     if not certificates:

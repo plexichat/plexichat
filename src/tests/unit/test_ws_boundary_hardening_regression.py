@@ -37,10 +37,10 @@ from src.core.security.hardening import HardeningViolation
 @pytest.mark.parametrize(
     "value",
     [
-        "deadbeef\n",          # ``$`` matched before this trailing newline
-        "deadbeef\r\n",        # CR + LF
-        "a" * 32 + "\n",       # otherwise-valid length, one trailing newline
-        "ab\ncd",              # embedded control character
+        "deadbeef\n",  # ``$`` matched before this trailing newline
+        "deadbeef\r\n",  # CR + LF
+        "a" * 32 + "\n",  # otherwise-valid length, one trailing newline
+        "ab\ncd",  # embedded control character
     ],
 )
 def test_session_id_rejects_trailing_or_embedded_newline(value):
@@ -68,9 +68,7 @@ def test_decompress_payload_clamps_explicit_oversized_limit():
 
 
 def test_streaming_decompressor_clamps_explicit_oversized_limit():
-    stream = ZlibCompressor().compress(
-        {"d": "A" * (MAX_DECOMPRESSED_BYTES + 1)}
-    )
+    stream = ZlibCompressor().compress({"d": "A" * (MAX_DECOMPRESSED_BYTES + 1)})
     with pytest.raises(CompressionError):
         ZlibDecompressor(max_decompressed_size=10**9).decompress(stream)
 

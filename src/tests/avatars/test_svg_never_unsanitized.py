@@ -14,6 +14,7 @@ Covers:
 These tests FAIL on the pre-fix code (validator honoured operator config,
 no upload sniffing, ``get_*_data`` returned poisoned rows verbatim).
 """
+
 from typing import Any, cast
 
 import hashlib
@@ -67,6 +68,7 @@ def avatar_manager(db):
 def svg_allowed_config():
     """Simulate an operator adding SVG to the avatar allow-list."""
     from utils.config import _config_instance as _config_for_test
+
     loader = cast(Any, _config_for_test)
 
     loader.config["avatars"] = {

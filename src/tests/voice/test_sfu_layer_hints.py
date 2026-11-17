@@ -92,8 +92,10 @@ async def test_rest_still_honours_an_explicit_consumer_id() -> None:
     applied = await adapter.set_preferred_layers("voice_9", "user_5", "explicit", 1, 1)
 
     assert applied is True
-    assert cast(Any, adapter._request).await_args.args[1].endswith(
-        "consumers/explicit/preferredLayers"
+    assert (
+        cast(Any, adapter._request)
+        .await_args.args[1]
+        .endswith("consumers/explicit/preferredLayers")
     )
 
 

@@ -87,7 +87,9 @@ def validate_certificate_pair(
     return cert, key
 
 
-def validate_config_path_tokens(path: object, *, field: str = "certificate path") -> str:
+def validate_config_path_tokens(
+    path: object, *, field: str = "certificate path"
+) -> str:
     """Reject traversal / control-character / over-long tokens in a config path.
 
     This is the *pre-resolution* check applied to operator-supplied config

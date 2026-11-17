@@ -421,8 +421,8 @@ class DSARManager:
 
             generator = ExportFormatGenerator(db=self._db)
 
-            retention_days = (
-                effective_config.get("harvester", {}).get("retention_days", 7)
+            retention_days = effective_config.get("harvester", {}).get(
+                "retention_days", 7
             )
             expires_at = int(time.time()) + (retention_days * 86400)
 

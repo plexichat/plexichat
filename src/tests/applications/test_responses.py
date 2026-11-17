@@ -1,4 +1,5 @@
 """Tests for application interaction responses."""
+
 from typing import Any, cast
 
 import pytest

@@ -218,7 +218,9 @@ class MessagesCRUDBase:
                                         embeds=embeds,
                                     )
                     elif messaging:
-                        ensure = getattr(servers_mod, "ensure_channel_conversation", None)
+                        ensure = getattr(
+                            servers_mod, "ensure_channel_conversation", None
+                        )
                         if ensure is not None:
                             try:
                                 repaired = await run_in_threadpool(ensure, channel_id)

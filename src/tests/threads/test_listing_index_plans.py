@@ -29,7 +29,9 @@ _FROM = (
 )
 _ACTIVE = _FROM + "ORDER BY t.last_message_at DESC NULLS LAST"
 _ARCHIVED = _FROM + "ORDER BY t.archived_at DESC, t.id DESC LIMIT ?"
-_ARCHIVED_BEFORE = _FROM + "AND t.archived_at < ? ORDER BY t.archived_at DESC, t.id DESC LIMIT ?"
+_ARCHIVED_BEFORE = (
+    _FROM + "AND t.archived_at < ? ORDER BY t.archived_at DESC, t.id DESC LIMIT ?"
+)
 
 
 def _schema_statements() -> list[str]:

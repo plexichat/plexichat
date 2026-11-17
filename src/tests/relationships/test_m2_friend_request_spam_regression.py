@@ -6,6 +6,7 @@ Covers ``POST /friends/requests`` (``FriendRequestMixin.create_relationship``):
 - Privacy: a recipient with ``allow_friend_requests`` disabled gets a 403
   denial; the default (flag unset) still allows the request.
 """
+
 from typing import Any, cast
 
 import asyncio

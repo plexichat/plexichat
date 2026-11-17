@@ -243,7 +243,9 @@ def _error(status_code: int, message: str) -> JoinApiError:
 )
 async def list_joins(
     request: Request,
-    status: Optional[str] = Query(None, max_length=32, description="Filter by connection status"),
+    status: Optional[str] = Query(
+        None, max_length=32, description="Filter by connection status"
+    ),
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """List federation Joins (client contract for ``GET /Join/list``).
