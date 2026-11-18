@@ -233,7 +233,13 @@ class TemplateManager:
         if not row:
             return None
 
-        if not row["is_public"] and user_id and row["creator_id"] != user_id:
+        # Fail CLOSED for private templates: the caller identity is what
+        # authorizes access, so an omitted/unknown user (``None``) must not be
+        # treated as a wildcard grant. Previously the truthiness check let
+        # every caller that omitted ``user_id`` read any private template.
+        if not row["is_public"] and (
+            user_id is None or row["creator_id"] != user_id
+        ):
             logger.debug(
                 f"Template access denied: creator {row['creator_id']} != user {user_id}"
             )
@@ -279,9 +285,17 @@ class TemplateManager:
         )
         return [self._row_to_template(row) for row in rows]
 
-    def preview_template(self, code: str) -> Optional[TemplateData]:
-        """Preview template data without applying."""
-        template = self.get_template(code)
+    def preview_template(
+        self, code: str, user_id: Optional[int] = None
+    ) -> Optional[TemplateData]:
+        """Preview template data without applying.
+
+        Private templates are only previewable by their creator. The caller
+        identity must be propagated to ``get_template``; passing ``None`` used
+        to skip the privacy check entirely and leak a private template's
+        channel/role snapshot to anyone holding its code.
+        """
+        template = self.get_template(code, user_id)
         if not template:
             raise TemplateNotFoundError("Template not found")
 

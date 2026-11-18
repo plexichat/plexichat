@@ -6,6 +6,7 @@ from ..exceptions import (
     ChannelAccessDeniedError,
     ChannelFullError,
     ChannelTypeError,
+    PermissionDeniedError,
     UserNotInChannelError,
 )
 
@@ -14,6 +15,60 @@ from .protocol import VoiceProtocol
 
 
 class ModerationMixin(VoiceProtocol):
+    def _require_can_moderate_member(
+        self,
+        moderator_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        permission: str,
+    ) -> None:
+        """Enforce role hierarchy before moderating another member.
+
+        Holding ``voice.mute_members`` / ``voice.deafen_members`` /
+        ``voice.move_members`` is not sufficient on its own: without a
+        hierarchy check a moderator could mute, deafen, move or disconnect
+        the server owner or a peer ranked at or above them. Mirror the
+        servers module's kick/ban gate so voice moderation obeys the same
+        member-target rules.
+
+        A moderator targeting themselves is a no-op for hierarchy purposes;
+        self-mute/self-deafen go through the ordinary self-service path.
+        Fails closed when the servers module is not wired, since role rows
+        cannot be read in that case.
+        """
+        if int(moderator_id) == int(target_user_id):
+            return
+
+        if not self._servers:
+            raise PermissionDeniedError(
+                "Cannot verify role hierarchy: servers module unavailable",
+                permission,
+            )
+
+        server_row = self._db.fetch_one(
+            "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+            (server_id,),
+        )
+        if not server_row:
+            raise PermissionDeniedError("Server not found", permission)
+
+        owner_id = server_row["owner_id"]
+        is_owner = int(owner_id) == int(moderator_id)
+        target_is_owner = int(owner_id) == int(target_user_id)
+        if target_is_owner:
+            raise PermissionDeniedError("Cannot moderate the server owner", permission)
+
+        # Imported lazily: the servers package wires core modules together at
+        # import time, and this helper only needs the pure hierarchy predicate.
+        from src.core.servers.permission_utils import can_manage_member
+
+        user_roles = self._servers._get_member_role_rows(server_id, moderator_id)
+        target_roles = self._servers._get_member_role_rows(server_id, target_user_id)
+        if not can_manage_member(user_roles, target_roles, is_owner, target_is_owner):
+            raise PermissionDeniedError(
+                "Cannot moderate a member with equal or higher role", permission
+            )
+
     def server_mute(
         self,
         moderator_id: SnowflakeID,
@@ -30,6 +85,10 @@ class ModerationMixin(VoiceProtocol):
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
+
+        self._require_can_moderate_member(
+            moderator_id, target_user_id, server_id, "voice.mute_members"
+        )
 
         now = self._get_timestamp()
         self._db.execute(
@@ -60,6 +119,10 @@ class ModerationMixin(VoiceProtocol):
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
 
+        self._require_can_moderate_member(
+            moderator_id, target_user_id, server_id, "voice.mute_members"
+        )
+
         now = self._get_timestamp()
         self._db.execute(
             "UPDATE voice_states SET server_mute = 0, last_activity = ? WHERE user_id = ?",
@@ -86,6 +149,10 @@ class ModerationMixin(VoiceProtocol):
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
+
+        self._require_can_moderate_member(
+            moderator_id, target_user_id, server_id, "voice.deafen_members"
+        )
 
         now = self._get_timestamp()
         self._db.execute(
@@ -115,6 +182,10 @@ class ModerationMixin(VoiceProtocol):
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
+
+        self._require_can_moderate_member(
+            moderator_id, target_user_id, server_id, "voice.deafen_members"
+        )
 
         now = self._get_timestamp()
         self._db.execute(
@@ -151,6 +222,19 @@ class ModerationMixin(VoiceProtocol):
             raise UserNotInChannelError(
                 f"User {target_user_id} is not in a voice channel"
             )
+
+        # A moderator's authority is scoped to their own server. Without this
+        # check, ``voice.move_members`` in server A could drag a user who is
+        # connected to server B into A's channel (and silently reassign their
+        # voice state's server_id).
+        if state.server_id != server_id:
+            raise ChannelAccessDeniedError(
+                "User is not in this server's voice channel", "voice.move_members"
+            )
+
+        self._require_can_moderate_member(
+            moderator_id, target_user_id, server_id, "voice.move_members"
+        )
 
         # Agent 34 M3: moving a member into a channel they cannot connect to
         # (or that is full) must fail just like a normal join_channel.
@@ -217,6 +301,10 @@ class ModerationMixin(VoiceProtocol):
 
         if state.server_id != server_id:
             raise ChannelAccessDeniedError("User is not in this server's voice channel")
+
+        self._require_can_moderate_member(
+            moderator_id, target_user_id, server_id, "voice.move_members"
+        )
 
         self._db.execute(
             "DELETE FROM voice_speaker_requests WHERE user_id = ?", (target_user_id,)

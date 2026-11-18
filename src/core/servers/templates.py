@@ -53,9 +53,11 @@ def get_public_templates(limit: int = 50) -> List[ServerTemplate]:
     return _get_manager().get_public_templates(limit)
 
 
-def preview_template(code: str) -> Optional[TemplateData]:
+def preview_template(
+    code: str, user_id: Optional[SnowflakeID] = None
+) -> Optional[TemplateData]:
     """Preview template data without applying."""
-    return _get_manager().preview_template(code)
+    return _get_manager().preview_template(code, user_id)
 
 
 def apply_template(

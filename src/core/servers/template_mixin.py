@@ -50,9 +50,11 @@ class TemplateMixin:
         """Get public templates."""
         return self._template_manager.get_public_templates(limit)
 
-    def preview_template(self, code: str) -> Optional[TemplateData]:
+    def preview_template(
+        self, code: str, user_id: Optional[SnowflakeID] = None
+    ) -> Optional[TemplateData]:
         """Preview template data without applying."""
-        return self._template_manager.preview_template(code)
+        return self._template_manager.preview_template(code, user_id)
 
     def apply_template(
         self,

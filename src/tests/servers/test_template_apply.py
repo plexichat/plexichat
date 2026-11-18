@@ -285,7 +285,7 @@ class TestTemplateChannelPreservation:
             name="Settings Template",
         )
 
-        preview = servers.preview_template(template.code)
+        preview = servers.preview_template(template.code, owner.id)
         nsfw_channels = [ch for ch in preview.channels if ch.get("nsfw")]
 
         assert len(nsfw_channels) > 0
@@ -319,7 +319,7 @@ class TestTemplateRolePreservation:
             name="Permission Template",
         )
 
-        preview = servers.preview_template(template.code)
+        preview = servers.preview_template(template.code, owner.id)
         custom_roles = [r for r in preview.roles if r["name"] == "Custom Role"]
 
         assert len(custom_roles) == 1
@@ -347,7 +347,7 @@ class TestTemplateRolePreservation:
             name="Style Template",
         )
 
-        preview = servers.preview_template(template.code)
+        preview = servers.preview_template(template.code, owner.id)
         styled_roles = [r for r in preview.roles if r["name"] == "Styled Role"]
 
         assert len(styled_roles) == 1
@@ -367,7 +367,7 @@ class TestTemplateRolePreservation:
             name="No Default Template",
         )
 
-        preview = servers.preview_template(template.code)
+        preview = servers.preview_template(template.code, owner.id)
         default_roles = [r for r in preview.roles if r["name"] == "@everyone"]
 
         assert len(default_roles) == 0

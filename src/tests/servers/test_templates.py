@@ -202,7 +202,7 @@ class TestTemplatePreview:
             name="Preview Template",
         )
 
-        preview = servers.preview_template(template.code)
+        preview = servers.preview_template(template.code, owner.id)
 
         assert preview is not None
         assert isinstance(preview.channels, list)
@@ -230,7 +230,7 @@ class TestTemplatePreview:
             name="Channel Template",
         )
 
-        preview = servers.preview_template(template.code)
+        preview = servers.preview_template(template.code, owner.id)
         channel_names = [ch["name"] for ch in preview.channels]
 
         assert "announcements" in channel_names
@@ -257,7 +257,7 @@ class TestTemplatePreview:
             name="Category Template",
         )
 
-        preview = servers.preview_template(template.code)
+        preview = servers.preview_template(template.code, owner.id)
         category_names = [cat["name"] for cat in preview.categories]
 
         assert "Text Channels" in category_names
