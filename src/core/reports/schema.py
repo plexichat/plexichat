@@ -49,6 +49,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_server ON reports(server_id);
 -- Server-scoped report lists order by created_at.
 CREATE INDEX IF NOT EXISTS idx_reports_server_created ON reports(server_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_assigned ON reports(assigned_to);
+-- Assigned-queue filters assigned_to + status.
+CREATE INDEX IF NOT EXISTS idx_reports_assigned_status ON reports(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_reports_priority ON reports(priority);
 -- The moderator queue filters on status and orders by created_at DESC. A
 -- composite index lets that query read in order instead of sorting every row.
