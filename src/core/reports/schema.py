@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS message_reports (
 
 -- Message reports indexes
 CREATE INDEX IF NOT EXISTS idx_message_reports_status ON message_reports(status);
+CREATE INDEX IF NOT EXISTS idx_message_reports_status_priority
+    ON message_reports(status, priority);
 CREATE INDEX IF NOT EXISTS idx_message_reports_status_at
     ON message_reports(status, reported_at);
 CREATE INDEX IF NOT EXISTS idx_message_reports_reporter ON message_reports(reporter_id);
