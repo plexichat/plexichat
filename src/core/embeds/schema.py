@@ -85,6 +85,9 @@ CREATE TABLE IF NOT EXISTS embed_preview_rate_limits (
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_embed_created_by ON embed_embeds(created_by);
+-- A user's embeds list newest-first.
+CREATE INDEX IF NOT EXISTS idx_embed_created_by_created
+    ON embed_embeds(created_by, created_at);
 CREATE INDEX IF NOT EXISTS idx_embed_fields_embed ON embed_fields(embed_id);
 CREATE INDEX IF NOT EXISTS idx_embed_message ON embed_message_embeds(message_id);
 CREATE INDEX IF NOT EXISTS idx_embed_embed ON embed_message_embeds(embed_id);
