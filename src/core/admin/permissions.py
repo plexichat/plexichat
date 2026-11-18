@@ -15,6 +15,10 @@ from dataclasses import dataclass
 import utils.logger as logger
 
 from .request_roles import cached_session_roles, clear_session_roles
+from .permission_cache import (
+    get_cached_max_position,
+    invalidate_position_cache,
+)
 
 
 @dataclass
@@ -88,6 +92,8 @@ PERMISSION_SCOPES = {
     "admin.edit": "Edit admin accounts",
     "admin.roles": "Manage admin roles and permissions",
     "admin.approvals": "Handle approval workflows",
+    # Application / bot oversight
+    "admin.bots.read": "View system-wide application and bot oversight data",
     # Data export (DSAR)
     "data_export.read": "View and manage data export requests",
     "data_export.process": "Approve, deny, and generate data exports",
@@ -571,6 +577,13 @@ def get_admin_max_position(db, admin_id: int) -> int:
     """
     Get the highest position of all roles assigned to an admin.
 
+    The lookup is memoised for a short, bounded window because the hierarchy
+    checks (``can_manage_admin`` / ``can_manage_role``) resolve the same actor
+    repeatedly within a request. Every privilege mutation clears the cache via
+    :func:`invalidate_admin_permission_caches`, so a revoked/demoted role is
+    reflected on the very next check. The loader fails closed (0 on error or
+    no roles), so a cold miss or a broken row can never synthesise a grant.
+
     Args:
         db: Database instance
         admin_id: The admin user ID
@@ -578,22 +591,26 @@ def get_admin_max_position(db, admin_id: int) -> int:
     Returns:
         The maximum position value across all assigned roles (0 if no roles)
     """
-    try:
-        row = db.fetch_one(
-            """
-            SELECT COALESCE(MAX(r.position), 0) as max_pos
-            FROM admin_roles r
-            JOIN admin_role_assignments a ON r.id = a.role_id
-            WHERE a.admin_id = ?
-        """,
-            (admin_id,),
-        )
-        if row:
-            return row["max_pos"] if isinstance(row, dict) else int(row[0])
-        return 0
-    except Exception as e:
-        logger.error(f"Error getting admin max position: {e}")
-        return 0
+
+    def _load() -> int:
+        try:
+            row = db.fetch_one(
+                """
+                SELECT COALESCE(MAX(r.position), 0) as max_pos
+                FROM admin_roles r
+                JOIN admin_role_assignments a ON r.id = a.role_id
+                WHERE a.admin_id = ?
+            """,
+                (admin_id,),
+            )
+            if row:
+                return row["max_pos"] if isinstance(row, dict) else int(row[0])
+            return 0
+        except Exception as e:
+            logger.error(f"Error getting admin max position: {e}")
+            return 0
+
+    return get_cached_max_position(db, admin_id, _load)
 
 
 def can_manage_admin(db, current_admin_id: int, target_admin_id: int) -> bool:
@@ -700,17 +717,23 @@ def invalidate_admin_permission_caches() -> None:
 
     ``src.core.auth.privilege_cache.invalidate_privilege_caches`` clears the
     memoised *user* auth context (``token_verify:*``, ``user_data:*`` ...) but
-    never touches the request-scoped role payloads that
-    :func:`check_permission` reuses via ``cached_session_roles``.  Without this
-    call, a role edit / assignment / revocation followed by any further
-    authorization check in the same request would be decided against the
-    pre-mutation permission set -- a just-revoked scope still appears granted.
+    never touches the admin-side authorization caches:
+
+    * the request-scoped role payloads that :func:`check_permission` reuses via
+      ``cached_session_roles``; and
+    * the bounded, short-TTL role-position cache behind
+      :func:`get_admin_max_position` (used by the hierarchy gates).
+
+    Without this call, a role edit / assignment / revocation followed by any
+    further authorization check in the same request would be decided against
+    the pre-mutation permission set -- a just-revoked scope still appears
+    granted, and a demoted admin keeps its old hierarchy position.
 
     Call this from the mutation point after the database write succeeds.  It is
-    safe to call more than once and is a no-op when no session was validated in
-    the current request.
+    safe to call more than once and is a no-op when no state was cached.
     """
     clear_session_roles()
+    invalidate_position_cache()
 
 
 def log_admin_action(
