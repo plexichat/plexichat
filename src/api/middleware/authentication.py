@@ -30,6 +30,12 @@ import utils.logger as logger
 
 security = HTTPBearer(auto_error=False)
 
+# ``re.fullmatch(pattern_string, ...)`` rebuilds the cache key and routes
+# through the module-level wrapper on every call. Keep the compiled pattern
+# once; the restrictive Bearer/Bot grammar itself still lives inside
+# ``_extract_token`` so it stays auditable at the point of use.
+_TOKEN_PATTERN_CACHE: dict = {}
+
 
 class AuthenticationMiddleware:
     """ASGI middleware for hardened token validation."""
@@ -592,7 +598,12 @@ class AuthenticationMiddleware:
         return wrapped_send
 
     def _extract_token(self, auth_header: str) -> Optional[str]:
-        match = re.fullmatch(r"(Bearer|Bot) ([A-Za-z0-9._-]+)", auth_header)
+        pattern = r"(Bearer|Bot) ([A-Za-z0-9._-]+)"
+        compiled = _TOKEN_PATTERN_CACHE.get(pattern)
+        if compiled is None:
+            compiled = re.compile(pattern)
+            _TOKEN_PATTERN_CACHE[pattern] = compiled
+        match = compiled.fullmatch(auth_header)
         if match:
             return match.group(2)
         return None

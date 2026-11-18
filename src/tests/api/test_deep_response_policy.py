@@ -46,11 +46,11 @@ async def _run(
     error: bool = False,
     monkeypatch: pytest.MonkeyPatch,
 ) -> List[Header]:
-    monkeypatch.setattr(security_module, "_resolve_api_prefix", lambda: "/api/v1")
+    # One config read now feeds every policy input; stub that single seam.
     monkeypatch.setattr(
         security_module,
-        "_cors_settings",
-        lambda: (("https://good.example",), True),
+        "_security_policy",
+        lambda: ("/api/v1", ("https://good.example",), True),
     )
 
     async def downstream(scope, receive, send):
