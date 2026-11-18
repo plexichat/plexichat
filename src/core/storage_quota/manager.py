@@ -16,6 +16,27 @@ what a user may keep, not how many bytes the storage backend happens to share.
 The reservation ledger closes the check-then-upload race. A reservation is
 inserted with a short TTL before bytes are stored and removed in a ``finally``;
 concurrent uploads see each other's pending bytes.
+
+Multi-worker correctness
+------------------------
+
+The enforcement read (live usage + other pending reservations) is folded into
+the reservation INSERT as a single conditional ``INSERT ... SELECT`` statement.
+A statement is atomic on both SQLite and PostgreSQL, so no worker can observe
+an old total and insert a second reservation that pushes the user over quota.
+PostgreSQL additionally serialises the whole check on a per-user advisory lock;
+SQLite serialises the write at the first DELETE inside the transaction.
+
+The database layer maintains a short-TTL (1s) per-connection query cache. Every
+quota *mutation* explicitly invalidates it, so a worker never enforces a limit
+against a usage/limit snapshot cached before another worker's upload, delete,
+or override change. Reads that only display status may be up to one TTL stale;
+enforcement never is.
+
+Tracking is bounded: expired reservations are pruned globally on every reserve
+(not only for the reserving user), each user may hold at most
+``MAX_ACTIVE_RESERVATIONS_PER_USER`` reservations, and the process-local manager
+cache is an LRU with a fixed ceiling.
 """
 
 from __future__ import annotations
@@ -58,6 +79,38 @@ MAX_CONFIG_QUOTA_MB = MAX_OVERRIDE_LIMIT_BYTES // MIB
 MAX_LIST_LIMIT = 200
 MAX_LIST_OFFSET = 1_000_000
 MAX_LIST_PATH_CHARS = 512
+
+#: A single user may only hold this many in-flight reservations. Without a cap,
+#: a client that repeatedly starts uploads and aborts them (or a buggy caller)
+#: could grow ``storage_quota_reservations`` without bound within one TTL window.
+MAX_ACTIVE_RESERVATIONS_PER_USER = 128
+
+#: Upper bound on the process-local manager cache. Keyed by ``id(db)``; without
+#: an LRU ceiling, repeatedly constructed DB objects would leak managers.
+MAX_MANAGER_CACHE_ENTRIES = 64
+
+#: Largest single reservation accepted. Keeps the SUM in the guard statement
+#: inside signed 64-bit range while staying one byte above the largest legal
+#: limit, so clamping an absurd request can never turn a denied upload into an
+#: allowed one.
+MAX_RESERVATION_BYTES = MAX_OVERRIDE_LIMIT_BYTES + 1
+
+#: One statement performs the quota check and the reservation insert. The
+#: ``? = 1`` branch short-circuits the guard for unlimited users; otherwise the
+#: live usage and the other live reservations must leave room for ``amount``.
+#: Both subqueries are keyed by the reserving user, so no other user's bytes can
+#: influence the decision.
+_ATOMIC_RESERVE_SQL = """
+INSERT INTO storage_quota_reservations
+    (token, user_id, bytes, created_at, expires_at)
+SELECT ?, ?, ?, ?, ?
+WHERE ? = 1 OR (
+    (SELECT COALESCE(SUM(size), 0) FROM media_files
+      WHERE uploaded_by = ? AND deleted = 0) +
+    (SELECT COALESCE(SUM(bytes), 0) FROM storage_quota_reservations
+      WHERE user_id = ? AND expires_at > ?) + ? <= ?
+)
+"""
 
 #: Distinguishes "caller did not supply an override row" from an explicit
 #: ``None`` (no override exists) in :meth:`StorageQuotaManager.resolve_limit`.
@@ -354,6 +407,39 @@ class StorageQuotaManager:
             "default_limit_bytes": resolved["default_limit_bytes"],
         }
 
+    def _invalidate_quota_cache(self) -> None:
+        """Drop this worker's cached SQL reads before/after a quota mutation.
+
+        The database layer caches ``fetch_one``/``fetch_all`` for up to one TTL
+        (1s) per connection. That cache is local to each worker: a write on
+        worker A does not clear worker B's copy. Enforcing a quota from such a
+        copy would let a user whose usage just grew (or whose limit just shrank)
+        keep uploading until the entry expired. Every quota write therefore
+        clears the local cache first so the following reads - and the atomic
+        guard in :meth:`reserve` - see committed state.
+        """
+        invalidator = getattr(self._db, "_invalidate_query_cache", None)
+        if callable(invalidator):
+            try:
+                invalidator()
+            except Exception as exc:
+                # Cache invalidation is best-effort; the SQL guard is the
+                # authoritative enforcement point and never reads the cache.
+                logger.debug(f"storage quota query-cache invalidation failed: {exc}")
+
+    def _prune_expired_reservations(self, now: int) -> None:
+        """Remove expired reservations for *all* users.
+
+        The old cleanup only ran for the user doing the current reserve, so a
+        user who uploaded once and never returned left rows forever. Pruning
+        globally (and only expired rows) keeps the table bounded by the number
+        of uploads in the last TTL window without ever touching a live
+        reservation belonging to another user.
+        """
+        self._db.execute(
+            "DELETE FROM storage_quota_reservations WHERE expires_at <= ?", (now,)
+        )
+
     # ── reservations --------------------------------------------------------
 
     def reserve(self, user_id: int, requested_bytes: int) -> Optional[str]:
@@ -362,48 +448,95 @@ class StorageQuotaManager:
         Returns an opaque token to pass to :meth:`release`, or ``None`` for a
         zero-byte request. Raises ``StorageQuotaExceededError`` when the
         request would cross the effective cap.
+
+        The check and the insert are one atomic SQL statement (see
+        :data:`_ATOMIC_RESERVE_SQL`); a read-then-write check would be a TOCTOU
+        race between workers. A per-user advisory lock serialises PostgreSQL
+        workers and the first write in the transaction serialises SQLite ones.
         """
         amount = max(0, _as_int(requested_bytes, 0))
         if amount == 0:
             return None
+        # Clamp absurd requests before they reach signed 64-bit SUM arithmetic.
+        amount = min(amount, MAX_RESERVATION_BYTES)
 
         self._ensure_schema()
+        self._invalidate_quota_cache()
         now = int(time.time() * 1000)
         expires = now + self._reservation_ttl_seconds() * 1000
         token = uuid.uuid4().hex
+        uid = int(user_id)
+
+        # Bound the table for users who never come back to upload again. This is
+        # outside the transaction: it only deletes already-expired rows, so it
+        # can never remove a live reservation belonging to another user.
+        self._prune_expired_reservations(now)
+        self._invalidate_quota_cache()
 
         self._db.begin_transaction()
         try:
             # PostgreSQL needs an explicit per-user lock because two app
             # workers can evaluate the aggregate concurrently. SQLite's
-            # single-writer transaction provides the same serialization.
+            # single-writer transaction provides the same serialization; the
+            # DELETE below is deliberately the first write so the write lock is
+            # taken before any read (avoids a deferred-transaction upgrade race).
             if getattr(self._db, "type", "") == "postgres":
-                self._db.execute("SELECT pg_advisory_xact_lock(?)", (int(user_id),))
+                self._db.execute("SELECT pg_advisory_xact_lock(?)", (uid,))
 
             self._db.execute(
                 "DELETE FROM storage_quota_reservations "
                 "WHERE user_id = ? AND expires_at <= ?",
-                (int(user_id), now),
+                (uid, now),
             )
-            resolved = self.resolve_limit(user_id)
-            used = self.usage_bytes(user_id)
-            pending = self.pending_bytes(user_id, now_ms=now)
+
+            resolved = self.resolve_limit(uid)
             limit = resolved["limit_bytes"]
-            if not resolved["unlimited"] and limit is not None:
-                if used + pending + amount > int(limit):
-                    raise StorageQuotaExceededError(
-                        "Storage limit reached. Delete some files or ask an "
-                        "administrator for more space.",
-                        used_bytes=used + pending,
-                        limit_bytes=int(limit),
-                        requested_bytes=amount,
-                    )
-            self._db.execute(
-                "INSERT INTO storage_quota_reservations "
-                "(token, user_id, bytes, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (token, int(user_id), amount, now, expires),
+            unlimited = bool(resolved["unlimited"])
+
+            # Bound per-user tracking: a client that starts many uploads and
+            # aborts them must not be able to grow the ledger without limit.
+            active = self._db.fetch_one(
+                "SELECT COUNT(*) AS active FROM storage_quota_reservations "
+                "WHERE user_id = ? AND expires_at > ?",
+                (uid, now),
             )
+            if max(0, _as_int(_row_value(active, "active", 0), 0)) >= (
+                MAX_ACTIVE_RESERVATIONS_PER_USER
+            ):
+                raise StorageQuotaExceededError(
+                    "Too many uploads in progress. Retry in a moment.",
+                    limit_bytes=int(limit) if limit is not None else 0,
+                    requested_bytes=amount,
+                )
+
+            # A single statement checks usage + other pending reservations and
+            # inserts the reservation only if it still fits. No worker can see
+            # a stale total and push the user over quota.
+            cursor = self._db.execute(
+                _ATOMIC_RESERVE_SQL,
+                (
+                    token,
+                    uid,
+                    amount,
+                    now,
+                    expires,
+                    1 if unlimited else 0,
+                    uid,
+                    uid,
+                    now,
+                    amount,
+                    int(limit) if limit is not None else 0,
+                ),
+            )
+            if getattr(cursor, "rowcount", 0) != 1:
+                used = self.usage_bytes(uid) + self.pending_bytes(uid, now_ms=now)
+                raise StorageQuotaExceededError(
+                    "Storage limit reached. Delete some files or ask an "
+                    "administrator for more space.",
+                    used_bytes=used,
+                    limit_bytes=int(limit) if limit is not None else 0,
+                    requested_bytes=amount,
+                )
             self._db.commit()
         except Exception:
             try:
@@ -411,18 +544,25 @@ class StorageQuotaManager:
             except Exception as rollback_error:
                 logger.debug(f"storage quota rollback failed: {rollback_error}")
             raise
+        self._invalidate_quota_cache()
         return token
 
     def release(self, token: Optional[str]) -> None:
-        """Release a reservation. Safe to call repeatedly or with ``None``."""
+        """Release a reservation. Safe to call repeatedly or with ``None``.
+
+        Tokens are unguessable uuid4 values, so deleting by token can never
+        release another user's reservation.
+        """
         if not token:
             return
         try:
             self._ensure_schema()
+            self._invalidate_quota_cache()
             self._db.execute(
                 "DELETE FROM storage_quota_reservations WHERE token = ?",
                 (str(token),),
             )
+            self._invalidate_quota_cache()
         except Exception as exc:
             # A stale reservation expires on its own; never turn a successful
             # upload into a failure just because cleanup raced a restart.
@@ -458,6 +598,7 @@ class StorageQuotaManager:
             parse_id(updated_by, "updated_by") if updated_by is not None else None
         )
         self._ensure_schema()
+        self._invalidate_quota_cache()
         now = int(time.time() * 1000)
         self._db.execute(
             "INSERT INTO user_storage_quotas "
@@ -478,13 +619,16 @@ class StorageQuotaManager:
                 now,
             ),
         )
+        self._invalidate_quota_cache()
         return self.get_status(user_id)
 
     def clear_override(self, user_id: int) -> Dict[str, Any]:
         self._ensure_schema()
+        self._invalidate_quota_cache()
         self._db.execute(
             "DELETE FROM user_storage_quotas WHERE user_id = ?", (int(user_id),)
         )
+        self._invalidate_quota_cache()
         return self.get_status(user_id)
 
     def get_override(self, user_id: int) -> Optional[Dict[str, Any]]:
@@ -568,7 +712,13 @@ _manager_cache: Dict[int, StorageQuotaManager] = {}
 
 
 def get_manager(db=None) -> StorageQuotaManager:
-    """Return a process-local manager for ``db`` (or the API database)."""
+    """Return a process-local manager for ``db`` (or the API database).
+
+    The cache is a bounded LRU: an unbounded dict keyed by ``id(db)`` leaked a
+    manager for every DB object ever constructed (and could hand back a manager
+    bound to a collected object whose id was reused). Evicting a manager is safe
+    - it only drops the ``_schema_ready`` flag, which is re-established lazily.
+    """
     if db is None:
         import src.api as api
 
@@ -576,8 +726,12 @@ def get_manager(db=None) -> StorageQuotaManager:
     if db is None:
         raise RuntimeError("Database unavailable for storage quota")
     key = id(db)
-    manager = _manager_cache.get(key)
+    # pop + reinsert keeps the dict in least-recently-used order.
+    manager = _manager_cache.pop(key, None)
     if manager is None:
         manager = StorageQuotaManager(db)
-        _manager_cache[key] = manager
+    _manager_cache[key] = manager
+    while len(_manager_cache) > MAX_MANAGER_CACHE_ENTRIES:
+        oldest = next(iter(_manager_cache))
+        _manager_cache.pop(oldest, None)
     return manager
