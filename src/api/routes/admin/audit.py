@@ -91,8 +91,8 @@ def _validate_date_window(date_from, date_to) -> None:
         )
 
 
-def _enforce_indexed_scan(conditions, params) -> None:
-    """Ensure an indexed predicate exists before any audit table scan.
+def _enforce_indexed_scan(conditions, params, date_from=None) -> None:
+    """Ensure an indexed, *bounded* predicate exists before any audit scan.
 
     Callers that supply no filter either get a hard 400 (when
     ``admin.audit.require_indexed_filter`` is enabled) or an automatically
@@ -100,17 +100,39 @@ def _enforce_indexed_scan(conditions, params) -> None:
     callers working while guaranteeing that no request ever scans the whole
     table; ``idx_admin_audit_created`` (and every other audit index) keeps the
     fan-out proportionate to the requested window.
+
+    A filter being present is not, on its own, a bound. ``date_from=0`` (or any
+    pre-retention timestamp) becomes ``created_at >= 0``, which every row
+    satisfies, and an upper-only window has no lower bound at all. Both make
+    the count and export queries scan the entire table even though an index
+    is technically in play. Whenever the caller did not supply a lower bound
+    inside the retention window, add the cutoff explicitly so the seek can
+    never fan out past the retention period.
     """
-    if conditions:
-        return
-    if bool(_audit_config().get("require_indexed_filter", False)):
-        raise HTTPException(
-            status_code=400,
-            detail="An indexed filter is required for audit scans",
-        )
     cutoff_ms = int(time.time() * 1000) - _bounded_scan_days() * 86400 * 1000
-    conditions.append("created_at >= ?")
-    params.append(cutoff_ms)
+    has_bounded_lower = date_from is not None and date_from >= cutoff_ms
+
+    if not conditions and not has_bounded_lower:
+        if bool(_audit_config().get("require_indexed_filter", False)):
+            raise HTTPException(
+                status_code=400,
+                detail="An indexed filter is required for audit scans",
+            )
+
+    if has_bounded_lower:
+        return
+
+    if not conditions:
+        # Legacy unfiltered callers keep their existing bound-parameter shape.
+        conditions.append("created_at >= ?")
+        params.append(cutoff_ms)
+    else:
+        # Keep every caller-supplied parameter untouched (including an explicit
+        # ``date_from=0``) and add the retention cutoff as a server-computed
+        # integer literal instead. This preserves the query shape the filtered
+        # endpoints already expose while making the index seek genuinely
+        # bounded; the literal is never caller text.
+        conditions.append(f"created_at >= {cutoff_ms}")
 
 
 def _coerce_nullable_int(value):
@@ -210,7 +232,7 @@ async def get_audit_logs(
             params.append(date_to)
 
         _validate_date_window(date_from, date_to)
-        _enforce_indexed_scan(conditions, params)
+        _enforce_indexed_scan(conditions, params, date_from)
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
@@ -417,7 +439,7 @@ async def export_audit_logs(
             params.append(date_to)
 
         _validate_date_window(date_from, date_to)
-        _enforce_indexed_scan(conditions, params)
+        _enforce_indexed_scan(conditions, params, date_from)
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)

@@ -466,7 +466,10 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
         # SECURITY: single conditional UPDATE makes the increment atomic.
         # The CAS guard on ``approved_by`` detects a concurrent voter that
         # read the same snapshot; on rowcount 0 we re-read and retry rather
-        # than clobbering their vote or over-counting consensus.
+        # than clobbering their vote or over-counting consensus. The expiry
+        # guard is part of the same atomic write: the read-side expiry check
+        # above is only advisory, so without it a request that expires between
+        # our SELECT and this UPDATE could still be flipped to 'approved'.
         cursor = db.execute(
             """
             UPDATE admin_approvals
@@ -479,12 +482,20 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
                 updated_at = ?
             WHERE id = ?
               AND status = 'pending'
+              AND (expires_at IS NULL OR expires_at > ?)
               AND (
                     approved_by = ?
                     OR (approved_by IS NULL AND CAST(? AS TEXT) IS NULL)
                   )
         """,
-            (new_approved_by, now, approval_id, raw_approved_by, raw_approved_by),
+            (
+                new_approved_by,
+                now,
+                approval_id,
+                now,
+                raw_approved_by,
+                raw_approved_by,
+            ),
         )
 
         if getattr(cursor, "rowcount", 0) > 0:
