@@ -230,37 +230,60 @@ def format_error_response(code: int, message: str, debug: bool = False) -> dict:
     return {"error": {"code": code, "message": safe_message}}
 
 
+# Mirrors the safe fallback in ``src.api.config.get_api_config``: an omitted
+# allowlist is never treated as "allow any origin".
+_DEFAULT_ERROR_CORS_ORIGINS = [
+    "https://plexichat.com",
+    "https://app.plexichat.com",
+    "https://api.plexichat.com",
+    "https://www.plexichat.com",
+]
+_DEFAULT_ERROR_CORS_HEADERS = [
+    "Authorization",
+    "Content-Type",
+    "Accept",
+    "X-API-Access-Token",
+    "X-Plexichat-Request",
+]
+_DEFAULT_ERROR_CORS_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+
 def _get_cors_headers(request: Request) -> dict:
-    """Get CORS headers for error responses."""
-    cors_allow_headers = [
-        "Authorization",
-        "Content-Type",
-        "Accept",
-        "X-API-Access-Token",
-        "X-Plexichat-Request",
-    ]
-    cors_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    """Build CORS headers for error responses using the configured policy.
+
+    Error responses must obey the same CORS rules as successful responses.
+    The old helper defaulted an omitted ``cors_origins`` to ``["*"]`` and
+    reflected whatever was listed verbatim, so a deployment that never set an
+    allowlist granted ``Access-Control-Allow-Origin: *`` *together with*
+    ``Access-Control-Allow-Credentials: true`` on every 4xx/5xx -- the exact
+    combination the API config rejects at build time. Apply the same wildcard
+    hardening here and fail closed whenever the effective policy is unclear.
+    """
+    cors_origins = list(_DEFAULT_ERROR_CORS_ORIGINS)
+    cors_allow_headers = list(_DEFAULT_ERROR_CORS_HEADERS)
+    cors_methods = list(_DEFAULT_ERROR_CORS_METHODS)
     allow_credentials = False  # fail closed until configuration says otherwise
+    allow_wildcard = False
     try:
-        api_conf = config.get("api", {})
-        cors_origins = api_conf.get("cors_origins", ["*"])
-        cors_allow_headers = api_conf.get(
-            "cors_allow_headers",
-            [
-                "Authorization",
-                "Content-Type",
-                "Accept",
-                "X-API-Access-Token",
-                "X-Plexichat-Request",
-            ],
-        )
-        cors_methods = api_conf.get(
-            "cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-        )
-        # ``Access-Control-Allow-Credentials`` used to be hard-coded to "true"
-        # here, so error responses granted credentialed CORS even when the
-        # operator had explicitly disabled it. Honour the configured policy.
+        api_conf = config.get("api", {}) or {}
+        raw_origins = api_conf.get("cors_origins")
+        if raw_origins:
+            # A string is a single origin; a sequence is the allowlist. Any
+            # other shape is treated as empty (fail closed).
+            if isinstance(raw_origins, str):
+                cors_origins = [raw_origins]
+            elif isinstance(raw_origins, (list, tuple)):
+                cors_origins = list(raw_origins)
+            else:
+                cors_origins = []
+        configured_headers = api_conf.get("cors_allow_headers")
+        if configured_headers:
+            cors_allow_headers = list(configured_headers)
+        configured_methods = api_conf.get("cors_allow_methods")
+        if configured_methods:
+            cors_methods = list(configured_methods)
         allow_credentials = bool(api_conf.get("cors_allow_credentials", True))
+        allow_wildcard = bool(api_conf.get("allow_wildcard_cors", False))
     except Exception:
         # Error handling must fail closed if configuration cannot be read;
         # reflecting an arbitrary Origin with credentials would weaken the
@@ -268,22 +291,40 @@ def _get_cors_headers(request: Request) -> dict:
         cors_origins = []
         allow_credentials = False
 
-    origin = request.headers.get("origin", "")
+    # Mirror ``get_api_config``'s wildcard hardening: a wildcard is useless
+    # unless explicitly opted into, and may never carry credentials (it would
+    # otherwise let any site read credentialed error responses cross-origin).
+    has_wildcard = any(isinstance(o, str) and o.strip() == "*" for o in cors_origins)
+    if has_wildcard and (not allow_wildcard or allow_credentials):
+        return {}
+    if has_wildcard:
+        allow_credentials = False
 
-    # Wildcard origins are never reflected when credentials are enabled.
-    # Only an explicitly configured origin may receive credentialed errors.
-    is_allowed = bool(origin) and origin in cors_origins
+    allowed = {
+        o.strip().rstrip("/")
+        for o in cors_origins
+        if isinstance(o, str) and o.strip() and o.strip() != "*"
+    }
 
-    if is_allowed:
-        headers = {
-            "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Methods": ", ".join(cors_methods),
-            "Access-Control-Allow-Headers": ", ".join(cors_allow_headers),
-        }
-        if allow_credentials:
-            headers["Access-Control-Allow-Credentials"] = "true"
-        return headers
-    return {}
+    raw_origin = request.headers.get("origin", "")
+    if not raw_origin or not isinstance(raw_origin, str):
+        return {}
+    origin = raw_origin.strip().rstrip("/")
+
+    common_headers = {
+        "Access-Control-Allow-Methods": ", ".join(cors_methods),
+        "Access-Control-Allow-Headers": ", ".join(cors_allow_headers),
+    }
+    if has_wildcard:
+        # Anonymous wildcard: a literal '*' is safe precisely because no
+        # credentials are attached.
+        return {"Access-Control-Allow-Origin": "*", **common_headers}
+    if origin not in allowed:
+        return {}
+    headers = {"Access-Control-Allow-Origin": origin, **common_headers}
+    if allow_credentials:
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return headers
 
 
 class ErrorHandlingMiddleware:

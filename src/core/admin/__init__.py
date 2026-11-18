@@ -117,9 +117,15 @@ def get_ticket_counts() -> Dict[str, int]:
 
 
 def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
-    """Verify if the client IP is allowed based on host restrictions."""
+    """Verify if the client IP is allowed based on host restrictions.
+
+    An empty allowlist fails CLOSED. Disabling the gate entirely is an
+    explicit operator choice (``admin_ui.host_restriction.enabled = false``);
+    an empty/missing list is a misconfiguration and must never turn the admin
+    host restriction into an allow-all rule.
+    """
     if not allowed_hosts:
-        return True
+        return False
     localhost_variants = {"127.0.0.1", "localhost", "::1"}
     if client_ip in localhost_variants:
         return any(
