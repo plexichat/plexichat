@@ -114,6 +114,8 @@ CREATE INDEX IF NOT EXISTS idx_message_reports_message_at
     ON message_reports(message_id, reported_at);
 CREATE INDEX IF NOT EXISTS idx_message_reports_priority ON message_reports(priority);
 CREATE INDEX IF NOT EXISTS idx_message_reports_assigned ON message_reports(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_message_reports_assigned_at
+    ON message_reports(assigned_to, reported_at);
 -- Moderation queues order by reported_at.
 CREATE INDEX IF NOT EXISTS idx_message_reports_reported_at ON message_reports(reported_at);
 
