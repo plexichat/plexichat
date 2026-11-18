@@ -16,13 +16,38 @@ break the underlying REST/CRUD operation that triggered it.
 from typing import Any, Callable, Dict, List, Optional, ParamSpec
 
 import functools
+import sys
 
 import utils.logger as logger
 
+from .recipient_cache import RecipientResolutionCache
 from .snowflakes import stringify_snowflake_ids
 from .types import EventType
 
 P = ParamSpec("P")
+
+
+# Shared, bounded cache of fully resolved channel-event audiences. A burst of
+# typing / reaction / read-receipt frames for one channel reuses a single
+# resolution instead of re-walking every member's channels.view permission on
+# every emit. The key includes the complete resolution identity and the
+# audience-source module identities (see resolve_channel_event_recipients), so
+# no audience can be served another audience's recipients.
+_channel_recipient_cache = RecipientResolutionCache()
+
+
+def clear_channel_recipient_cache() -> None:
+    """Invalidate all cached channel-event audiences.
+
+    Called by the events test conftest between tests and available to setup /
+    membership-change code that wants an immediate, unconditional flush.
+    """
+    _channel_recipient_cache.clear()
+
+
+def get_channel_recipient_cache_stats() -> Dict[str, int]:
+    """Expose hit/miss/size counters for observability and regression tests."""
+    return _channel_recipient_cache.stats()
 
 
 def _non_raising(fn: Callable[P, None]) -> Callable[P, None]:
@@ -297,6 +322,16 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
     return [pid for pid in participant_ids if pid not in excluded]
 
 
+def _coerce_scope_id(value: Any) -> Optional[int]:
+    """Normalize a scope id for the cache key without accepting booleans."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def resolve_channel_event_recipients(
     channel_id: Optional[int],
     *,
@@ -319,24 +354,56 @@ def resolve_channel_event_recipients(
       * otherwise -> DM / group conversation participants.
 
     The actor is always excluded (their client already applied the action).
+
+    The result is memoized in a bounded, short-TTL cache keyed by the *complete*
+    resolution identity: channel, guild, actor, exclusions, the identity of the
+    audience-source modules and the threads module. Every input that can change
+    the audience is in the key, so a different scope or a re-setup of the
+    audience sources can never reuse another audience's recipients. Intent
+    filtering remains at dispatch time and is unaffected.
     """
     if channel_id is None:
         return []
 
     exclude = set()
     for uid in exclude_user_ids or []:
-        try:
-            exclude.add(int(uid))
-        except (TypeError, ValueError):
-            continue
-    if actor_id is not None:
-        try:
-            exclude.add(int(actor_id))
-        except (TypeError, ValueError):
-            pass
+        coerced = _coerce_scope_id(uid)
+        if coerced is not None:
+            exclude.add(coerced)
+    actor = _coerce_scope_id(actor_id)
+    if actor is not None:
+        exclude.add(actor)
+
+    # Fetch the audience sources once: the cheap lookups are also folded into
+    # the cache key (by identity) so swapping a source guarantees a fresh
+    # resolution rather than replaying a stale audience.
+    try:
+        import src.api as api
+
+        servers = api.get_servers()
+        messaging = api.get_messaging()
+        relationships = api.get_relationships()
+    except Exception:
+        servers = None
+        messaging = None
+        relationships = None
+
+    cache_parts = (
+        _coerce_scope_id(channel_id),
+        _coerce_scope_id(guild_id),
+        actor,
+        tuple(sorted(exclude)),
+        id(servers),
+        id(messaging),
+        id(relationships),
+        id(sys.modules.get("src.core.threads")),
+    )
+    cached = _channel_recipient_cache.get(cache_parts)
+    if cached is not None:
+        return cached
 
     def _final(ids) -> List[int]:
-        """Coerce, dedupe (preserving order) and drop excluded ids."""
+        """Coerce, dedupe (preserving order), drop excluded ids and cache."""
         seen = set()
         result = []
         for uid in ids:
@@ -347,6 +414,7 @@ def resolve_channel_event_recipients(
             if uid not in exclude and uid not in seen:
                 seen.add(uid)
                 result.append(uid)
+        _channel_recipient_cache.put(cache_parts, result)
         return result
 
     # 1. Known private thread: exact member set (fail closed on lookup error).
@@ -355,13 +423,6 @@ def resolve_channel_event_recipients(
         return _final(thread_members)
 
     # 2. Server channel: members with channels.view, never the raw member list.
-    try:
-        import src.api as api
-
-        servers = api.get_servers()
-    except Exception:
-        servers = None
-
     server_id = guild_id
     channel = None
     if servers is not None:
@@ -379,13 +440,13 @@ def resolve_channel_event_recipients(
             # for a channel the actor cannot view and leak the event to members
             # of the claimed server. DM callers pass no guild_id and still fall
             # through to participant resolution below.
-            return []
+            return _final([])
 
     if server_id is not None and servers is not None:
         has_permission = getattr(servers, "has_permission", None)
         if not callable(has_permission):
             # Cannot verify channel access -> no recipients (fail closed).
-            return []
+            return _final([])
         try:
             member_ids = servers.get_member_user_ids(int(server_id)) or []
         except Exception:
@@ -400,11 +461,8 @@ def resolve_channel_event_recipients(
         return _final(recipients)
 
     # 3. DM / group conversation participants.
-    try:
-        import src.api as api
-
-        messaging = api.get_messaging()
-        if messaging is not None:
+    if messaging is not None:
+        try:
             manager = (
                 messaging.get_manager()
                 if hasattr(messaging, "get_manager")
@@ -414,9 +472,9 @@ def resolve_channel_event_recipients(
             return _final(
                 _dm_participants_without_blocks(participants or [], actor_id)
             )
-    except Exception:
-        pass
-    return []
+        except Exception:
+            pass
+    return _final([])
 
 
 # --------------------------------------------------------------------------

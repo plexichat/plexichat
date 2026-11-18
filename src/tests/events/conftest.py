@@ -32,6 +32,24 @@ def setup_events(db, rel_manager, server_manager, messaging_manager):
     events._setup_complete = False
 
 
+@pytest.fixture(autouse=True)
+def clear_channel_recipient_cache_between_tests():
+    """Isolate the shared channel-event recipient cache across tests.
+
+    Tests in this directory monkeypatch the audience sources (servers /
+    messaging / relationships) with fresh fakes that reuse the same channel
+    ids. Without a flush, a resolution cached under one test's fakes would be
+    replayed under the next test's different fakes. The cache key also carries
+    source-module identities, but clearing here makes the isolation explicit
+    and covers fakes that happen to be re-instantiated at a recycled id.
+    """
+    from src.core.events.gateway_emit import clear_channel_recipient_cache
+
+    clear_channel_recipient_cache()
+    yield
+    clear_channel_recipient_cache()
+
+
 @pytest.fixture
 def event_router():
     """Create an event router instance."""
