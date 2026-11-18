@@ -156,6 +156,8 @@ CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports(reported_us
 CREATE INDEX IF NOT EXISTS idx_user_reports_reported_at
     ON user_reports(reported_user_id, reported_at);
 CREATE INDEX IF NOT EXISTS idx_user_reports_priority ON user_reports(priority);
+CREATE INDEX IF NOT EXISTS idx_user_reports_priority_at
+    ON user_reports(priority, reported_at);
 CREATE INDEX IF NOT EXISTS idx_user_reports_assigned ON user_reports(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_user_reports_assigned_at
     ON user_reports(assigned_to, reported_at);
