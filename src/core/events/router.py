@@ -188,8 +188,15 @@ class EventRouter:
         effective_server_id = server_id or event.server_id
         effective_channel_id = channel_id or event.channel_id
 
-        if effective_server_id and self._servers:
-            recipients.update(self._get_server_member_ids(effective_server_id))
+        if effective_server_id:
+            # A server-scoped event may ONLY be widened to the server's
+            # members. The old ``if ... and self._servers / elif`` shape
+            # fell through to DM-participant resolution whenever the
+            # servers module was missing, silently rerouting guild content
+            # to a conversation's participant list — an audience leak.
+            # Without the authoritative member source, resolve nobody.
+            if self._servers:
+                recipients.update(self._get_server_member_ids(effective_server_id))
         elif effective_channel_id and self._messaging:
             recipients.update(
                 self._get_dm_participant_ids(

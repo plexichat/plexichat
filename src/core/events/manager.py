@@ -28,6 +28,13 @@ class EventManager:
     # Bounded knobs (constant) — sized for a single Plexichat
     # instance; raise if a deployment needs more headroom.
     _MAX_SUBSCRIBERS = 1024
+    # Critical subscribers are immune to BOTH merged-cap eviction and
+    # idle-TTL pruning (see ``subscribe`` / ``_maybe_prune_locked``), so the
+    # merged cap alone cannot bound that pool: once every slot is critical,
+    # each new ``subscribe(..., critical=True)`` grows the dict (and
+    # ``_last_used``) forever. Give the non-lossy lane its own hard ceiling.
+    # Production registers only a handful (gateway dispatcher, TLS hooks).
+    _MAX_CRITICAL_SUBSCRIBERS = 64
     _SUBSCRIBER_IDLE_TTL_SEC = 300  # 5 minutes
     _DISPATCH_QUEUE_MAX = 4096
     # Consumer poll interval (seconds). The queue consumer batches all
@@ -250,6 +257,21 @@ class EventManager:
         with self._lock:
             self._maybe_prune_locked()
             if callback in self._subscribers or callback in self._critical_subscribers:
+                return
+            if (
+                critical
+                and len(self._critical_subscribers) >= self._MAX_CRITICAL_SUBSCRIBERS
+            ):
+                # Fail closed rather than demote/evict an existing critical
+                # callback: silently dropping one would break the non-lossy
+                # delivery guarantee the caller opted into. Refuse the new
+                # subscription and surface it so operators can see the
+                # saturation instead of leaking an unbounded subscriber map.
+                logger.warning(
+                    f"Critical subscriber cap "
+                    f"({self._MAX_CRITICAL_SUBSCRIBERS}) reached; "
+                    "refusing new critical subscriber"
+                )
                 return
             total = len(self._subscribers) + len(self._critical_subscribers)
             if total >= self._MAX_SUBSCRIBERS:
