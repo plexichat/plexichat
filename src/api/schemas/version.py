@@ -3,8 +3,20 @@ Version and status schemas for API responses.
 """
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Union
+from typing import Annotated, Optional, List, Union
 from enum import Enum
+
+# Version-negotiation input is fully attacker-controlled and is parsed by the
+# PEP 440 helper. The body cap (10 MB) is not a field bound: a single string can
+# stay under it while still being far larger than any real version, and the
+# ``supported_versions`` list can hold thousands of entries. Bound both at the
+# schema so a hostile value is rejected before any parsing work is done.
+#
+# ``MAX_CLIENT_VERSION_LENGTH`` mirrors the route guard in
+# ``src.api.routes.version``; the invariant suite asserts they never drift.
+MAX_CLIENT_VERSION_LENGTH = 128
+MAX_SUPPORTED_VERSIONS = 16
+MAX_SUPPORTED_VERSION_LENGTH = 128
 
 
 class ServerState(str, Enum):
@@ -57,10 +69,15 @@ class VersionNegotiateRequest(BaseModel):
     client_version: str = Field(
         ...,
         min_length=1,
+        max_length=MAX_CLIENT_VERSION_LENGTH,
         description="Client's current version string",
     )
-    supported_versions: Optional[List[str]] = Field(
-        None, description="List of server versions client supports"
+    supported_versions: Optional[
+        List[Annotated[str, Field(max_length=MAX_SUPPORTED_VERSION_LENGTH)]]
+    ] = Field(
+        None,
+        max_length=MAX_SUPPORTED_VERSIONS,
+        description="List of server versions client supports",
     )
 
 
