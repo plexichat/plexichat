@@ -6,8 +6,10 @@ Stash mutations and Sum workbook persistence remain separate domains and are not
 silently routed through the generic artifact payload.
 """
 
+import copy
 import json
-from typing import Any, Dict, Iterable, List, Optional
+import time
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import utils.logger as logger
 from fastapi import APIRouter, Depends, Query
@@ -78,6 +80,49 @@ _VALID_APP_IDS = frozenset(
 _MAX_SEARCH_LENGTH = 200
 _MAX_SERVER_IDS = 100
 _MAX_ACTIVITY_PART_LENGTH = 120
+
+
+# The universal-home feeds are opened on every launcher start. Each miss fans
+# out to the artifact repository plus the Stash/Sum listings (each with its own
+# COUNT and visibility subqueries), so a burst of opens turns into repeated
+# scatter/gather work. Memoize the fully projected response for a short TTL.
+#
+# The key ALWAYS includes the viewer id and every request input: one user's
+# personalized feed can never be served to another (IDOR), and distinct
+# queries cannot grow the cache without bound. Returned/stored values are deep
+# copies so a caller mutating a response cannot poison a later cache hit.
+_SUITE_FEED_CACHE_TTL_SECONDS = 2.0
+_SUITE_FEED_CACHE_MAX_ENTRIES = 256
+_suite_feed_cache: Dict[
+    Tuple[int, str, int, Optional[str]], Tuple[float, Dict[str, Any]]
+] = {}
+
+
+def _clear_suite_feed_cache(user_id: Optional[int] = None) -> None:
+    """Drop memoized suite feeds, optionally only one viewer's entries."""
+    if user_id is None:
+        _suite_feed_cache.clear()
+        return
+    uid = int(user_id)
+    for key in [key for key in _suite_feed_cache if key[0] == uid]:
+        _suite_feed_cache.pop(key, None)
+
+
+def _suite_feed_from_cache(key: Tuple[int, str, int, Optional[str]]):
+    """Return a memoized feed response, or ``None`` on miss/expiry."""
+    cached = _suite_feed_cache.get(key)
+    if cached is not None and (
+        time.monotonic() - cached[0]
+    ) < _SUITE_FEED_CACHE_TTL_SECONDS:
+        return copy.deepcopy(cached[1])
+    return None
+
+
+def _store_suite_feed(key: Tuple[int, str, int, Optional[str]], result: Dict[str, Any]):
+    """Memoize a feed response with a hard size cap."""
+    if len(_suite_feed_cache) >= _SUITE_FEED_CACHE_MAX_ENTRIES:
+        _suite_feed_cache.clear()
+    _suite_feed_cache[key] = (time.monotonic(), copy.deepcopy(result))
 
 
 def clean_suite_search(value: Any) -> Optional[str]:
@@ -457,11 +502,16 @@ async def list_recent_suite_items(
     personal author scope. Shared/server recent activity will be added only with
     explicit scope authorization and pagination tests.
     """
+    bounded = bounded_int(limit, "limit", minimum=1, maximum=50)
+    key = (int(current_user.user_id), "recent", bounded, None)
+    cached = _suite_feed_from_cache(key)
+    if cached is not None:
+        return cached
     manager = _get_manager()
     filters = {
         "sort_by": "updated_at",
         "sort_order": "desc",
-        "limit": int(limit),
+        "limit": bounded,
         "offset": 0,
         "author_id": current_user.user_id,
     }
@@ -473,20 +523,22 @@ async def list_recent_suite_items(
     ]
     stash_manager, sum_manager = _suite_managers()
     if _domain_available("plexistash"):
-        stash_items, _ = stash_manager.list_items(current_user.user_id, limit=limit)
+        stash_items, _ = stash_manager.list_items(current_user.user_id, limit=bounded)
         items.extend(_stash_home_item(item) for item in stash_items)
     if _domain_available("plexisum"):
         sum_items, _ = sum_manager.list_workbooks(
-            current_user.user_id, limit=limit, offset=0
+            current_user.user_id, limit=bounded, offset=0
         )
         items.extend(_sum_home_item(item) for item in sum_items)
-    bounded_items = _sort_and_bound(items, int(limit))
-    return {
+    bounded_items = _sort_and_bound(items, bounded)
+    result = {
         "schemaVersion": 1,
         "items": bounded_items,
         "total": len(items),
         "hasMore": len(items) > len(bounded_items),
     }
+    _store_suite_feed(key, result)
+    return result
 
 
 @router.get(
@@ -532,14 +584,21 @@ async def list_shared_suite_items(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return server-scoped items after each domain's authorization checks."""
-    items = _shared_items(current_user.user_id, int(limit))
-    bounded_items = _sort_and_bound(items, int(limit))
-    return {
+    bounded = bounded_int(limit, "limit", minimum=1, maximum=50)
+    key = (int(current_user.user_id), "shared", bounded, None)
+    cached = _suite_feed_from_cache(key)
+    if cached is not None:
+        return cached
+    items = _shared_items(current_user.user_id, bounded)
+    bounded_items = _sort_and_bound(items, bounded)
+    result = {
         "schemaVersion": 1,
         "items": bounded_items,
         "total": len(items),
         "hasMore": len(items) > len(bounded_items),
     }
+    _store_suite_feed(key, result)
+    return result
 
 
 # The activity feed reads a single actor's newest rows. Stash's canonical
@@ -664,13 +723,18 @@ async def search_suite(
     query = clean_suite_search(q)
     if not query:
         return {"schemaVersion": 1, "items": [], "total": 0, "hasMore": False}
+    bounded = bounded_int(limit, "limit", minimum=1, maximum=50)
+    key = (int(current_user.user_id), "search", bounded, query)
+    cached = _suite_feed_from_cache(key)
+    if cached is not None:
+        return cached
     manager = _get_manager()
     artifacts = manager.list_with_filters(
         filters={
             "search": query,
             "sort_by": "updated_at",
             "sort_order": "desc",
-            "limit": limit,
+            "limit": bounded,
         },
         author_id=current_user.user_id,
     )
@@ -678,29 +742,31 @@ async def search_suite(
     stash_manager, sum_manager = _suite_managers()
     if _domain_available("plexistash"):
         stash_items, _ = stash_manager.list_items(
-            current_user.user_id, limit=limit, search=query
+            current_user.user_id, limit=bounded, search=query
         )
         items.extend(_stash_home_item(item) for item in stash_items)
     if _domain_available("plexisum"):
         # Server-side title search: matches workbooks beyond the first page,
         # unlike the previous bounded-list-then-filter approach.
         sum_items, _ = sum_manager.list_workbooks(
-            current_user.user_id, limit=limit, offset=0, search=query
+            current_user.user_id, limit=bounded, offset=0, search=query
         )
         items.extend(_sum_home_item(item) for item in sum_items)
     # Universal search must also cover server-scoped (shared) items, matching
     # the scope of ``/suite/home/shared``, rather than personal scope only.
     # The personal listings above already include server-scoped rows visible
     # to the caller, so dedupe before bounding to avoid double cards.
-    items.extend(_shared_items(current_user.user_id, int(limit), search=query))
+    items.extend(_shared_items(current_user.user_id, bounded, search=query))
     items = _dedupe_items(items)
-    bounded_items = _sort_and_bound(items, int(limit))
-    return {
+    bounded_items = _sort_and_bound(items, bounded)
+    result = {
         "schemaVersion": 1,
         "items": bounded_items,
         "total": len(items),
         "hasMore": len(items) > len(bounded_items),
     }
+    _store_suite_feed(key, result)
+    return result
 
 
 __all__ = [

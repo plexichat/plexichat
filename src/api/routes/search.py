@@ -2,9 +2,10 @@
 Search routes - Unified search and discovery endpoints.
 """
 
+import copy
 import time
 from dataclasses import asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
@@ -509,6 +510,40 @@ async def list_public_servers(
         raise HTTPException(status_code=500, detail="Internal search error")
 
 
+# Discovery categories are platform-wide (not user-scoped), so a single entry
+# suffices. Rebuilding them runs a GROUP BY over the whole server-listing table
+# via ``update_category_counts`` on every request; a burst of catalogue reads
+# turns into repeated full scans. Memoize the computed list briefly. The short
+# TTL is the invalidation window for listing changes, and the helper lets
+# writers/tests drop it explicitly when a listing is (un)listed.
+_CATEGORIES_CACHE_TTL_SECONDS = 2.0
+_categories_cache: Optional[Tuple[float, List[Any]]] = None
+
+
+def _clear_categories_cache() -> None:
+    """Drop memoized discovery categories (tests / explicit invalidation)."""
+    global _categories_cache
+    _categories_cache = None
+
+
+def _server_categories(search_mod) -> List[Any]:
+    """Return discovery categories, recomputing at most once per TTL window.
+
+    Returned rows are deep copies: callers (and the response serializer) must
+    never be able to mutate the memoized ``ServerCategory`` objects, which
+    would corrupt both this cache and the search manager's own cache.
+    """
+    global _categories_cache
+    now = time.monotonic()
+    if _categories_cache is not None:
+        stored_at, cached = _categories_cache
+        if (now - stored_at) < _CATEGORIES_CACHE_TTL_SECONDS:
+            return copy.deepcopy(cached)
+    fresh = search_mod.get_server_categories()
+    _categories_cache = (now, fresh)
+    return copy.deepcopy(fresh)
+
+
 @router.get(
     "/discovery/categories",
     summary="Get server discovery categories",
@@ -521,7 +556,7 @@ async def get_server_categories(
     if not search_mod:
         raise HTTPException(status_code=500, detail="Search module not available")
     try:
-        categories = search_mod.get_server_categories()
+        categories = _server_categories(search_mod)
         return {"categories": categories}
     except Exception as e:
         logger.error(f"Get categories failed: {e}", exc_info=True)
