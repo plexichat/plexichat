@@ -25,6 +25,7 @@ from .opcodes import GatewayOpcode, GatewayCloseCode
 from .connection import Connection, ConnectionState
 from .session import SessionManager
 from .dispatcher import GatewayDispatcher
+from src.core.events.dedupe import cross_worker_dedupe
 from src.utils.system_alerts import record_system_alert as _record_system_alert
 
 __all__ = [
@@ -121,6 +122,7 @@ def cross_worker_listener_status() -> dict:
             "poll_count": _listener_poll_count,
             "running": _cross_worker_task is not None and not _cross_worker_task.done(),
             "worker_id": _get_worker_id(),
+            "dedupe": cross_worker_dedupe.metrics(),
             "tuning": {
                 "poll_interval_sec": _POLL_INTERVAL_SEC,
                 "heartbeat_interval_polls": _HEARTBEAT_INTERVAL_POLLS,
@@ -300,6 +302,16 @@ async def _handle_cross_worker_message(raw_message: str) -> None:
     # discards sibling delivery during the pre-identity window.
     own_id = _get_worker_id()
     if source_worker and source_worker != "unknown" and source_worker == own_id:
+        return
+
+    # Duplicate suppression (bounded + TTL): collapse re-deliveries and our
+    # own pre-identity echoes that the ``sw`` guard above cannot catch.
+    # The id is recorded at publish time by the sending worker and here on
+    # first sight; a second sighting is dropped.  Legacy payloads without an
+    # id opt out so mixed-version workers keep interoperating.
+    event_id = payload.get("id", "")
+    if event_id and cross_worker_dedupe.is_duplicate(event_id):
+        logger.debug("Cross-worker: dropping duplicate event %s", event_id)
         return
 
     event_type: str = payload.get("t", "")

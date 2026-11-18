@@ -10,11 +10,13 @@ import asyncio
 import json
 import threading
 import time
+import uuid
 from typing import Optional, List, Callable
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
 
+from .dedupe import cross_worker_dedupe
 from .models import Event
 from .router import EventRouter
 
@@ -148,9 +150,17 @@ class EventManager:
         if client is None:
             return
 
+        # Give every publication a globally-unique id.  The receiver uses it
+        # to collapse duplicates (e.g. our own pre-identity ``sw="unknown"``
+        # echo, or a re-delivery after a sibling reconnects).  Recording the
+        # id here lets this worker recognise its own echo before the pub/sub
+        # round-trip completes.  The shared registry is bounded + TTL'd, so
+        # this adds no unbounded "retained message" growth.
+        event_id = f"{self._worker_id}:{uuid.uuid4().hex}"
         try:
             payload = json.dumps(
                 {
+                    "id": event_id,
                     "t": event.event_type.value,
                     "d": event.data,
                     "u": [int(uid) for uid in recipients],
@@ -164,6 +174,9 @@ class EventManager:
                 e,
             )
             return
+        # Remember before publishing so a fast local echo cannot race ahead
+        # of the record and be mistaken for a fresh remote event.
+        cross_worker_dedupe.remember(event_id)
         try:
             client.publish(_CROSS_WORKER_CHANNEL, payload)
         except Exception as e:
