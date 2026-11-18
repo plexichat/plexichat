@@ -168,6 +168,19 @@ _SEGMENT_PLACEHOLDERS = {
 
 OVERFLOW_BUCKET = "_other"
 
+# ``method`` is the second GROUP BY dimension (alongside ``endpoint``) in
+# ``get_endpoint_stats``. The endpoint allowlist/overflow bucket above only
+# bounds *endpoint* keys: leaving the method client-controlled let a single 100
+# entry flush mint 100 brand new ``(endpoint, method)`` aggregation keys even
+# when every endpoint was collapsed into ``_other``. HTTP methods are a small,
+# closed set, so anything outside it is folded into one overflow method instead
+# of becoming a new metric key. This keeps cardinality bounded no matter what a
+# hostile client puts in the field.
+KNOWN_HTTP_METHODS = frozenset(
+    {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"}
+)
+OVERFLOW_METHOD = "OTHER"
+
 _route_templates: List[str] = []
 _templates_registered = False
 _seen_endpoints: set = set()
