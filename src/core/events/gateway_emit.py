@@ -228,6 +228,75 @@ def _known_private_thread_members(channel_id: Optional[int]) -> Optional[List[in
     return None
 
 
+def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> List[int]:
+    """Drop DM participants who have a block relationship with the actor.
+
+    :meth:`EventRouter._get_dm_participant_ids` excludes either side of a block
+    from a conversation's audience. Channel-scoped emitters bypass that router
+    by handing the resolved audience to ``dispatch`` as an explicit
+    ``user_ids`` list, so the block filter has to be applied here as well —
+    without it a blocked user still received the actor's typing, read-receipt
+    and reaction events even though the same event routed through the
+    :class:`EventRouter` was withheld from them.
+
+    Mirrors the router's semantics for a known actor: a participant that
+    blocked the actor, and any participant the actor blocked, are excluded.
+    When the relationship source is unavailable the existing audience is kept
+    (the same fallback the router uses), so this never silences DM traffic.
+    """
+    if actor_id is None:
+        return list(participants)
+    try:
+        import src.api as api
+
+        relationships = api.get_relationships()
+    except Exception:
+        relationships = None
+    if relationships is None:
+        return list(participants)
+
+    def _as_id(value: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    actor = _as_id(actor_id)
+    if actor is None:
+        return list(participants)
+
+    participant_ids: List[int] = []
+    for value in participants:
+        pid = _as_id(value)
+        if pid is not None and pid not in participant_ids:
+            participant_ids.append(pid)
+
+    excluded: set = set()
+    for pid in participant_ids:
+        if pid == actor:
+            continue
+        try:
+            blocked = relationships.get_all_blocked_ids(pid) or []
+        except Exception:
+            continue
+        # A participant that blocked the actor must not see the actor's events.
+        if any(_as_id(bid) == actor for bid in blocked):
+            excluded.add(pid)
+    # Users the actor blocked must not see the actor's events either.
+    try:
+        actor_blocked = relationships.get_all_blocked_ids(actor) or []
+    except Exception:
+        actor_blocked = []
+    for value in actor_blocked:
+        bid = _as_id(value)
+        if bid is not None:
+            excluded.add(bid)
+
+    return [pid for pid in participant_ids if pid not in excluded]
+
+
 def resolve_channel_event_recipients(
     channel_id: Optional[int],
     *,
@@ -302,6 +371,15 @@ def resolve_channel_event_recipients(
             channel = None
         if channel is not None:
             server_id = getattr(channel, "server_id", None) or server_id
+        elif guild_id is not None and actor_id is not None:
+            # FAIL CLOSED: the authoritative lookup says the actor cannot see
+            # this channel (unknown, deleted, non-member or no channels.view).
+            # A caller-supplied ``guild_id`` is only a routing hint, not proof
+            # of access; using it here would reconstruct a server-wide audience
+            # for a channel the actor cannot view and leak the event to members
+            # of the claimed server. DM callers pass no guild_id and still fall
+            # through to participant resolution below.
+            return []
 
     if server_id is not None and servers is not None:
         has_permission = getattr(servers, "has_permission", None)
@@ -333,7 +411,9 @@ def resolve_channel_event_recipients(
                 else messaging
             )
             participants = manager.get_participant_ids(channel_id)
-            return _final(participants or [])
+            return _final(
+                _dm_participants_without_blocks(participants or [], actor_id)
+            )
     except Exception:
         pass
     return []
