@@ -39,6 +39,13 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_server ON artifacts(server_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_author ON artifacts(author_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
 CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts(created_at);
+-- Retention sweep: WHERE expires_at IS NOT NULL AND expires_at <= ?.
+CREATE INDEX IF NOT EXISTS idx_artifacts_expires ON artifacts(expires_at);
+-- Listing a conversation/author newest-first.
+CREATE INDEX IF NOT EXISTS idx_artifacts_conversation_created
+    ON artifacts(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_author_created
+    ON artifacts(author_id, created_at);
 
 -- Voice calls table (call-specific metadata; may reference an artifact)
 CREATE TABLE IF NOT EXISTS voice_calls (
