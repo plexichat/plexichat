@@ -388,13 +388,17 @@ async def get_available_tiers(
         )
 
     try:
-        tiers = features.get_available_tiers()
+        # The tier table is derived from a largely-static config section.
+        # ``get_tier_configuration`` builds/validates it once and reuses it
+        # until the config changes, so a listing request no longer re-reads
+        # config and revalidates every limit on each call.
+        tier_config = features.get_tier_configuration()
         tier_info = {
-            tier: TierLimitsResponse(**features.get_tier_limits(tier).to_dict())
-            for tier in tiers
+            tier: TierLimitsResponse(**limits.to_dict())
+            for tier, limits in tier_config.limits.items()
         }
 
-        return TiersResponse(tiers=tier_info, default=features.get_default_tier())
+        return TiersResponse(tiers=tier_info, default=tier_config.default)
     except Exception as e:
         logger.error(f"Failed to fetch available tiers: {e}", exc_info=True)
         raise HTTPException(

@@ -73,6 +73,7 @@ import utils.logger as logger
 import utils.config as config
 
 from src.core.security.hardening import SNOWFLAKE_MAX, bounded_int
+from src.core.config.snapshot import VersionedConfigSnapshot, file_version
 
 from .models import (
     UserFeatures,
@@ -207,6 +208,81 @@ def get_tier_limits(tier: str) -> TierLimits:
 def get_default_tier() -> str:
     """Get the default tier for new users."""
     return _get_config("default_tier", "standard")
+
+
+# === Tier configuration snapshot ===
+#
+# ``get_available_tiers``/``get_tier_limits``/``get_default_tier`` are all
+# derived from the same (largely static) ``user_features`` config section. The
+# admin tier-listing endpoint used to call those helpers once per tier plus once
+# for the default, re-reading the config and re-validating/reconstructing every
+# TierLimits on each request. Build the whole table once and reuse it until the
+# config actually changes.
+#
+# The version token follows the established config-snapshot pattern (see
+# ``src.api.config``): it folds in the live loader identity, the config file's
+# mtime/size, and a representation of only the two sections that affect this
+# table. A new ``config.setup()``, an on-disk edit, or an in-memory change to
+# ``rate_limit_tiers``/``default_tier`` therefore invalidates on the very next
+# access with no staleness window, while an untouched config is served from
+# memory forever. No validation is skipped -- the cached value is produced by
+# the same helpers used everywhere else.
+
+
+class TierConfiguration:
+    """The computed tier table used by the admin tier-listing endpoint."""
+
+    __slots__ = ("tiers", "limits", "default")
+
+    def __init__(
+        self, tiers: List[str], limits: dict[str, "TierLimits"], default: str
+    ) -> None:
+        self.tiers = tiers
+        self.limits = limits
+        self.default = default
+
+
+def _tier_config_version() -> tuple:
+    """Cheap token describing everything the tier table depends on."""
+    loader = getattr(config, "_config_instance", None)
+    path = getattr(loader, "config_path", None)
+    try:
+        features_config = config.get("user_features", {}) or {}
+    except Exception:
+        features_config = {}
+    if not isinstance(features_config, dict):
+        features_config = {}
+    return (
+        id(loader),
+        file_version(path),
+        repr(features_config.get("rate_limit_tiers")),
+        repr(features_config.get("default_tier")),
+    )
+
+
+def _build_tier_configuration() -> TierConfiguration:
+    """Build the tier table via the authoritative helpers (cache miss only)."""
+    tiers = get_available_tiers()
+    return TierConfiguration(
+        tiers=tiers,
+        limits={tier: get_tier_limits(tier) for tier in tiers},
+        default=get_default_tier(),
+    )
+
+
+_tier_configuration_snapshot = VersionedConfigSnapshot(
+    _build_tier_configuration, version_fn=_tier_config_version
+)
+
+
+def get_tier_configuration() -> TierConfiguration:
+    """Return the current tier table, rebuilding only when config changes."""
+    return _tier_configuration_snapshot.snapshot()
+
+
+def invalidate_tier_configuration_cache() -> None:
+    """Drop the cached tier table so the next access rebuilds it."""
+    _tier_configuration_snapshot.invalidate()
 
 
 def is_alpha_registration_enabled() -> bool:
@@ -671,6 +747,9 @@ __all__ = [
     "get_available_tiers",
     "get_tier_limits",
     "get_default_tier",
+    "get_tier_configuration",
+    "invalidate_tier_configuration_cache",
+    "TierConfiguration",
     "get_user_features",
     "get_user_tier",
     "get_user_tier_limits",
