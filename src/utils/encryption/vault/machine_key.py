@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -52,15 +53,34 @@ def _is_safe_existing_key_file(key_file: Path) -> bool:
 
 
 def _persist_machine_key(key_file: Path, new_key: bytes) -> None:
+    """Persist a freshly generated KEK without writing through a symlink.
+
+    The previous implementation opened ``key_file`` directly with
+    ``O_WRONLY|O_CREAT|O_TRUNC``. The caller's ``Path.exists()`` guard follows
+    symlinks, so a *dangling* symlink planted at the key path reported
+    "missing" and the open wrote the new KEK straight through the symlink into
+    an attacker-chosen file (truncating it). Writing to a unique temp file in
+    the same directory and atomically replacing the final name fixes both that
+    and the check/use race: ``os.replace`` replaces the directory entry
+    itself, so a symlink swapped in mid-write is replaced, never followed.
+    """
     key_file.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    # is_symlink() does not follow the link, so it catches dangling symlinks
+    # too (unlike exists()/stat()). Fail closed rather than redirecting the
+    # KEK to whatever the symlink points at.
+    if key_file.is_symlink():
+        raise RuntimeError(
+            f"Refusing to write machine key through symlink {key_file}"
+        )
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{key_file.name}.", suffix=".tmp", dir=str(key_file.parent)
+    )
+    tmp_path = Path(tmp_name)
     try:
-        fd = os.open(str(key_file), flags, 0o600)
-    except OSError:
-        key_file.write_bytes(new_key)
-        _restrict_machine_key_permissions(key_file)
-        return
-    try:
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError):
+            pass  # mkstemp already creates 0600 on POSIX
         with os.fdopen(fd, "wb") as handle:
             handle.write(new_key)
             handle.flush()
@@ -68,13 +88,15 @@ def _persist_machine_key(key_file: Path, new_key: bytes) -> None:
                 os.fsync(handle.fileno())
             except OSError:
                 pass
+        # Covers platforms without fchmod (e.g. Windows ACLs).
+        _restrict_machine_key_permissions(tmp_path)
+        os.replace(tmp_path, key_file)
     except Exception:
         try:
-            key_file.unlink(missing_ok=True)
+            tmp_path.unlink()
         except OSError:
             pass
         raise
-    _restrict_machine_key_permissions(key_file)
 
 
 def _restrict_machine_key_permissions(key_file: Path) -> None:
@@ -109,6 +131,15 @@ def _load_machine_key_impl(key_path: str) -> bytes:
     Cached by :func:`_load_machine_key_cached` so keyrings share a load.
     """
     key_file = Path(key_path)
+    # is_symlink() is True even for a DANGLING symlink, unlike exists()/stat()
+    # which follow it and report "missing". Refuse before any generation so a
+    # planted symlink cannot redirect the new KEK to an attacker-chosen path.
+    if key_file.is_symlink():
+        logger.error("Refusing to use machine key symlink: %s", key_file)
+        raise RuntimeError(
+            f"Unsafe machine key file at {key_file} (symlink). "
+            "Move it aside and configure a secure KEK source."
+        )
     if key_file.exists():
         if _is_safe_existing_key_file(key_file):
             try:

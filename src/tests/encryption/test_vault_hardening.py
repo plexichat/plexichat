@@ -97,6 +97,44 @@ class TestMachineKeyHardening:
         with pytest.raises(RuntimeError, match="Unsafe machine key file"):
             vault_module._load_machine_key_impl(str(link))
 
+    def test_refuses_dangling_symlink(self, tmp_path):
+        """A dangling symlink must never redirect the generated KEK.
+
+        Regression: ``Path.exists()`` follows symlinks and reports False for a
+        dangling one, so the old ``open(O_WRONLY|O_CREAT|O_TRUNC)`` wrote the
+        fresh 32-byte KEK straight through the link into the attacker-chosen
+        target (truncating it) while returning that key to encrypt the keyrings.
+        """
+        from src.utils.encryption.vault.machine_key import _persist_machine_key
+
+        key_file = tmp_path / "key"
+        target = tmp_path / "victim"
+        key_file.symlink_to(target)  # target does not exist -> dangling link
+
+        with pytest.raises(RuntimeError, match="Unsafe machine key file"):
+            vault_module._load_machine_key_impl(str(key_file))
+        assert not target.exists(), "KEK must not be written through a symlink"
+
+        # The write primitive refuses a symlink as well (defence in depth for
+        # direct callers and for a link swapped in after the loader's check).
+        with pytest.raises(RuntimeError, match="symlink"):
+            _persist_machine_key(key_file, os.urandom(32))
+        assert not target.exists()
+
+    def test_persist_is_atomic_and_secure(self, tmp_path):
+        """The KEK is written via a temp file + rename, never truncated in place."""
+        from src.utils.encryption.vault.machine_key import _persist_machine_key
+
+        key_file = tmp_path / "key"
+        key = os.urandom(32)
+        _persist_machine_key(key_file, key)
+
+        assert key_file.read_bytes() == key
+        assert (key_file.stat().st_mode & 0o777) == 0o600
+        # No temp artefacts left behind by the atomic replace.
+        assert not list(tmp_path.glob(".*.tmp"))
+        assert not list(tmp_path.glob("*.tmp"))
+
     def test_refuses_directory(self, tmp_path):
         d = tmp_path / "dirkey"
         d.mkdir()
