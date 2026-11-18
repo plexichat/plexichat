@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS soundboard_usage (
 
 -- Sound usage indexes
 CREATE INDEX IF NOT EXISTS idx_soundboard_usage_sound ON soundboard_usage(sound_id);
+-- Usage counts for a sound over a time window.
+CREATE INDEX IF NOT EXISTS idx_soundboard_usage_sound_used
+    ON soundboard_usage(sound_id, used_at);
 CREATE INDEX IF NOT EXISTS idx_soundboard_usage_user ON soundboard_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_soundboard_usage_channel ON soundboard_usage(channel_id);
 

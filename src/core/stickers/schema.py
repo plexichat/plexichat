@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS sticker_usage (
 
 -- Sticker usage indexes
 CREATE INDEX IF NOT EXISTS idx_sticker_usage_sticker ON sticker_usage(sticker_id);
+-- Usage counts for a sticker over a time window.
+CREATE INDEX IF NOT EXISTS idx_sticker_usage_sticker_used
+    ON sticker_usage(sticker_id, used_at);
 CREATE INDEX IF NOT EXISTS idx_sticker_usage_user ON sticker_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_sticker_usage_message ON sticker_usage(message_id);
 """
