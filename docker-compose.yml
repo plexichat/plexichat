@@ -44,15 +44,36 @@ name: plexichat
 # rate limiting, and Snowflake IDs are also Valkey-backed for global
 # consistency across replicas.
 #
+# Set BACKEND_REPLICAS=N as well: the backend divides its fleet-wide
+# PostgreSQL connection budget (90 by default) by that number. Leaving it
+# at 1 while running four replicas opens four times too many sockets and
+# exhausts Postgres under load.
+#
+# Bootstrap a fresh stack ONCE with a single backend before scaling. The
+# first start persists env overrides into ./config/docker-config.yaml and
+# generates media.signing_key there; starting N replicas against an
+# uninitialized config races that one-time write and can leave replicas
+# with different signing keys (broken signed media URLs).
+#
 # When scaling >1, comment out the ``ports`` mappings on the backend
 # service (host ports 8000/TCP and 30000-30100/UDP can only bind to
 # one container) and rely on the client nginx proxy at :443 which
 # load-balances to backend:8000 internally via Docker DNS round-robin.
+# The same caveat applies if BACKEND_SWARM_REPLICAS (below) is raised:
+# Swarm's routing mesh publishes ports, plain ``compose up`` does not.
+#
+# Resource limits under ``deploy.resources.limits`` are PER REPLICA: a host
+# running N backends needs roughly N x (backend CPU/memory) plus the fixed
+# services. Raise/lower the *_MEM_LIMIT / *_CPU_LIMIT variables to fit.
 
 services:
   db:
     restart: unless-stopped
-    image: postgres:18-alpine
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    image: postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015
     env_file:
       - .env
     environment:
@@ -70,10 +91,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    # Bound the shared database so a query storm from N backend replicas
+    # cannot starve the rest of the host. Size generously: an OOM-killed
+    # Postgres corrupts availability for every worker.
+    deploy:
+      resources:
+        limits:
+          cpus: '${DB_CPU_LIMIT:-2}'
+          memory: ${DB_MEM_LIMIT:-2G}
+        reservations:
+          memory: 512M
 
   valkey:
     restart: unless-stopped
-    image: valkey/valkey:9.1.1-alpine
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    image: valkey/valkey:9.1.1-alpine@sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9
     env_file:
       - .env
     # Fail fast when VALKEY_PASSWORD is unset/empty - an empty --requirepass
@@ -89,9 +124,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    # Sessions, rate limits and cross-worker events all live here. A hard
+    # 2G ceiling keeps a runaway dataset from OOMing the host; raise it for
+    # large session/cache datasets (eviction is intentionally left to the
+    # application, so this is a safety net, not a cache-size setting).
+    deploy:
+      resources:
+        limits:
+          cpus: '${VALKEY_CPU_LIMIT:-1}'
+          memory: ${VALKEY_MEM_LIMIT:-2G}
+        reservations:
+          memory: 256M
 
   rustfs-perms:
-    image: alpine:3.24
+    security_opt:
+      - no-new-privileges:true
+    image: alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
     user: root
     volumes:
       - rustfs_data:/data
@@ -102,7 +150,11 @@ services:
 
   rustfs:
     restart: unless-stopped
-    image: rustfs/rustfs:1.0.0-rc.3
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    image: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
     env_file:
       - .env
     depends_on:
@@ -130,9 +182,18 @@ services:
       timeout: 10s
       retries: 10
       start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '${RUSTFS_CPU_LIMIT:-2}'
+          memory: ${RUSTFS_MEM_LIMIT:-2G}
+        reservations:
+          memory: 512M
 
   rustfs-init:
-    image: rustfs/rc:v0.1.30
+    security_opt:
+      - no-new-privileges:true
+    image: rustfs/rc:v0.1.30@sha256:1296510ec27800668d26a8bdca6251e587086187a9368c7b80134a169e8a3bb8
     env_file:
       - .env
     depends_on:
@@ -149,7 +210,9 @@ services:
     restart: "no"
 
   cert-init:
-    image: alpine:3.24
+    security_opt:
+      - no-new-privileges:true
+    image: alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
     volumes:
       - certs:/certs
     entrypoint: >
@@ -163,7 +226,11 @@ services:
 
   clamav:
     restart: unless-stopped
-    image: clamav/clamav:1.5.4
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    image: clamav/clamav:1.5.4@sha256:7054e3f34308c384ea43cd786ea17abf899bd44af40af9f1b099853d7a5c214e
     environment:
       CLAMD_CONF_StreamMaxLength: "600M"
       CLAMD_CONF_MaxScanSize: "600M"
@@ -179,12 +246,25 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    # Signatures need ~1.2 GB at rest and ~2.4 GB during a reload (see
+    # docker/README.md). 4G is the documented ceiling, not a tight fit.
+    deploy:
+      resources:
+        limits:
+          cpus: '${CLAMAV_CPU_LIMIT:-2}'
+          memory: ${CLAMAV_MEM_LIMIT:-4G}
+        reservations:
+          memory: 1G
 
   clamav-unofficial-sigs:
     restart: unless-stopped
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
     # Pinned to the 8.0.0 release (never :latest): a floating tag lets
     # rebuilds drift silently and defeats digest verification.
-    image: ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0
+    image: ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0@sha256:7503b665d6d8a539bc493d2fe1b4aa4b1c3623e1e05c2e6f699c02c87827695c
     environment:
       CUS_MODE: updater
       CUS_UPDATE_HOURS: "2"
@@ -199,6 +279,19 @@ services:
 
   backend:
     restart: unless-stopped
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    # The FastAPI process runs as UID 10001 and binds only unprivileged ports
+    # (8000/TCP, 30000-30100/UDP); it needs no Linux capabilities. Dropping
+    # them all limits the blast radius of a code-execution bug in the app or
+    # in a spawned ffmpeg/subprocess.
+    cap_drop:
+      - ALL
+    # Reap orphaned children (ffmpeg, websocket workers) that PID 1 would
+    # otherwise leave as zombies for the lifetime of the container.
+    init: true
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:?BACKEND_VERSION must be set to a pinned release tag/digest}
     env_file:
       - .env
@@ -237,33 +330,52 @@ services:
       - "8000"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/ready"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      # Scaled-out workers warm up together and contend for DB/Valkey.
+      # The old 5s/3-retry probe marked healthy replicas unhealthy on a
+      # single slow response; keep a generous budget under load.
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     # Host ports are fine for single-instance dev/prod.  When scaling
     # to multiple replicas (docker compose --scale backend=N or
-    # deploy.replicas below), comment out BOTH port mappings — 8000/TCP
-    # and 30000-30100/UDP can't bind to the host from multiple
+    # BACKEND_SWARM_REPLICAS below), comment out BOTH port mappings —
+    # 8000/TCP and 30000-30100/UDP can't bind to the host from multiple
     # containers.  The client nginx at :443 reverse-proxies to
     # backend:8000 internally regardless.
     ports:
       - "8000:8000"
       - "30000-30100:30000-30100/udp"
-    # For Docker Swarm / stack deploy (has no effect with
-    # ``docker compose up`` — use --scale instead):
-    # deploy:
-    #   replicas: ${BACKEND_REPLICAS:-2}
-    #   resources:
-    #     limits:
-    #       cpus: '2'
-    #       memory: 4G
-    #     reservations:
-    #       cpus: '1'
-    #       memory: 2G
+    # Limits are PER REPLICA. 2 CPU / 2G is enough for one worker and
+    # leaves room to scale N of them on a appropriately sized host.
+    deploy:
+      # Deliberately NOT BACKEND_REPLICAS: that variable is the pool-budget
+      # hint passed into each container. Reusing it here could silently
+      # start N containers with the host ports above still mapped.
+      replicas: ${BACKEND_SWARM_REPLICAS:-1}
+      resources:
+        limits:
+          cpus: '${BACKEND_CPU_LIMIT:-2}'
+          memory: ${BACKEND_MEM_LIMIT:-2G}
+        reservations:
+          cpus: '${BACKEND_CPU_RESERVATION:-0.5}'
+          memory: ${BACKEND_MEM_RESERVATION:-512M}
+      # Swarm-only rolling updates: replace one worker at a time, keep the
+      # old one serving until the new one is healthy, roll back on failure.
+      # Plain `docker compose up` ignores this and uses --scale instead.
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+        monitor: 60s
 
   client:
     restart: unless-stopped
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat-client}/nginx:${CLIENT_VERSION:?CLIENT_VERSION must be set to a pinned release tag/digest}
     # F8: no env_file here. The only variable this container needs is the CSP
     # connect-src list below (a public origin, never a secret), so injecting
@@ -292,6 +404,13 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    deploy:
+      resources:
+        limits:
+          cpus: '${CLIENT_CPU_LIMIT:-1}'
+          memory: ${CLIENT_MEM_LIMIT:-512M}
+        reservations:
+          memory: 128M
 
   backup:
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backup:${BACKEND_VERSION:?BACKEND_VERSION must be set to a pinned release tag/digest}
@@ -328,6 +447,10 @@ services:
       - rustfs_data:/rustfs-data:ro
       - backup_repo:/repo
     restart: unless-stopped
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       # Liveness = supercronic running AND a recent successful backup marker
       # (see /scripts/healthcheck.sh). Catches dead cron loops, broken mounts,
@@ -337,6 +460,15 @@ services:
       timeout: 10s
       retries: 3
       start_period: 2m
+    # Restic's dedup index can balloon on a large repo; keep it bounded but
+    # well above the working set so a scheduled backup is never OOM-killed.
+    deploy:
+      resources:
+        limits:
+          cpus: '${BACKUP_CPU_LIMIT:-1}'
+          memory: ${BACKUP_MEM_LIMIT:-2G}
+        reservations:
+          memory: 256M
 
   # Local AI moderation (Shieldstral) - OPTIONAL.
   #
@@ -353,7 +485,13 @@ services:
   shieldstral:
     profiles: ["ai"]
     restart: unless-stopped
-    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b10614}
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    # Was `server-b10614`, which no longer resolves; pin the current concrete
+    # build (b12464) by digest so the default AI profile actually pulls.
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b12464@sha256:5b43086e3ba7ea5794d72904654f6cd41224a9b1c6ac0398f4940ee380d30f23}
     environment:
       LLAMA_ARG_MODEL: /models/shieldstral/${SHIELDSTRAL_MODEL:-Shieldstral-1.0-3B-Q4_K_M.gguf}
       LLAMA_ARG_MMPROJ: /models/shieldstral/${SHIELDSTRAL_MMPROJ:-mmproj-Shieldstral-1.0-3b-BF16.gguf}
@@ -376,6 +514,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '${SHIELDSTRAL_CPU_LIMIT:-4}'
           memory: ${SHIELDSTRAL_MEM_LIMIT:-6G}
 
 
@@ -387,7 +526,11 @@ services:
   meilisearch:
     profiles: ["search", "search-meilisearch"]
     restart: unless-stopped
-    image: getmeili/meilisearch:v1.12
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    image: getmeili/meilisearch:v1.15@sha256:fe500cf9cca05cb9f027981583f28eccf17d35d94499c1f8b7b844e7418152fc
     env_file:
       - .env
     environment:
@@ -412,6 +555,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '${MEILISEARCH_CPU_LIMIT:-1}'
           memory: ${MEILISEARCH_MEM_LIMIT:-512M}
         reservations:
           memory: 128M
@@ -419,7 +563,11 @@ services:
   elasticsearch:
     profiles: ["search-elastic"]
     restart: unless-stopped
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    # Deny setuid/setgid escalation and file-capability gain inside the
+    # container. Legitimate privilege *drops* by image entrypoints still work.
+    security_opt:
+      - no-new-privileges:true
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0@sha256:e1e66bfabae0fd03a0a36651a9bb198e7f061e0c99f457a6203b116e053e9cdb
     env_file:
       - .env
     environment:
@@ -443,6 +591,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '${ES_CPU_LIMIT:-2}'
           memory: ${ES_MEM_LIMIT:-2G}
         reservations:
           memory: 512M

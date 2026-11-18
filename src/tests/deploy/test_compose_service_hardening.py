@@ -13,6 +13,8 @@ was hardened here.
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,33 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = REPO_ROOT / "docker-compose.yml"
+JANUS_COMPOSE = REPO_ROOT / "docker/janus/docker-compose.janus.yml"
+DIGEST_LOCK = REPO_ROOT / "image-digests.lock.json"
+IMAGE_LINE_RE = re.compile(r"(?m)^\s*image:\s*(\S+)\s*$")
+
+# Every third-party image ref in the compose file, pinned to the manifest
+# digest re-resolved from its registry. Changing one requires re-verifying the
+# digest online and updating image-digests.lock.json in the same change.
+EXPECTED_PINS = {
+    "db": "postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015",
+    "valkey": "valkey/valkey:9.1.1-alpine@sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9",
+    "rustfs-perms": "alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+    "rustfs": "rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
+    "rustfs-init": "rustfs/rc:v0.1.30@sha256:1296510ec27800668d26a8bdca6251e587086187a9368c7b80134a169e8a3bb8",
+    "cert-init": "alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+    "clamav": "clamav/clamav:1.5.4@sha256:7054e3f34308c384ea43cd786ea17abf899bd44af40af9f1b099853d7a5c214e",
+    "clamav-unofficial-sigs": "ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0@sha256:7503b665d6d8a539bc493d2fe1b4aa4b1c3623e1e05c2e6f699c02c87827695c",
+    "meilisearch": "getmeili/meilisearch:v1.15@sha256:fe500cf9cca05cb9f027981583f28eccf17d35d94499c1f8b7b844e7418152fc",
+    "elasticsearch": "docker.elastic.co/elasticsearch/elasticsearch:8.19.0@sha256:e1e66bfabae0fd03a0a36651a9bb198e7f061e0c99f457a6203b116e053e9cdb",
+}
+# The AI profile's operator-overridable default must still carry a valid pin.
+LLAMA_DEFAULT_PIN = (
+    "ghcr.io/ggml-org/llama.cpp:server-b12464@sha256:"
+    "5b43086e3ba7ea5794d72904654f6cd41224a9b1c6ac0398f4940ee380d30f23"
+)
+
+# Tags that were superseded during the digest-pinning pass.
+STALE_TAGS = ("1.0.0-rc.3", "v1.12", "8.15.0", "server-b10614")
 
 # Services that keep on-disk state and therefore must expose a readiness probe.
 STATEFUL_SERVICES = ("db", "valkey", "rustfs", "clamav", "meilisearch", "elasticsearch")
@@ -177,3 +206,107 @@ def test_scaling_guidance_is_preserved() -> None:
     text = COMPOSE.read_text(encoding="utf-8")
     assert "--scale backend" in text, "compose must keep the horizontal-scaling note"
     assert "30000-30100/udp" in text, "ports caveat for scaled backend must stay accurate"
+
+
+def test_every_service_drops_new_privileges(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    """No container may gain privileges via setuid/setgid or file capabilities.
+
+    This is a kernel-level backstop: even if a setuid helper or a capability-
+    bearing file is introduced into an image, ``no_new_privs`` makes execve
+    fail closed instead of handing root to a compromised process. Privilege
+    *drops* performed by image entrypoints (gosu/su-exec) are unaffected.
+    """
+    assert services, "expected services in the canonical compose file"
+    for name, spec in services.items():
+        opts = spec.get("security_opt", [])
+        assert isinstance(opts, list), f"{name} has a malformed security_opt: {opts!r}"
+        assert any(
+            str(opt).replace(" ", "") == "no-new-privileges:true" for opt in opts
+        ), f"{name} is missing security_opt: no-new-privileges:true"
+
+
+def test_backend_drops_capabilities_and_reaps_children(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    """The internet-facing, non-root backend needs no Linux capabilities."""
+    backend = services["backend"]
+    dropped = backend.get("cap_drop", [])
+    assert isinstance(dropped, list) and "ALL" in dropped, (
+        "backend must drop all Linux capabilities (it runs as UID 10001 and "
+        "binds only unprivileged ports)"
+    )
+    assert backend.get("init") is True, (
+        "backend must run under an init process so orphaned ffmpeg/websocket "
+        "children are reaped instead of lingering as zombies"
+    )
+
+
+def test_janus_dev_api_is_bound_to_loopback() -> None:
+    """The unauthenticated dev gateway must never listen on 0.0.0.0."""
+    assert JANUS_COMPOSE.is_file(), f"missing Janus compose file: {JANUS_COMPOSE}"
+    data = yaml.safe_load(JANUS_COMPOSE.read_text(encoding="utf-8"))
+    ports = data["services"]["janus"].get("ports") or []
+    assert ports, "Janus compose must publish its API ports for the adapter tests"
+    for entry in ports:
+        # Compose publishes "host:container"; a bare port means 0.0.0.0.
+        host = str(entry).split(":", 1)[0]
+        assert host == "127.0.0.1", (
+            f"Janus dev API port {entry!r} is not pinned to 127.0.0.1; an "
+            "unauthenticated API must not be exposed on all host interfaces"
+        )
+    assert "0.0.0.0" not in JANUS_COMPOSE.read_text(encoding="utf-8"), (
+        "Janus compose must not contain a 0.0.0.0 bind"
+    )
+
+
+def test_third_party_images_are_pinned_to_verified_digests(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    for name, expected in EXPECTED_PINS.items():
+        assert services[name]["image"] == expected, f"unexpected pin for {name}"
+    llama = services["shieldstral"]["image"]
+    assert LLAMA_DEFAULT_PIN in llama, "AI profile default must carry a valid digest pin"
+    assert "server-b10614" not in llama, "the stale llama.cpp build tag must stay gone"
+
+
+def test_no_third_party_image_is_tag_only_or_floating() -> None:
+    text = COMPOSE.read_text(encoding="utf-8")
+    refs = [m.group(1) for m in IMAGE_LINE_RE.finditer(text)]
+    assert refs, "expected image lines in the compose file"
+    for ref in refs:
+        if "${CI_REGISTRY_IMAGE" in ref:
+            continue  # first-party, require-pinned via ${BACKEND_VERSION:?...}
+        assert "@sha256:" in ref, f"third-party image is not digest-pinned: {ref}"
+        assert not ref.endswith(":latest"), f"floating third-party image: {ref}"
+        for stale in STALE_TAGS:
+            assert stale not in ref, f"stale tag {stale} still referenced: {ref}"
+
+
+def test_digest_lock_matches_every_pinned_image() -> None:
+    assert DIGEST_LOCK.is_file(), f"missing digest lock: {DIGEST_LOCK}"
+    lock = json.loads(DIGEST_LOCK.read_text(encoding="utf-8"))
+    assert lock.get("format") == "plexichat/image-digests-lock/v1"
+    images = lock["images"]
+    expected_refs = set(EXPECTED_PINS.values()) | {LLAMA_DEFAULT_PIN}
+    assert set(images) == expected_refs, (
+        f"digest lock refs drifted from compose: missing={sorted(expected_refs - set(images))}, "
+        f"extra={sorted(set(images) - expected_refs)}"
+    )
+    for ref, entry in images.items():
+        assert entry["reference"] == ref, f"lock entry has a mismatched reference: {ref}"
+        assert entry["tag"], f"lock entry is missing its tag: {ref}"
+        digest = "@sha256:" + ref.rsplit("@sha256:", 1)[1]
+        assert entry["digest"] == digest, f"lock digest does not match pin: {ref}"
+        assert re.fullmatch(r"@sha256:[0-9a-f]{64}", digest), f"malformed digest: {ref}"
+
+
+def test_supply_chain_policy_markers_are_preserved() -> None:
+    text = COMPOSE.read_text(encoding="utf-8")
+    for marker in (
+        "ALLOW_DEV_COMPOSE",
+        "ALLOW_DOCKERHUB_FALLBACK",
+        "ALLOW_UNPINNED_IMAGES",
+    ):
+        assert marker in text, f"pinning policy marker was removed: {marker}"

@@ -1,5 +1,56 @@
 {
   "format": "plexichat/image-digests-lock/v1",
-  "note": "Populate/refresh with `python scripts/generate_sbom.py --no-image-sbom` or `docker buildx imagetools inspect`. Digest pins are environment/registry-specific; verify before production deploy.",
-  "images": {}
+  "note": "Immutable third-party pins used by docker-compose.yml. Each digest was resolved online from the registry (docker buildx imagetools inspect / authenticated registry manifest GET) and is stored in @sha256: form for scripts/verify_supply_chain.py --require-digest-lock. Keep the compose image refs and this file in sync (enforced by src/tests/deploy/test_compose_service_hardening.py).",
+  "images": {
+    "alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf": {
+      "reference": "alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+      "tag": "3.24",
+      "digest": "@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf"
+    },
+    "clamav/clamav:1.5.4@sha256:7054e3f34308c384ea43cd786ea17abf899bd44af40af9f1b099853d7a5c214e": {
+      "reference": "clamav/clamav:1.5.4@sha256:7054e3f34308c384ea43cd786ea17abf899bd44af40af9f1b099853d7a5c214e",
+      "tag": "1.5.4",
+      "digest": "@sha256:7054e3f34308c384ea43cd786ea17abf899bd44af40af9f1b099853d7a5c214e"
+    },
+    "docker.elastic.co/elasticsearch/elasticsearch:8.19.0@sha256:e1e66bfabae0fd03a0a36651a9bb198e7f061e0c99f457a6203b116e053e9cdb": {
+      "reference": "docker.elastic.co/elasticsearch/elasticsearch:8.19.0@sha256:e1e66bfabae0fd03a0a36651a9bb198e7f061e0c99f457a6203b116e053e9cdb",
+      "tag": "8.19.0",
+      "digest": "@sha256:e1e66bfabae0fd03a0a36651a9bb198e7f061e0c99f457a6203b116e053e9cdb"
+    },
+    "getmeili/meilisearch:v1.15@sha256:fe500cf9cca05cb9f027981583f28eccf17d35d94499c1f8b7b844e7418152fc": {
+      "reference": "getmeili/meilisearch:v1.15@sha256:fe500cf9cca05cb9f027981583f28eccf17d35d94499c1f8b7b844e7418152fc",
+      "tag": "v1.15",
+      "digest": "@sha256:fe500cf9cca05cb9f027981583f28eccf17d35d94499c1f8b7b844e7418152fc"
+    },
+    "ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0@sha256:7503b665d6d8a539bc493d2fe1b4aa4b1c3623e1e05c2e6f699c02c87827695c": {
+      "reference": "ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0@sha256:7503b665d6d8a539bc493d2fe1b4aa4b1c3623e1e05c2e6f699c02c87827695c",
+      "tag": "8.0.0",
+      "digest": "@sha256:7503b665d6d8a539bc493d2fe1b4aa4b1c3623e1e05c2e6f699c02c87827695c"
+    },
+    "ghcr.io/ggml-org/llama.cpp:server-b12464@sha256:5b43086e3ba7ea5794d72904654f6cd41224a9b1c6ac0398f4940ee380d30f23": {
+      "reference": "ghcr.io/ggml-org/llama.cpp:server-b12464@sha256:5b43086e3ba7ea5794d72904654f6cd41224a9b1c6ac0398f4940ee380d30f23",
+      "tag": "server-b12464",
+      "digest": "@sha256:5b43086e3ba7ea5794d72904654f6cd41224a9b1c6ac0398f4940ee380d30f23"
+    },
+    "postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015": {
+      "reference": "postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015",
+      "tag": "18-alpine",
+      "digest": "@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015"
+    },
+    "rustfs/rc:v0.1.30@sha256:1296510ec27800668d26a8bdca6251e587086187a9368c7b80134a169e8a3bb8": {
+      "reference": "rustfs/rc:v0.1.30@sha256:1296510ec27800668d26a8bdca6251e587086187a9368c7b80134a169e8a3bb8",
+      "tag": "v0.1.30",
+      "digest": "@sha256:1296510ec27800668d26a8bdca6251e587086187a9368c7b80134a169e8a3bb8"
+    },
+    "rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff": {
+      "reference": "rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
+      "tag": "1.0.0",
+      "digest": "@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff"
+    },
+    "valkey/valkey:9.1.1-alpine@sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9": {
+      "reference": "valkey/valkey:9.1.1-alpine@sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9",
+      "tag": "9.1.1-alpine",
+      "digest": "@sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9"
+    }
+  }
 }
