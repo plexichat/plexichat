@@ -7,7 +7,16 @@ Provides endpoints for:
 - Compression status
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    Request,
+    UploadFile,
+    File,
+    Query,
+)
 from typing import Any, Dict, Optional
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
@@ -487,16 +496,17 @@ async def cancel_upload_session(
     },
 )
 async def get_user_upload_sessions(
+    limit: int = Query(200, ge=1, le=200, description="Max sessions to return"),
     user: TokenInfo = Depends(get_current_user),
 ) -> UploadSessionsResponse:
-    """Get all active upload sessions for the current user."""
+    """Get a bounded page of the current user's active upload sessions."""
 
     # Access the chunked manager directly
     from src.core import media as media_module
 
     try:
         manager = media_module._get_chunked_manager()
-        sessions = manager.get_user_sessions(user.user_id)
+        sessions = manager.get_user_sessions(user.user_id, limit=limit)
         logger.debug(f"User {user.user_id} retrieved {len(sessions)} upload sessions")
 
         return UploadSessionsResponse(

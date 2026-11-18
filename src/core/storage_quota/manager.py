@@ -59,6 +59,10 @@ MAX_LIST_LIMIT = 200
 MAX_LIST_OFFSET = 1_000_000
 MAX_LIST_PATH_CHARS = 512
 
+#: Distinguishes "caller did not supply an override row" from an explicit
+#: ``None`` (no override exists) in :meth:`StorageQuotaManager.resolve_limit`.
+_UNSET = object()
+
 
 def _bounded_override_note(note: Any) -> Optional[str]:
     """Return a safe override note, refusing control characters and bloat."""
@@ -180,10 +184,16 @@ class StorageQuotaManager:
             (int(user_id),),
         )
 
-    def resolve_limit(self, user_id: int) -> Dict[str, Any]:
-        """Return the effective limit and where it came from."""
+    def resolve_limit(self, user_id: int, override: Any = _UNSET) -> Dict[str, Any]:
+        """Return the effective limit and where it came from.
+
+        ``override`` may be supplied by a caller that already fetched the row
+        in a wider aggregate query (the quota status hot path does exactly
+        that). When omitted, the row is read here as before.
+        """
         tier = self._user_tier(user_id)
-        override = self._override_row(user_id)
+        if override is _UNSET:
+            override = self._override_row(user_id)
         default_bytes = self._default_limit_bytes()
         tier_bytes = self._tier_limit_bytes(tier)
 
@@ -277,11 +287,49 @@ class StorageQuotaManager:
         )
         return max(0, _as_int(_row_value(row, "pending", 0), 0))
 
+    def _status_snapshot(self, user_id: int) -> tuple[int, int, int, Any]:
+        """Return every piece of live data ``get_status`` needs in one query.
+
+        The old path issued four separate reads (usage aggregate, file count,
+        reservation aggregate, override row) on every quota/usage request.
+        Folding them into a single statement removes three database round trips
+        from the hottest read endpoint while returning byte-for-byte identical
+        values. All subqueries are keyed by the caller's id and run against the
+        same indexed columns as the original standalone queries.
+        """
+        self._ensure_schema()
+        uid = int(user_id)
+        now = int(time.time() * 1000)
+        row = self._db.fetch_one(
+            "SELECT "
+            "(SELECT COALESCE(SUM(size), 0) FROM media_files "
+            " WHERE uploaded_by = ? AND deleted = 0) AS used, "
+            "(SELECT COUNT(*) FROM media_files "
+            " WHERE uploaded_by = ? AND deleted = 0) AS files, "
+            "(SELECT COALESCE(SUM(bytes), 0) FROM storage_quota_reservations "
+            " WHERE user_id = ? AND expires_at > ?) AS pending, "
+            "q.limit_bytes AS q_limit, q.unlimited AS q_unlimited "
+            "FROM (SELECT 1) AS one "
+            "LEFT JOIN user_storage_quotas q ON q.user_id = ?",
+            (uid, uid, uid, now, uid),
+        )
+        used = max(0, _as_int(_row_value(row, "used", 0), 0))
+        files = max(0, _as_int(_row_value(row, "files", 1), 0))
+        pending = max(0, _as_int(_row_value(row, "pending", 2), 0))
+        q_limit = _row_value(row, "q_limit", 3)
+        q_unlimited = _row_value(row, "q_unlimited", 4)
+        # A LEFT JOIN with no matching row yields NULL for both columns; that
+        # is the "no override" case. A real override with limit_bytes NULL and
+        # unlimited 0 still has a non-NULL unlimited column, so it is kept.
+        override = None
+        if q_limit is not None or q_unlimited is not None:
+            override = {"limit_bytes": q_limit, "unlimited": q_unlimited}
+        return used, files, pending, override
+
     def get_status(self, user_id: int) -> Dict[str, Any]:
         """Return usage, limit, and remaining bytes for a user."""
-        resolved = self.resolve_limit(user_id)
-        used = self.usage_bytes(user_id)
-        pending = self.pending_bytes(user_id)
+        used, file_count, pending, override = self._status_snapshot(user_id)
+        resolved = self.resolve_limit(user_id, override=override)
         limit = resolved["limit_bytes"]
         unlimited = bool(resolved["unlimited"])
         consumed = used + pending
@@ -299,7 +347,7 @@ class StorageQuotaManager:
             "remaining_bytes": remaining,
             "percent_used": percent,
             "unlimited": unlimited,
-            "file_count": self.file_count(user_id),
+            "file_count": file_count,
             "source": resolved["source"],
             "tier": resolved["tier"],
             "tier_limit_bytes": resolved["tier_limit_bytes"],

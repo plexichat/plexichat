@@ -3,6 +3,7 @@ Admin approval workflow routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException, Query
+from starlette.responses import Response
 from src.api.schemas.common import (
     ErrorResponse,
     SnowflakeID,
@@ -122,14 +123,24 @@ async def list_approvals(
     request: Request,
     status: Optional[str] = Query(None, max_length=32),
     action_type: Optional[str] = Query(None, max_length=64),
+    # SECURITY: the approval table is attacker-growable (any admin.approvals
+    # holder may file requests) and every row is serialized into the response.
+    # Bound both the page size and how far it may paginate so one call can never
+    # turn into an unbounded allocation / render pass.
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=1_000_000),
 ):
     """
     List approval requests with optional filtering.
+
+    The fully rendered response is cached briefly (db-scoped, gates first);
+    approval mutations invalidate it so a stale status is never observed.
     """
     check_host_restriction(request)
     require_admin_permission(request, "admin.approvals")
 
     import src.api as api
+    from src.core.admin.read_cache import get_or_render, _render_json
 
     db = api.get_db()
     if db is None:
@@ -138,29 +149,36 @@ async def list_approvals(
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    # Build query with filters
-    query = """
-        SELECT id, requested_by, action_type, target_type, target_id, action_details, 
-               status, required_approvals, current_approvals, approved_by, rejected_by, 
-               rejection_reason, expires_at, created_at, updated_at
-        FROM admin_approvals
-        WHERE 1=1
-    """
-    params = []
+    def _render() -> bytes:
+        # Build query with filters
+        query = """
+            SELECT id, requested_by, action_type, target_type, target_id, action_details,
+                   status, required_approvals, current_approvals, approved_by, rejected_by,
+                   rejection_reason, expires_at, created_at, updated_at
+            FROM admin_approvals
+            WHERE 1=1
+        """
+        params = []
 
-    if status:
-        query += " AND status = ?"
-        params.append(status)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
 
-    if action_type:
-        query += " AND action_type = ?"
-        params.append(action_type)
+        if action_type:
+            query += " AND action_type = ?"
+            params.append(action_type)
 
-    query += " ORDER BY created_at DESC LIMIT 100"
+        # Bound the scan AND the response; the filters stay bound parameters.
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend((limit, offset))
 
-    rows = db.fetch_all(query, params)
+        rows = db.fetch_all(query, params)
+        return _render_json({"approvals": [_serialize_approval_row(row) for row in rows]})
 
-    return {"approvals": [_serialize_approval_row(row) for row in rows]}
+    body = get_or_render(
+        "approvals", (status, action_type, limit, offset), _render
+    )
+    return Response(content=body, media_type="application/json")
 
 
 @router.get(
@@ -301,6 +319,12 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
             now,
         ),
     )
+
+    # The approval list response is cached briefly; a new row must be visible
+    # immediately.
+    from src.core.admin.read_cache import invalidate_approval_caches
+
+    invalidate_approval_caches()
 
     from src.core.admin.permissions import log_admin_action
 
@@ -514,6 +538,11 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
             },
         )
 
+    # A successful vote changes the row's status/count; refresh the cached list.
+    from src.core.admin.read_cache import invalidate_approval_caches
+
+    invalidate_approval_caches()
+
     # The conditional UPDATE is the single source of truth for this vote:
     # its CAS guard on ``approved_by`` guarantees no other vote landed between
     # our read and the write, so the row we already fetched determines the new
@@ -667,6 +696,11 @@ async def reject_request(
             },
         )
 
+    # The row moved to 'rejected'; refresh the cached list.
+    from src.core.admin.read_cache import invalidate_approval_caches
+
+    invalidate_approval_caches()
+
     from src.core.admin.permissions import log_admin_action
 
     log_admin_action(
@@ -806,6 +840,11 @@ async def cancel_approval(request: Request, approval_id: SnowflakeIDParam):
                 }
             },
         )
+
+    # The row moved to 'cancelled'; refresh the cached list.
+    from src.core.admin.read_cache import invalidate_approval_caches
+
+    invalidate_approval_caches()
 
     from src.core.admin.permissions import log_admin_action
 

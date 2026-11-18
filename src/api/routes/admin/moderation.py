@@ -38,11 +38,25 @@ from .utils import (
     get_admin_from_token,
     require_admin_permission,
 )
+from ._summary_cache import get_or_compute
+from src.core.security.hardening.text import strip_control_characters
 import src.api as api
 import utils.logger as logger
 import utils.config as config
 
 router = APIRouter()
+
+# Short window for the read-only moderator queue/count summaries.  The scope
+# gate runs before the cache is read, so a cached page is never served to a
+# caller without ``reports.read``.
+_REPORTS_TTL_SECONDS = 2.0
+
+
+def _safe_label(value: Any) -> Any:
+    """Strip control chars from a free-text status/category label."""
+    if value is None:
+        return None
+    return strip_control_characters(value)
 
 
 def _load_target_admin_context(
@@ -357,53 +371,72 @@ async def get_enhanced_reports(
     keeps those reports visible in the moderator queue instead of orphaned.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
-    db = api.get_db()
-    if db is None:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Database unavailable"}},
+    require_admin_permission(request, "reports.read")
+
+    def _load() -> dict:
+        db = api.get_db()
+        if db is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database unavailable"}},
+            )
+        clauses = []
+        params: List[Any] = []
+        if status_filter:
+            clauses.append("status = ?")
+            params.append(status_filter)
+        where = (" AND ".join(clauses)) if clauses else "1=1"
+        # COUNT(*) OVER() gives the full filtered total alongside the page in a
+        # single scan: the window is evaluated over the whole WHERE set before
+        # LIMIT/OFFSET is applied.  This drops the separate COUNT round trip on
+        # the hot path.  The status/created_at composite index (or the created_at
+        # index when unfiltered) keeps the ordered scan index-backed.
+        rows = db.fetch_all(
+            f"SELECT *, COUNT(*) OVER() AS _report_total FROM reports WHERE {where} "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            tuple(params + [limit, offset]),
         )
-    clauses = []
-    params: List[Any] = []
-    if status_filter:
-        clauses.append("status = ?")
-        params.append(status_filter)
-    where = (" AND ".join(clauses)) if clauses else "1=1"
-    # COUNT(*) OVER() gives the full filtered total alongside the page in a
-    # single scan: the window is evaluated over the whole WHERE set before
-    # LIMIT/OFFSET is applied.  This drops the separate COUNT round trip on
-    # the hot path.  The status/created_at composite index (or the created_at
-    # index when unfiltered) keeps the ordered scan index-backed.
-    rows = db.fetch_all(
-        f"SELECT *, COUNT(*) OVER() AS _report_total FROM reports WHERE {where} "
-        "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        tuple(params + [limit, offset]),
+        if rows and isinstance(rows[0], dict):
+            total = int(rows[0]["_report_total"] or 0)
+            # Never mutate the row dicts: fetch_all caches them, so popping the
+            # helper column would corrupt every later identical request.
+            items = [
+                {k: v for k, v in row.items() if k != "_report_total"} for row in rows
+            ]
+        elif rows:
+            total = int(rows[0][-1] or 0)
+            items = [dict(row) for row in rows]
+        elif offset:
+            # A page beyond the end has no row to carry the window total; one
+            # cheap COUNT keeps ``total`` accurate for that rare case.
+            total_row = db.fetch_one(
+                f"SELECT COUNT(*) AS count FROM reports WHERE {where}", tuple(params)
+            )
+            total = int(total_row["count"]) if total_row else 0
+            items = []
+        else:
+            total = 0
+            items = []
+        # Status/category are rendered as filter chips and chart labels in the
+        # moderator UI.  Normalize control characters out of those two fields
+        # without touching the report body itself.
+        for item in items:
+            if "status" in item:
+                item["status"] = _safe_label(item["status"])
+            if "category" in item:
+                item["category"] = _safe_label(item["category"])
+        return {
+            "items": items,
+            "total": total,
+            "has_more": offset + len(items) < total,
+        }
+
+    return get_or_compute(
+        "reports_page",
+        (status_filter, limit, offset),
+        _load,
+        _REPORTS_TTL_SECONDS,
     )
-    if rows and isinstance(rows[0], dict):
-        total = int(rows[0]["_report_total"] or 0)
-        # Never mutate the row dicts: fetch_all caches them, so popping the
-        # helper column would corrupt every later identical request.
-        items = [{k: v for k, v in row.items() if k != "_report_total"} for row in rows]
-    elif rows:
-        total = int(rows[0][-1] or 0)
-        items = [dict(row) for row in rows]
-    elif offset:
-        # A page beyond the end has no row to carry the window total; one
-        # cheap COUNT keeps ``total`` accurate for that rare case.
-        total_row = db.fetch_one(
-            f"SELECT COUNT(*) AS count FROM reports WHERE {where}", tuple(params)
-        )
-        total = int(total_row["count"]) if total_row else 0
-        items = []
-    else:
-        total = 0
-        items = []
-    return {
-        "items": items,
-        "total": total,
-        "has_more": offset + len(items) < total,
-    }
 
 
 @router.get(
@@ -417,23 +450,32 @@ async def get_enhanced_reports(
 async def get_enhanced_report_counts(request: Request):
     """Counts of enhanced reports grouped by status."""
     check_host_restriction(request)
-    get_admin_from_token(request)
-    db = api.get_db()
-    if db is None:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Database unavailable"}},
+    require_admin_permission(request, "reports.read")
+
+    def _load() -> dict:
+        db = api.get_db()
+        if db is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database unavailable"}},
+            )
+        counts: Dict[str, int] = {}
+        # Bound the number of status buckets so a corrupt/crafted status value
+        # cannot turn this aggregate into an unbounded response.
+        rows = db.fetch_all(
+            "SELECT status, COUNT(*) as count FROM reports "
+            "GROUP BY status LIMIT 200"
         )
-    counts: Dict[str, int] = {}
-    rows = db.fetch_all("SELECT status, COUNT(*) as count FROM reports GROUP BY status")
-    total = 0
-    for row in rows:
-        status = row["status"]
-        count = int(row["count"])
-        counts[status] = count
-        total += count
-    counts["total"] = total
-    return counts
+        total = 0
+        for row in rows:
+            status = _safe_label(row["status"])
+            count = int(row["count"])
+            counts[status] = count
+            total += count
+        counts["total"] = total
+        return counts
+
+    return get_or_compute("reports_counts", (), _load, _REPORTS_TTL_SECONDS)
 
 
 @router.post(

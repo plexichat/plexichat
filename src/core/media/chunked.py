@@ -25,6 +25,14 @@ import utils.logger as logger
 import utils.config as config
 
 
+#: Hard cap on the number of active upload sessions a single listing may
+#: return. Sessions are cheap to create, so without a cap one request could
+#: materialise an unbounded response (and an unbounded validation cost) for the
+#: caller. 200 matches the storage-file listing cap and is far above any
+#: realistic number of concurrently active uploads.
+MAX_USER_SESSIONS = 200
+
+
 class UploadSessionStatus(Enum):
     """Status of an upload session."""
 
@@ -952,8 +960,16 @@ class ChunkedUploadManager:
 
         return count
 
-    def get_user_sessions(self, user_id: int) -> List[UploadSession]:
-        """Get all active sessions for a user."""
+    def get_user_sessions(
+        self, user_id: int, limit: int = MAX_USER_SESSIONS
+    ) -> List[UploadSession]:
+        """Get a bounded page of the user's active sessions.
+
+        ``limit`` is clamped to :data:`MAX_USER_SESSIONS` so a single listing
+        can never grow without bound, regardless of how many sessions an
+        account has accumulated.
+        """
+        safe_limit = bounded_int(limit, "limit", minimum=1, maximum=MAX_USER_SESSIONS)
         now = int(time.time() * 1000)
 
         rows = self._db.fetch_all(
@@ -962,8 +978,8 @@ class ChunkedUploadManager:
                       created_at, updated_at, expires_at, temp_path, checksum
                FROM media_upload_sessions
                WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired')
-               ORDER BY created_at DESC""",
-            (user_id, now),
+               ORDER BY created_at DESC LIMIT ?""",
+            (user_id, now, safe_limit),
         )
 
         sessions = []

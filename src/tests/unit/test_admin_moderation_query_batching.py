@@ -149,6 +149,7 @@ class _ReportDB:
 def _patch_report_gate(monkeypatch, db):
     monkeypatch.setattr(moderation_routes, "check_host_restriction", lambda r: None)
     monkeypatch.setattr(moderation_routes, "get_admin_from_token", lambda r: 1)
+    monkeypatch.setattr(moderation_routes, "require_admin_permission", lambda r, p: 1)
     monkeypatch.setattr(api, "get_db", lambda: db)
 
 

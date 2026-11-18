@@ -3,6 +3,7 @@ Admin dashboard and system metrics routes.
 """
 
 import json
+from typing import Any
 
 from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel as _BaseModel
@@ -17,10 +18,31 @@ from .utils import (
     get_admin_from_token,
     require_admin_permission,
 )
+from ._summary_cache import get_or_compute
+from src.core.security.hardening.text import strip_control_characters
 from src.core import applications
 import utils.logger as logger
 
 router = APIRouter()
+
+# Operators poll these read endpoints every few seconds.  A short window
+# collapses a burst of polls into one computation without serving data that is
+# meaningfully stale.  Scope/host gates run before the cache is consulted.
+_SUMMARY_TTL_SECONDS = 2.0
+
+
+def _safe_label(value: Any) -> Any:
+    """Strip control characters from a free-text label before it is emitted.
+
+    Alert sources/severities and telemetry endpoint labels originate from
+    internal events but are stored as free text.  A C0/C1 or line-separator
+    character in one of those values can forge a log line or split a
+    downstream parser, so labels are normalized on the way out.  ``None`` is
+    preserved so the response shape does not change.
+    """
+    if value is None:
+        return None
+    return strip_control_characters(value)
 
 
 @router.get(
@@ -39,6 +61,15 @@ async def get_dashboard(request: Request):
     """
     check_host_restriction(request)
     require_admin_permission(request, "metrics.read")
+    # The gates above run on every request, including cache hits: authorization
+    # is never served from the short-TTL summary cache.
+    return get_or_compute(
+        "dashboard", (), _build_dashboard_response, _SUMMARY_TTL_SECONDS
+    )
+
+
+def _build_dashboard_response() -> AdminDashboardResponse:
+    """Compute the dashboard summary from scratch (cache producer)."""
     from src.core import admin
 
     try:
@@ -51,8 +82,8 @@ async def get_dashboard(request: Request):
                 stats = telemetry.get_endpoint_stats(hours=24)
                 telemetry_stats = [
                     TelemetryEndpointStat(
-                        endpoint=s.endpoint,
-                        method=s.method,
+                        endpoint=_safe_label(s.endpoint),
+                        method=_safe_label(s.method),
                         count=s.count,
                         avg_ms=round(s.avg_response_time_ms, 2),
                         min_ms=round(s.min_response_time_ms, 2)
@@ -103,6 +134,15 @@ async def get_dashboard(request: Request):
         feature_stats = {}
         try:
             feature_stats = applications.get_admin_dashboard_feature_stats()
+            # Report categories are rendered as chart labels; never emit raw
+            # control characters from a stored category value.
+            categories = feature_stats.get("report_categories")
+            if isinstance(categories, list):
+                feature_stats["report_categories"] = [
+                    {**item, "category": _safe_label(item.get("category"))}
+                    for item in categories
+                    if isinstance(item, dict)
+                ]
         except Exception as fe:
             logger.warning(f"Feature stats dashboard error: {fe}")
 
@@ -371,68 +411,76 @@ async def get_system_alerts(
 ):
     """Return recent system alerts across all subsystems."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "metrics.read")
 
-    try:
-        import src.api as _api
-        import time
+    def _load() -> dict:
+        try:
+            import src.api as _api
+            import time
 
-        db = _api.get_db()
-        if db is None:
-            raise HTTPException(status_code=500, detail="Database not available")
+            db = _api.get_db()
+            if db is None:
+                raise HTTPException(status_code=500, detail="Database not available")
 
-        cutoff = int(time.time()) - (hours * 3600)
-        where = ["created_at >= ?"]
-        params: list = [cutoff]
-        if source:
-            where.append("source = ?")
-            params.append(source)
-        if severity:
-            where.append("severity = ?")
-            params.append(severity)
-        params.append(limit)
+            cutoff = int(time.time()) - (hours * 3600)
+            where = ["created_at >= ?"]
+            params: list = [cutoff]
+            if source:
+                where.append("source = ?")
+                params.append(source)
+            if severity:
+                where.append("severity = ?")
+                params.append(severity)
+            params.append(limit)
 
-        rows = db.fetch_all(
-            f"SELECT id, source, event_type, severity, details, target_path, created_at "
-            f"FROM system_alerts "
-            f"WHERE {' AND '.join(where)} "
-            f"ORDER BY created_at DESC LIMIT ?",
-            tuple(params),
-        )
+            rows = db.fetch_all(
+                f"SELECT id, source, event_type, severity, details, target_path, created_at "
+                f"FROM system_alerts "
+                f"WHERE {' AND '.join(where)} "
+                f"ORDER BY created_at DESC LIMIT ?",
+                tuple(params),
+            )
 
-        entries: list[dict] = []
-        for row in rows:
-            if isinstance(row, dict):
-                entries.append(
-                    {
-                        "id": row["id"],
-                        "source": row["source"],
-                        "event_type": row["event_type"],
-                        "severity": row["severity"],
-                        "details": row.get("details"),
-                        "target_path": row.get("target_path"),
-                        "created_at": row["created_at"],
-                    }
-                )
-            else:
-                entries.append(
-                    {
-                        "id": row[0],
-                        "source": row[1],
-                        "event_type": row[2],
-                        "severity": row[3],
-                        "details": row[4],
-                        "target_path": row[5],
-                        "created_at": row[6],
-                    }
-                )
+            entries: list[dict] = []
+            for row in rows:
+                if isinstance(row, dict):
+                    entries.append(
+                        {
+                            "id": row["id"],
+                            "source": _safe_label(row["source"]),
+                            "event_type": _safe_label(row["event_type"]),
+                            "severity": _safe_label(row["severity"]),
+                            "details": row.get("details"),
+                            "target_path": row.get("target_path"),
+                            "created_at": row["created_at"],
+                        }
+                    )
+                else:
+                    entries.append(
+                        {
+                            "id": row[0],
+                            "source": _safe_label(row[1]),
+                            "event_type": _safe_label(row[2]),
+                            "severity": _safe_label(row[3]),
+                            "details": row[4],
+                            "target_path": row[5],
+                            "created_at": row[6],
+                        }
+                    )
 
-        return {"entries": entries}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"System alerts query error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to query system alerts")
+            return {"entries": entries}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"System alerts query error: {e}")
+            raise HTTPException(status_code=500, detail="Failed to query system alerts")
+
+    return get_or_compute(
+        "system_alerts",
+        (limit, hours, source, severity),
+        _load,
+        _SUMMARY_TTL_SECONDS,
+    )
 
 
 @router.get(
@@ -449,39 +497,52 @@ async def get_system_alert_stats(
 ):
     """Return alert counts grouped by source and severity."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "metrics.read")
 
-    try:
-        import src.api as _api
-        import time
+    def _load() -> dict:
+        try:
+            import src.api as _api
+            import time
 
-        db = _api.get_db()
-        if db is None:
-            raise HTTPException(status_code=500, detail="Database not available")
+            db = _api.get_db()
+            if db is None:
+                raise HTTPException(status_code=500, detail="Database not available")
 
-        cutoff = int(time.time()) - (hours * 3600)
-        rows = db.fetch_all(
-            "SELECT source, severity, COUNT(*) as cnt "
-            "FROM system_alerts "
-            "WHERE created_at >= ? "
-            "GROUP BY source, severity "
-            "ORDER BY source, severity",
-            (cutoff,),
-        )
+            cutoff = int(time.time()) - (hours * 3600)
+            # Bound the number of label buckets.  Without a LIMIT a subsystem
+            # emitting a distinct source/severity pair could make this
+            # aggregate grow without limit and turn a cheap stats read into a
+            # large response.  The 200 most frequent pairs are plenty for the
+            # dashboard's chart.
+            rows = db.fetch_all(
+                "SELECT source, severity, COUNT(*) as cnt "
+                "FROM system_alerts "
+                "WHERE created_at >= ? "
+                "GROUP BY source, severity "
+                "ORDER BY source, severity "
+                "LIMIT 200",
+                (cutoff,),
+            )
 
-        stats: dict[str, dict[str, int]] = {}
-        total = 0
-        for row in rows:
-            if isinstance(row, dict):
-                src, sev, cnt = row["source"], row["severity"], row["cnt"]
-            else:
-                src, sev, cnt = row[0], row[1], row[2]
-            stats.setdefault(src, {})[sev] = cnt
-            total += cnt
+            stats: dict[str, dict[str, int]] = {}
+            total = 0
+            for row in rows:
+                if isinstance(row, dict):
+                    src, sev, cnt = row["source"], row["severity"], row["cnt"]
+                else:
+                    src, sev, cnt = row[0], row[1], row[2]
+                # Labels come from free-text event fields; strip control chars
+                # before they become dict keys (chart labels / log lines).
+                stats.setdefault(_safe_label(src), {})[_safe_label(sev)] = cnt
+                total += cnt
 
-        return {"hours": hours, "total": total, "by_source": stats}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"System alert stats error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to query alert stats")
+            return {"hours": hours, "total": total, "by_source": stats}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"System alert stats error: {e}")
+            raise HTTPException(status_code=500, detail="Failed to query alert stats")
+
+    return get_or_compute(
+        "system_alert_stats", (hours,), _load, _SUMMARY_TTL_SECONDS
+    )

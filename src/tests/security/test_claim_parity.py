@@ -149,7 +149,9 @@ def test_root_health_path_proxies_to_api_health_handler():
     # root /health endpoint exists and delegates to the canonical health handler
     assert '@app.get(\n        "/health"' in app_src or '@app.get("/health"' in app_src
     assert "from .routes.health import health_check" in app_src
-    assert "await health_check()" in app_src
+    # The direct caller supplies a Response (FastAPI injects it only on the
+    # routed endpoint), so accept both the bare and the explicit call shape.
+    assert "await health_check()" in app_src or "await health_check(" in app_src
 
 
 # === PKCE S256 + oauth state cookie + login rejects code_verifier ===

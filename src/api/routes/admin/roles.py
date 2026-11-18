@@ -4,7 +4,8 @@ Admin role management routes.
 
 import json
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
+from starlette.responses import Response
 from src.api.schemas.common import (
     ErrorResponse,
     SnowflakeID,
@@ -14,6 +15,7 @@ from src.api.schemas.common import (
 from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.policy_types import UIText
 from src.core.auth.privilege_cache import invalidate_privilege_caches
+from src.core.admin.read_cache import invalidate_admin_read_caches
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -264,14 +266,25 @@ class RoleAssignment(BaseModel):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def list_roles(request: Request):
+async def list_roles(
+    request: Request,
+    # SECURITY: bound the page so a single poll cannot render an unbounded
+    # role catalog. The default preserves the previous "all roles" response for
+    # any realistic deployment; larger pages are rejected, not silently widened.
+    limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0, le=1_000_000),
+):
     """
     List all available admin roles.
+
+    The rendered response is cached briefly (db-scoped, gates first); role
+    mutations invalidate it so a stale privilege map is never observed.
     """
     check_host_restriction(request)
     _require_role_manager(request)
 
     import src.api as api
+    from src.core.admin.read_cache import get_or_render, _render_json
 
     db = api.get_db()
     if db is None:
@@ -280,13 +293,20 @@ async def list_roles(request: Request):
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    rows = db.fetch_all("""
-        SELECT id, name, description, permissions, created_at, created_by, updated_at, is_system
-        FROM admin_roles
-        ORDER BY is_system DESC, name ASC
-    """)
+    def _render() -> bytes:
+        rows = db.fetch_all(
+            """
+            SELECT id, name, description, permissions, created_at, created_by, updated_at, is_system
+            FROM admin_roles
+            ORDER BY is_system DESC, name ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        return _render_json({"roles": [_serialize_role_row(row) for row in rows]})
 
-    return {"roles": [_serialize_role_row(row) for row in rows]}
+    body = get_or_render("roles", (limit, offset), _render)
+    return Response(content=body, media_type="application/json")
 
 
 @router.get(
@@ -445,6 +465,11 @@ async def create_role(request: Request, role_data: RoleCreate):
         ),
     )
 
+    # A new role must appear in the cached catalog immediately, and its
+    # creators' auth context must be refreshed like any other role change.
+    invalidate_privilege_caches()
+    invalidate_admin_read_caches()
+
     # Log the action
     from src.core.admin.permissions import log_admin_action
 
@@ -599,6 +624,7 @@ async def update_role(
     # holder.  Drop the cached auth context so a bearer/cookie token cannot
     # keep answering with the pre-edit permission map.
     invalidate_privilege_caches()
+    invalidate_admin_read_caches()
 
     # Log the action
     from src.core.admin.permissions import log_admin_action
@@ -714,6 +740,7 @@ async def delete_role(request: Request, role_id: SnowflakeIDParam):
             },
         )
     invalidate_privilege_caches()
+    invalidate_admin_read_caches()
 
     # Log the action
     from src.core.admin.permissions import log_admin_action
@@ -893,6 +920,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     # The target just gained privileges; do not let a cached auth context
     # keep reporting the old (lower) permission set.
     invalidate_privilege_caches()
+    invalidate_admin_read_caches()
 
     # Log the action
     from src.core.admin.permissions import log_admin_action
@@ -1007,6 +1035,7 @@ async def revoke_role(
     # Revocation must take effect immediately, including for a session whose
     # verification result is still cached from just before the revoke.
     invalidate_privilege_caches()
+    invalidate_admin_read_caches()
 
     # Log the action
     from src.core.admin.permissions import log_admin_action
@@ -1033,14 +1062,24 @@ async def revoke_role(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_admin_roles(request: Request, admin_id: SnowflakeIDParam):
+async def get_admin_roles(
+    request: Request,
+    admin_id: SnowflakeIDParam,
+    # SECURITY: bound the page of assignments returned for one admin.
+    limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0, le=1_000_000),
+):
     """
     Get all roles assigned to a specific admin.
+
+    The rendered response is cached briefly (db-scoped, gates first); role
+    assignment mutations invalidate it so a revoked role never lingers.
     """
     check_host_restriction(request)
     _require_role_manager(request)
 
     import src.api as api
+    from src.core.admin.read_cache import get_or_render, _render_json
 
     db = api.get_db()
     if db is None:
@@ -1049,48 +1088,53 @@ async def get_admin_roles(request: Request, admin_id: SnowflakeIDParam):
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    rows = db.fetch_all(
-        """
-        SELECT r.id, r.name, r.description, r.permissions, r.is_system, ra.assigned_at, ra.assigned_by
-        FROM admin_role_assignments ra
-        JOIN admin_roles r ON ra.role_id = r.id
-        WHERE ra.admin_id = ?
-        ORDER BY r.name ASC
-    """,
-        (admin_id,),
-    )
+    def _render() -> bytes:
+        rows = db.fetch_all(
+            """
+            SELECT r.id, r.name, r.description, r.permissions, r.is_system, ra.assigned_at, ra.assigned_by
+            FROM admin_role_assignments ra
+            JOIN admin_roles r ON ra.role_id = r.id
+            WHERE ra.admin_id = ?
+            ORDER BY r.name ASC
+            LIMIT ? OFFSET ?
+            """,
+            (admin_id, limit, offset),
+        )
 
-    roles = []
-    for row in rows:
-        if isinstance(row, dict):
-            assigned_by = row.get("assigned_by")
-            roles.append(
-                {
-                    "id": str(row["id"]),
-                    "name": row["name"],
-                    "description": row["description"],
-                    "permissions": row["permissions"],
-                    "is_system": bool(row["is_system"]),
-                    "assigned_at": row["assigned_at"],
-                    "assigned_by": (
-                        str(assigned_by) if assigned_by is not None else None
-                    ),
-                }
-            )
-        else:
-            assigned_by = row[6] if len(row) > 6 else None
-            roles.append(
-                {
-                    "id": str(row[0]),
-                    "name": row[1],
-                    "description": row[2],
-                    "permissions": row[3],
-                    "is_system": bool(row[4]),
-                    "assigned_at": row[5],
-                    "assigned_by": (
-                        str(assigned_by) if assigned_by is not None else None
-                    ),
-                }
-            )
+        roles = []
+        for row in rows:
+            if isinstance(row, dict):
+                assigned_by = row.get("assigned_by")
+                roles.append(
+                    {
+                        "id": str(row["id"]),
+                        "name": row["name"],
+                        "description": row["description"],
+                        "permissions": row["permissions"],
+                        "is_system": bool(row["is_system"]),
+                        "assigned_at": row["assigned_at"],
+                        "assigned_by": (
+                            str(assigned_by) if assigned_by is not None else None
+                        ),
+                    }
+                )
+            else:
+                assigned_by = row[6] if len(row) > 6 else None
+                roles.append(
+                    {
+                        "id": str(row[0]),
+                        "name": row[1],
+                        "description": row[2],
+                        "permissions": row[3],
+                        "is_system": bool(row[4]),
+                        "assigned_at": row[5],
+                        "assigned_by": (
+                            str(assigned_by) if assigned_by is not None else None
+                        ),
+                    }
+                )
 
-    return {"admin_id": str(admin_id), "roles": roles}
+        return _render_json({"admin_id": str(admin_id), "roles": roles})
+
+    body = get_or_render("admin_roles", (admin_id, limit, offset), _render)
+    return Response(content=body, media_type="application/json")

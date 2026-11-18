@@ -32,6 +32,7 @@ from ...artifacts_export import (
 from ...artifacts_helpers import (
     _AuthCache,
     _authorize_scope,
+    _get_artifact_scope,
     _get_manager,
     _require_artifact_capability,
 )
@@ -215,8 +216,9 @@ async def _list_artifact_ops_impl(
     try:
         aid = parse_artifact_id(artifact_id)
 
-        manager = _get_manager()
-        artifact = manager.get(aid)
+        # Focused scope read: the ops replay never uses the artifact payload,
+        # so avoid SELECT * + full JSON parsing on every request.
+        artifact = _get_artifact_scope(aid)
         if artifact is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -233,6 +235,7 @@ async def _list_artifact_ops_impl(
         )
         _require_artifact_capability(artifact.artifact_type)
 
+        manager = _get_manager()
         ops = manager.list_ops(aid, after_seq=after_seq, limit=limit)
         return {"artifact_id": str(aid), "ops": ops}
     except HTTPException:

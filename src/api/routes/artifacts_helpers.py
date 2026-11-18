@@ -7,6 +7,7 @@ existing import paths remain stable.
 """
 
 import json
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
@@ -475,6 +476,55 @@ def _artifact_response(
         if profile.get("avatar_url"):
             response.author_avatar_url = profile["avatar_url"]
     return response
+
+
+def _get_artifact_scope(artifact_id: Any) -> Optional[SimpleNamespace]:
+    """Load only the columns needed to authorize a read of one artifact.
+
+    ``ArtifactManager.get`` issues ``SELECT *`` and parses the full
+    ``payload``/``summary``/``retention_policy`` JSON. Endpoints that only
+    replay a side table (such as the ops log) never touch that data, so loading
+    it on every request is wasted work that scales with artifact size. This
+    focused read keeps the same existence and scope semantics (no ``deleted``
+    filter, same legacy ``artifact_type`` fallback) while fetching four columns
+    instead of the whole row. Returns ``None`` when the artifact does not exist.
+    """
+    db = api.get_db()
+    if db is None:
+        return None
+    row = db.fetch_one(
+        "SELECT id, conversation_id, server_id, author_id, artifact_type "
+        "FROM artifacts WHERE id = ?",
+        (artifact_id,),
+    )
+    if not row:
+        return None
+    if isinstance(row, dict):
+        raw_type = row.get("artifact_type")
+        conversation_id = row.get("conversation_id")
+        server_id = row.get("server_id")
+        author_id = row.get("author_id")
+    else:
+        # Defensive: positional adapters use this column order.
+        (
+            _,
+            conversation_id,
+            server_id,
+            author_id,
+            raw_type,
+        ) = (row[0], row[1], row[2], row[3], row[4])
+    try:
+        artifact_type = ArtifactType(raw_type)
+    except ValueError:
+        # Match ``repository._parse_artifact_type``: drift must not crash a read.
+        artifact_type = ArtifactType.FUTURE
+    return SimpleNamespace(
+        id=artifact_id,
+        conversation_id=conversation_id,
+        server_id=server_id,
+        author_id=author_id,
+        artifact_type=artifact_type,
+    )
 
 
 def _get_manager():
