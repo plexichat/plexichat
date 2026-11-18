@@ -145,6 +145,9 @@ CREATE TABLE IF NOT EXISTS admin_approvals (
 -- Admin approvals indexes
 CREATE INDEX IF NOT EXISTS idx_admin_approvals_requested ON admin_approvals(requested_by);
 CREATE INDEX IF NOT EXISTS idx_admin_approvals_status ON admin_approvals(status);
+-- Approval queues filter status and order by created_at.
+CREATE INDEX IF NOT EXISTS idx_admin_approvals_status_created
+    ON admin_approvals(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_admin_approvals_action ON admin_approvals(action_type);
 CREATE INDEX IF NOT EXISTS idx_admin_approvals_target ON admin_approvals(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_admin_approvals_expires ON admin_approvals(expires_at);
