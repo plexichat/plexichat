@@ -42,6 +42,15 @@ MAX_APPLICATION_FILTER_LENGTH = 128
 MAX_WEBHOOK_URL_LENGTH = 2048
 MAX_URL_PATTERN_LENGTH = 512
 
+# Bot directory free-form data is persisted and echoed to every directory
+# reader. Without ceilings a single application owner could turn the directory
+# into an unbounded payload (storage bloat + response amplification), so caps
+# are enforced here at the core boundary, not just in the HTTP schema.
+MAX_BOT_TAGS = 25
+MAX_BOT_TAG_LENGTH = 32
+MAX_BOT_NAME_LENGTH = 100
+MAX_BOT_REASON_LENGTH = 2000
+
 #: A registered redirect URI is a literal callback address, never a pattern.
 #: Wildcard/regex metacharacters would turn the allow-list into an open
 #: redirector, so they are rejected both when storing and when matching.
@@ -210,4 +219,57 @@ def validate_config_url_pattern(
         re.compile(text)
     except re.error as exc:
         raise HardeningViolation(f"{field} is not a valid regular expression") from exc
+    return text
+
+
+def validate_bot_tags(value: Any, *, field: str = "tags") -> List[str]:
+    """Validate and bound a bot profile's tag list.
+
+    Returns a de-duplicated list of non-empty, control-character-free tags.
+    Both the number of tags and each tag's length are capped so a profile
+    cannot be used as an unbounded data carrier in the public directory.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        raise HardeningViolation(f"{field} must be a list of tags")
+    try:
+        candidates: List[Any] = list(value)
+    except TypeError as exc:
+        raise HardeningViolation(f"{field} must be a list of tags") from exc
+    if len(candidates) > MAX_BOT_TAGS:
+        raise HardeningViolation(
+            f"{field} may contain at most {MAX_BOT_TAGS} entries"
+        )
+    tags: List[str] = []
+    for index, candidate in enumerate(candidates):
+        label = f"{field}[{index}]"
+        text = reject_control_characters(candidate, label).strip()
+        if not text or len(text) > MAX_BOT_TAG_LENGTH:
+            raise HardeningViolation(f"{label} has an invalid length")
+        # Exact-match tags gain nothing from duplicates; keep the list canonical.
+        if text not in tags:
+            tags.append(text)
+    return tags
+
+
+def validate_bot_display_name(
+    value: Any, *, field: str = "bot_name"
+) -> Optional[str]:
+    """Bound a bot's display name, which is persisted and shown publicly."""
+    if value is None:
+        return None
+    text = reject_control_characters(value, field).strip()
+    if not text or len(text) > MAX_BOT_NAME_LENGTH:
+        raise HardeningViolation(f"{field} has an invalid length")
+    return text
+
+
+def validate_bot_reason(value: Any, *, field: str = "reason") -> Optional[str]:
+    """Bound the free-form reason attached to bot requests and reviews."""
+    if value is None:
+        return None
+    text = reject_control_characters(value, field)
+    if len(text) > MAX_BOT_REASON_LENGTH:
+        raise HardeningViolation(f"{field} exceeds {MAX_BOT_REASON_LENGTH} characters")
     return text

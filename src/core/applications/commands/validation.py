@@ -189,4 +189,21 @@ def validate_command_update(update_data: Dict[str, Any]) -> Tuple[bool, List[str
             opts_valid, opts_issues = validate_options(options)
             issues.extend(opts_issues)
 
+    # SECURITY: mirror the registration-time check. `default_member_permissions`
+    # can also be changed through update_command; without this guard an
+    # attempter could register a command with a valid decimal permission
+    # bitfield and then update it to an arbitrary value ("*", "-1", a huge
+    # number, ...) that the command vocabulary rejects on creation. Validating
+    # on both paths keeps the permission grammar consistent in both directions.
+    default_perms = update_data.get("default_member_permissions")
+    if default_perms is not None:
+        try:
+            validate_permission_string(
+                default_perms, field="default_member_permissions"
+            )
+        except (HardeningViolation, TypeError, ValueError):
+            issues.append(
+                "default_member_permissions must be a valid permission integer string"
+            )
+
     return len(issues) == 0, issues

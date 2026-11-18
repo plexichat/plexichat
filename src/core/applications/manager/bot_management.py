@@ -29,6 +29,9 @@ from ..exceptions import (
 from ..validation import (
     MAX_APP_SHORT_DESCRIPTION_LENGTH,
     validate_application_description,
+    validate_bot_display_name,
+    validate_bot_reason,
+    validate_bot_tags,
     validate_homepage_url,
 )
 from .row_mappers import row_to_approved_bot, row_to_bot_request, row_to_bot_profile
@@ -125,6 +128,9 @@ class BotManagementMixin(ApplicationManagerProtocol):
         if not _permission_checked:
             self._require_server_manage_permission(approved_by, server_id)
         self._check_bot_license()
+
+        # Bound free-form bot metadata before it reaches storage/directory.
+        bot_name = validate_bot_display_name(bot_name)
 
         existing = self._db.fetch_one(
             "SELECT id FROM app_approved_bots WHERE server_id = ? AND application_id = ? AND status = 'approved'",
@@ -281,6 +287,8 @@ class BotManagementMixin(ApplicationManagerProtocol):
         requester_id: SnowflakeID,
         reason: Optional[str] = None,
     ) -> BotRequest:
+        # Bound free-form request text before it is persisted/returned.
+        reason = validate_bot_reason(reason)
         existing = self._db.fetch_one(
             "SELECT id FROM app_bot_requests WHERE server_id = ? AND application_id = ? AND status = 'pending'",
             (server_id, application_id),
@@ -346,6 +354,8 @@ class BotManagementMixin(ApplicationManagerProtocol):
         approve: bool,
         review_reason: Optional[str] = None,
     ) -> BotRequest:
+        # Bound free-form review text before it is persisted/returned.
+        review_reason = validate_bot_reason(review_reason, field="review_reason")
         row = self._db.fetch_one(
             "SELECT * FROM app_bot_requests WHERE id = ?",
             (request_id,),
@@ -509,6 +519,10 @@ class BotManagementMixin(ApplicationManagerProtocol):
         website_url = validate_homepage_url(website_url, field="website_url")
         support_url = validate_homepage_url(support_url, field="support_url")
         github_url = validate_homepage_url(github_url, field="github_url")
+        # Only validate when supplied: an omitted field must stay "omitted" so
+        # a partial update does not silently reset an existing tag list.
+        if tags is not None:
+            tags = validate_bot_tags(tags)
 
         existing = self.get_bot_profile(application_id, viewer_id=user_id)
         now = self._get_timestamp()
