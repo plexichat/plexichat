@@ -9,6 +9,14 @@ import utils.config as config
 import utils.logger as logger
 
 
+# SQLite reads ``LIMIT -1`` as *unlimited*, so an unclamped page bound lets a
+# single call dump the whole feedback/admin_notes tables. Clamp every page
+# helpers accepts to a closed range, and cap ticket-note history explicitly —
+# notes have no pagination parameter of their own on the read route.
+MAX_PAGE_SIZE = 200
+MAX_TICKET_NOTES = 200
+
+
 @dataclass
 class FeedbackTicket:
     """A feedback/support ticket."""
@@ -42,6 +50,9 @@ def get_feedback_tickets(
     db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
 ) -> List[FeedbackTicket]:
     """Get feedback tickets with optional status filter."""
+    limit = max(0, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
+
     encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
 
     if status_filter:
@@ -276,15 +287,23 @@ def add_internal_note(
 
 
 def get_ticket_notes(db: Any, ticket_id: int) -> List[AdminNote]:
-    """Get all internal notes for a ticket."""
+    """Get internal notes for a ticket, newest ``MAX_TICKET_NOTES`` retained.
+
+    The read route has no pagination parameter, so without a bound a ticket
+    with thousands of notes would materialize them all in one response. Fetch
+    the most recent page in descending order, then restore ascending output so
+    callers still see chronological history.
+    """
     rows = db.fetch_all(
         """SELECT n.id, n.ticket_id, n.admin_id, u.username, n.content, n.created_at
            FROM admin_notes n
            LEFT JOIN auth_users u ON n.admin_id = u.id
            WHERE n.ticket_id = ?
-           ORDER BY n.created_at ASC""",
-        (ticket_id,),
+           ORDER BY n.created_at DESC
+           LIMIT ?""",
+        (ticket_id, MAX_TICKET_NOTES),
     )
+    rows = list(reversed(rows))
 
     notes = []
     for row in rows:

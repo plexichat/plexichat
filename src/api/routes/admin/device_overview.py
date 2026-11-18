@@ -24,6 +24,14 @@ _DEFAULTS = {
     "trusted_extend_threshold_hours": 168,
 }
 
+# The overview enumerates every user that owns a device or a live session and
+# then issues two more queries per user (get_devices + get_sessions). With no
+# bound this is an O(N) fan-out driven entirely by the size of auth_devices /
+# auth_sessions: one admin GET can materialize an unbounded response and hold
+# the DB busy for an arbitrarily long time. Cap the user set and fetch one
+# extra row only to detect and log truncation.
+MAX_OVERVIEW_USERS = 1000
+
 
 def _sessions_policy(config: Dict[str, Any]) -> Dict[str, Any]:
     """Return the effective session-duration policy with defaults applied.
@@ -106,9 +114,19 @@ def get_device_trust_overview(
     try:
         rows = auth_manager._db.fetch_all(
             "SELECT DISTINCT user_id FROM auth_devices "
-            "UNION SELECT DISTINCT user_id FROM auth_sessions WHERE revoked = 0"
+            "UNION SELECT DISTINCT user_id FROM auth_sessions WHERE revoked = 0 "
+            "LIMIT ?",
+            (MAX_OVERVIEW_USERS + 1,),
         )
-        user_ids = sorted(int(r["user_id"]) for r in rows)
+        truncated = len(rows) > MAX_OVERVIEW_USERS
+        user_ids = sorted(int(r["user_id"]) for r in rows[:MAX_OVERVIEW_USERS])
+        if truncated:
+            logger.warning(
+                "Device overview: more than %d users with devices/sessions; "
+                "reporting the first %d only",
+                MAX_OVERVIEW_USERS,
+                MAX_OVERVIEW_USERS,
+            )
     except Exception as e:
         logger.warning(f"Device overview: failed to enumerate users: {e}")
         user_ids = []
