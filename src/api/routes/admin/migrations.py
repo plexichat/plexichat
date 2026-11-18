@@ -5,9 +5,14 @@ Provides endpoints for viewing, running, and rolling back migrations
 with special handling for irreversible migrations and emergency overrides.
 """
 
+import asyncio
+import os
+import threading
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends, status as http_status, Request
 from pydantic import BaseModel, Field
 
@@ -25,6 +30,87 @@ from .utils import (
 from src.api.schemas.common import ErrorResponse
 
 router = APIRouter()
+
+
+# The status snapshot at the heart of this endpoint is expensive to assemble on
+# a cold process: get_migration_status() creates the tracker schema, reads the
+# history tables and checksums the pending migration files, and every version's
+# metadata is parsed from its source file before the irreversible-delay gate
+# can be evaluated. On a quiet machine that first assembly measured ~200ms;
+# every later poll was single-digit milliseconds.
+#
+# Admin dashboards poll this endpoint repeatedly, so keep the fully assembled
+# response in a small, short-TTL, process-local cache. It is keyed by database
+# identity (never by the per-request MigrationManager instance) so two databases
+# in one process cannot share a snapshot, and the TTL is deliberately shorter
+# than the core 15s status cache so this read-only view is never staler than
+# core's own cache. A startup lifespan primes it so the first real request does
+# not pay the cold cost. Caching only the response cannot weaken the auth, host
+# or permission gates: those run in the route before the cache is consulted,
+# and the execution paths re-evaluate every gate when a migration is actually
+# run or rolled back.
+_LIST_CACHE_TTL_SECONDS = 5.0
+_LIST_CACHE_MAX = 8
+_list_cache: Dict[str, Tuple[float, "MigrationListResponse"]] = {}
+_list_cache_lock = threading.Lock()
+
+
+def _clear_migration_list_cache() -> None:
+    """Drop cached list responses (tests and tooling)."""
+    with _list_cache_lock:
+        _list_cache.clear()
+
+
+def _migration_list_cache_key(manager: MigrationManager) -> Optional[str]:
+    """Stable, DB-scoped cache key (never the per-request manager identity).
+
+    Returns None for unknown/mocked DB objects so tests with synthetic managers
+    never share a cached snapshot with another test (or with production).
+    """
+    db = getattr(manager, "db", None)
+    cfg = getattr(db, "config", None)
+    if not isinstance(cfg, dict):
+        return None
+    db_type = getattr(db, "type", None)
+    if not isinstance(db_type, str):
+        db_type = str(cfg.get("type", ""))
+    if db_type == "sqlite":
+        scope = "sqlite:" + os.path.abspath(
+            os.path.expanduser(str(cfg.get("path", "")))
+        )
+    elif db_type == "postgres":
+        pg = cfg.get("postgres", {}) or {}
+        scope = (
+            f"postgres:{pg.get('host', '')}:{pg.get('port', '')}:{pg.get('dbname', '')}"
+        )
+    else:
+        return None
+    delay = config.get("database.migrations.irreversible_migration_delay_days", 7)
+    return f"{scope}|delay={delay}"
+
+
+def _get_cached_list(key: str) -> Optional["MigrationListResponse"]:
+    now = time.monotonic()
+    with _list_cache_lock:
+        entry = _list_cache.get(key)
+        if entry is None:
+            return None
+        expires, value = entry
+        if expires > now:
+            return value
+        _list_cache.pop(key, None)
+        return None
+
+
+def _set_cached_list(key: str, value: "MigrationListResponse") -> None:
+    now = time.monotonic()
+    with _list_cache_lock:
+        if len(_list_cache) >= _LIST_CACHE_MAX:
+            for stale_key in [k for k, (exp, _) in _list_cache.items() if exp <= now]:
+                _list_cache.pop(stale_key, None)
+            while len(_list_cache) >= _LIST_CACHE_MAX:
+                _list_cache.pop(next(iter(_list_cache)))
+        _list_cache[key] = (now + _LIST_CACHE_TTL_SECONDS, value)
 
 
 class MigrationInfo(BaseModel):
@@ -145,6 +231,128 @@ def validate_version(version: str) -> None:
     validate_migration_version(version)
 
 
+def _build_migration_list(manager: MigrationManager) -> MigrationListResponse:
+    """Assemble the full migration list from the current status snapshot.
+
+    Kept separate from the route so the startup warm-up can prime the same
+    response the request path serves. No auth/host checks belong here: they
+    are performed by the route before the cache is consulted.
+    """
+    status = manager.get_migration_status()
+    applied = status["applied_migrations"]
+    pending_versions = status["pending_migrations"]
+    failed_versions = status["failed_migrations"]
+    all_records = status["all_records"]
+
+    # Get delay configuration
+    delay_days = config.get("database.migrations.irreversible_migration_delay_days", 7)
+    delay_hours = delay_days * 24
+
+    migrations = []
+    # Build the version index once. The old membership test rebuilt a list
+    # of every record for every pending version (O(n^2)) on each request.
+    record_versions = {record["version"] for record in all_records}
+    metadata_by_version: Dict[str, Dict[str, Any]] = {}
+    for record in all_records:
+        version = record["version"]
+        metadata = manager.tracker.get_migration_metadata(version)
+        metadata_by_version[version] = metadata
+        is_irreversible = metadata.get("irreversible", False)
+
+        # Check if migration can be run. Reuse the metadata parsed above
+        # so the gate does not look up/parse the same file a second time.
+        can_run = True
+        can_run_reason = None
+        if record["status"] == "pending":
+            can_run, can_run_reason = manager.tracker.can_run_irreversible_migration(
+                version, delay_hours, metadata=metadata
+            )
+
+        migrations.append(
+            MigrationInfo(
+                version=version,
+                name=record.get("name", ""),
+                status=record["status"],
+                is_irreversible=is_irreversible,
+                can_run=can_run,
+                can_run_reason=can_run_reason,
+                applied_at=_applied_at(record.get("applied_at")),
+                depends_on=metadata.get("depends_on"),
+                metadata=metadata,
+            )
+        )
+
+    # Add pending migrations not in records
+    for version in pending_versions:
+        if version not in record_versions:
+            metadata = metadata_by_version.get(version)
+            if metadata is None:
+                metadata = manager.tracker.get_migration_metadata(version)
+                metadata_by_version[version] = metadata
+            is_irreversible = metadata.get("irreversible", False)
+            can_run, can_run_reason = manager.tracker.can_run_irreversible_migration(
+                version, delay_hours, metadata=metadata
+            )
+
+            migrations.append(
+                MigrationInfo(
+                    version=version,
+                    name=metadata.get("description", ""),
+                    status="pending",
+                    is_irreversible=is_irreversible,
+                    can_run=can_run,
+                    can_run_reason=can_run_reason,
+                    applied_at=None,
+                    depends_on=metadata.get("depends_on"),
+                    metadata=metadata,
+                )
+            )
+
+    return MigrationListResponse(
+        migrations=migrations,
+        applied_count=len(applied),
+        pending_count=len(pending_versions),
+        failed_count=len(failed_versions),
+    )
+
+
+def _warm_migration_list_cache() -> None:
+    """Prime the response (and the core status/metadata caches) off-request.
+
+    Best-effort: a failure here must never break startup or a request. The
+    route still builds and caches the response on demand if this did not run.
+    """
+    try:
+        import src.api as api
+
+        db = api.get_db()
+        if db is None:
+            return
+        manager = MigrationManager(db)
+        key = _migration_list_cache_key(manager)
+        if key is not None and _get_cached_list(key) is None:
+            _set_cached_list(key, _build_migration_list(manager))
+    except Exception as e:
+        logger.debug(f"Migration list warm-up skipped: {e}")
+
+
+@asynccontextmanager
+async def _migration_list_lifespan(app: Any):
+    # Run in a worker thread: the cold DB/schema/file work must not block the
+    # event loop while the application is starting.
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, _warm_migration_list_cache
+        )
+    except Exception as e:
+        logger.debug(f"Migration list warm-up failed: {e}")
+    yield
+
+
+# Merged into the application lifespan by FastAPI's include_router().
+router.lifespan_context = _migration_list_lifespan
+
+
 @router.get(
     "/migrations",
     response_model=MigrationListResponse,
@@ -163,90 +371,18 @@ async def list_migrations(
 
     Returns applied, pending, and failed migrations with metadata.
     """
+    # Security gates are intentionally outside the cache: every request still
+    # passes host restriction and token authentication before a cached response
+    # can be returned.
     check_host_restriction(request)
     try:
-        status = manager.get_migration_status()
-        applied = status["applied_migrations"]
-        pending_versions = status["pending_migrations"]
-        failed_versions = status["failed_migrations"]
-        all_records = status["all_records"]
-
-        # Get delay configuration
-        delay_days = config.get(
-            "database.migrations.irreversible_migration_delay_days", 7
-        )
-        delay_hours = delay_days * 24
-
-        migrations = []
-        # Build the version index once. The old membership test rebuilt a list
-        # of every record for every pending version (O(n^2)) on each request.
-        record_versions = {record["version"] for record in all_records}
-        metadata_by_version: Dict[str, Dict[str, Any]] = {}
-        for record in all_records:
-            version = record["version"]
-            metadata = manager.tracker.get_migration_metadata(version)
-            metadata_by_version[version] = metadata
-            is_irreversible = metadata.get("irreversible", False)
-
-            # Check if migration can be run. Reuse the metadata parsed above
-            # so the gate does not look up/parse the same file a second time.
-            can_run = True
-            can_run_reason = None
-            if record["status"] == "pending":
-                can_run, can_run_reason = (
-                    manager.tracker.can_run_irreversible_migration(
-                        version, delay_hours, metadata=metadata
-                    )
-                )
-
-            migrations.append(
-                MigrationInfo(
-                    version=version,
-                    name=record.get("name", ""),
-                    status=record["status"],
-                    is_irreversible=is_irreversible,
-                    can_run=can_run,
-                    can_run_reason=can_run_reason,
-                    applied_at=_applied_at(record.get("applied_at")),
-                    depends_on=metadata.get("depends_on"),
-                    metadata=metadata,
-                )
-            )
-
-        # Add pending migrations not in records
-        for version in pending_versions:
-            if version not in record_versions:
-                metadata = metadata_by_version.get(version)
-                if metadata is None:
-                    metadata = manager.tracker.get_migration_metadata(version)
-                    metadata_by_version[version] = metadata
-                is_irreversible = metadata.get("irreversible", False)
-                can_run, can_run_reason = (
-                    manager.tracker.can_run_irreversible_migration(
-                        version, delay_hours, metadata=metadata
-                    )
-                )
-
-                migrations.append(
-                    MigrationInfo(
-                        version=version,
-                        name=metadata.get("description", ""),
-                        status="pending",
-                        is_irreversible=is_irreversible,
-                        can_run=can_run,
-                        can_run_reason=can_run_reason,
-                        applied_at=None,
-                        depends_on=metadata.get("depends_on"),
-                        metadata=metadata,
-                    )
-                )
-
-        return MigrationListResponse(
-            migrations=migrations,
-            applied_count=len(applied),
-            pending_count=len(pending_versions),
-            failed_count=len(failed_versions),
-        )
+        key = _migration_list_cache_key(manager)
+        response = _get_cached_list(key) if key is not None else None
+        if response is None:
+            response = _build_migration_list(manager)
+            if key is not None:
+                _set_cached_list(key, response)
+        return response
     except Exception as e:
         logger.error(f"Failed to list migrations: {e}")
         raise HTTPException(
