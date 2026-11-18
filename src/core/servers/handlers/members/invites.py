@@ -22,7 +22,10 @@ from ...manager.converters import _row_to_invite
 
 # Per-user invite-creation sliding window (in-process; the global rate-limit
 # middleware covers transport-level floods, this guards the invite-minting
-# endpoint itself). Keyed by user_id, bounded by config.
+# endpoint itself). Keyed by user_id. The configured ``window_max`` bounds the
+# timestamps *within* one bucket but not the number of buckets: without a
+# cap/TTL a key is left behind for every user who ever minted an invite. Idle
+# buckets are pruned and the map has a hard entry ceiling.
 _COUNT_LIVE_INVITES_BY_INVITER = (
     "SELECT COUNT(*) AS c FROM srv_invites "
     "WHERE inviter_id = ? AND revoked = 0 "
@@ -36,6 +39,65 @@ _COUNT_LIVE_INVITES_BY_SERVER = (
 
 _invite_creation_lock = threading.Lock()
 _invite_creation_windows: dict = {}
+
+# Idle buckets older than this are reclaimed regardless of the configured
+# window. Pruning uses ``max(configured_window, this_value)`` so a long
+# configured window can never be shortened by reclamation (which would weaken
+# the rate limit); the hard cap bounds the map even if that window is huge.
+_INVITE_WINDOW_TTL_SECONDS = 86_400
+_INVITE_WINDOW_MAX_KEYS = 8192
+
+
+def _reset_invite_windows() -> None:
+    """Drop every invite-creation window (tests / explicit reclamation only)."""
+    with _invite_creation_lock:
+        _invite_creation_windows.clear()
+
+
+def _check_invite_creation_rate(user_id, cfg=None) -> None:
+    """Apply the per-user sliding-window invite-creation limit.
+
+    Behavior is identical to the previous inline block; the only addition is
+    reclaiming idle buckets and enforcing a hard entry cap so the registry
+    cannot grow with the number of users that ever created an invite.
+    """
+    if cfg is None:
+        cfg = _invite_config()
+    window_seconds = int(cfg.get("creation_window_seconds", 3600))
+    window_max = int(cfg.get("creation_max_per_window", 20))
+    if window_max <= 0:
+        return
+    now = time.monotonic()
+    key = str(user_id)
+    with _invite_creation_lock:
+        # Reclaim buckets whose newest timestamp is older than the retention
+        # window. Use the larger of the configured window and the TTL floor so
+        # pruning can never drop timestamps the configured window still counts.
+        retention = max(window_seconds, _INVITE_WINDOW_TTL_SECONDS)
+        stale = [
+            k
+            for k, stamps in _invite_creation_windows.items()
+            if not stamps or now - stamps[-1] >= retention
+        ]
+        for k in stale:
+            _invite_creation_windows.pop(k, None)
+        # Hard ceiling. Dicts keep insertion order, so the oldest bucket goes
+        # first; this only bites under a flood of distinct user ids.
+        while len(_invite_creation_windows) >= _INVITE_WINDOW_MAX_KEYS:
+            _invite_creation_windows.pop(next(iter(_invite_creation_windows)))
+
+        timestamps = [
+            ts
+            for ts in _invite_creation_windows.get(key, [])
+            if now - ts < window_seconds
+        ]
+        if len(timestamps) >= window_max:
+            raise InviteRateLimitedError(
+                "Invite creation rate limit exceeded",
+                retry_after_seconds=window_seconds,
+            )
+        timestamps.append(now)
+        _invite_creation_windows[key] = timestamps
 
 
 def _invite_config() -> dict:
@@ -90,24 +152,7 @@ class MemberInviteMixin:
         cfg = _invite_config()
 
         # --- Per-user creation rate limit (sliding window) ---
-        window_seconds = int(cfg.get("creation_window_seconds", 3600))
-        window_max = int(cfg.get("creation_max_per_window", 20))
-        if window_max > 0:
-            now = time.monotonic()
-            key = str(user_id)
-            with _invite_creation_lock:
-                timestamps = [
-                    ts
-                    for ts in _invite_creation_windows.get(key, [])
-                    if now - ts < window_seconds
-                ]
-                if len(timestamps) >= window_max:
-                    raise InviteRateLimitedError(
-                        "Invite creation rate limit exceeded",
-                        retry_after_seconds=window_seconds,
-                    )
-                timestamps.append(now)
-                _invite_creation_windows[key] = timestamps
+        _check_invite_creation_rate(user_id, cfg)
 
         # --- Active-invite quotas ---
         now_ms = self.manager._get_timestamp()

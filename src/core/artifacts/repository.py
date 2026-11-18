@@ -10,6 +10,7 @@ constrained to an explicit allow-list so no user input is interpolated into SQL.
 import json
 import threading
 import time
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
@@ -479,18 +480,85 @@ _MAX_ARTIFACT_OP_BYTES = 256 * 1024
 # SELECT-MAX/INSERT race window between threads of this process so the
 # UNIQUE-retry loop below (which still arbitrates cross-process races)
 # almost never has to fire more than once.
+#
+# The registry is process-global and keyed by artifact id. Without a bound,
+# every artifact ever appended to would pin a mutex here forever — a steady
+# in-process memory leak as artifacts accumulate. Entries are LRU-ordered and
+# evicted once idle. A lock that still has live guards is *never* evicted:
+# otherwise a second thread could receive a different mutex for the same
+# artifact while the first is mid-append, defeating the serialization this
+# registry exists to provide. ``_ArtifactLockGuard`` owns the refcount and
+# must be used as a context manager (the sole caller already is).
+_APPEND_LOCKS_MAX = 1024
 _APPEND_LOCKS_GUARD = threading.Lock()
-_APPEND_LOCKS: Dict[Any, threading.Lock] = {}
+_APPEND_LOCKS: "OrderedDict[Any, _ArtifactLock]" = OrderedDict()
 
 
-def _append_lock(artifact_id: SnowflakeID) -> threading.Lock:
-    """Return the process-wide mutex serializing appends to one artifact."""
+class _ArtifactLock:
+    __slots__ = ("lock", "refs")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.refs = 0
+
+
+class _ArtifactLockGuard:
+    """Acquire a per-artifact mutex on enter; release and drop its ref on exit."""
+
+    __slots__ = ("_key", "_entry")
+
+    def __init__(self, key: Any, entry: _ArtifactLock) -> None:
+        self._key = key
+        self._entry = entry
+
+    def __enter__(self):
+        self._entry.lock.acquire()
+        return self._entry.lock
+
+    def __exit__(self, exc_type, exc, tb):
+        self._entry.lock.release()
+        with _APPEND_LOCKS_GUARD:
+            self._entry.refs -= 1
+            _prune_append_locks_locked()
+        return False
+
+
+def _prune_append_locks_locked() -> None:
+    """Evict idle LRU locks until the registry is back under its cap.
+
+    Caller holds ``_APPEND_LOCKS_GUARD``. Locks with live guards are skipped:
+    evicting one would hand the next caller a different mutex and break the
+    serialization guarantee. When every retained lock is in use the registry
+    may temporarily exceed the cap, but that is bounded by concurrency, not
+    by the lifetime number of artifacts.
+    """
+    while len(_APPEND_LOCKS) > _APPEND_LOCKS_MAX:
+        for key, entry in _APPEND_LOCKS.items():
+            if entry.refs == 0:
+                del _APPEND_LOCKS[key]
+                break
+        else:
+            break  # all retained locks are currently in use
+
+
+def _append_lock(artifact_id: SnowflakeID) -> _ArtifactLockGuard:
+    """Return a context manager serializing appends to one artifact."""
     with _APPEND_LOCKS_GUARD:
-        lock = _APPEND_LOCKS.get(artifact_id)
-        if lock is None:
-            lock = threading.Lock()
-            _APPEND_LOCKS[artifact_id] = lock
-        return lock
+        entry = _APPEND_LOCKS.get(artifact_id)
+        if entry is None:
+            entry = _ArtifactLock()
+            _APPEND_LOCKS[artifact_id] = entry
+        else:
+            _APPEND_LOCKS.move_to_end(artifact_id)
+        entry.refs += 1
+        _prune_append_locks_locked()
+        return _ArtifactLockGuard(artifact_id, entry)
+
+
+def _reset_append_locks() -> None:
+    """Drop every per-artifact lock (tests / explicit reclamation only)."""
+    with _APPEND_LOCKS_GUARD:
+        _APPEND_LOCKS.clear()
 
 
 def _fetch_next_seq(db, artifact_id: SnowflakeID) -> int:
