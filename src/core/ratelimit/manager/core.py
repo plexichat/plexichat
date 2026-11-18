@@ -10,6 +10,7 @@ from dataclasses import replace
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from ..exceptions import RateLimitStoreUnavailable
 from ..config import (
     DEFAULT_ROUTE_LIMITS,
     DEFAULT_WEBHOOK_CHANNEL_LIMIT,
@@ -324,7 +325,18 @@ class RateLimitManager:
             apply_custom_increment(state, field, value, outcome)
 
         self._storage.update_bucket(key, mutate, ttl=ttl)
-        return outcome.get("value", value)
+        # SECURITY: ``apply_custom_increment`` always records the new value
+        # when it runs. A missing outcome means the backend silently skipped
+        # the mutation (unreachable store, unacquirable lock, swallowed
+        # error), so returning ``value`` would report the requested increment
+        # as the authoritative counter and silently disable the caller's
+        # budget (upload bytes, sticker/friend-request quotas, ...). Fail
+        # closed instead, matching the secondary-limit guard in ``atomic``.
+        if "value" not in outcome:
+            raise RateLimitStoreUnavailable(
+                f"rate-limit store did not apply custom counter {key!r}"
+            )
+        return outcome["value"]
 
     def _check_global_limit(
         self,
@@ -707,7 +719,14 @@ class RateLimitManager:
             apply_custom_increment(state, field, value, outcome)
 
         await self._storage.aupdate_bucket(key, mutate, ttl=ttl)
-        return outcome.get("value", value)
+        # See the blocking form: a backend that returns without running the
+        # mutation must not have its requested ``amount`` reported as the
+        # current counter value.
+        if "value" not in outcome:
+            raise RateLimitStoreUnavailable(
+                f"rate-limit store did not apply custom counter {key!r}"
+            )
+        return outcome["value"]
 
     async def areset_bucket(self, bucket_key: str) -> None:
         """Awaitable counterpart of :meth:`reset_bucket`."""

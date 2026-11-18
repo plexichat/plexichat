@@ -577,7 +577,19 @@ class ValkeyStorage(RateLimitStorage):
     ) -> None:
         client = get_client()
         if not client or not is_available():
-            return
+            # SECURITY: this is a read-modify-write that carries abuse budgets
+            # (custom usage counters: upload bytes, sticker/friend-request
+            # quotas, ...). Silently returning here made every caller that
+            # relies on the returned counter see the caller-supplied ``amount``
+            # instead of the authoritative stored value, so a Valkey outage
+            # disabled those rate limits entirely (fail-open). The blocking
+            # path goes through ``RateLimitStorage.update_bucket``, which
+            # raises ``RateLimitStoreUnavailable`` when its lock cannot be
+            # acquired; do the same here so the two paths agree and callers
+            # can fail closed.
+            raise RateLimitStoreUnavailable(
+                f"rate-limit store unavailable for bucket {key!r}"
+            )
 
         full_key = self._get_key(key)
         token = await self.aacquire_lock(key, timeout=5.0)
