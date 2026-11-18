@@ -66,6 +66,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_assigned_priority
 CREATE INDEX IF NOT EXISTS idx_reports_priority ON reports(priority);
 -- Priority queues filter priority + status.
 CREATE INDEX IF NOT EXISTS idx_reports_priority_status ON reports(priority, status);
+-- Status-first queues order by priority.
+CREATE INDEX IF NOT EXISTS idx_reports_status_priority ON reports(status, priority);
 -- Priority queues order by priority then recency.
 CREATE INDEX IF NOT EXISTS idx_reports_priority_created ON reports(priority, created_at);
 -- The moderator queue filters on status and orders by created_at DESC. A
