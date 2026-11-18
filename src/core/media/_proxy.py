@@ -26,6 +26,10 @@ class _ProxyMixin:
                 cache_ttl=self._config.get("proxy_cache_ttl", 86400),
                 max_size=self._config.get("proxy_max_size", 10 * 1024 * 1024),
                 buffer_size=self._config.get("proxy_buffer_size", 65536),
+                memory_cache_size=self._config.get("proxy_memory_cache_size", 256),
+                memory_cache_max_bytes=self._config.get(
+                    "proxy_memory_cache_max_bytes", 32 * 1024 * 1024
+                ),
             )
         except Exception as e:
             logger.warning(f"External proxy unavailable: {e}")

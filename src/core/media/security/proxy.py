@@ -3,6 +3,7 @@ External URL proxy for fetching, caching, and serving external content.
 """
 
 import hashlib
+import os
 import time
 import io
 import importlib
@@ -25,6 +26,7 @@ from src.utils.security import URLValidator, bracket_ip_literal
 
 from ..models import ProxiedContent
 from ..exceptions import ProxyError, ProxyFetchError, ProxyCacheError
+from .._proxy_cache import ProxyContentCache
 
 
 class ResponseStreamWrapper(io.RawIOBase):
@@ -44,6 +46,11 @@ class ResponseStreamWrapper(io.RawIOBase):
         self._hash = hashlib.sha256()
         self._hash.update(initial)
         self._buffer = initial
+        # Upstream response metadata used solely to honour Cache-Control when
+        # the caller decides whether to retain the bytes in the in-process
+        # content cache. Populated by ``ExternalProxy._fetch_url``.
+        self.cache_control: str = ""
+        self.etag: str = ""
 
     def read(self, size: int = -1) -> bytes:
         if size == -1:
@@ -137,6 +144,8 @@ class ExternalProxy:
         user_agent: str = "Plexichat/1.0",
         timeout: int = 30,
         buffer_size: int = 65536,
+        memory_cache_size: int = 256,
+        memory_cache_max_bytes: int = 32 * 1024 * 1024,
     ):
         """
         Initialize external proxy.
@@ -151,6 +160,8 @@ class ExternalProxy:
             user_agent: User agent for requests
             timeout: Request timeout in seconds
             buffer_size: Buffer size for streaming
+            memory_cache_size: Max entries in the in-process content cache
+            memory_cache_max_bytes: Max total bytes retained in that cache
         """
         self._storage = storage_backend
         self._db = db
@@ -163,11 +174,83 @@ class ExternalProxy:
         self._buffer_size = buffer_size
         self._url_validator = URLValidator()
 
+        # In-process bounded TTL cache of fully-validated content. This is the
+        # hot path for repeated proxy requests: it avoids a second DNS lookup
+        # and outbound fetch while keeping every security check on the miss
+        # path (see ``get_content``). Both an entry cap and a byte cap apply.
+        self._content_cache = ProxyContentCache(
+            maxsize=memory_cache_size,
+            max_bytes=memory_cache_max_bytes,
+            ttl_seconds=cache_ttl,
+        )
+
         if requests is None:
             raise ProxyError(
                 "requests is required for proxy. Install with: pip install requests"
             )
         self._requests = requests
+
+    def _assert_safe_url_structure(self, url: str) -> None:
+        """Cheap, network-free SSRF gate re-run on *every* request.
+
+        This mirrors the non-DNS portion of ``URLValidator`` (scheme, forbidden
+        host literals, ``.local``/``.internal`` suffixes) so cache hits still
+        pass an SSRF check. It performs no DNS resolution, so a cache hit does
+        not pay the tens-of-milliseconds lookup that dominated proxy latency.
+        The full validation — including DNS resolution to a pinned connect IP
+        and the private/reserved-IP check — always runs on a cache miss before
+        any outbound fetch.
+        """
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in self.ALLOWED_SCHEMES:
+            raise ProxyFetchError(f"Scheme {scheme} not allowed", url)
+
+        hostname = parsed.hostname
+        if not hostname:
+            raise ProxyFetchError("Invalid URL: missing hostname", url)
+
+        hostname_lower = hostname.lower()
+        # Loopback literals are allowed only under the self-test env flag,
+        # exactly as in URLValidator.validate_url_for_request.
+        selftest_loopback = os.getenv("PLEXICHAT_SELF_TEST") is not None and (
+            hostname_lower in ("127.0.0.1", "localhost", "::1")
+        )
+        if not selftest_loopback:
+            blocked = getattr(
+                self._url_validator, "_blocked_hosts", URLValidator.BLOCKED_HOSTS
+            )
+            if hostname_lower in blocked:
+                raise ProxyFetchError(f"Access to {hostname} is forbidden", url)
+            if hostname_lower.endswith(".local") or hostname_lower.endswith(
+                ".internal"
+            ):
+                raise ProxyFetchError(
+                    f"Access to internal host {hostname} is forbidden", url
+                )
+
+    @staticmethod
+    def _memory_cache_policy(cache_control: str) -> Tuple[bool, Optional[int]]:
+        """Return ``(cacheable, ttl_override)`` from an upstream Cache-Control.
+
+        ``no-store``, ``private`` and ``no-cache`` responses are not retained in
+        the in-process cache. A smaller positive ``max-age`` shortens the TTL.
+        """
+        directives = [
+            part.strip().lower()
+            for part in (cache_control or "").split(",")
+            if part.strip()
+        ]
+        for directive in ("no-store", "private", "no-cache"):
+            if directive in directives:
+                return False, None
+        for directive in directives:
+            if directive.startswith("max-age="):
+                try:
+                    return True, max(0, int(directive.split("=", 1)[1]))
+                except ValueError:
+                    pass
+        return True, None
 
     def fetch(self, url: str, force_refresh: bool = False) -> ProxiedContent:
         """
@@ -186,6 +269,16 @@ class ExternalProxy:
         except ValueError as e:
             raise ProxyFetchError(str(e), url)
 
+        return self._fetch_validated(url, hostname, resolved_ip, force_refresh)
+
+    def _fetch_validated(
+        self,
+        url: str,
+        hostname: str,
+        resolved_ip: str,
+        force_refresh: bool = False,
+    ) -> ProxiedContent:
+        """Fetch using a destination already validated by ``fetch``/``get_content``."""
         if not force_refresh:
             cached = self._get_cached(url)
             if cached:
@@ -198,7 +291,12 @@ class ExternalProxy:
 
     def get_content(self, url: str) -> Tuple[bytes, str]:
         """
-        Get content for URL (from cache or fetch).
+        Get content for URL (from the in-process cache, DB cache, or fetch).
+
+        The cheap structural SSRF gate runs on every request. A hit on the
+        in-process cache is served without DNS or outbound I/O; a miss runs the
+        full SSRF/DNS validation before any fetch, so a forbidden URL can never
+        enter (or be served from) the cache.
 
         Args:
             url: URL to get content for
@@ -206,9 +304,50 @@ class ExternalProxy:
         Returns:
             Tuple of (content bytes, content_type)
         """
-        proxied = self.fetch(url)
+        # SSRF gate (network-free) — always runs, including on cache hits.
+        self._assert_safe_url_structure(url)
+
+        cached = self._content_cache.get(url)
+        if cached is not None:
+            return cached
+
+        # Full SSRF validation (DNS resolution + private/reserved-IP check)
+        # happens only on a miss, before any outbound fetch.
+        try:
+            hostname, resolved_ip = self._url_validator.validate_url_for_request(url)
+        except ValueError as e:
+            raise ProxyFetchError(str(e), url)
+
+        proxied = self._fetch_validated(url, hostname, resolved_ip)
         data = self._storage.retrieve(proxied.storage_path)
+
+        # Only fully-validated, size-capped content reaches this point. Honour
+        # the upstream Cache-Control policy and cache the final bytes so the
+        # next request needs neither DNS nor a fetch.
+        cacheable, policy_ttl = self._memory_cache_policy(proxied.cache_control)
+        if cacheable:
+            effective_ttl = policy_ttl
+            # A persistent-cache hit carries only its remaining lifetime (the
+            # upstream directives are not persisted in the DB schema). Never
+            # retain it in memory past the authoritative DB expiry.
+            if proxied.remaining_ttl is not None:
+                remaining = max(0, int(proxied.remaining_ttl))
+                effective_ttl = (
+                    remaining
+                    if effective_ttl is None
+                    else min(effective_ttl, remaining)
+                )
+            self._content_cache.put(
+                url,
+                (data, proxied.content_type),
+                size=len(data),
+                ttl_seconds=effective_ttl,
+            )
         return data, proxied.content_type
+
+    def content_cache_stats(self) -> dict:
+        """Snapshot of the in-process content cache counters (observability)."""
+        return self._content_cache.stats()
 
     def get_content_stream(self, url: str) -> Tuple[BinaryIO, int, str]:
         """
@@ -254,6 +393,8 @@ class ExternalProxy:
             logger.debug(f"proxy cache blob delete failed: {exc}")
 
         self._db.execute("DELETE FROM media_proxy_cache WHERE id = ?", (row["id"],))
+        # Keep the in-process cache consistent with the persistent one.
+        self._content_cache.pop(url)
 
         return True
 
@@ -322,6 +463,7 @@ class ExternalProxy:
             last_accessed=row["last_accessed"],
             access_count=row["access_count"],
             checksum=row["checksum"],
+            remaining_ttl=max(0, int((row["expires_at"] - now) / 1000)),
         )
 
     def _fetch_url(
@@ -428,6 +570,11 @@ class ExternalProxy:
             if content_type not in self._allowed_types:
                 raise ProxyFetchError(f"Content type not allowed: {content_type}", url)
 
+            # Retain upstream cache metadata so the in-process cache can honour
+            # Cache-Control (no-store/private/no-cache and max-age) on hits.
+            cache_control = response.headers.get("Cache-Control", "") or ""
+            etag = response.headers.get("ETag", "") or ""
+
             content_length = response.headers.get("Content-Length")
             if content_length:
                 try:
@@ -449,6 +596,8 @@ class ExternalProxy:
 
             # Create stream wrapper for memory-safe reading and hashing
             stream_wrapper = ResponseStreamWrapper(gen, self._max_size, initial=peek)
+            stream_wrapper.cache_control = cache_control
+            stream_wrapper.etag = etag
 
             return content_type, stream_wrapper
         except ProxyFetchError:
@@ -591,6 +740,8 @@ class ExternalProxy:
             last_accessed=now,
             access_count=1,
             checksum=checksum,
+            cache_control=getattr(stream_wrapper, "cache_control", "") or "",
+            etag=getattr(stream_wrapper, "etag", "") or "",
         )
 
     def _update_access(self, cache_id: int):

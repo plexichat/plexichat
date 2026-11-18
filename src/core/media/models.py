@@ -136,6 +136,13 @@ class ProxiedContent:
     last_accessed: int
     access_count: int = 0
     checksum: Optional[str] = None
+    # Upstream response metadata, used only to honour Cache-Control when the
+    # in-process proxy content cache decides whether/how long to retain bytes.
+    cache_control: str = ""
+    etag: str = ""
+    # Remaining lifetime (seconds) of a persistent-cache hit, used to bound
+    # the in-process cache so it never outlives the authoritative DB entry.
+    remaining_ttl: Optional[int] = None
 
 
 @dataclass
