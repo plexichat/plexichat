@@ -4,10 +4,33 @@ Caps percentage rule.
 Detects messages with excessive capital letters.
 """
 
+import math
 from typing import Dict, Any, Optional
 
 from .base import BaseRule
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+
+DEFAULT_MAX_PERCENTAGE = 70.0
+DEFAULT_MIN_LENGTH = 10
+MAX_MIN_LENGTH = 10_000
+
+
+def _bounded_float(value: Any, default: float, low: float, high: float) -> float:
+    """Coerce an untrusted numeric config value into a finite, bounded float."""
+    # bool is a subclass of int but is never a meaningful percentage.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    value = float(value)
+    if not math.isfinite(value):
+        return default
+    return min(max(value, low), high)
+
+
+def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
+    """Coerce an untrusted config value into a bounded int."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    return min(max(value, low), high)
 
 
 class CapsPercentageRule(BaseRule):
@@ -19,14 +42,34 @@ class CapsPercentageRule(BaseRule):
         super().__init__(rule)
         import utils.config as config
 
-        self._max_percentage: float = self.config.get(
-            "max_percentage", config.get("automod.rules.caps.max_percentage", 70.0)
+        # Rule configs are stored as JSON and are rebuilt into rule objects on
+        # every process start. validate_config() only runs on create/update, so
+        # a stale or hand-edited row can reach construction carrying arbitrary
+        # values. Coerce and bound them here: without this, a string/NaN/None
+        # raises a TypeError inside check() and takes down the whole message
+        # check pipeline, while a negative or oversized threshold produces
+        # nonsensical (or unbounded) matching. This mirrors the
+        # construction-time allowlisting performed by AIModerationRule.
+        max_percentage = self.config.get(
+            "max_percentage",
+            config.get("automod.rules.caps.max_percentage", DEFAULT_MAX_PERCENTAGE),
         )
-        self._min_length: int = self.config.get(
-            "min_length", config.get("automod.rules.caps.min_length", 10)
+        min_length = self.config.get(
+            "min_length",
+            config.get("automod.rules.caps.min_length", DEFAULT_MIN_LENGTH),
         )
-        self._ignore_commands: bool = self.config.get(
-            "ignore_commands", config.get("automod.rules.caps.ignore_commands", True)
+        ignore_commands = self.config.get(
+            "ignore_commands",
+            config.get("automod.rules.caps.ignore_commands", True),
+        )
+        self._max_percentage: float = _bounded_float(
+            max_percentage, DEFAULT_MAX_PERCENTAGE, 0.0, 100.0
+        )
+        self._min_length: int = _bounded_int(
+            min_length, DEFAULT_MIN_LENGTH, 1, MAX_MIN_LENGTH
+        )
+        self._ignore_commands: bool = (
+            ignore_commands if isinstance(ignore_commands, bool) else True
         )
 
     def check(
@@ -72,12 +115,21 @@ class CapsPercentageRule(BaseRule):
         """Validate caps percentage rule configuration."""
         issues = []
 
-        max_pct = config.get("max_percentage", 70.0)
-        if not isinstance(max_pct, (int, float)) or not 0 <= max_pct <= 100:
-            issues.append("max_percentage must be between 0 and 100")
+        max_pct = config.get("max_percentage", DEFAULT_MAX_PERCENTAGE)
+        if (
+            isinstance(max_pct, bool)
+            or not isinstance(max_pct, (int, float))
+            or not math.isfinite(max_pct)
+            or not 0 <= max_pct <= 100
+        ):
+            issues.append("max_percentage must be a finite number between 0 and 100")
 
-        min_len = config.get("min_length", 10)
-        if not isinstance(min_len, int) or min_len < 1:
+        min_len = config.get("min_length", DEFAULT_MIN_LENGTH)
+        if (
+            isinstance(min_len, bool)
+            or not isinstance(min_len, int)
+            or not 1 <= min_len <= MAX_MIN_LENGTH
+        ):
             issues.append("min_length must be a positive integer")
 
         if "ignore_commands" in config and not isinstance(

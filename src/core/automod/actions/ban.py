@@ -141,7 +141,22 @@ class BanUserAction(BaseAction):
             "SELECT owner_id FROM srv_servers WHERE id = ?", (violation.server_id,)
         )
 
-        if server and server["owner_id"] == violation.user_id:
+        # Fail closed: the owner hierarchy is the only thing protecting the
+        # server owner from a system/manual ban. If the server row cannot be
+        # resolved (stale row, anomalous DB state, or a caller-supplied
+        # server_id that does not match a real server), we cannot establish
+        # that hierarchy and must not sanction anyone. Reading the row with
+        # ``.get`` also avoids a KeyError on a malformed row escaping into the
+        # action pipeline.
+        if isinstance(server, dict):
+            owner_id = server.get("owner_id")
+        else:
+            owner_id = server[0] if server else None
+
+        if owner_id is None:
+            return False, "Cannot resolve server owner"
+
+        if owner_id == violation.user_id:
             return False, "Cannot ban server owner"
 
         return True, None

@@ -107,7 +107,19 @@ class KickUserAction(BaseAction):
             "SELECT owner_id FROM srv_servers WHERE id = ?", (violation.server_id,)
         )
 
-        if server and server["owner_id"] == violation.user_id:
+        # Fail closed: see the matching guard in ban.py. Without a resolvable
+        # owner row the ownership hierarchy cannot be established, so the
+        # action must be refused rather than silently allowed. ``.get`` keeps a
+        # malformed row from raising out of the permission check.
+        if isinstance(server, dict):
+            owner_id = server.get("owner_id")
+        else:
+            owner_id = server[0] if server else None
+
+        if owner_id is None:
+            return False, "Cannot resolve server owner"
+
+        if owner_id == violation.user_id:
             return False, "Cannot kick server owner"
 
         return True, None
