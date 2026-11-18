@@ -138,6 +138,8 @@ CREATE TABLE IF NOT EXISTS user_reports (
 
 -- User reports indexes
 CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status);
+CREATE INDEX IF NOT EXISTS idx_user_reports_status_at
+    ON user_reports(status, reported_at);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reporter_at
     ON user_reports(reporter_id, reported_at);
