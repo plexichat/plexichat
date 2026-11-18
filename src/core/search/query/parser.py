@@ -41,6 +41,14 @@ DATE_FORMATS = [
 
 RELATIVE_DATE_PATTERN = re.compile(r"^(\d+)(d|w|m|y)$", re.IGNORECASE)
 
+# A relative filter ("7d", "2w") is a human convenience, but the digit run is
+# attacker-controlled and ``int()`` parses arbitrarily large values. Passing
+# those straight to ``timedelta`` raises OverflowError (C int conversion) out
+# of parse(), turning a search request into a 500. Clamp the resolved span to
+# a century so it stays inside datetime's range and remains semantically
+# meaningful; anything larger is the same "everything" filter as 100y.
+MAX_RELATIVE_DATE_DAYS = 36525  # ~100 years
+
 
 class QueryParser:
     """Parser for advanced search queries with filters."""
@@ -145,16 +153,19 @@ class QueryParser:
 
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             if unit == "d":
-                target = now - timedelta(days=amount)
+                days = amount
             elif unit == "w":
-                target = now - timedelta(weeks=amount)
+                days = amount * 7
             elif unit == "m":
-                target = now - timedelta(days=amount * 30)
+                days = amount * 30
             elif unit == "y":
-                target = now - timedelta(days=amount * 365)
+                days = amount * 365
             else:
                 return None
 
+            # Bound before timedelta: an unbounded digit string would raise
+            # OverflowError here and 500 the whole search request.
+            target = now - timedelta(days=min(days, MAX_RELATIVE_DATE_DAYS))
             return target.strftime("%Y-%m-%d")
 
         if value.lower() == "today":

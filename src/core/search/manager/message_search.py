@@ -1,5 +1,7 @@
 from typing import List, Optional
 
+from src.core.security.hardening import HardeningViolation, reject_control_characters
+
 from .base import SearchManagerBase
 from ..exceptions import InvalidQuerySyntaxError, SearchLimitError
 from ..models import MessageSearchResult, MessageSearchResultPage
@@ -30,6 +32,15 @@ def validate_search_query(query: str, *, has_filters: bool = False) -> None:
         if has_filters:
             return
         raise InvalidQuerySyntaxError("Query must not be empty")
+    # Control characters have no place in a search needle. Besides forging log
+    # lines, a NUL byte survives the parser into the FTS MATCH expression where
+    # sqlite3 raises "unterminated string" (OperationalError) — an authenticated
+    # caller could turn any search endpoint into a 500 with "%00" in the query.
+    # Reject them at the boundary with the shared guard instead.
+    try:
+        reject_control_characters(query, "search query")
+    except HardeningViolation as exc:
+        raise InvalidQuerySyntaxError("Query contains control characters") from exc
     if len(query) > MAX_QUERY_LENGTH:
         raise InvalidQuerySyntaxError(
             f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters"
