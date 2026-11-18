@@ -53,6 +53,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_id);
 CREATE INDEX IF NOT EXISTS idx_reports_target_created ON reports(target_id, created_at);
 -- Target queue filters target_id + status.
 CREATE INDEX IF NOT EXISTS idx_reports_target_status ON reports(target_id, status);
+-- Target queue filtered by priority.
+CREATE INDEX IF NOT EXISTS idx_reports_target_priority ON reports(target_id, priority);
 CREATE INDEX IF NOT EXISTS idx_reports_server ON reports(server_id);
 -- Server-scoped report lists order by created_at.
 CREATE INDEX IF NOT EXISTS idx_reports_server_created ON reports(server_id, created_at);
