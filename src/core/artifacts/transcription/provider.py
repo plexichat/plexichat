@@ -24,6 +24,7 @@ so the provider selection logic lives here and nowhere else.
 import asyncio
 import importlib.util
 import ipaddress
+import math
 import re
 import socket
 import threading
@@ -123,6 +124,27 @@ def _require_public_https_endpoint(value: Any, field: str) -> str:
     return url
 
 
+def _timespan_seconds_to_ms(seconds: float, negative: bool = False) -> int:
+    """Round a span in seconds to whole milliseconds, failing soft.
+
+    Provider values are untrusted (they come from an SDK callback or a remote
+    batch JSON). ``nan``/``inf`` and huge tick counts used to reach ``round()``
+    and raise ``ValueError``/``OverflowError``, aborting a transcription that
+    had already completed. A malformed span is treated like any other garbage
+    value -- zero -- so one bad segment cannot fail the whole result.
+    """
+    if not math.isfinite(seconds):
+        return 0
+    ms = seconds * 1000.0
+    if not math.isfinite(ms):
+        return 0
+    try:
+        rounded = int(round(ms))
+    except (ValueError, OverflowError):
+        return 0
+    return -rounded if negative else rounded
+
+
 def azure_timespan_to_ms(value: Any) -> int:
     """Normalize an Azure offset/duration value to integer milliseconds.
 
@@ -136,7 +158,12 @@ def azure_timespan_to_ms(value: Any) -> int:
         return 0
     if isinstance(value, (int, float)):
         # The Speech SDK reports ticks; batch JSON never uses bare numbers.
-        return int(round(float(value) / _AZURE_TICKS_PER_SECOND * 1000))
+        # float() can itself overflow for a giant int, so guard that too.
+        try:
+            ticks = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        return _timespan_seconds_to_ms(ticks / _AZURE_TICKS_PER_SECOND)
     text = str(value).strip()
     if not text:
         return 0
@@ -149,14 +176,12 @@ def azure_timespan_to_ms(value: Any) -> int:
         minutes = float(match.group("minutes") or 0)
         seconds = float(match.group("seconds") or 0)
         total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
-        ms = int(round(total_seconds * 1000))
-        return -ms if negative else ms
+        return _timespan_seconds_to_ms(total_seconds, negative)
     try:
         ticks = float(text)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
-    ms = int(round(ticks / _AZURE_TICKS_PER_SECOND * 1000))
-    return -ms if negative else ms
+    return _timespan_seconds_to_ms(ticks / _AZURE_TICKS_PER_SECOND, negative)
 
 
 @dataclass

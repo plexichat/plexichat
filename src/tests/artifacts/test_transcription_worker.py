@@ -372,6 +372,30 @@ def test_azure_timespan_tolerates_suffixes_and_garbage():
     assert azure_timespan_to_ms(True) == 0
 
 
+def test_azure_timespan_never_raises_on_nonfinite_or_overflowing_values():
+    """A malformed provider timestamp must not abort a finished job.
+
+    ``nan``/``inf`` (numeric or string) and giant tick counts used to reach
+    ``round()``/``float()`` and raise, failing the whole transcription result.
+    They are now treated like any other garbage value: zero milliseconds.
+    """
+    bad_values = [
+        float("nan"),
+        float("inf"),
+        -float("inf"),
+        "nan",
+        "inf",
+        "-inf",
+        "NaN",
+        "-NaN",
+        10**400,  # int too large to convert to float
+        "9" * 400,  # string that parses to inf
+        "P" + "9" * 400 + "D",  # ISO duration whose seconds overflow
+    ]
+    for value in bad_values:
+        assert azure_timespan_to_ms(value) == 0, repr(value)[:40]
+
+
 def test_azure_segment_builder_handles_v31_iso_offsets():
     provider = AzureSpeechProvider({"azure_key": "test-key"})
     result = provider._build_segments_from_results(
