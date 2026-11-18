@@ -54,7 +54,7 @@ class _FakeManager:
             "pages": 1,
         }
 
-    def get_connection(self, connection_id):
+    def get_connection(self, connection_id, **kwargs):
         return self._connection
 
     def create_connection(self, **kwargs):
@@ -83,7 +83,9 @@ def _patch_admin(monkeypatch, manager):
         admin_plexijoin, "require_admin_permission", lambda request, perm: 7
     )
     monkeypatch.setattr(
-        admin_plexijoin, "_get_plexijoin_manager", lambda request: manager
+        admin_plexijoin,
+        "_get_plexijoin_manager",
+        lambda request, **kwargs: manager,
     )
 
 

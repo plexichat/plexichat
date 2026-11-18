@@ -104,8 +104,14 @@ def _encryption_service():
     return _ENCRYPTION_SERVICE
 
 
-def _get_plexijoin_manager(request):
-    """Get PlexiJoin manager instance."""
+def _get_plexijoin_manager(request, *, require_encryption: bool = True):
+    """Get PlexiJoin manager instance.
+
+    Read-only endpoints pass ``require_encryption=False``: they never emit a
+    shared key, so requiring (and, on a cold worker, importing) the crypto
+    stack just to list metadata is both a latency tax and an unnecessary
+    availability dependency. No secret is exposed by skipping it.
+    """
     import src.api as api_mod
     from src.core.plexijoin import PlexiJoinManager
     from src.core.admin.logging import get_admin_logger
@@ -130,9 +136,9 @@ def _get_plexijoin_manager(request):
             },
         )
 
-    encryption_service = _encryption_service()
+    encryption_service = _encryption_service() if require_encryption else None
 
-    if encryption_service is None:
+    if require_encryption and encryption_service is None:
         raise HTTPException(
             status_code=503,
             detail={
@@ -173,11 +179,17 @@ async def list_connections(
 ):
     """List all outbound federation connections."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    # Scope gate (also closes the IDOR-style read of federation metadata by
+    # authenticated admins who lack the federation scope).
+    require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
-        manager = _get_plexijoin_manager(request)
-        result = manager.list_connections(status=status, page=page, per_page=per_page)
+        # Admin reads never emit shared keys: skip the AEAD work and the
+        # crypto-service dependency on this hot path.
+        manager = _get_plexijoin_manager(request, require_encryption=False)
+        result = manager.list_connections(
+            status=status, page=page, per_page=per_page, decrypt_keys=False
+        )
 
         connections_data = []
         for conn in result["connections"]:
@@ -213,11 +225,14 @@ async def list_connections(
 async def get_connection(request: Request, connection_id: SnowflakeIDParam):
     """Get a specific connection by ID."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    # Scope gate before touching the row: this id is caller-controlled, so an
+    # authenticated-but-unscoped admin must not be able to read arbitrary
+    # connections by id.
+    require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
-        manager = _get_plexijoin_manager(request)
-        connection = manager.get_connection(connection_id)
+        manager = _get_plexijoin_manager(request, require_encryption=False)
+        connection = manager.get_connection(connection_id, decrypt_keys=False)
 
         if not connection:
             raise HTTPException(

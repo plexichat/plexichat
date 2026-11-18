@@ -204,43 +204,56 @@ class PlexiJoinManager:
         status: Optional[str] = None,
         page: int = 1,
         per_page: int = 50,
+        *,
+        decrypt_keys: bool = True,
     ) -> Dict[str, Any]:
-        """List all outbound federation connections."""
+        """List all outbound federation connections.
+
+        ``decrypt_keys=False`` is the read-only/admin path: the admin
+        serializer never emits ``shared_key``, so decrypting one per row is
+        pure work (O(page size) AEAD calls) on a hot endpoint. Callers that
+        actually federate (``artifacts``, outbound transport) keep the default
+        ``True`` and still receive the plaintext key.
+        """
         page, per_page = bound_pagination(page, per_page)
-        query = "SELECT * FROM plexijoin_connections"
-        params = []
+        where = ""
+        params: List[Any] = []
 
         if status:
-            query += " WHERE status = ?"
+            where = " WHERE status = ?"
             params.append(status)
 
-        query += " ORDER BY created_at DESC"
+        # Count the rows directly. The old code wrapped a full
+        # ``SELECT ... ORDER BY created_at DESC`` in a derived table, so the
+        # database sorted every matching row just to count it. The ORDER BY
+        # belongs on the page query only; with the (status, created_at) index
+        # the count is an index-only scan.
+        total = self.db.fetch_one(
+            "SELECT COUNT(*) AS total FROM plexijoin_connections" + where, params
+        )["total"]
 
-        # The alias is not optional: PostgreSQL rejects a derived table
-        # without one ("subquery in FROM must have an alias"), and this
-        # query backs both the admin list endpoint and the connection lookup
-        # every signed inbound request authenticates through.
-        count_query = f"SELECT COUNT(*) as total FROM ({query}) AS sub"
-        total = self.db.fetch_one(count_query, params)["total"]
-
-        query += " LIMIT ? OFFSET ?"
-        params.extend([per_page, (page - 1) * per_page])
-
-        connections = self.db.fetch_all(query, params)
-        # CORRECTNESS FIX: decrypt shared_key for every returned
-        # connection so dashboards / federation handlers always see
-        # the plaintext key (matches ``get_connection``).
-        materialized = [self._materialize_connection(c) for c in connections]
+        query = (
+            "SELECT * FROM plexijoin_connections"
+            + where
+            + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+        connections = self.db.fetch_all(
+            query, [*params, per_page, (page - 1) * per_page]
+        )
+        if decrypt_keys:
+            connections = [self._materialize_connection(c) for c in connections]
 
         return {
-            "connections": materialized,
+            "connections": connections,
             "total": total,
             "page": page,
             "per_page": per_page,
             "pages": (total + per_page - 1) // per_page,
         }
 
-    def get_connection(self, connection_id: int) -> Optional[Dict[str, Any]]:
+    def get_connection(
+        self, connection_id: int, *, decrypt_keys: bool = True
+    ) -> Optional[Dict[str, Any]]:
         """Get a specific connection by ID.
 
         CORRECTNESS FIX: the previous implementation returned the
@@ -251,7 +264,9 @@ class PlexiJoinManager:
         forwarded to the remote instance which could not decrypt it
         because the key was never written into a shared message).
         We now materialise the decrypted ``shared_key`` here so
-        callers always see the plaintext they expect.
+        callers always see the plaintext they expect. Read-only callers (the
+        admin GET endpoints, which never emit the key) can pass
+        ``decrypt_keys=False`` to skip that work and the crypto dependency.
         """
         connection_id = bound_id(connection_id, "connection_id")
         row = self.db.fetch_one(
@@ -260,7 +275,11 @@ class PlexiJoinManager:
         )
         if row is None:
             return None
-        return self._materialize_connection(row)
+        if decrypt_keys:
+            return self._materialize_connection(row)
+        # Read-only/admin path: no shared_key is emitted, so skip the AEAD
+        # decrypt entirely (see ``list_connections``).
+        return row
 
     def _materialize_connection(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Decrypt the shared_key in-place for a connection row."""
