@@ -4,6 +4,8 @@ Component builders - Build and validate message components.
 
 from typing import List, Dict, Any, Optional, Tuple
 
+from src.core.security.hardening import HardeningViolation, require_http_url
+
 from ..models import (
     Button,
     SelectMenu,
@@ -25,6 +27,16 @@ MAX_LABEL_LENGTH = 80
 MAX_PLACEHOLDER_LENGTH = 150
 MAX_SELECT_OPTIONS = 25
 MAX_MODAL_COMPONENTS = 5
+# Link buttons are rendered as clickable anchors by clients, so their URL must
+# be a bounded absolute HTTP(S) URL -- never a javascript:/data:/file: URI that
+# could execute when a user clicks the button.
+MAX_BUTTON_URL_LENGTH = 2048
+# Select-option metadata is echoed back to every user who sees the message.
+# Bound it at the core boundary so a single bot cannot inflate payloads or
+# stuff unbounded strings into the rendered component tree.
+MAX_SELECT_OPTION_LABEL_LENGTH = 100
+MAX_SELECT_OPTION_VALUE_LENGTH = 100
+MAX_SELECT_OPTION_DESCRIPTION_LENGTH = 100
 
 
 def build_button(
@@ -216,6 +228,21 @@ def validate_button(button: Dict[str, Any]) -> Tuple[bool, List[str]]:
     if style == ButtonStyle.LINK or style == 5:
         if not url:
             issues.append("Link button requires a URL")
+        else:
+            # SECURITY: a link button becomes an anchor in the client. Only
+            # absolute HTTP(S) URLs without embedded credentials are safe to
+            # render -- javascript:/data:/file: schemes are executable XSS
+            # payloads and control characters can smuggle a second URL past
+            # a naive parser. Fail closed when validation rejects the URL.
+            try:
+                if len(str(url)) > MAX_BUTTON_URL_LENGTH:
+                    issues.append(
+                        f"Link button URL exceeds {MAX_BUTTON_URL_LENGTH} characters"
+                    )
+                else:
+                    require_http_url(url, field="Link button URL")
+            except HardeningViolation:
+                issues.append("Link button URL must be an absolute HTTP(S) URL")
         if custom_id:
             issues.append("Link button cannot have a custom_id")
     else:
@@ -255,10 +282,31 @@ def validate_select_menu(select: Dict[str, Any]) -> Tuple[bool, List[str]]:
             issues.append(f"Select menu exceeds {MAX_SELECT_OPTIONS} options")
 
         for i, opt in enumerate(options):
-            if not opt.get("label"):
+            if not isinstance(opt, dict):
+                issues.append(f"Option {i} must be an object")
+                continue
+            label = opt.get("label")
+            value = opt.get("value")
+            description = opt.get("description")
+            if not label:
                 issues.append(f"Option {i} requires a label")
-            if not opt.get("value"):
+            elif len(str(label)) > MAX_SELECT_OPTION_LABEL_LENGTH:
+                issues.append(
+                    f"Option {i} label exceeds {MAX_SELECT_OPTION_LABEL_LENGTH} characters"
+                )
+            if not value:
                 issues.append(f"Option {i} requires a value")
+            elif len(str(value)) > MAX_SELECT_OPTION_VALUE_LENGTH:
+                issues.append(
+                    f"Option {i} value exceeds {MAX_SELECT_OPTION_VALUE_LENGTH} characters"
+                )
+            if (
+                description is not None
+                and len(str(description)) > MAX_SELECT_OPTION_DESCRIPTION_LENGTH
+            ):
+                issues.append(
+                    f"Option {i} description exceeds {MAX_SELECT_OPTION_DESCRIPTION_LENGTH} characters"
+                )
 
     placeholder = select.get("placeholder")
     if placeholder and len(placeholder) > MAX_PLACEHOLDER_LENGTH:
