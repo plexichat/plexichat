@@ -20,6 +20,7 @@ from .exceptions import (
     SettingsValueTooLong,
     SettingsKeyReserved,
     SettingsKeyInvalid,
+    SettingsBulkLimitExceeded,
 )
 
 
@@ -92,6 +93,48 @@ class SettingsManager(BaseManager):
                 self._key_pattern = re.compile(f"[{config.key_charset}]+")
             except re.error as exc:
                 raise ValueError(f"Invalid key_charset: {config.key_charset}") from exc
+
+            # The reserved-namespace fields are a security control, not a
+            # tuning knob. An empty or malformed value would fail open and let
+            # user-facing writes reach server-owned keys such as ``__internal``
+            # or ``_focused_channel``. Validate them here so a bad (possibly
+            # injected) config raises at first use instead of silently
+            # disabling the namespace protection.
+            def _check_namespace(name: str, value: object) -> tuple:
+                if not isinstance(value, (tuple, list)):
+                    raise ValueError(f"{name} must be a tuple or list of strings")
+                for entry in value:
+                    if not isinstance(entry, str) or not entry:
+                        raise ValueError(f"{name} must contain only non-empty strings")
+                return tuple(value)
+
+            reserved_prefixes = _check_namespace(
+                "reserved_prefixes", config.reserved_prefixes
+            )
+            reserved_keys = _check_namespace("reserved_keys", config.reserved_keys)
+            server_setting_keys = _check_namespace(
+                "server_setting_keys", config.server_setting_keys
+            )
+
+            # The single-underscore prefix is the server-owned namespace. If it
+            # is not reserved, generic user writes can collide with (and
+            # overwrite) server-semantics keys.
+            if "_" not in reserved_prefixes:
+                raise ValueError(
+                    "reserved_prefixes must reserve the '_' server namespace"
+                )
+            # Double-underscore keys are internal-only: they must never be
+            # reachable even through the dedicated server-setting path.
+            if any(key.startswith("__") for key in server_setting_keys):
+                raise ValueError(
+                    "server_setting_keys may not include reserved internal keys"
+                )
+            # Keys reserved outright can never also be server-managed keys.
+            if any(key in server_setting_keys for key in reserved_keys):
+                raise ValueError(
+                    "server_setting_keys may not include reserved keys"
+                )
+
             self._config_validated = True
 
     @property
@@ -169,6 +212,12 @@ class SettingsManager(BaseManager):
 
     def _validate_value(self, value: str) -> None:
         """Validate a setting value."""
+        # Values are persisted as text. Reject non-strings explicitly: apart
+        # from being a type-contract violation, ``len()`` on a container counts
+        # elements rather than bytes and would let an oversized nested payload
+        # slip past both the per-value limit and the bulk byte cap below.
+        if not isinstance(value, str):
+            raise ValueError("Setting value must be a string")
         if len(value) > self.config.max_value_length:
             raise SettingsValueTooLong(
                 f"Value exceeds maximum length of {self.config.max_value_length} characters"
@@ -379,9 +428,27 @@ class SettingsManager(BaseManager):
             SettingsBulkLimitExceeded: If the batch would exceed the per-user
                 settings limit.
         """
+        # Enforce the configured bulk caps here, not only in the HTTP route.
+        # SettingsManager is the single entry point for settings writes, so
+        # every caller (internal code, background jobs, alternate transports)
+        # must be protected from an unbounded atomic batch. The route layer's
+        # pre-checks are defence in depth, not the primary control.
+        self._ensure_config_validated()
+        if len(items) > self.config.max_bulk_entries:
+            raise SettingsBulkLimitExceeded(
+                f"Bulk write exceeds maximum of {self.config.max_bulk_entries} entries"
+            )
+
         for key, value in items.items():
             self._validate_key(key)
             self._validate_value(value)
+
+        total_bytes = sum(len(key) + len(value) for key, value in items.items())
+        if total_bytes > self.config.max_bulk_payload_bytes:
+            raise SettingsBulkLimitExceeded(
+                f"Bulk write payload exceeds maximum of "
+                f"{self.config.max_bulk_payload_bytes} bytes"
+            )
 
         now = self._get_timestamp()
         results: Dict[str, UserSetting] = {}
