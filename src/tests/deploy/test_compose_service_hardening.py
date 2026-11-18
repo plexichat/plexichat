@@ -256,9 +256,12 @@ def test_janus_dev_api_is_bound_to_loopback() -> None:
             f"Janus dev API port {entry!r} is not pinned to 127.0.0.1; an "
             "unauthenticated API must not be exposed on all host interfaces"
         )
-    assert "0.0.0.0" not in JANUS_COMPOSE.read_text(encoding="utf-8"), (
-        "Janus compose must not contain a 0.0.0.0 bind"
-    )
+    for line in JANUS_COMPOSE.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("-") and ":" in stripped:
+            assert "0.0.0.0" not in stripped, (
+                f"Janus port binding must not use a 0.0.0.0 bind: {stripped}"
+            )
 
 
 def test_third_party_images_are_pinned_to_verified_digests(
@@ -310,3 +313,121 @@ def test_supply_chain_policy_markers_are_preserved() -> None:
         "ALLOW_UNPINNED_IMAGES",
     ):
         assert marker in text, f"pinning policy marker was removed: {marker}"
+
+
+# --- Horizontal-scaling / resource-budget invariants ------------------------
+
+# Every long-lived daemon that a scaled backend fleet shares must be bounded:
+# without per-container ceilings, N hungry workers can OOM the host through a
+# dependency instead of failing in one place.
+RESOURCE_BOUNDED_SERVICES = (
+    "db",
+    "valkey",
+    "rustfs",
+    "clamav",
+    "backend",
+    "client",
+    "backup",
+)
+
+
+def _resource_limits(services: dict[str, dict[str, Any]], name: str) -> dict[str, Any]:
+    deploy = services[name].get("deploy")
+    assert isinstance(deploy, dict), f"{name} has no deploy block for resource limits"
+    resources = deploy.get("resources")
+    assert isinstance(resources, dict), f"{name} has no deploy.resources"
+    limits = resources.get("limits")
+    assert isinstance(limits, dict), f"{name} has no deploy.resources.limits"
+    return limits
+
+
+def _memory_bytes(value: Any) -> int:
+    """Parse a Compose memory quantity, resolving ``${VAR:-default}`` to its default."""
+    text = re.sub(r"\$\{[^}]*?:-([^}]*)\}", r"\1", str(value)).strip()
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([kmgt]?)i?b?", text, re.IGNORECASE)
+    assert match, f"unparseable memory quantity: {value!r}"
+    scale = {"": 1, "k": 2**10, "m": 2**20, "g": 2**30, "t": 2**40}[
+        match.group(2).lower()
+    ]
+    return int(float(match.group(1)) * scale)
+
+
+def _duration_seconds(value: Any) -> float:
+    """Parse a Compose duration such as ``20s``/``5m``/``1m0s`` into seconds."""
+    parts = re.findall(r"(\d+(?:\.\d+)?)([smh])", str(value), re.IGNORECASE)
+    assert parts, f"unparseable duration: {value!r}"
+    factors = {"s": 1, "m": 60, "h": 3600}
+    return sum(float(number) * factors[unit.lower()] for number, unit in parts)
+
+
+def test_scalable_services_declare_bounded_cpu_and_memory(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    for name in RESOURCE_BOUNDED_SERVICES:
+        limits = _resource_limits(services, name)
+        assert limits.get("cpus"), f"{name} must cap CPU to keep replicas fair"
+        assert limits.get("memory"), f"{name} must cap memory to bound a runaway replica"
+        assert _memory_bytes(limits["memory"]) >= 256 * 2**20, (
+            f"{name} memory limit is too small to start, let alone serve load"
+        )
+    # ClamAV loads ~1.2 GB of signatures and peaks around ~2.4 GB on reload;
+    # the 4G ceiling documented in docker/README.md must survive refactors.
+    assert _memory_bytes(_resource_limits(services, "clamav")["memory"]) >= 3 * 2**30, (
+        "clamav's memory limit dropped below its documented reload working set"
+    )
+
+
+def test_optional_heavy_services_declare_cpu_limits(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    for name in ("shieldstral", "meilisearch", "elasticsearch"):
+        assert _resource_limits(services, name).get("cpus"), (
+            f"{name} must declare a CPU limit alongside its memory limit"
+        )
+
+
+def test_backend_healthcheck_is_not_aggressive_under_load(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    """N warming replicas must not be marked unhealthy on one slow response."""
+    healthcheck = services["backend"]["healthcheck"]
+    assert _duration_seconds(healthcheck["interval"]) >= 20
+    assert _duration_seconds(healthcheck["timeout"]) >= 10
+    assert int(healthcheck["retries"]) >= 5
+    assert _duration_seconds(healthcheck["start_period"]) >= 20
+
+
+def test_backend_swarm_replicas_use_a_separate_variable(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    """The pool-budget hint must not silently spawn N port-bound containers."""
+    replicas = str(services["backend"]["deploy"]["replicas"])
+    assert replicas == "${BACKEND_SWARM_REPLICAS:-1}", (
+        "deploy.replicas must default to one and use BACKEND_SWARM_REPLICAS, "
+        "not the BACKEND_REPLICAS env var passed into each container for "
+        "connection-pool budgeting"
+    )
+
+
+def test_backend_rolling_update_is_safe_for_a_scaled_fleet(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    update = services["backend"]["deploy"].get("update_config")
+    assert isinstance(update, dict), "backend must declare a Swarm rolling-update policy"
+    assert int(update.get("parallelism", 0)) == 1, "replace one worker at a time"
+    assert update.get("order") == "start-first", "keep the old worker until the new one is up"
+    assert update.get("failure_action") == "rollback", "a failed rollout must roll back"
+    assert _duration_seconds(update.get("monitor", 0)) >= 60, (
+        "failure monitoring must outlast the healthcheck's start period"
+    )
+
+
+def test_scaling_notes_cover_pool_budget_and_first_boot() -> None:
+    text = COMPOSE.read_text(encoding="utf-8")
+    for marker in (
+        "BACKEND_REPLICAS=N",
+        "media.signing_key",
+        "BACKEND_SWARM_REPLICAS",
+        "PER REPLICA",
+    ):
+        assert marker in text, f"scaling guidance lost its {marker!r} note"

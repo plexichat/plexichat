@@ -64,14 +64,18 @@ The backend healthcheck is `curl -sf http://localhost:8000/api/v1/ready` (`docke
 
 When you run more than one backend replica, Valkey is required for cross-worker events (`plexichat:events:cross_worker`), sessions, and rate limiting.
 
-1. Comment out the `ports` section on the `backend` service (host ports `8000/TCP` and `30000-30100/UDP` can bind only once).
-2. Scale with:
+1. Bring the stack up once with a **single** backend on a fresh install. The first start persists env overrides into `config/docker-config.yaml` and generates `media.signing_key`; booting N replicas against an uninitialized config races that write and can leave each worker with a different key.
+2. Set `BACKEND_REPLICAS=N` (the backend divides its fleet-wide PostgreSQL connection budget by this value; leaving it at 1 with four replicas exhausts Postgres).
+3. Comment out the `ports` section on the `backend` service (host ports `8000/TCP` and `30000-30100/UDP` can bind only once).
+4. Scale with:
 
    ```bash
-   docker compose up --scale backend=4 -d
+   BACKEND_REPLICAS=4 docker compose up --scale backend=4 -d
    ```
 
 The `client` Nginx at `:443` load-balances to `backend:8000` via Docker DNS.
+
+Every `deploy.resources.limits` entry is **per replica**: a four-worker fleet needs roughly four times the backend CPU/memory plus the fixed services. Raise or lower the `*_CPU_LIMIT` / `*_MEM_LIMIT` / `BACKEND_*_RESERVATION` variables to fit the host. For Swarm, `deploy.replicas` is controlled by `BACKEND_SWARM_REPLICAS` (default 1) and `deploy.update_config` rolls workers one at a time with `start-first`; plain `docker compose up` ignores both and uses `--scale`.
 
 ## Configure malware scanning
 
