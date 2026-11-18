@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.api.schemas.policy_types import UIText
 from src.core import applications
@@ -230,6 +231,7 @@ async def list_applications(
     ] = None,
 ):
     """Get a bounded page of applications owned by the current user."""
+    require_user_token(current_user)
     try:
         apps = applications.get_user_applications(
             current_user.user_id,
@@ -264,6 +266,7 @@ async def create_application(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Create a new application for the current user."""
+    require_user_token(current_user)
     try:
         app = applications.create_application(
             owner_id=current_user.user_id,
@@ -298,6 +301,7 @@ async def get_application(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get details of a specific application."""
+    require_user_token(current_user)
     try:
         app = applications.get_application(
             application_id=int(application_id),
@@ -345,6 +349,7 @@ async def update_application(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Update an application's details."""
+    require_user_token(current_user)
     try:
         app = applications.update_application(
             user_id=current_user.user_id,
@@ -390,6 +395,7 @@ async def delete_application(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Delete an application."""
+    require_user_token(current_user)
     try:
         applications.delete_application(
             user_id=current_user.user_id,
@@ -429,6 +435,7 @@ async def create_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Create a bot account for an application and return its token."""
+    require_user_token(current_user)
     try:
         # If bot already exists, this will raise ApplicationAccessDeniedError
         # In that case, return success with a placeholder message
@@ -480,6 +487,7 @@ async def regenerate_secret(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Regenerate the client secret for an application."""
+    require_user_token(current_user)
     try:
         result = applications.regenerate_client_secret(
             application_id=int(application_id),

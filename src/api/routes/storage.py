@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
+from src.api.routes.users.helpers import require_user_token
 from src.core.security.hardening import HardeningViolation
 from src.core.storage_quota import get_manager
 
@@ -17,6 +18,7 @@ router = APIRouter(prefix="/storage", tags=["Storage"])
 async def get_my_storage_quota(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> dict:
+    require_user_token(current_user)
     try:
         return get_manager().get_status(current_user.user_id)
     except Exception as exc:
@@ -41,6 +43,7 @@ async def get_my_storage_quota(
 async def get_my_storage_usage(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> dict:
+    require_user_token(current_user)
     return await get_my_storage_quota(current_user)
 
 
@@ -52,6 +55,7 @@ async def list_my_storage_files(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> dict:
     """List a bounded page of the caller's files, optionally under ``path``."""
+    require_user_token(current_user)
     try:
         return get_manager().list_user_files(
             current_user.user_id, limit=limit, offset=offset, path_prefix=path
