@@ -22,8 +22,21 @@ _BLOCKED_ENDPOINT_HOSTS = frozenset(
         "local",
         "metadata",
         "metadata.google.internal",
+        # Common /etc/hosts aliases for the loopback address.
+        "ip6-localhost",
+        "ip6-loopback",
+        "loopback",
     }
 )
+
+# Suffixes whose *every* member designates local infrastructure. RFC 6761
+# guarantees any name ending in ``.localhost`` resolves to the loopback
+# address, and ``.localdomain`` is the conventional loopback alias; neither
+# needs a DNS answer to be an SSRF target. The literal-IP gate below cannot
+# help here because these are DNS names (no literal to normalise). An
+# authenticated caller registering ``https://anything.localhost/...`` would
+# otherwise make pywebpush POST the payload straight back to this host.
+_BLOCKED_ENDPOINT_SUFFIXES = (".local", ".internal", ".localhost", ".localdomain")
 
 
 def _endpoint_address(host: str) -> Optional[Any]:
@@ -78,7 +91,7 @@ def _require_public_endpoint(endpoint: str) -> str:
     host = (urlparse(endpoint).hostname or "").lower().rstrip(".")
     if not host:
         raise ValueError("endpoint has no host")
-    if host in _BLOCKED_ENDPOINT_HOSTS or host.endswith((".local", ".internal")):
+    if host in _BLOCKED_ENDPOINT_HOSTS or host.endswith(_BLOCKED_ENDPOINT_SUFFIXES):
         raise ValueError("endpoint targets an internal host")
     address = _endpoint_address(host)
     if address is None:

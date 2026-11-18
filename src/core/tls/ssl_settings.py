@@ -44,6 +44,16 @@ _WEAK_CIPHER_TOKENS = (
     "MD5",
     "SHA1",
     "EXPORT",
+    # OpenSSL also accepts the short ``EXP`` alias for the same export-grade
+    # (40-bit) suites. Matching only the long spelling let a cipher string of
+    # ``EXP`` / ``ECDHE+AESGCM:EXP`` through validation; on builds that still
+    # honour it that silently enables weak export ciphers alongside the
+    # strong ones. Keep both spellings blocked.
+    "EXP",
+    # GOST is a deprecated national cipher family (weak, rarely audited, and
+    # only available through the legacy provider). Aliases such as ``GOST``,
+    # ``aGOST``, ``GOST89MAC`` and ``GOST12`` are all subsumed by this token.
+    "GOST",
     "PSK",
     "SRP",
     "DSS",
