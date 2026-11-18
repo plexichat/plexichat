@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS push_tokens (
 -- Push tokens indexes
 CREATE INDEX IF NOT EXISTS idx_push_token_user ON push_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_push_token_platform ON push_tokens(platform);
+-- Push fan-out filters platform and user.
+CREATE INDEX IF NOT EXISTS idx_push_token_platform_user
+    ON push_tokens(platform, user_id);
 CREATE INDEX IF NOT EXISTS idx_push_token_index ON push_tokens(token_index);
 
 -- Last chat tracking table
