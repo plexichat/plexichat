@@ -45,6 +45,8 @@ class KeyringMigration(KEKMigrationProtocol):
             keyring_path.parent
             / f"{keyring_path.stem}_backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}{keyring_path.suffix}"
         )
+        # Retained for rollback/cleanup compatibility only: the re-encryption
+        # write no longer uses this fixed path (see _atomic_write_bytes).
         self.temp_path = (
             keyring_path.parent / f"{keyring_path.stem}_temp{keyring_path.suffix}"
         )
@@ -137,6 +139,38 @@ class KeyringMigration(KEKMigrationProtocol):
 
         return result
 
+    @staticmethod
+    def _atomic_write_bytes(path: Path, data: bytes) -> None:
+        """Write ``data`` to ``path`` via a unique, private temporary file.
+
+        A fixed destination path (the timestamped ``*_backup_*.json`` name or
+        the constant ``*_temp.json`` name) can be pre-planted as a symlink by
+        another local user with write access to the keyring directory. A plain
+        ``open(path, "w")`` / ``shutil.copy2(..., path)`` follows that symlink
+        and would clobber the link target with key material, then reset its
+        mode to 0600. ``mkstemp`` uses O_CREAT | O_EXCL in the same directory
+        and ``os.replace`` installs the result atomically, replacing rather
+        than following any symlink at the destination.
+        """
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{path.stem}.", suffix=".tmp", dir=str(path.parent)
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            try:
+                os.chmod(temp_path, 0o600)
+            except (OSError, AttributeError):
+                pass
+            os.replace(temp_path, path)
+        finally:
+            # Only reached when the swap did not happen (write failure).
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
     def backup_keyring(self) -> bool:
         """
         Create a backup of the keyring file.
@@ -151,7 +185,7 @@ class KeyringMigration(KEKMigrationProtocol):
             return False
 
         try:
-            shutil.copy2(self.keyring_path, self.backup_path)
+            self._atomic_write_bytes(self.backup_path, self.keyring_path.read_bytes())
             logger.info(f"Backup created successfully: {self.backup_path}")
             return True
         except Exception as e:
@@ -246,18 +280,17 @@ class KeyringMigration(KEKMigrationProtocol):
                 "payload": base64.b64encode(new_payload).decode(),
             }
 
-            # Write to temporary file first
-            with open(self.temp_path, "w") as f:
-                json.dump(new_encrypted_data, f)
-
-            # Set permissions
-            try:
-                os.chmod(self.temp_path, 0o600)
-            except (OSError, AttributeError):
-                pass
-
-            # Atomic swap
-            os.replace(self.temp_path, self.keyring_path)
+            # Install the re-encrypted keyring through a unique temp file and
+            # an atomic swap. The old fixed ``*_temp.json`` path was shared by
+            # every run and opened with ``"w"``, so a symlink planted there
+            # would redirect the write to an arbitrary file (and chmod it to
+            # 0600). ``_atomic_write_bytes`` creates the temp with O_EXCL in
+            # the same directory and replaces the keyring path itself, never
+            # following a symlink at either location.
+            self._atomic_write_bytes(
+                self.keyring_path,
+                json.dumps(new_encrypted_data).encode("utf-8"),
+            )
 
             logger.info(
                 f"Successfully migrated keyring to new KEK: {self.keyring_path.name}"
