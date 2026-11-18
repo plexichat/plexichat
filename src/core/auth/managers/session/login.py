@@ -17,6 +17,18 @@ from ...permissions import permissions_from_json
 from ..protocol import AuthManagerProtocol
 
 
+# Sentinel user id for the *global*, per-source-IP failure budget stored in
+# auth_failed_logins. Real snowflake ids start at 1, so -1 can never collide
+# with an actual account, and the existing per-(user, IP) rows/queries that
+# filter on a real user id are unaffected by these rows.
+_GLOBAL_IP_SENTINEL_USER_ID = -1
+# Default number of failed logins, from ANY account, allowed from one source
+# before that source is uniformly refused. Mirrors the HTTP-layer login route
+# cap but lives in the manager so it still holds for non-HTTP callers and when
+# the application rate-limit middleware is disabled.
+DEFAULT_CREDENTIAL_STUFFING_IP_LIMIT = 50
+
+
 class LoginMixin(AuthManagerProtocol):
     def create_session_for_user(
         self,
@@ -106,12 +118,37 @@ class LoginMixin(AuthManagerProtocol):
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> AuthResult:
+        # Global per-source credential-stuffing budget. The per-(user, IP)
+        # throttle and the distributed account lockout below are both keyed to
+        # an individual account, so an attacker spraying ONE password across
+        # thousands of accounts never trips either: each account sees a single
+        # failure from a single IP. This budget is keyed to the source IP only,
+        # so enough failures against *any* accounts from one source make every
+        # subsequent attempt from that source fail uniformly. It is checked
+        # before the account lookup so a throttled source cannot enumerate
+        # usernames either. Does not touch account state (no lockout DoS).
+        ip_index_for_budget = (
+            self.crypto.blind_index(ip_address, "ip_address") if ip_address else None
+        )
+        if ip_index_for_budget:
+            self._ensure_failed_logins_table()
+            if self._global_ip_throttle_active(ip_index_for_budget):
+                self.crypto.verify_password(password, self._dummy_password_hash)
+                logger.warning(
+                    "Login throttled: source IP exhausted credential-stuffing budget"
+                )
+                raise InvalidCredentialsError("Invalid credentials")
+
         email_index = self.crypto.blind_index(username, "user_email")
         row = self._db.fetch_one(
             "SELECT * FROM auth_users WHERE username = ? OR email_index = ?",
             (username, email_index),
         )
         if not row:
+            # A nonexistent username is the common credential-stuffing case, so
+            # it must consume the per-IP budget just like a real wrong password.
+            if ip_address:
+                self._record_global_ip_failure(ip_address)
             # Equalize timing with the found-user path so responses are identical
             # regardless of whether the account exists (prevents enumeration).
             self.crypto.verify_password(password, self._dummy_password_hash)
@@ -300,6 +337,70 @@ class LoginMixin(AuthManagerProtocol):
         ensure_failed_logins_table(self._db)
         LoginMixin._failed_logins_table_ready = True
 
+    def _credential_stuffing_ip_limit(self) -> int:
+        """Per-source-IP failure budget before uniform throttling kicks in."""
+        security_config = self._config.get("security", {})
+        try:
+            limit = int(
+                security_config.get(
+                    "credential_stuffing_ip_limit",
+                    DEFAULT_CREDENTIAL_STUFFING_IP_LIMIT,
+                )
+            )
+        except (TypeError, ValueError):
+            limit = DEFAULT_CREDENTIAL_STUFFING_IP_LIMIT
+        return max(1, limit)
+
+    def _global_ip_throttle_active(self, ip_index: str) -> bool:
+        """Whether one source has exhausted the cross-account failure budget.
+
+        Fail closed on unparseable counts/timestamps: a corrupt sentinel row
+        must be treated as throttled rather than as an open abuse corridor.
+        """
+        row = self._db.fetch_one(
+            "SELECT attempts, last_attempt_at FROM auth_failed_logins "
+            "WHERE user_id = ? AND ip_index = ?",
+            (_GLOBAL_IP_SENTINEL_USER_ID, ip_index),
+        )
+        if not row:
+            return False
+        security_config = self._config.get("security", {})
+        try:
+            window_minutes = max(
+                1, int(security_config.get("failed_login_window_minutes", 15))
+            )
+        except (TypeError, ValueError):
+            window_minutes = 15
+        try:
+            last = int(row.get("last_attempt_at", 0))
+            attempts = int(row.get("attempts", 0))
+        except (TypeError, ValueError):
+            return True
+        cutoff = self._get_timestamp() - window_minutes * 60 * 1000
+        if last <= cutoff:
+            return False
+        return attempts >= self._credential_stuffing_ip_limit()
+
+    def _record_global_ip_failure(self, ip_address: str) -> None:
+        """Increment the cross-account failure budget for one source IP."""
+        self._ensure_failed_logins_table()
+        ip_index = self.crypto.blind_index(ip_address, "ip_address")
+        now = self._get_timestamp()
+        try:
+            self._db.execute(
+                "INSERT INTO auth_failed_logins "
+                "(user_id, ip_index, attempts, last_attempt_at) VALUES (?, ?, 1, ?)",
+                (_GLOBAL_IP_SENTINEL_USER_ID, ip_index, now),
+            )
+        except Exception:
+            # Concurrent insert for the same source IP; count it.
+            self._db.execute(
+                "UPDATE auth_failed_logins "
+                "SET attempts = attempts + 1, last_attempt_at = ? "
+                "WHERE user_id = ? AND ip_index = ?",
+                (now, _GLOBAL_IP_SENTINEL_USER_ID, ip_index),
+            )
+
     def _ip_throttle_active(self, user_id: int, ip_index: str) -> bool:
         """True when this (user, IP) pair has exhausted its failure budget.
 
@@ -342,6 +443,14 @@ class LoginMixin(AuthManagerProtocol):
         window_ms = window_minutes * 60 * 1000
 
         self._ensure_failed_logins_table()
+
+        # A wrong password for an existing account also spends the caller's
+        # cross-account failure budget (the nonexistent-username path records
+        # it in login()). Together these close the credential-stuffing gap
+        # where spraying many accounts from one source evades every per-account
+        # control.
+        if ip_address:
+            self._record_global_ip_failure(ip_address)
 
         # Atomic increment: no read-modify-write race between concurrent
         # requests can lose or double-count a failure.
