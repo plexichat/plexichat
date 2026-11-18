@@ -24,6 +24,14 @@ from ..tokens import create_email_token, parse_token, verify_token_hash
 from .protocol import AuthManagerProtocol
 
 
+# RFC 5321/5322 caps a mailbox at 254 characters. ``validate_email`` in
+# core.auth.passwords is an unbounded regex, so every entry point that can
+# register a user (API, admin provisioning, selftest, internal callers) must
+# enforce this structural ceiling itself. Without it, a multi-megabyte
+# "email" passes validation and is blind-indexed, encrypted and persisted.
+MAX_EMAIL_LENGTH = 254
+
+
 class RegistrationMixin(AuthManagerProtocol):
     def register(
         self,
@@ -94,6 +102,8 @@ class RegistrationMixin(AuthManagerProtocol):
                     f"Username is blocked: {reason}", [reason or "Blocked"]
                 )
 
+        if not isinstance(email, str) or len(email) > MAX_EMAIL_LENGTH:
+            raise InvalidEmailError("Invalid email")
         if not validate_email(email):
             raise InvalidEmailError("Invalid email")
 
@@ -285,6 +295,17 @@ class RegistrationMixin(AuthManagerProtocol):
         # now + 24h * 3600 s/h * 1000 ms/s. (86-seconds bug when the day was
         # encoded as 86400 raw.)
         now = self._get_timestamp()
+        # Keep exactly one live verification token per user. Re-issuing (a
+        # resend, or a fresh token after an address change) must invalidate
+        # earlier tokens so a stale one cannot be replayed later — notably
+        # after the account's address has moved to a value the holder never
+        # proved they control. Reset-password tokens use the same table but a
+        # different token_type and are intentionally not touched here.
+        self._db.execute(
+            "UPDATE auth_email_tokens SET used = 1 "
+            "WHERE user_id = ? AND token_type = 'verify_email' AND used = 0",
+            (user_id,),
+        )
         self._db.execute(
             "INSERT INTO auth_email_tokens (id, user_id, token_hash, token_type, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
             (tid, user_id, token_hash, "verify_email", now, now + 86400 * 1000),

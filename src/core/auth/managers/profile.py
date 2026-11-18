@@ -16,6 +16,7 @@ from src.core.database import cached, invalidate_pattern
 
 
 from .protocol import AuthManagerProtocol
+from .registration import MAX_EMAIL_LENGTH
 
 
 class ProfileMixin(AuthManagerProtocol):
@@ -76,6 +77,11 @@ class ProfileMixin(AuthManagerProtocol):
             # M4: the registration path validates email format; profile updates
             # previously skipped it entirely and relied on the DB constraint
             # for uniqueness, so a malformed address was accepted/stored.
+            # Enforce the same structural ceiling as registration so a direct
+            # manager call cannot smuggle an unbounded value past the API's
+            # EmailStr bound into blind indexes / encrypted columns.
+            if not isinstance(email, str) or len(email) > MAX_EMAIL_LENGTH:
+                raise InvalidEmailError("Invalid email")
             if not validate_email(email):
                 raise InvalidEmailError("Invalid email")
             current_for_email = self.get_user(user_id)
@@ -97,6 +103,22 @@ class ProfileMixin(AuthManagerProtocol):
                     "email_index = ?, email_encrypted = ?, email_verified = ?"
                 )
                 params.extend([email_index, email_encrypted, 0])
+
+                # Verification-token replay fix: a token row carries only a
+                # user id, not the address it was minted for. Without this,
+                # a token issued for an address the user used to control can
+                # be replayed after the switch and flip ``email_verified`` on
+                # for the NEW (unconfirmed) address. Consume every outstanding
+                # verification token at the instant the address changes so the
+                # only usable token is the fresh one delivered to the new
+                # address below. (Password-reset tokens are deliberately left
+                # untouched — they are not address-bound.)
+                self._db.execute(
+                    "UPDATE auth_email_tokens SET used = 1 "
+                    "WHERE user_id = ? AND token_type = 'verify_email' "
+                    "AND used = 0",
+                    (user_id,),
+                )
         if permissions is not None:
             from ..permissions import PERMISSIONS, BOT_RESTRICTED_PERMISSIONS
 
