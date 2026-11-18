@@ -18,6 +18,15 @@ from .base import RateLimitStorage
 
 # The token-bucket evaluation is one Lua script shared by the blocking and the
 # awaitable path, so the two can never drift apart.
+#
+# SECURITY: the script used to rebuild the bucket from scratch as
+# ``{tokens, last_update}`` and SET that over the stored JSON. A bucket also
+# carries the hourly/daily quota counters written by ``update_bucket`` (see
+# ``manager.algorithms.apply_secondary_limits``), so EVERY token spend wiped
+# them. With Valkey as the backend the hourly/daily limit therefore never
+# accumulated past one request — a distributed-only quota bypass. Decode the
+# stored value into ``state`` and write that SAME table back so unrelated
+# fields survive a spend, matching MemoryStorage and DatabaseStorage.
 _TOKEN_BUCKET_LUA = """
         local key = KEYS[1]
         local capacity = tonumber(ARGV[1])
@@ -26,17 +35,22 @@ _TOKEN_BUCKET_LUA = """
         local ttl = tonumber(ARGV[4])
         local now = tonumber(ARGV[5])
 
-        local bucket = redis.call('GET', key)
-        local tokens
-        local last_update
+        local state = {}
+        local tokens = capacity
+        local last_update = now
 
+        local bucket = redis.call('GET', key)
         if bucket then
-            local data = cjson.decode(bucket)
-            tokens = tonumber(data.tokens)
-            last_update = tonumber(data.last_update)
-        else
-            tokens = capacity
-            last_update = now
+            local ok, decoded = pcall(cjson.decode, bucket)
+            if ok and type(decoded) == 'table' then
+                state = decoded
+                if tonumber(state.tokens) then
+                    tokens = tonumber(state.tokens)
+                end
+                if tonumber(state.last_update) then
+                    last_update = tonumber(state.last_update)
+                end
+            end
         end
 
         local elapsed = math.max(0, now - last_update)
@@ -48,18 +62,15 @@ _TOKEN_BUCKET_LUA = """
             allowed = true
         end
 
-        local res = {
-            tokens = tokens,
-            last_update = now
-        }
-        
-        redis.call('SET', key, cjson.encode(res), 'EX', ttl)
-        
+        state.tokens = tokens
+        state.last_update = now
+        redis.call('SET', key, cjson.encode(state), 'EX', ttl)
+
         local reset_after = 0
         if not allowed then
             reset_after = (cost - tokens) / refill_rate
         end
-        
+
         return {tostring(allowed), tostring(math.floor(tokens)), tostring(reset_after)}
         """
 
@@ -92,6 +103,19 @@ class ValkeyStorage(RateLimitStorage):
     # F8: every bucket write carries a TTL so crafted distinct URLs expire
     # instead of accumulating forever.
     DEFAULT_BUCKET_TTL = 86400
+    # The TTL alone does not bound the KEYSpace: a client that rotates a
+    # caller-influenced identifier (IP, route, resource id) can mint many
+    # distinct keys inside one TTL window and grow the shared store without
+    # limit. MemoryStorage (max_buckets) and DatabaseStorage (MAX_BUCKET_ROWS)
+    # both cap their state; Valkey had no equivalent. Keep the same order of
+    # magnitude so a bounded distributed store cannot be inflated at will.
+    MAX_BUCKET_KEYS = 50000
+    # Enforcing the cap requires a cursor-based SCAN of the keyspace, so it is
+    # throttled by TIME, not per N writes: at high request rates a scan every
+    # 10 writes would mean hundreds of round trips per second. Sixty seconds
+    # matches MemoryStorage's default cleanup cadence and keeps the hot path
+    # free of scans in the common case.
+    _CAP_CHECK_INTERVAL = 60.0
 
     def __init__(self, key_prefix: str = "ratelimit"):
         """
@@ -101,10 +125,71 @@ class ValkeyStorage(RateLimitStorage):
             key_prefix: Prefix for all rate limit keys in Valkey.
         """
         self._key_prefix = key_prefix
+        self._last_cap_check = 0.0
 
     def _get_key(self, key: str) -> str:
         """Get full Valkey key."""
         return f"{self._key_prefix}:{key}"
+
+    def _maybe_enforce_key_cap(self, client: Any) -> None:
+        """Best-effort pruning of the data keyspace (blocking).
+
+        Scans only the bucket namespace owned by ``_key_prefix`` (never the
+        ``lock:`` namespace the distributed locks live in), so it uses exactly
+        the same keys as every writer — no drift between "key we write" and
+        "key we prune". Soonest-expiring keys are evicted first. Never raises:
+        a pruning failure must not break the rate-limit decision itself.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_last_cap_check", 0.0) < self._CAP_CHECK_INTERVAL:
+            return
+        self._last_cap_check = now
+        try:
+            keys = client.keys(f"{self._key_prefix}:*")
+            if len(keys) <= self.MAX_BUCKET_KEYS:
+                return
+            scored = []
+            for key in keys:
+                try:
+                    scored.append((int(client.ttl(key)), key))
+                except Exception:
+                    scored.append((-1, key))
+            # Unknown TTL (-1/-2) sorts last: prefer keys we know expire soon.
+            scored.sort(key=lambda pair: (pair[0] if pair[0] >= 0 else 10**9, pair[1]))
+            excess = len(keys) - self.MAX_BUCKET_KEYS
+            victims = [key for _, key in scored[:excess]]
+            if victims:
+                client.delete(*victims)
+        except Exception as prune_error:
+            import utils.logger as logger
+
+            logger.debug(f"rate limit Valkey key cap prune failed: {prune_error}")
+
+    async def _amaybe_enforce_key_cap(self, client: Any) -> None:
+        """Awaitable counterpart of :meth:`_maybe_enforce_key_cap`."""
+        now = time.monotonic()
+        if now - getattr(self, "_last_cap_check", 0.0) < self._CAP_CHECK_INTERVAL:
+            return
+        self._last_cap_check = now
+        try:
+            keys = await client.akeys(f"{self._key_prefix}:*")
+            if len(keys) <= self.MAX_BUCKET_KEYS:
+                return
+            scored = []
+            for key in keys:
+                try:
+                    scored.append((int(await client.attl(key)), key))
+                except Exception:
+                    scored.append((-1, key))
+            scored.sort(key=lambda pair: (pair[0] if pair[0] >= 0 else 10**9, pair[1]))
+            excess = len(keys) - self.MAX_BUCKET_KEYS
+            victims = [key for _, key in scored[:excess]]
+            if victims:
+                await client.adelete(*victims)
+        except Exception as prune_error:
+            import utils.logger as logger
+
+            logger.debug(f"rate limit Valkey key cap prune failed: {prune_error}")
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
         """Get bucket state by key."""
@@ -132,6 +217,7 @@ class ValkeyStorage(RateLimitStorage):
             # ValkeyClient.set_json expects Optional[int]
             int_ttl = int(ttl) if ttl is not None else self.DEFAULT_BUCKET_TTL
             client.set_json(full_key, state, ttl=int_ttl)
+            self._maybe_enforce_key_cap(client)
         except ValkeyOperationError:
             pass
 
@@ -203,6 +289,7 @@ class ValkeyStorage(RateLimitStorage):
                 new_value = current + amount
                 bucket[field] = new_value
                 client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
+                self._maybe_enforce_key_cap(client)
                 return new_value
             except ValkeyOperationError:
                 return 0
@@ -229,6 +316,7 @@ class ValkeyStorage(RateLimitStorage):
                 previous = bucket.get(field, default)
                 bucket[field] = value
                 client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
+                self._maybe_enforce_key_cap(client)
                 return previous
             except ValkeyOperationError:
                 return default
@@ -262,6 +350,7 @@ class ValkeyStorage(RateLimitStorage):
                     lst = lst[-max_size:]
                 bucket[field] = lst
                 client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
+                self._maybe_enforce_key_cap(client)
                 return len(lst)
             except ValkeyOperationError:
                 return 0
@@ -292,6 +381,7 @@ class ValkeyStorage(RateLimitStorage):
                 lst = [v for v in lst if v >= min_value]
                 bucket[field] = lst
                 client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
+                self._maybe_enforce_key_cap(client)
                 return original_len - len(lst)
             except ValkeyOperationError:
                 return 0
@@ -313,6 +403,28 @@ class ValkeyStorage(RateLimitStorage):
         if not client or not is_available() or token is None:
             return
         client.release_lock(f"extlock:{key}", token)
+
+    @staticmethod
+    def _lock_failure_outcome(key: str, reason: str) -> tuple:
+        """Fail closed when the token-bucket lock cannot be acquired.
+
+        The Lua spend is atomic on its own, but it also reads/writes the same
+        bucket that ``update_bucket`` (secondary hourly/daily quotas) mutates
+        under ``extlock:<key>``. Without taking that SAME lock here the two
+        operations interleave: a locked secondary-limit write can be clobbered
+        by an unnoticed Lua spend (and vice versa). Treating an unacquirable
+        lock as "allowed" would reopen the cross-worker double-spend window,
+        so deny and make the condition loud.
+        """
+        from utils import logger as _log
+
+        _log.critical(
+            "rate-limit Valkey token bucket could not acquire distributed "
+            "lock for %r (%s); failing closed",
+            key,
+            reason,
+        )
+        return False, 0, 60.0
 
     def _backend_error_outcome(self, exc: Exception, capacity: int) -> tuple:
         """Outcome for an ``eval_token_bucket`` backend error (fail-closed).
@@ -370,6 +482,17 @@ class ValkeyStorage(RateLimitStorage):
             return False, 0, 60.0
 
         full_key = self._get_key(key)
+        lock_key = f"extlock:{key}"
+        # Serialise the Lua spend with every other bucket mutation (notably
+        # the secondary-limit update_bucket that follows on the same key).
+        # Locking fails closed: never fall through to an unlocked spend.
+        try:
+            token = client.acquire_lock(lock_key, timeout=5.0)
+        except Exception as exc:
+            return self._lock_failure_outcome(key, str(exc))
+        if not token:
+            return self._lock_failure_outcome(key, "timeout")
+
         try:
             # We use time.time() here because monotonic() isn't shared across machines
             # and Valkey Lua scripts don't have access to non-deterministic TIME unless using specialized commands
@@ -383,10 +506,17 @@ class ValkeyStorage(RateLimitStorage):
             allowed = _script_truth(result[0])
             remaining = int(float(_decode_script_scalar(result[1])))
             reset_after = float(_decode_script_scalar(result[2]))
-
+            self._maybe_enforce_key_cap(client)
             return allowed, remaining, reset_after
         except Exception as exc:
             return self._backend_error_outcome(exc, capacity)
+        finally:
+            try:
+                client.release_lock(lock_key, token)
+            except Exception as release_error:
+                import utils.logger as logger
+
+                logger.debug(f"rate limit token-bucket lock release failed: {release_error}")
 
     # ------------------------------------------------------------------
     # Async API
@@ -421,6 +551,7 @@ class ValkeyStorage(RateLimitStorage):
             bucket = cast(Dict[str, Any], await client.aget_json(full_key) or {})
             result = mutate(bucket)
             await client.aset_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
+            await self._amaybe_enforce_key_cap(client)
             return result
         except ValkeyError:
             return default
@@ -449,6 +580,7 @@ class ValkeyStorage(RateLimitStorage):
         try:
             int_ttl = int(ttl) if ttl is not None else self.DEFAULT_BUCKET_TTL
             await client.aset_json(full_key, state, ttl=int_ttl)
+            await self._amaybe_enforce_key_cap(client)
         except ValkeyError:
             pass
 
@@ -557,6 +689,16 @@ class ValkeyStorage(RateLimitStorage):
 
         script = _TOKEN_BUCKET_LUA
         full_key = self._get_key(key)
+        lock_key = f"extlock:{key}"
+        # Same lock namespace as aupdate_bucket / the mutator paths. See the
+        # sync eval_token_bucket docstring for why this cannot be skipped.
+        try:
+            token = await client.aacquire_lock(lock_key, timeout=5.0)
+        except Exception as exc:
+            return self._lock_failure_outcome(key, str(exc))
+        if not token:
+            return self._lock_failure_outcome(key, "timeout")
+
         try:
             now = time.time()
             result = await client.aeval_lua(
@@ -565,9 +707,17 @@ class ValkeyStorage(RateLimitStorage):
             allowed = _script_truth(result[0])
             remaining = int(float(_decode_script_scalar(result[1])))
             reset_after = float(_decode_script_scalar(result[2]))
+            await self._amaybe_enforce_key_cap(client)
             return allowed, remaining, reset_after
         except Exception as exc:
             return self._backend_error_outcome(exc, capacity)
+        finally:
+            try:
+                await client.arelease_lock(lock_key, token)
+            except Exception as release_error:
+                import utils.logger as logger
+
+                logger.debug(f"rate limit token-bucket lock release failed: {release_error}")
 
     async def aupdate_bucket(
         self,
@@ -605,6 +755,7 @@ class ValkeyStorage(RateLimitStorage):
             mutate_fn(state)
             int_ttl = int(ttl) if ttl is not None else self.DEFAULT_BUCKET_TTL
             await client.aset_json(full_key, state, ttl=int_ttl)
+            await self._amaybe_enforce_key_cap(client)
         except ValkeyError as exc:
             raise RateLimitStoreUnavailable(
                 f"rate-limit bucket write failed for {key!r}: {exc}"
