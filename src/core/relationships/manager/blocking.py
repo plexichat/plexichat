@@ -2,11 +2,11 @@
 Block operations mixin for the RelationshipManager.
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from src.core.database import cached
+from src.core.database import cache_get_many, cache_set, cached
 
 from ..models import BlockedUser
 from ..exceptions import (
@@ -18,6 +18,28 @@ from ..exceptions import (
 )
 from .helpers import RelationshipHelpersMixin
 from .protocol import RelationshipMixinProtocol
+
+
+# Chunk size for the bulk two-way block lookup. Each chunk binds this many ids
+# to *each* side of the ``blocker_id IN (...) OR blocked_id IN (...)`` predicate,
+# so the widest statement carries 2 * 500 = 1000 binds - comfortably under
+# SQLite's variable ceiling (the same 500-id chunk the notification and search
+# bulk lookups use). Keeping it bounded also stops a group DM with thousands of
+# participants from building an unbounded IN clause.
+_BULK_BLOCK_ID_CHUNK_SIZE = 500
+
+# These are deliberately the SAME key/TTL the cached single-user
+# ``get_all_blocked_ids`` uses. Sharing the key means every existing
+# block/unblock invalidation keeps working and the bulk path can never serve a
+# stale authorization decision the single lookup would not also serve.
+_BLOCKED_IDS_CACHE_PREFIX = "user_blocked_all"
+_BLOCKED_IDS_CACHE_TTL = 300
+
+
+def _block_id_chunks(items: List[int]):
+    """Yield bounded slices of ``items`` for IN-clause binding."""
+    for start in range(0, len(items), _BULK_BLOCK_ID_CHUNK_SIZE):
+        yield items[start : start + _BULK_BLOCK_ID_CHUNK_SIZE]
 
 
 class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
@@ -158,6 +180,92 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             (user_id, user_id),
         )
         return [row["user_id"] for row in rows]
+
+    def get_all_blocked_ids_bulk(
+        self, user_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]:
+        """Resolve the two-way block set for many users in bounded batches.
+
+        Mirrors :meth:`get_all_blocked_ids` (the UNION of "users I blocked"
+        and "users who blocked me") but collapses the N-per-id fan-out - e.g.
+        DM event routing over every conversation participant - into a warm
+        cache MGET plus at most ``ceil(len(ids) / 500)`` DB round trips.
+
+        Results are identical to calling ``get_all_blocked_ids`` once per id,
+        including the fail-closed behaviour for ids with no block rows (an
+        empty set, never "unknown"). An id is only ever reported as blocked
+        when an authoritative ``rel_blocked`` row exists; a missing/unknown id
+        resolves to an empty set, never to "unblocked by fiat". A failed DB
+        lookup raises rather than returning a partial answer, so callers can
+        fail closed (deny delivery) instead of leaking to a blocked party.
+        """
+        ids = list(dict.fromkeys(int(uid) for uid in user_ids))
+        if not ids:
+            return {}
+
+        result: Dict[SnowflakeID, List[SnowflakeID]] = {uid: [] for uid in ids}
+
+        # Warm path: one bulk cache read for every per-user set. A cached empty
+        # list is a legitimate hit and is returned as such (not a DB miss).
+        keys = {f"{_BLOCKED_IDS_CACHE_PREFIX}:int:{uid}": uid for uid in ids}
+        try:
+            cached_values = cache_get_many(list(keys))
+        except Exception as cache_error:  # a cache outage must never fail open
+            logger.debug(f"bulk blocked-id cache read failed: {cache_error}")
+            cached_values = {}
+
+        misses: List[int] = []
+        for key, uid in keys.items():
+            value = cached_values.get(key)
+            if value is None:
+                misses.append(uid)
+                continue
+            try:
+                result[uid] = [int(item) for item in value]
+            except (TypeError, ValueError):
+                # Malformed cache entry: re-resolve from the authoritative DB.
+                misses.append(uid)
+
+        if not misses:
+            return result
+
+        # Cold path: chunk the IN binds. Each execution binds at most
+        # ``_BULK_BLOCK_ID_CHUNK_SIZE`` ids to EACH side of the predicate.
+        for chunk in _block_id_chunks(misses):
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                f"""SELECT blocker_id, blocked_id FROM rel_blocked
+                    WHERE blocker_id IN ({placeholders})
+                       OR blocked_id IN ({placeholders})""",
+                (*chunk, *chunk),
+            )
+            blocked_for: Dict[int, set] = {uid: set() for uid in chunk}
+            for row in rows:
+                blocker = int(row["blocker_id"])
+                blocked = int(row["blocked_id"])
+                # A row (B blocks D) contributes D to B's set and B to D's
+                # set - exactly the two directions of get_all_blocked_ids.
+                if blocker in blocked_for:
+                    blocked_for[blocker].add(blocked)
+                if blocked in blocked_for:
+                    blocked_for[blocked].add(blocker)
+            for uid, values in blocked_for.items():
+                resolved = list(values)
+                result[uid] = resolved
+                try:
+                    cache_set(
+                        f"{_BLOCKED_IDS_CACHE_PREFIX}:int:{uid}",
+                        resolved,
+                        ttl=_BLOCKED_IDS_CACHE_TTL,
+                    )
+                except Exception as cache_error:
+                    # The authoritative answer is already in ``result``; a
+                    # cache write failure must not drop the whole batch.
+                    logger.debug(
+                        f"bulk blocked-id cache write failed for {uid}: {cache_error}"
+                    )
+
+        return result
 
     def is_blocked(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool:
         """Check if blocker has blocked blocked_id."""

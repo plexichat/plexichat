@@ -156,6 +156,10 @@ class RelationshipMixinProtocol(Protocol):
 
     def get_all_blocked_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]: ...
 
+    def get_all_blocked_ids_bulk(
+        self, user_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]: ...
+
     def is_blocked(self, blocker_id: SnowflakeID, blocked_id: SnowflakeID) -> bool: ...
 
     def is_blocked_by_either(

@@ -81,6 +81,7 @@ __all__ = [
     "get_blocked_users",
     "get_blocked_user_ids",
     "get_all_blocked_ids",
+    "get_all_blocked_ids_bulk",
     "is_blocked",
     "is_blocked_by_either",
     # Relationship status
@@ -227,6 +228,11 @@ def get_blocked_user_ids(user_id: int) -> List[int]:
 def get_all_blocked_ids(user_id: int) -> List[int]:
     """Get all user IDs blocked by, or blocking, this user."""
     return _get_manager().get_all_blocked_ids(user_id)
+
+
+def get_all_blocked_ids_bulk(user_ids: List[int]) -> Dict[int, List[int]]:
+    """Get two-way block sets for many users in bounded, batched lookups."""
+    return _get_manager().get_all_blocked_ids_bulk(user_ids)
 
 
 def is_blocked(blocker_id: int, blocked_id: int) -> bool:
