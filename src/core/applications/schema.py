@@ -217,6 +217,9 @@ CREATE INDEX IF NOT EXISTS idx_app_interactions_user ON app_interactions(user_id
 CREATE INDEX IF NOT EXISTS idx_app_interactions_token ON app_interactions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_app_webhook_deliveries_application ON app_webhook_deliveries(application_id);
 CREATE INDEX IF NOT EXISTS idx_app_webhook_deliveries_interaction ON app_webhook_deliveries(interaction_id);
+-- Delivery logs list an application's attempts newest-first.
+CREATE INDEX IF NOT EXISTS idx_app_webhook_deliveries_app_delivered
+    ON app_webhook_deliveries(application_id, delivered_at);
 """
 
 
