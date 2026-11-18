@@ -70,6 +70,20 @@ database:
     auto_migrate: true
 ```
 
+### Per-worker pool budget
+
+With `docker compose up --scale backend=N` every replica is a separate
+process with its own pool. `pool_budget.py` converts one **fleet-wide** ceiling
+into a bounded per-worker ceiling so N workers cannot collectively open N ×
+`max_connections` sockets against PostgreSQL (whose default `max_connections`
+is 100). Set the replica count in the environment (`BACKEND_REPLICAS`, also
+`WEB_CONCURRENCY` / `UVICORN_WORKERS`, or `connection_pool.replicas`); the
+optional `DATABASE_TOTAL_CONNECTION_BUDGET` / `connection_pool.total_connection_budget`
+(default 90, leaving headroom for migrations and backup) is divided across
+replicas. Both `min_connections` (opened eagerly) and `max_connections` are
+bounded, `min <= max` is enforced, and `connect_timeout` is clamped so a
+saturated pool fails fast instead of parking request threads.
+
 Global server keys use these paths — see `plexichat/src/config_defaults.py`:
 
 *   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:70`. Do not use `api.host`, `api.port`, or `api.workers`.

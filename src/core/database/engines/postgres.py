@@ -3,6 +3,7 @@ from typing import Any, Optional, Dict, List, Tuple
 import time
 from .base import BaseEngine
 from .pool import ConnectionPool
+from ..pool_budget import resolve_connect_timeout, resolve_pool_limits
 import utils.logger as logger
 
 
@@ -302,7 +303,10 @@ class PostgresEngine(BaseEngine):
             "user": pg_config.get("user", "postgres"),
             "password": pg_config.get("password", ""),
             "database": pg_config.get("dbname", "plexichat"),
-            "timeout": self._pool_config.get("connect_timeout", 10),
+            # Bound the socket timeout at the config boundary: an unbounded
+            # value parks a worker forever on an unreachable database, and a
+            # negative one is rejected by the driver.
+            "timeout": resolve_connect_timeout(self.config, default=10.0),
             "tcp_keepalive": True,
             "application_name": "plexichat",
         }
@@ -345,13 +349,24 @@ class PostgresEngine(BaseEngine):
     def connect(self, pool: Optional[Any] = None) -> Any:
         if isinstance(pool, ConnectionPool):
             # Honor the configured ``connect_timeout`` so pool exhaustion
-            # surfaces fast instead of blocking the caller.
-            timeout = self._pool_config.get("connect_timeout", 30.0)
+            # surfaces fast instead of blocking the caller. The budget helper
+            # clamps it before it reaches the pool's own timeout bound.
+            timeout = resolve_connect_timeout(self.config)
             return pool.get_connection(timeout=timeout)
         return self._create_single_connection()
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
-        connect_timeout = self._pool_config.get("connect_timeout", 10)
+        # Every scaled backend replica constructs its own pool from the same
+        # config. Without a fleet-wide budget N workers would each open up to
+        # ``max_connections`` sockets, overwhelming PostgreSQL's finite
+        # connection limit (100 by default). Resolve the per-worker ceiling
+        # and bound the acquire timeout before touching the driver.
+        limits = resolve_pool_limits(
+            self.config, requested_min=min_conn, requested_max=max_conn
+        )
+        min_conn = limits.min_connections
+        max_conn = limits.max_connections
+        connect_timeout = resolve_connect_timeout(self.config, default=10.0)
         logger.info(
             f"Creating PostgreSQL connection pool ({min_conn}-{max_conn}) "
             f"with timeout {connect_timeout}s"

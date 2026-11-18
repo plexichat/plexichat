@@ -84,6 +84,13 @@ class DatabaseTransactionMixin:
                 conn.rollback()
                 self.transaction_depth = 0
                 self.in_transaction = False
+                # The failed savepoint aborted the whole chain. Clear the
+                # pool's in-transaction marker AND hand the connection back,
+                # otherwise this error path strands a checked-out connection
+                # (marked in_transaction) until the idle reaper eventually
+                # reclaims it. Repeated failures then starve the pool.
+                self._touch_pool(conn, in_transaction=False)
+                self._release_conn()
                 raise
 
             self.transaction_depth -= 1
@@ -133,6 +140,9 @@ class DatabaseTransactionMixin:
                         self.transaction_depth = 0
                         self.in_transaction = False
                         self._touch_pool(conn, in_transaction=False)
+                        # The chain is gone: release the pooled connection so
+                        # a failing client cannot pin pool capacity forever.
+                        self._release_conn()
                         return
                     raise
                 finally:
@@ -160,3 +170,7 @@ class DatabaseTransactionMixin:
         else:
             conn.rollback()
             self.in_transaction = False
+            # Keep the pool's transaction marker in sync even when rollback is
+            # called with no active transaction (e.g. after an earlier error
+            # already unwound the depth).
+            self._touch_pool(conn, in_transaction=False)
