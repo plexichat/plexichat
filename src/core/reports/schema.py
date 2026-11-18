@@ -47,6 +47,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_reports_reporter_created ON reports(reporter_id, created_at);
 -- Reporter history filtered by status.
 CREATE INDEX IF NOT EXISTS idx_reports_reporter_status ON reports(reporter_id, status);
+-- Reporter history filtered by priority.
+CREATE INDEX IF NOT EXISTS idx_reports_reporter_priority ON reports(reporter_id, priority);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
 CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_id);
 -- Target history lists reports against a user newest-first.
