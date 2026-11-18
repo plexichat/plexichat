@@ -138,6 +138,49 @@ def _can_manage_role_at(
     return current_pos > role_pos
 
 
+# Write-time hierarchy guard. ``update_role``/``delete_role`` re-assert their
+# read-time invariants in the WHERE clause, but ``assign_role``/``revoke_role``
+# used to grant/revoke privileges off the same snapshot with a completely
+# unguarded write. A concurrent admin could promote a role, rewrite its scopes
+# or elevate the target admin in that window and the stale, previously-
+# authorized decision would still hand out (or strip) privileges. The fragment
+# below recomputes both hierarchy decisions from the database *as the write
+# executes*, so a stale updater gets a 409 instead of laundering privileges.
+# It is fixed SQL text; every external value stays a bound parameter.
+_ACTOR_POSITION_SQL = (
+    "(SELECT COALESCE(MAX(rp.position), 0) "
+    "FROM admin_roles rp "
+    "JOIN admin_role_assignments ap ON rp.id = ap.role_id "
+    "WHERE ap.admin_id = ?)"
+)
+
+
+def _hierarchy_write_guard(actor_id: int, target_admin_id: int, role_id: int):
+    """Build a SQL predicate + params mirroring the read-time hierarchy checks.
+
+    ``_can_manage_admin_at`` becomes ``actor_pos > target_pos`` and
+    ``_can_manage_role_at`` becomes ``role_pos < actor_pos`` for ordinary
+    roles, with the documented position-100 exception for system roles.
+    """
+    predicate = (
+        "EXISTS (SELECT 1 FROM admin_roles gr "
+        "WHERE gr.id = ? "
+        f"AND ((gr.is_system = 1 AND {_ACTOR_POSITION_SQL} >= 100) "
+        f"OR (gr.is_system = 0 AND gr.position < {_ACTOR_POSITION_SQL}))) "
+        "AND EXISTS (SELECT 1 FROM admin_users gu WHERE gu.id = ?) "
+        f"AND {_ACTOR_POSITION_SQL} > {_ACTOR_POSITION_SQL}"
+    )
+    params = (
+        role_id,
+        actor_id,
+        actor_id,
+        target_admin_id,
+        actor_id,
+        target_admin_id,
+    )
+    return predicate, params
+
+
 def _load_create_role_context(db, admin_id: int, name: str) -> tuple[int, bool]:
     """Fetch the actor's max position and role-name collision in one query."""
     row = db.fetch_one(
@@ -808,13 +851,45 @@ async def assign_role(request: Request, assignment: RoleAssignment):
             },
         )
 
-    db.execute(
-        """
-        INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by)
-        VALUES (?, ?, ?, ?)
-    """,
-        (target_admin_id, target_role_id, now, admin_id),
+    # SECURITY: the object-level delegation check above used a snapshot of the
+    # role's scopes. Bind the write to that exact payload as well as to the
+    # current hierarchy, so a concurrent scope escalation cannot turn this
+    # assignment into a privilege laundering operation.
+    permission_guard_sql = ""
+    permission_guard_params: tuple = ()
+    if isinstance(raw_permissions, str):
+        permission_guard_sql = (
+            " AND EXISTS (SELECT 1 FROM admin_roles pr "
+            "WHERE pr.id = ? AND pr.permissions = ?)"
+        )
+        permission_guard_params = (target_role_id, raw_permissions)
+
+    guard_sql, guard_params = _hierarchy_write_guard(
+        admin_id, target_admin_id, target_role_id
     )
+    cursor = db.execute(
+        "INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by) "
+        "SELECT ?, ?, ?, ? WHERE " + guard_sql + permission_guard_sql,
+        (
+            target_admin_id,
+            target_role_id,
+            now,
+            admin_id,
+            *guard_params,
+            *permission_guard_params,
+        ),
+    )
+    rowcount = getattr(cursor, "rowcount", None)
+    if isinstance(rowcount, int) and rowcount <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Role or admin changed concurrently, retry",
+                }
+            },
+        )
     # The target just gained privileges; do not let a cached auth context
     # keep reporting the old (lower) permission set.
     invalidate_privilege_caches()
@@ -906,10 +981,29 @@ async def revoke_role(
             detail={"error": {"code": 404, "message": "Role assignment not found"}},
         )
 
-    db.execute(
-        "DELETE FROM admin_role_assignments WHERE admin_id = ? AND role_id = ?",
-        (admin_id, role_id),
+    # SECURITY: same read-then-write TOCTOU as the other role mutations. The
+    # DELETE must re-assert the hierarchy that authorized it against the state
+    # at write time, otherwise a concurrent promotion could let a stale,
+    # previously-authorized snapshot revoke a protected role/assignment.
+    guard_sql, guard_params = _hierarchy_write_guard(
+        current_admin_id, admin_id, role_id
     )
+    cursor = db.execute(
+        "DELETE FROM admin_role_assignments "
+        "WHERE admin_id = ? AND role_id = ? AND " + guard_sql,
+        (admin_id, role_id, *guard_params),
+    )
+    rowcount = getattr(cursor, "rowcount", None)
+    if isinstance(rowcount, int) and rowcount <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Role or admin changed concurrently, retry",
+                }
+            },
+        )
     # Revocation must take effect immediately, including for a session whose
     # verification result is still cached from just before the revoke.
     invalidate_privilege_caches()
