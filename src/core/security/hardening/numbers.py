@@ -8,12 +8,23 @@ and a negative one is not either.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Optional
 
 from .errors import HardeningViolation
 
 #: Largest value a snowflake identifier can carry.
 SNOWFLAKE_MAX = 2**63 - 1
+
+#: Plain ASCII decimal integer, with an optional sign. ``int(str)`` is much
+#: more permissive than this: it accepts Unicode decimal digits (``"٤٢"`` and
+#: ``"４２"`` both become 42) and PEP 515 underscores (``"1_0"`` becomes 10).
+#: An upstream ASCII-only validator (or a different language's ``\d``) reads
+#: those same bytes as invalid, so accepting them here creates a parser
+#: differential -- a homoglyph id can pass this gate yet be interpreted
+#: differently by the next hop. Numeric input from a path/query/config has no
+#: reason to use anything but ASCII digits.
+_ASCII_INTEGER = re.compile(r"[+-]?[0-9]+")
 
 
 def bounded_int(
@@ -28,9 +39,10 @@ def bounded_int(
 
     ``int()`` alone is not a safe coercion here: it silently truncates a
     fraction (``10.9`` satisfied ``maximum=10``, ``-0.5`` satisfied
-    ``minimum=0``), accepts booleans as ``1``/``0``, and raises a bare
-    ``OverflowError`` for ``inf``. A value that is not an integer is rejected
-    instead of being quieted into range.
+    ``minimum=0``), accepts booleans as ``1``/``0``, raises a bare
+    ``OverflowError`` for ``inf``, and treats Unicode digit homoglyphs and
+    underscore separators as numbers. A value that is not a plain integer is
+    rejected instead of being quieted into range.
     """
     if value is None:
         if default is None:
@@ -44,6 +56,15 @@ def bounded_int(
         if not math.isfinite(value) or not value.is_integer():
             raise HardeningViolation(f"{field} must be an integer")
         number = int(value)
+    elif isinstance(value, str):
+        # Do not let int()'s permissive string grammar turn a homoglyph or an
+        # underscore-separated token into a number the caller never wrote in
+        # ASCII. Surrounding whitespace is the only tolerance kept (int()
+        # always allowed it), everything else must be an ASCII integer.
+        stripped = value.strip()
+        if not _ASCII_INTEGER.fullmatch(stripped):
+            raise HardeningViolation(f"{field} must be an integer")
+        number = int(stripped)
     else:
         try:
             number = int(value)

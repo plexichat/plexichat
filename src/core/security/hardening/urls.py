@@ -16,10 +16,11 @@ from .text import reject_control_characters
 
 
 def _require_absolute(value: Any, field: str, schemes: tuple[str, ...]) -> str:
-    # Reject C0/DEL controls before parsing. ``urlparse`` tolerates an embedded
-    # CR, LF or TAB, but a client that later fetches the URL or writes it into a
-    # header/log line can read a different authority (or inject a header) than
-    # the one that was checked here.
+    # Reject all control characters (C0, C1/NEL and the Unicode line/paragraph
+    # separators) before parsing. ``urlparse`` tolerates embedded CR, LF, TAB
+    # and U+2028/U+2029, but a client that later fetches the URL or writes it
+    # into a header/log line can read a different authority (or inject a
+    # header) than the one that was checked here.
     url = reject_control_characters(value, field).strip()
     try:
         parsed = urlparse(url)
