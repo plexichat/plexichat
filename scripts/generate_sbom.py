@@ -4,9 +4,17 @@
 Prefers tools available in the environment; degrades gracefully with clear
 diagnostics. Intended for CI wiring and local/operator use.
 
+The Python SBOM is built from the compiled, hash-pinned ``requirements.txt``
+by default (``--source lockfiles``). This is deterministic and describes the
+tree that actually ships in the runtime image. Building it from ambient
+``pip freeze`` remains available but must be requested explicitly
+(``--source environment``): that environment routinely contains undeclared
+system/tooling packages and stale versions, so a freeze-derived SBOM
+misrepresents the shipped dependency set.
+
 Outputs (default: ./sbom/):
-- python.cdx.json          CycloneDX SBOM for Python deps (cyclonedx-py or pip)
-- python.freeze.txt        pip freeze snapshot / provenance input
+- python.cdx.json          CycloneDX SBOM for Python deps (from the compiled lock)
+- python.freeze.txt        pip freeze snapshot (environment source only)
 - compose-images.txt       image references extracted from docker-compose.yml
 - image-digests.lock.json  resolved repo digests for compose images (docker)
 - <image>.cdx.json         per-image SBOM via syft/trivy when available
@@ -23,6 +31,7 @@ failure, 2 on usage error.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -96,7 +105,13 @@ def expand_compose_images(compose_path: Path) -> list[str]:
     return out
 
 
-def python_sbom(out: Path, warnings: list[str]) -> None:
+def python_sbom_environment(out: Path, warnings: list[str]) -> None:
+    """Legacy source: snapshot whatever is installed in the current interpreter.
+
+    Kept for provenance/debugging. NOT the default: the ambient environment is
+    not the declared dependency set and has been observed to contain both
+    undeclared packages and versions that disagree with the compiled locks.
+    """
     freeze = run([sys.executable, "-m", "pip", "freeze"])
     write_text(out / "python.freeze.txt", (freeze.stdout or "") + (freeze.stderr or ""))
 
@@ -164,6 +179,124 @@ def python_sbom(out: Path, warnings: list[str]) -> None:
     warnings.append(
         "cyclonedx-py not available; wrote fallback Python SBOM from pip freeze"
     )
+
+
+PIN_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s;\\]+)")
+HASH_RE = re.compile(r"--hash=sha256:([0-9a-fA-F]{64})")
+
+
+def normalize_name(name: str) -> str:
+    """PEP 503 distribution name (the form used in PURLs and lock comparisons)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def parse_pinned_lockfile(path: Path) -> list[dict]:
+    """Parse a uv-style ``name==version \\ --hash=sha256:...`` lock into dists.
+
+    Only the version and integrity hashes are consumed; ``# via`` comments and
+    extras are ignored. The result is ordered as in the file.
+    """
+    dists: list[dict] = []
+    current: dict | None = None
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        m = PIN_RE.match(line)
+        if m:
+            if current is not None:
+                dists.append(current)
+            current = {"name": m.group(1), "version": m.group(2), "hashes": []}
+        if current is not None:
+            for digest in HASH_RE.findall(line):
+                current["hashes"].append(digest.lower())
+    if current is not None:
+        dists.append(current)
+    return dists
+
+
+def python_sbom_lockfile(lockfile: Path, out: Path, warnings: list[str]) -> None:
+    """Write a deterministic CycloneDX SBOM from a compiled, hashed lockfile.
+
+    No timestamps or random serial numbers: regenerating from an unchanged
+    lockfile produces byte-identical output, so the committed artifact is a
+    meaningful drift check. The lockfile's own SHA-256 is recorded in metadata.
+    """
+    lockfile = Path(lockfile)
+    if not lockfile.is_file():
+        warnings.append(f"lockfile not found ({lockfile}); using environment SBOM")
+        python_sbom_environment(out, warnings)
+        return
+    dists = parse_pinned_lockfile(lockfile)
+    if not dists:
+        warnings.append(f"no pinned distributions in {lockfile}; using environment SBOM")
+        python_sbom_environment(out, warnings)
+        return
+
+    components: list[dict] = []
+    seen: set[str] = set()
+    for dist in dists:
+        name = normalize_name(dist["name"])
+        if name in seen:
+            warnings.append(f"duplicate distribution in {lockfile}: {name}")
+            continue
+        seen.add(name)
+        version = dist["version"]
+        component = {
+            "type": "library",
+            "name": name,
+            "version": version,
+            "purl": f"pkg:pypi/{name}@{version}",
+        }
+        hashes = sorted(set(dist["hashes"]))
+        if hashes:
+            component["hashes"] = [
+                {"alg": "SHA-256", "content": digest} for digest in hashes
+            ]
+        else:
+            warnings.append(f"distribution in {lockfile} has no SHA-256 hash: {name}")
+        components.append(component)
+    components.sort(key=lambda c: (c["name"], c["version"]))
+
+    bom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "metadata": {
+            "tools": [
+                {
+                    "vendor": "plexichat",
+                    "name": "generate_sbom.py",
+                    "version": "lockfile-source-1",
+                }
+            ],
+            "component": {
+                "type": "application",
+                "name": "plexichat",
+                "version": "unknown",
+            },
+            "properties": [
+                {"name": "plexichat:sbom:source", "value": "lockfile"},
+                {"name": "plexichat:sbom:lockfile", "value": lockfile.name},
+                {
+                    "name": "plexichat:sbom:lockfile-sha256",
+                    "value": hashlib.sha256(lockfile.read_bytes()).hexdigest(),
+                },
+            ],
+        },
+        "components": components,
+    }
+    write_text(
+        out / "python.cdx.json", json.dumps(bom, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def python_sbom(
+    out: Path, warnings: list[str], *, source: str = "lockfiles", lockfile: Path | None = None
+) -> None:
+    """Dispatch Python SBOM generation to the declared source."""
+    if source == "lockfiles":
+        python_sbom_lockfile(lockfile or (REPO_ROOT / "requirements.txt"), out, warnings)
+    else:
+        python_sbom_environment(out, warnings)
 
 
 def resolve_digests(images: list[str], out: Path, warnings: list[str]) -> dict:
@@ -288,6 +421,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--images-only", action="store_true")
     ap.add_argument("--python-only", action="store_true")
     ap.add_argument(
+        "--source",
+        choices=("lockfiles", "environment"),
+        default="lockfiles",
+        help=(
+            "source for the Python SBOM: 'lockfiles' (default, deterministic, "
+            "from --lockfile) or 'environment' (ambient pip freeze, opt-in)"
+        ),
+    )
+    ap.add_argument(
+        "--lockfile",
+        default=str(REPO_ROOT / "requirements.txt"),
+        help="compiled, hash-pinned requirements lock used when --source=lockfiles",
+    )
+    ap.add_argument(
+        "--sbom-only",
+        action="store_true",
+        help="write only the Python SBOM (no freeze/compose/digest/provenance files)",
+    )
+    ap.add_argument(
         "--no-image-sbom",
         action="store_true",
         help="resolve digests but skip per-image SBOM generation",
@@ -303,11 +455,21 @@ def main(argv: list[str] | None = None) -> int:
     ensure_dir(out)
     compose = Path(args.compose)
     warnings: list[str] = []
+
+    if args.sbom_only:
+        python_sbom(
+            out, warnings, source=args.source, lockfile=Path(args.lockfile)
+        )
+        for w in warnings:
+            print(f"WARNING: {w}", file=sys.stderr)
+        print(f"Python SBOM written to {out}")
+        return 0
+
     images = expand_compose_images(compose)
     write_text(out / "compose-images.txt", "\n".join(images) + ("\n" if images else ""))
 
     if not args.images_only:
-        python_sbom(out, warnings)
+        python_sbom(out, warnings, source=args.source, lockfile=Path(args.lockfile))
 
     if not args.python_only:
         resolve_digests(images, out, warnings)
