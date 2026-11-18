@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS webhook_retry_queue (
 -- Webhook retry queue indexes
 CREATE INDEX IF NOT EXISTS idx_wh_retry_webhook ON webhook_retry_queue(webhook_id);
 CREATE INDEX IF NOT EXISTS idx_wh_retry_next ON webhook_retry_queue(next_retry_at);
+-- Retry worker filters status and orders by next_retry_at.
+CREATE INDEX IF NOT EXISTS idx_wh_retry_status_next
+    ON webhook_retry_queue(status, next_retry_at);
 CREATE INDEX IF NOT EXISTS idx_wh_retry_status ON webhook_retry_queue(status);
 
 -- Push notification tokens table
