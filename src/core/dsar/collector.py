@@ -86,8 +86,6 @@ class DataCollector:
 
         Returns a dictionary with all categories populated.
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         export_time = int(time.time())
         export_version = "1.0"
 
@@ -102,27 +100,25 @@ class DataCollector:
         if not items:
             return result
 
-        # Collectors are independent read-only queries and the database hands
-        # each thread its own connection, so run them concurrently. A bounded
-        # pool keeps a large catalog from exhausting the connection pool.
-        max_workers = min(8, len(items))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {
-                pool.submit(collector.collect, user_id): name
-                for name, collector in items
-            }
-            for future in as_completed(futures):
-                name = futures[future]
-                collector = self._collectors[name]
-                try:
-                    result[name] = future.result()
-                except Exception as e:
-                    collector.record_error(str(e))
-                    result[name] = {}
-                if getattr(collector, "collection_errors", None):
-                    for err in collector.collection_errors:
-                        warnings.append(f"{name}: {err}")
-                    collector.collection_errors.clear()
+        # Run collectors on the calling thread, reusing its already-open
+        # database connection. The previous per-export ThreadPoolExecutor
+        # handed every worker its own connection; opening a SQLite connection
+        # parses the whole schema, so eight fresh workers dominated generation
+        # latency (measured: collect_all ~8x slower with a fresh 8-thread pool
+        # than sequentially on the warm connection). Collection is read-only,
+        # so sequential execution produces the identical payload - now with a
+        # deterministic category order - and keeps the same per-collector
+        # error/warning semantics below.
+        for name, collector in items:
+            try:
+                result[name] = collector.collect(user_id)
+            except Exception as e:
+                collector.record_error(str(e))
+                result[name] = {}
+            if getattr(collector, "collection_errors", None):
+                for err in collector.collection_errors:
+                    warnings.append(f"{name}: {err}")
+                collector.collection_errors.clear()
 
         # Surface incomplete-export warnings in the export metadata so a
         # compliance artifact with missing categories is never presented

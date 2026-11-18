@@ -6,6 +6,7 @@ import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 from .config import auto_approve_after_hours, export_quotas, get_dsar_config
 from .privacy import assert_export_ready
+from .security import bound_export_data, validate_export_id
 
 
 # Hard upper bound for the admin listing endpoint. Mirrors the ``le=200``
@@ -367,11 +368,18 @@ class DSARManager:
         """
         Admin manually triggers generation for a request.
         """
+        # IDOR defence: validate the client supplied id and bind the fetched
+        # row to it. A repository/DB helper that returns a different record
+        # must never satisfy a requested export id. The route has already
+        # authorised the calling admin for the ``data_export.process`` scope;
+        # core callers get the same id validation and row binding.
+        req_id = validate_export_id(request_id, "request id")
+        acting_admin = validate_export_id(admin_id, "admin id")
         request = self._db.fetch_one(
-            "SELECT * FROM dsar_requests WHERE id = ?", (request_id,)
+            "SELECT * FROM dsar_requests WHERE id = ?", (req_id,)
         )
-        if not request:
-            raise ValueError(f"DSAR request {request_id} not found")
+        if not request or validate_export_id(request.get("id"), "stored request id") != req_id:
+            raise ValueError(f"DSAR request {req_id} not found")
 
         if request["status"] not in ("pending", "approved"):
             raise ValueError(
@@ -384,7 +392,7 @@ class DSARManager:
         cursor = self._db.execute(
             "UPDATE dsar_requests SET status = 'approved', admin_id = ? "
             "WHERE id = ? AND status IN ('pending', 'approved')",
-            (admin_id, request_id),
+            (acting_admin, request_id),
         )
         if getattr(cursor, "rowcount", 0) == 0:
             raise ValueError(
@@ -417,6 +425,11 @@ class DSARManager:
             data = collector.collect_all(user_id)
             # Bound generation and fail closed: an incomplete or oversized
             # collection must leave this request 'failed', never 'ready'.
+            # The hard row cap runs before any (pretty) serialization so a
+            # runaway collector query cannot pull an effectively unbounded
+            # payload into the artifact writer; truncating marks the export
+            # incomplete, which the gate below refuses to write.
+            bound_export_data(data)
             assert_export_ready(data, export_quotas(effective_config))
 
             generator = ExportFormatGenerator(db=self._db)
@@ -485,7 +498,7 @@ class DSARManager:
                 f"user:{user_id}",
                 {
                     "request_id": request_id,
-                    "admin_id": admin_id,
+                    "admin_id": acting_admin,
                     "file_size": file_size,
                 },
             )
@@ -499,7 +512,7 @@ class DSARManager:
             )
 
             logger.info(
-                f"DSAR: Admin {admin_id} manually generated request {request_id}"
+                f"DSAR: Admin {acting_admin} manually generated request {request_id}"
             )
 
             return self._get_request_by_id(request_id)

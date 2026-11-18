@@ -132,21 +132,27 @@ class DSARLog:
             size = file_handle.tell()
             if size == 0:
                 return "0" * 64
-            pos = size
-            buffer = ""
-            while pos > 0:
-                pos -= 1
-                file_handle.seek(pos)
-                char = file_handle.read(1)
-                if char == "\n" and buffer:
-                    break
-                buffer = char + buffer
 
-            if not buffer:
+            # Read the tail in one bounded chunk instead of one byte at a time.
+            # The old backward scan issued one read() syscall per character of
+            # the last entry (hundreds on every append) and dominated the
+            # generate hot path, where two audit events are written per export.
+            # Audit entries are small; 64 KiB is well beyond a single line, and
+            # the final line in the chunk is always complete (the file ends in
+            # a newline). If a line somehow exceeded the chunk, the last line
+            # is still the correct tail entry.
+            tail_size = min(size, 64 * 1024)
+            file_handle.seek(size - tail_size)
+            tail = file_handle.read(tail_size)
+            last_line = ""
+            for line in reversed(tail.splitlines()):
+                if line.strip():
+                    last_line = line
+                    break
+            if not last_line:
                 return "0" * 64
 
-            last_line = json.loads(buffer)
-            return last_line.get("checksum", "0" * 64)
+            return json.loads(last_line).get("checksum", "0" * 64)
         except Exception as e:
             logger.error(f"Error reading last hash from open handle: {e}")
             return "0" * 64

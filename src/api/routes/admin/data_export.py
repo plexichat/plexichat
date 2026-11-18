@@ -36,6 +36,7 @@ from src.core.dsar import (
     deny_request,
     generate_manual,
 )
+from src.core.dsar.security import InvalidExportInput, validate_export_id
 
 router = APIRouter()
 
@@ -210,12 +211,19 @@ async def generate_data_export(request: Request, request_id: SnowflakeIDParam):
     """Manually trigger export generation for a pending/approved request."""
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
+    # Fail closed on the export id before doing any generation work: the core
+    # additionally binds the fetched row to this id (IDOR defence).
     try:
-        result = await run_in_threadpool(
-            generate_manual, int(request_id), int(admin_id)
+        req_id = validate_export_id(request_id, "request id")
+    except InvalidExportInput:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request ID"}},
         )
+    try:
+        result = await run_in_threadpool(generate_manual, req_id, int(admin_id))
     except ValueError as e:
-        raise _handle_mutation_error(request_id, e)
+        raise _handle_mutation_error(req_id, e)
     except Exception as e:
         logger.error(
             f"Admin data-export generation failed for {request_id}: {e}",

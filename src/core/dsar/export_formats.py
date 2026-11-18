@@ -22,6 +22,7 @@ from typing import Any, BinaryIO, Dict, Optional, Tuple
 import utils.config as config
 import utils.logger as logger
 
+from .security import safe_export_filename
 from src.core.media.storage import (
     LocalStorage,
     S3Storage,
@@ -91,9 +92,12 @@ class ExportFormatGenerator:
         served through the same download pipeline.
         """
         # UTC month-bucket so exports correlate across hosts regardless of
-        # each server's local zone (matches media storage paths).
+        # each server's local zone (matches media storage paths). The object
+        # name itself is built only from a validated numeric id and an
+        # allowlisted extension, so it cannot carry traversal components,
+        # separators or header/control bytes (filename injection defence).
         date_dir = datetime.now(timezone.utc).strftime("%Y/%m")
-        return f"dsar/{date_dir}/dsar_{request_id}.{extension}"
+        return f"dsar/{date_dir}/{safe_export_filename(request_id, extension)}"
 
     def _store(
         self,
