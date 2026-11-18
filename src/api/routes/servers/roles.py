@@ -25,8 +25,21 @@ _ROLES_CACHE_PREFIX = "server_roles_api"
 
 
 def _invalidate_roles_listing_cache() -> None:
-    """Drop cached role listings so mutations are visible immediately."""
+    """Drop cached role listings and permission-derived channel visibility.
+
+    Creating, updating or deleting a role -- and assigning/removing a role from
+    a member, which reuses this helper -- changes the effective ``channels.view``
+    permission of everyone holding that role. The manager invalidates its
+    ``perms:`` snapshots on a role change, but the permission-filtered channel
+    lists cached at the manager tier (``server_channels``) and at this API tier
+    (``server_channels_api``) are keyed by the viewer and are *not* covered by
+    that invalidation. Without the two extra clears below, a member whose
+    channel access was just revoked keeps reading those channels from cache
+    until the 30s TTL expires -- an authorization bypass via stale cache.
+    """
     invalidate_pattern(f"{_ROLES_CACHE_PREFIX}:*")
+    invalidate_pattern("server_channels_api:*")
+    invalidate_pattern("server_channels:*")
 
 
 def role_to_dict(role, server_id: int) -> dict:

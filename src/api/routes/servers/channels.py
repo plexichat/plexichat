@@ -11,6 +11,7 @@ from src.api.schemas.servers import (
 from src.api.schemas.common import SnowflakeID, ErrorResponse
 from src.core.database import (
     invalidate_server_channels,
+    invalidate_pattern,
     cached,
 )
 from src.core.servers.models import ChannelType
@@ -19,6 +20,18 @@ import utils.logger as logger
 from .helpers import _channel_to_response
 
 router = APIRouter()
+
+
+def _invalidate_channel_listing_cache() -> None:
+    """Clear the API-layer channel list cache after a channel mutation.
+
+    ``invalidate_server_channels()`` only targets the manager's ``channels`` /
+    ``server_channels`` namespaces; it does not match the ``server_channels_api``
+    prefix used by ``get_server_channels`` below. Without an explicit clear the
+    newly created channel stays absent from every member's cached response until
+    the 30s TTL expires.
+    """
+    invalidate_pattern("server_channels_api:*")
 
 
 @router.get(
@@ -149,6 +162,7 @@ async def create_server_channel(
     try:
         channel = servers_mod.create_channel(**kwargs)
         invalidate_server_channels(sid)
+        _invalidate_channel_listing_cache()
 
         response = _channel_to_response(channel)
 
@@ -186,6 +200,7 @@ async def create_server_channel(
                     user_id=current_user.user_id, server_id=sid, name=body.name
                 )
                 invalidate_server_channels(sid)
+                _invalidate_channel_listing_cache()
                 return _channel_to_response(channel)
             except Exception as inner_e:
                 logger.error(
