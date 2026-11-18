@@ -13,7 +13,7 @@ from .schema import (
 from src.core.security.hardening import HardeningViolation
 
 from .segments import SegmentEncoder
-from ..boundaries import bound_formula_text
+from ..boundaries import bound_cell_value, bound_formula_text
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
     INDEX_PROMOTION_THRESHOLD,
@@ -300,12 +300,19 @@ class SumManagerOperations(SumManagerProtocol):
                     # (it has no error_cls hook), so normalize it to the
                     # manager's validation error like every other bad cell.
                     raise SumValidationError(str(exc)) from exc
+            # Text values are as attacker-controlled as formula text and are
+            # copied into the blob, operation log, audit payloads and exports.
+            # Bound them at the single write choke point so one operation
+            # cannot persist an unbounded string (storage/CPU DoS on every
+            # subsequent read/export). The chunked import path applies the same
+            # bound when it builds its normalized cells.
+            value = bound_cell_value(cell.get("value"), error_cls=SumValidationError)
             normalized.append(
                 {
                     "row": row_index,
                     "column": column_index,
                     "value_type": value_type,
-                    "value": cell.get("value"),
+                    "value": value,
                     "formula": formula,
                     "style": cell.get("style"),
                 }

@@ -1,6 +1,11 @@
 import time
 from typing import Any, Dict
 
+from ...boundaries import (
+    MAX_WORKSPACE_DESCRIPTION_LENGTH,
+    MAX_WORKSPACE_TITLE_LENGTH,
+    bound_workspace_text,
+)
 from .._shared import (
     StashNotFoundError,
     StashPermissionError,
@@ -21,12 +26,27 @@ class ItemMutationMixin(StashManagerProtocol):
         self._authorize(row, user_id, "edit", mutation=True)
         updates: Dict[str, Any] = {}
         if "title" in fields:
-            title = str(fields["title"] or "").strip()
-            if not title or len(title) > 500:
-                raise StashValidationError("title must be between 1 and 500 characters")
-            updates["title"] = title
+            # Creation routes title through ``bound_workspace_text``; apply the
+            # same boundary here so an editor cannot bypass the length limit or
+            # smuggle control characters (log/response forging) via an update.
+            updates["title"] = bound_workspace_text(
+                fields["title"],
+                "title",
+                max_length=MAX_WORKSPACE_TITLE_LENGTH,
+                required=True,
+                error_cls=StashValidationError,
+            )
         if "description" in fields:
-            updates["description"] = fields["description"]
+            # Creation bounds description to MAX_WORKSPACE_DESCRIPTION_LENGTH
+            # and rejects control characters; the update path previously wrote
+            # the raw value, allowing an arbitrarily large blob (re-decoded on
+            # every read/listing) and control characters into stored data.
+            updates["description"] = bound_workspace_text(
+                fields["description"],
+                "description",
+                max_length=MAX_WORKSPACE_DESCRIPTION_LENGTH,
+                error_cls=StashValidationError,
+            )
         if "collection_id" in fields:
             collection_id = fields["collection_id"]
             self._validate_collection(

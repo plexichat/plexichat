@@ -34,6 +34,14 @@ MAX_FORMULA_NESTING_DEPTH = 128
 MAX_CSV_IMPORT_BYTES = 2_000_000
 MAX_XLSX_IMPORT_BYTES = 20 * 1024 * 1024
 MAX_IMPORT_CELLS = 1_000_000
+# A single cell value is copied into the workbook blob, the durable operation
+# log, audit payloads and CSV/XLSX exports. Formula text is already bounded by
+# ``bound_formula_text`` and the operation's *cell count* is capped, but a
+# free-form text value had no ceiling of its own: one operation could persist a
+# multi-megabyte string that is reloaded on every read and re-encoded on every
+# export (storage/CPU DoS). Keep it generous for legitimate long text yet
+# finite, matching the shared "no unbounded workspace field" rule.
+MAX_CELL_VALUE_LENGTH = 100_000
 
 
 # The same catalog the registry serves. Kept here as an explicit allowlist so
@@ -229,6 +237,23 @@ def bound_import_text(
     return value
 
 
+def bound_cell_value(
+    value: Any,
+    *,
+    error_cls: Type[Exception] = HardeningViolation,
+) -> Any:
+    """Refuse an unbounded single-cell value before it is persisted.
+
+    Non-string values (numbers, booleans, ``None``) are returned untouched;
+    only free-form string values can be used as a storage/CPU amplification
+    vector. Both the direct operation path and the chunked import path call
+    this so neither can bypass the ceiling.
+    """
+    if isinstance(value, str) and len(value) > MAX_CELL_VALUE_LENGTH:
+        raise error_cls(f"Cell value exceeds {MAX_CELL_VALUE_LENGTH} characters")
+    return value
+
+
 def bound_workspace_payload(
     data: Any,
     *,
@@ -261,6 +286,7 @@ def bound_workspace_tags(tags: Any) -> list[str]:
 
 __all__ = [
     "MAX_CSV_IMPORT_BYTES",
+    "MAX_CELL_VALUE_LENGTH",
     "MAX_FORMULA_LENGTH",
     "MAX_FORMULA_NESTING_DEPTH",
     "MAX_IMPORT_CELLS",
@@ -276,6 +302,7 @@ __all__ = [
     "SUITE_ARTIFACT_TYPES",
     "SUITE_CAPABILITIES",
     "bound_formula_text",
+    "bound_cell_value",
     "bound_import_bytes",
     "bound_import_text",
     "bound_workspace_payload",

@@ -10,6 +10,7 @@
 
 import pytest
 
+from src.core.security.hardening import HardeningViolation
 from src.core.suite.stash import StashManager
 from src.core.suite.stash.manager import StashValidationError
 from src.core.suite.stash.schema import create_tables as create_stash_tables
@@ -97,6 +98,62 @@ class TestBoundedMetadata:
             owner.id, item_type="link", title="Link", metadata=metadata
         )
         assert item["metadata"] == metadata
+
+
+class TestWorkspaceFieldsBoundedOnUpdate:
+    """Creation bounds title/description; the update path must not bypass them."""
+
+    def test_update_rejects_oversized_description_and_keeps_old_value(
+        self, db, two_users, server_manager, media_manager
+    ):
+        owner, _ = two_users
+        manager = _manager(db, server_manager, media_manager)
+        item = manager.create_item(
+            owner.id, item_type="note", title="Note", description="keep me"
+        )
+        with pytest.raises(StashValidationError):
+            manager.update_item(
+                owner.id, int(item["id"]), description="x" * 100_000
+            )
+        assert manager.get_item(owner.id, int(item["id"]))["description"] == "keep me"
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("title", "safe\x00title"),
+            ("title", "forged\n[SECURITY] audit line"),
+            ("description", "desc\x1b[31mred"),
+            ("description", "line1\r\nforged"),
+        ],
+    )
+    def test_update_rejects_control_characters(
+        self, db, two_users, server_manager, media_manager, field, value
+    ):
+        owner, _ = two_users
+        manager = _manager(db, server_manager, media_manager)
+        item = manager.create_item(
+            owner.id, item_type="note", title="Note", description="clean"
+        )
+        # Control-character rejection surfaces as HardeningViolation (the
+        # shared boundary helper has no error_cls hook for that check), the
+        # same way it does on create_item.
+        with pytest.raises(HardeningViolation):
+            manager.update_item(owner.id, int(item["id"]), **{field: value})
+
+    def test_update_accepts_normal_fields(
+        self, db, two_users, server_manager, media_manager
+    ):
+        owner, _ = two_users
+        manager = _manager(db, server_manager, media_manager)
+        item = manager.create_item(owner.id, item_type="note", title="Note")
+        updated = manager.update_item(
+            owner.id,
+            int(item["id"]),
+            title="Renamed",
+            description="A perfectly reasonable description",
+        )
+        assert updated["title"] == "Renamed"
+        assert updated["description"] == "A perfectly reasonable description"
 
 
 class TestLinkUrlSsrfGuard:

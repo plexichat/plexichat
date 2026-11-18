@@ -5,7 +5,7 @@ import time
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..boundaries import MAX_CSV_IMPORT_BYTES, bound_import_text
+from ..boundaries import MAX_CSV_IMPORT_BYTES, bound_cell_value, bound_import_text
 from .formulas import FormulaEvaluator, is_error
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
@@ -378,7 +378,12 @@ class SumManagerData(SumManagerProtocol):
                     "row": int(cell["row"]),
                     "column": int(cell["column"]),
                     "value_type": str(cell.get("value_type", "text")),
-                    "value": cell.get("value"),
+                    # Same ceiling as the direct operation path: the chunked
+                    # bulk importer writes straight to the connection and must
+                    # not be a bypass for oversized cell values.
+                    "value": bound_cell_value(
+                        cell.get("value"), error_cls=SumValidationError
+                    ),
                     "formula": cell.get("formula"),
                     "style": cell.get("style"),
                 }
