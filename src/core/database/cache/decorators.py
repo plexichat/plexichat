@@ -60,6 +60,8 @@ def cached(
     prefix: Optional[str] = None,
     key_builder: Optional[Callable[..., str]] = None,
     skip_cache_if: Optional[Callable[..., bool]] = None,
+    *,
+    l1_ttl: Optional[int] = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to cache function results in Valkey with in-memory fallback.
 
@@ -68,6 +70,15 @@ def cached(
         prefix: Custom key prefix. Defaults to function name.
         key_builder: Custom function to build cache key from arguments.
         skip_cache_if: Function that returns True to skip caching for this call.
+        l1_ttl: When set, enable a bounded process-local (L1) read-through tier
+            that is checked *before* Valkey. Warm requests avoid the Valkey
+            round-trip entirely. The local entry lives at most ``l1_ttl``
+            seconds (and never longer than ``ttl``), which bounds stale reads
+            after another worker invalidates/refreshes the shared entry.
+            Callers MUST key the entry per credential (e.g. via
+            ``authenticated_cache_key``) so one credential's private response
+            is never served from another's L1 entry. Default ``None`` keeps
+            the legacy Valkey-first behaviour for every other cached route.
 
     When applied to a method (first parameter named ``self``/``cls``), the
     bound instance is excluded from the default cache key so that cache
@@ -86,6 +97,13 @@ def cached(
                 return args[1:]
             return args
 
+        def _local_ttl() -> int:
+            """Bounded L1 lifetime; never outlives the shared Valkey entry."""
+            cache_ttl = ttl if ttl is not None else default_cache_ttl()
+            if l1_ttl is None:
+                return cache_ttl
+            return min(cache_ttl, l1_ttl)
+
         @wraps(func)
         async def async_wrapper(*args, **kwargs) -> Any:
             global _cache_stats
@@ -103,6 +121,16 @@ def cached(
             else:
                 cache_key = generate_cache_key(key_prefix, *_key_args(args), **kwargs)
 
+            # Opt-in process-local tier: serve warm requests without a Valkey
+            # round-trip. The key is supplied by the caller's key_builder, so
+            # credential partitioning/invalidation stay the caller's contract.
+            if l1_ttl is not None:
+                local_value = mem_cache_get(cache_key)
+                if local_value is not None:
+                    _cache_stats["hits"] += 1
+                    logger.debug(f"CACHE HIT (Memory L1): {cache_key}")
+                    return reconstruct_object(local_value)
+
             if valkey_ready:
                 assert client is not None
                 try:
@@ -112,11 +140,7 @@ def cached(
                         logger.debug(f"CACHE HIT (Valkey): {cache_key}")
                         # Keep the local L1 warm so lookups still succeed from
                         # memory if Valkey goes down right after this hit.
-                        mem_cache_set(
-                            cache_key,
-                            cached_value,
-                            ttl if ttl is not None else default_cache_ttl(),
-                        )
+                        mem_cache_set(cache_key, cached_value, _local_ttl())
                         return reconstruct_object(cached_value)
                 except ValkeyOperationError:
                     _cache_stats["errors"] += 1
@@ -148,7 +172,7 @@ def cached(
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
 
-            mem_cache_set(cache_key, serializable_result, cache_ttl)
+            mem_cache_set(cache_key, serializable_result, _local_ttl())
             return result
 
         @wraps(func)
@@ -167,6 +191,13 @@ def cached(
             else:
                 cache_key = generate_cache_key(key_prefix, *_key_args(args), **kwargs)
 
+            if l1_ttl is not None:
+                local_value = mem_cache_get(cache_key)
+                if local_value is not None:
+                    _cache_stats["hits"] += 1
+                    logger.debug(f"CACHE HIT (Memory L1): {cache_key}")
+                    return reconstruct_object(local_value)
+
             if valkey_ready:
                 assert client is not None
                 try:
@@ -176,11 +207,7 @@ def cached(
                         logger.debug(f"CACHE HIT (Valkey): {cache_key}")
                         # Keep the local L1 warm so lookups still succeed from
                         # memory if Valkey goes down right after this hit.
-                        mem_cache_set(
-                            cache_key,
-                            cached_value,
-                            ttl if ttl is not None else default_cache_ttl(),
-                        )
+                        mem_cache_set(cache_key, cached_value, _local_ttl())
                         return reconstruct_object(cached_value)
                 except ValkeyOperationError:
                     _cache_stats["errors"] += 1
@@ -211,7 +238,7 @@ def cached(
                     _cache_stats["errors"] += 1
                     logger.warning(f"Failed to cache result for {cache_key}: {e}")
 
-            mem_cache_set(cache_key, serializable_result, cache_ttl)
+            mem_cache_set(cache_key, serializable_result, _local_ttl())
             return result
 
         final_wrapper = async_wrapper if is_async else wrapper

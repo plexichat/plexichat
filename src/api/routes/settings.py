@@ -11,6 +11,7 @@ from src.core.database.cache.decorators import cached
 from src.core.database.cache.operations import invalidate_cached, invalidate_pattern
 from src.core.database.cache.serialization import generate_cache_key
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key, require_user_token
 from src.api.schemas.settings import (
     SettingValue,
     SettingResponse,
@@ -105,7 +106,12 @@ def _invalidate_user_settings_cache(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=60, prefix="user_settings_all_api")
+@cached(
+    ttl=60,
+    prefix="user_settings_all_api",
+    key_builder=authenticated_cache_key("user_settings_all_api"),
+    l1_ttl=2,
+)
 def get_all_settings(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SettingsResponse:
@@ -114,6 +120,7 @@ def get_all_settings(
 
     Returns all key-value pairs stored for the user.
     """
+    require_user_token(current_user)
     settings_module = api.get_settings()
     if not settings_module:
         logger.error("Settings module not available")

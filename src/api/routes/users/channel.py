@@ -89,6 +89,7 @@ class ChannelMixin:
         ttl=5,
         prefix="user_dm_channels_api",
         key_builder=authenticated_cache_key("user_dm_channels_api"),
+        l1_ttl=2,
     )
     def get_dm_channels(
         self,

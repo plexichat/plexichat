@@ -13,6 +13,7 @@ from src.api.request_guards import read_body_capped
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key, require_user_token
 from src.api.schemas.messages import (
     UnreadCountResponse,
     AllUnreadCountsResponse,
@@ -582,11 +583,17 @@ async def acknowledge_messages_bulk(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=10, prefix="unread_counts_api")
+@cached(
+    ttl=10,
+    prefix="unread_counts_api",
+    key_builder=authenticated_cache_key("unread_counts_api"),
+    l1_ttl=2,
+)
 def get_all_unread_counts(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> AllUnreadCountsResponse:
     """Get unread message counts for all conversations."""
+    require_user_token(current_user)
     messaging = api.get_messaging()
     if not messaging:
         raise HTTPException(
