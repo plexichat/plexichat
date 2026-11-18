@@ -39,6 +39,17 @@ _MAX_INFLIGHT_CONVERSIONS = 8
 _MAX_CONVERSION_BATCH = 100
 _CONVERSION_SLOTS = threading.BoundedSemaphore(_MAX_INFLIGHT_CONVERSIONS)
 
+# Page bounds enforced at the manager boundary. The HTTP routes clamp their own
+# query parameters, but ``list_with_filters`` is also called directly by suite
+# feeds, selftest and other internal callers that hand over a filters dict.
+# The repository interpolates ``limit``/``offset`` into ``LIMIT ? OFFSET ?`` and
+# only defaults an *omitted* limit: SQLite reads ``LIMIT -1`` as *unlimited*,
+# so a negative (or arbitrarily large) value reaching it would turn one bounded
+# page into a full-table read. Clamp every caller here, at the shared choke
+# point, so no caller can bypass the page contract.
+_MAX_LIST_LIMIT = 2000
+_MAX_LIST_OFFSET = 10_000_000
+
 # Sentinel distinguishing "caller did not supply a value" from an explicit
 # ``None`` (which is a legitimate retention/participant-list value).
 _UNSET = object()
@@ -558,6 +569,14 @@ class ArtifactManager(BaseManager):
         enforcing that the caller is actually allowed to see those scopes.
         """
         merged = dict(filters or {})
+        # Clamp page bounds before they reach the repository's LIMIT/OFFSET.
+        # ``None`` means "caller omitted the value" and is left for the
+        # repository's bounded default; any explicit value is forced into a
+        # safe, non-negative range (LIMIT -1 is unlimited in SQLite).
+        if merged.get("limit") is not None:
+            merged["limit"] = max(0, min(int(merged["limit"]), _MAX_LIST_LIMIT))
+        if merged.get("offset") is not None:
+            merged["offset"] = max(0, min(int(merged["offset"]), _MAX_LIST_OFFSET))
         if conversation_id is not None:
             merged["conversation_id"] = conversation_id
         if server_id is not None:

@@ -875,16 +875,21 @@ async def get_thread_messages(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     threads_mod = _get_threads()
+    # Parse the thread id and both pagination cursors through the shared
+    # snowflake guard. A bare ``int()`` accepted negatives, zero, identifiers
+    # past 2**63-1 and Unicode/underscore digits, and a non-numeric cursor
+    # raised out of the manager call as a 500 instead of the documented 400.
+    # All three reach SQL lookups, so validate them at the route boundary.
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
+        before = parse_id(before_id, "before_id") if before_id else None
+        after = parse_id(after_id, "after_id") if after_id else None
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+            detail={"error": {"code": 400, "message": "Invalid thread or cursor ID"}},
         )
     try:
-        before = int(before_id) if before_id else None
-        after = int(after_id) if after_id else None
         msgs = threads_mod.get_messages(
             current_user.user_id, tid, limit=limit, before_id=before, after_id=after
         )
