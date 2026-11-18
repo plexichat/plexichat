@@ -9,7 +9,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
-from src.core.security.hardening import sanitize_header_filename
+from src.core.artifacts.export.security import (
+    UnsafeExportInput,
+    bound_export_text,
+    bounded_chunks,
+    content_disposition_header,
+    enforce_export_limit,
+)
+from src.core.artifacts.storage import (
+    ArtifactAccessDenied,
+    authorize_artifact_access,
+)
 
 from ...artifacts_export import (
     _artifact_export_html,
@@ -26,7 +36,7 @@ from ...artifacts_helpers import (
     _require_artifact_capability,
 )
 from ..constants import EXPORT_MIME_MAP
-from ..validation import safe_download_filename, validate_export_format
+from ..validation import validate_export_format
 from .common import parse_artifact_id
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
@@ -70,23 +80,52 @@ async def _export_artifact_impl(
                 detail={"error": {"code": 404, "message": "Artifact not found"}},
             )
 
-        _authorize_scope(
-            current_user.user_id,
-            artifact.conversation_id,
-            artifact.server_id,
-            "artifact.view",
-            author_id=artifact.author_id,
-            cache=_AuthCache(),
-        )
-        _require_artifact_capability(artifact.artifact_type)
+        auth_cache = _AuthCache()
 
-        ascii_filename, utf8_filename = safe_download_filename(
-            artifact.title, export_format
-        )
+        def _can_access(
+            *,
+            user_id: int,
+            conversation_id: int | None,
+            server_id: int | None,
+            author_id: int | None,
+            permission: str,
+        ) -> bool:
+            """Adapt this route's scope check to the artifact access guard."""
+            try:
+                _authorize_scope(
+                    user_id,
+                    conversation_id,
+                    server_id,
+                    permission,
+                    author_id=author_id,
+                    cache=auth_cache,
+                )
+            except HTTPException:
+                return False
+            return True
+
+        # The guard also binds the fetched record to the requested id, closing
+        # the IDOR where a lookup helper hands back a different artifact.
+        try:
+            authorize_artifact_access(
+                requested_id=aid,
+                artifact=artifact,
+                user_id=current_user.user_id,
+                can_access=_can_access,
+                permission="artifact.view",
+            )
+        except ArtifactAccessDenied as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": 403, "message": "Not authorized"}},
+            ) from exc
+        _require_artifact_capability(artifact.artifact_type)
 
         payload = artifact.payload or {}
         artifact_type_value = artifact.artifact_type.value
-        text = _artifact_export_text(artifact_type_value, payload, artifact.summary)
+        text = bound_export_text(
+            _artifact_export_text(artifact_type_value, payload, artifact.summary)
+        )
 
         if (
             export_format == "plexiscribe"
@@ -121,14 +160,14 @@ async def _export_artifact_impl(
             data = str(payload).encode("utf-8", "replace")
 
         content_type = EXPORT_MIME_MAP.get(export_format, "application/octet-stream")
-        disposition = (
-            f'attachment; filename="{sanitize_header_filename(ascii_filename)}"; '
-            f"filename*=UTF-8''{utf8_filename}"
-        )
+        disposition = content_disposition_header(artifact.title, export_format)
+
+        # Check the whole payload before any response headers are committed;
+        # bounded_chunks repeats the check when the iterator is consumed.
+        data = enforce_export_limit(data)
 
         def _chunk_iter() -> Any:
-            for offset in range(0, len(data), _EXPORT_CHUNK_BYTES):
-                yield data[offset : offset + _EXPORT_CHUNK_BYTES]
+            yield from bounded_chunks(data, chunk_size=_EXPORT_CHUNK_BYTES)
 
         return StreamingResponse(
             _chunk_iter(),
@@ -140,6 +179,11 @@ async def _export_artifact_impl(
         )
     except HTTPException:
         raise
+    except UnsafeExportInput as e:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={"error": {"code": 413, "message": "Export too large"}},
+        ) from e
     except Exception as e:
         logger.error(f"Failed to export artifact {artifact_id}: {e}", exc_info=True)
         raise HTTPException(
