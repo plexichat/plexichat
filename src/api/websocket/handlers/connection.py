@@ -187,7 +187,24 @@ class ConnectionHandler:
         except ValueError:
             return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
-        user_id = await self._verify_token(token, is_selftest=connection.is_selftest)
+        # Pass the peer IP/User-Agent just like IDENTIFY does. Without an
+        # ip_address the configured ``security.token_verify_rate_limit`` is
+        # skipped entirely (``verify_token`` only checks it when ip_address is
+        # present), so an unauthenticated socket could flood well-formed
+        # ``wst.{id}.{secret}`` tickets at RESUME and force an uncached DB
+        # lookup + hash verification per frame. Supplying the binding context
+        # also keeps IP/UA-bound sessions resumable instead of always failing
+        # the "binding required" check inside _verify_session_token.
+        client = getattr(connection.websocket, "client", None)
+        ip_address = getattr(client, "host", None) if client else None
+        headers = getattr(connection.websocket, "headers", None)
+        user_agent = headers.get("User-Agent") if headers is not None else None
+        user_id = await self._verify_token(
+            token,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            is_selftest=connection.is_selftest,
+        )
         if user_id is None:
             return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 

@@ -73,6 +73,17 @@ INBOUND_RATE_LIMITS: Dict[int, Tuple[int, float]] = {
     int(GatewayOpcode.VOICE_DISCONNECT): (10, 10.0),
     int(GatewayOpcode.TYPING_STOP): (10, 10.0),
     int(GatewayOpcode.VOICE_QUALITY): (10, 10.0),
+    # Authentication opcodes are cheap to abuse and expensive to service.
+    # IDENTIFY runs ticket verification plus ~5 threadpool DB reads (user,
+    # presence, custom status, guild list) and a friend fan-out on every frame;
+    # RESUME verifies a ticket and then re-sends the whole bounded replay buffer
+    # (up to 100 frames of 256 KiB each) on *every* frame. Both are reachable
+    # before authentication and neither had a per-connection ceiling, so a
+    # single socket could loop them for unbounded DB/hash/bandwidth work. The
+    # limits are generous: a client identifies/resumes a handful of times per
+    # minute at most.
+    int(GatewayOpcode.IDENTIFY): (5, 10.0),
+    int(GatewayOpcode.RESUME): (5, 10.0),
     # Ordered-log writes + fan-out / replay snapshot builds.
     int(GatewayOpcode.ARTIFACT_SUBSCRIBE): (20, 10.0),
     int(GatewayOpcode.ARTIFACT_OP): (200, 10.0),

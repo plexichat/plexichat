@@ -172,3 +172,64 @@ async def test_voice_state_update_loop_is_capped_before_dispatch(monkeypatch):
         )
 
     assert op_mock.await_count == budget
+
+
+@pytest.mark.parametrize("op", [GatewayOpcode.IDENTIFY, GatewayOpcode.RESUME])
+def test_auth_opcodes_are_throttled(op):
+    """IDENTIFY/RESUME verify tickets and (for RESUME) replay the event buffer."""
+    assert int(op) in INBOUND_RATE_LIMITS
+
+
+@pytest.mark.asyncio
+async def test_resume_loop_is_capped_before_dispatch(monkeypatch):
+    """Over-budget RESUME frames never reach the ticket-verification path."""
+    handler = OpcodeHandler(session_manager=SessionManager())
+    resume_mock = AsyncMock(return_value=(None, None, None))
+    monkeypatch.setattr(handler._connection_handler, "handle_resume", resume_mock)
+
+    conn = SimpleNamespace(
+        connection_id="resume-throttle-conn",
+        _inbound_rate_buckets={},
+        is_authenticated=False,
+        is_selftest=False,
+        user_id=None,
+    )
+    budget = INBOUND_RATE_LIMITS[int(GatewayOpcode.RESUME)][0]
+    for _ in range(budget + 5):
+        await handler.handle(
+            conn,
+            int(GatewayOpcode.RESUME),
+            {"token": "wst.1.abcdef", "session_id": "deadbeef", "seq": 0},
+        )
+
+    assert resume_mock.await_count == budget
+
+
+@pytest.mark.asyncio
+async def test_resume_passes_peer_context_to_token_verification(monkeypatch):
+    """RESUME must feed the peer IP/UA so per-IP token-verify limits apply."""
+    handler = OpcodeHandler(session_manager=SessionManager())
+    verify = AsyncMock(return_value=None)
+    monkeypatch.setattr(handler._connection_handler, "_verify_token", verify)
+
+    conn = SimpleNamespace(
+        is_selftest=False,
+        websocket=SimpleNamespace(
+            client=SimpleNamespace(host="203.0.113.9"),
+            headers={"User-Agent": "test-client/1.0"},
+        ),
+    )
+    await handler._connection_handler.handle_resume(
+        conn,
+        {
+            "token": "wst.1.abcdef",
+            "session_id": "deadbeef",
+            "seq": 0,
+        },
+    )
+
+    verify.assert_awaited_once()
+    kwargs = verify.await_args.kwargs
+    assert kwargs["ip_address"] == "203.0.113.9"
+    assert kwargs["user_agent"] == "test-client/1.0"
+    assert kwargs["is_selftest"] is False

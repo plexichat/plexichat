@@ -28,12 +28,24 @@ class HeaderValidationError(ValueError):
 
 
 def validate_header_name(name: Any, *, field: str = "header name") -> str:
-    """Return a valid HTTP field name or raise ``HeaderValidationError``."""
+    """Return a valid HTTP field name or raise ``HeaderValidationError``.
+
+    ``_HEADER_TOKEN`` ends in ``$``, and Python's ``$`` also matches *just
+    before* a trailing newline. Using ``re.match`` therefore accepted names
+    such as ``"X-Evil\\n"`` -> an embedded line break in a response header
+    name, which is the classic header-injection primitive. Consume the whole
+    value with ``fullmatch`` and reject control characters explicitly so an
+    ASGI server can never be handed a name containing CR/LF/NEL.
+    """
     if not isinstance(name, str) or not name:
         raise HeaderValidationError(f"{field} must be a non-empty string")
     if len(name) > MAX_HEADER_NAME_LENGTH:
         raise HeaderValidationError(f"{field} is too long")
-    if not _HEADER_TOKEN.match(name):
+    try:
+        reject_control_characters(name, field=field)
+    except ValueError as exc:
+        raise HeaderValidationError(str(exc)) from exc
+    if not _HEADER_TOKEN.fullmatch(name):
         raise HeaderValidationError(f"{field} contains invalid characters")
     return name
 

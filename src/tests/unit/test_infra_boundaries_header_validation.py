@@ -49,6 +49,27 @@ class TestHeaderName:
         with pytest.raises(HeaderValidationError):
             validate_header_name(bad)
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "X-Evil\n",  # ``$`` matches before a trailing newline with re.match
+            "X-Evil\r",
+            "X-Evil\x00",
+            "X-Evil\u0085",  # NEL is a line break for many proxies/loggers
+            "X-Evil\u2028",
+            "X-Evil\nInjected: 1",
+        ],
+    )
+    def test_trailing_control_cannot_smuggle_into_header_name(self, bad):
+        """A header name must never carry CR/LF/NEL (header injection)."""
+        with pytest.raises(HeaderValidationError):
+            validate_header_name(bad)
+
+    def test_validated_headers_rejects_injected_name(self):
+        """The collection helper must not emit a name with an embedded line break."""
+        with pytest.raises(HeaderValidationError):
+            validated_headers([(b"X-Evil\n", b"1")])
+
     def test_too_long(self):
         with pytest.raises(HeaderValidationError):
             validate_header_name("a" * 200)
