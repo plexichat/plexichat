@@ -39,7 +39,9 @@ include:
 supplychain:pinned_deps:
   stage: security
   timeout: 10m
-  image: python:3.14-slim
+  # Pinned to the same exact patch-level base as .gitlab/ci/pipeline.yml so a
+  # registry tag move cannot silently change the gate's Python/digest behaviour.
+  image: python:3.14.8-slim-trixie
   needs: []
   rules:
     - if: '$RUN_LIVE_SMOKE != "1"'
@@ -56,7 +58,9 @@ supplychain:pinned_deps:
 supplychain:secrets_baseline:
   stage: security
   timeout: 10m
-  image: python:3.14-slim
+  # Pinned to the same exact patch-level base as .gitlab/ci/pipeline.yml so a
+  # registry tag move cannot silently change the gate's Python/digest behaviour.
+  image: python:3.14.8-slim-trixie
   needs: []
   rules:
     - if: '$RUN_LIVE_SMOKE != "1"'
@@ -72,7 +76,9 @@ supplychain:secrets_baseline:
 supplychain:dangerous_patterns:
   stage: security
   timeout: 10m
-  image: python:3.14-slim
+  # Pinned to the same exact patch-level base as .gitlab/ci/pipeline.yml so a
+  # registry tag move cannot silently change the gate's Python/digest behaviour.
+  image: python:3.14.8-slim-trixie
   needs: []
   rules:
     - if: '$RUN_LIVE_SMOKE != "1"'
@@ -84,7 +90,9 @@ supplychain:dangerous_patterns:
 supplychain:permissions:
   stage: security
   timeout: 10m
-  image: python:3.14-slim
+  # Pinned to the same exact patch-level base as .gitlab/ci/pipeline.yml so a
+  # registry tag move cannot silently change the gate's Python/digest behaviour.
+  image: python:3.14.8-slim-trixie
   needs: []
   rules:
     - if: '$RUN_LIVE_SMOKE != "1"'
@@ -96,7 +104,9 @@ supplychain:permissions:
 supplychain:checksums:
   stage: security
   timeout: 10m
-  image: python:3.14-slim
+  # Pinned to the same exact patch-level base as .gitlab/ci/pipeline.yml so a
+  # registry tag move cannot silently change the gate's Python/digest behaviour.
+  image: python:3.14.8-slim-trixie
   needs: []
   rules:
     - if: '$RUN_LIVE_SMOKE != "1"'
@@ -108,7 +118,9 @@ supplychain:checksums:
 supplychain:regressions:
   stage: security
   timeout: 20m
-  image: python:3.14-slim
+  # Pinned to the same exact patch-level base as .gitlab/ci/pipeline.yml so a
+  # registry tag move cannot silently change the gate's Python/digest behaviour.
+  image: python:3.14.8-slim-trixie
   needs: []
   rules:
     - if: '$RUN_LIVE_SMOKE != "1"'
