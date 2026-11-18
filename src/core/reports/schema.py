@@ -174,6 +174,9 @@ CREATE INDEX IF NOT EXISTS idx_user_reports_status_at
 CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reporter_at
     ON user_reports(reporter_id, reported_at);
+-- Reporter history filtered by status.
+CREATE INDEX IF NOT EXISTS idx_user_reports_reporter_status
+    ON user_reports(reporter_id, status);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports(reported_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reported_at
     ON user_reports(reported_user_id, reported_at);
