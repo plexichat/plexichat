@@ -36,6 +36,42 @@ def _serving_loop() -> Optional[asyncio.AbstractEventLoop]:
     return loop
 
 
+def _event_scope_from_data(event_data: Any) -> tuple:
+    """Recover ``(server_id, channel_id)`` from a cross-worker event payload.
+
+    The Valkey pub/sub envelope carries only ``t``/``d``/``u``/``sw``; the
+    publishing worker's ``Event.server_id`` and ``Event.channel_id`` are
+    dropped on serialization. Reconstructing an :class:`Event` with both
+    fields unset makes the intent router classify every remote event as
+    guild-scoped (``is_dm`` is false when both are ``None``), so a client
+    holding ``GUILD_MESSAGES`` but not ``DIRECT_MESSAGES`` receives DM events
+    emitted by a sibling worker -- the same frame is correctly withheld on
+    the worker that created it. Payload builders put the authoritative scope
+    under ``server_id``/``guild_id`` and ``channel_id``; restore it here so
+    cross-worker and local dispatch apply identical intent gates.
+
+    Values are coerced defensively: an unparseable scope is left unset rather
+    than raising out of the pub/sub receive path.
+    """
+    if not isinstance(event_data, dict):
+        return None, None
+
+    def _as_id(value: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    server_id = _as_id(event_data.get("server_id"))
+    if server_id is None:
+        # Typing and older payloads use the legacy ``guild_id`` alias.
+        server_id = _as_id(event_data.get("guild_id"))
+    channel_id = _as_id(event_data.get("channel_id"))
+    return server_id, channel_id
+
+
 class GatewayDispatcher:
     """Dispatches events to connected WebSocket clients."""
 
@@ -237,7 +273,17 @@ class GatewayDispatcher:
             )
             return 0
 
-        event = Event(event_type=resolved_type, data=event_data)
+        # Restore the routing scope that the pub/sub envelope drops. Without
+        # it ``filter_event_by_intents`` sees no server_id/channel_id and
+        # classifies a DM as a guild event, leaking DM payloads to clients
+        # that only hold the guild intent.
+        server_id, channel_id = _event_scope_from_data(event_data)
+        event = Event(
+            event_type=resolved_type,
+            data=event_data,
+            server_id=server_id,
+            channel_id=channel_id,
+        )
         return await self.dispatch_event(event, user_ids)
 
     async def dispatch_to_connection(

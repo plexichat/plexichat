@@ -60,6 +60,19 @@ INBOUND_RATE_LIMITS: Dict[int, Tuple[int, float]] = {
     int(GatewayOpcode.VOICE_SDP_OFFER): (10, 10.0),
     int(GatewayOpcode.VOICE_SDP_ANSWER): (10, 10.0),
     int(GatewayOpcode.VOICE_ICE_CANDIDATE): (50, 10.0),
+    # These four were the remaining unthrottled mutating opcodes that still
+    # perform a synchronous DB write and/or a full member fan-out. Without a
+    # ceiling an identified socket can loop them to amplify DB/threadpool
+    # work and peer frames without bound. The ceilings are deliberately
+    # generous: mute/deafen toggles, channel teardown, typing-stop and a
+    # client's periodic quality hint all stay well below them in normal use.
+    # VOICE_SPEAKING is intentionally absent: it is high-frequency media
+    # keepalive (tens of frames per second) and is bounded by the signaling
+    # idle sweeper instead.
+    int(GatewayOpcode.VOICE_STATE_UPDATE): (20, 10.0),
+    int(GatewayOpcode.VOICE_DISCONNECT): (10, 10.0),
+    int(GatewayOpcode.TYPING_STOP): (10, 10.0),
+    int(GatewayOpcode.VOICE_QUALITY): (10, 10.0),
     # Ordered-log writes + fan-out / replay snapshot builds.
     int(GatewayOpcode.ARTIFACT_SUBSCRIBE): (20, 10.0),
     int(GatewayOpcode.ARTIFACT_OP): (200, 10.0),
