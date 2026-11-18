@@ -55,6 +55,9 @@ CREATE INDEX IF NOT EXISTS idx_reports_server_created ON reports(server_id, crea
 CREATE INDEX IF NOT EXISTS idx_reports_assigned ON reports(assigned_to);
 -- Assigned-queue filters assigned_to + status.
 CREATE INDEX IF NOT EXISTS idx_reports_assigned_status ON reports(assigned_to, status);
+-- Assigned-queue recency within a status.
+CREATE INDEX IF NOT EXISTS idx_reports_assigned_created
+    ON reports(assigned_to, created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_priority ON reports(priority);
 -- Priority queues order by priority then recency.
 CREATE INDEX IF NOT EXISTS idx_reports_priority_created ON reports(priority, created_at);
