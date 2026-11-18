@@ -17,6 +17,24 @@ def _truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_snowflake_id(configured: object) -> int | None:
+    """Resolve a configured Snowflake worker/datacenter id.
+
+    ``None`` (the config default meaning "derive automatically") must be
+    forwarded to :func:`encryption.setup` as ``None`` so the generator can
+    derive a per-replica identity from the environment/hostname/PID. The old
+    ``...get("worker_id", 1) or 1`` coercion turned an unset id into the
+    literal ``1``, so every replica of a ``--scale backend=N`` deployment
+    generated IDs with the same (datacenter, worker) tuple — two workers
+    emitting in the same millisecond then produced the *same* ID (duplicate
+    primary keys). An explicit ``0`` is a valid id and must be preserved
+    rather than being treated as falsy.
+    """
+    if configured is None:
+        return None
+    return int(configured)
+
+
 def _is_pipeline_context() -> bool:
     return (
         os.getenv("CI") is not None
@@ -105,10 +123,10 @@ def setup_utilities() -> None:
                 logger.critical(error_msg)
                 raise RuntimeError(error_msg)
 
+    snowflake_config = encryption_config.get("snowflake", {}) or {}
     encryption.setup(
-        worker_id=encryption_config.get("snowflake", {}).get("worker_id", 1) or 1,
-        datacenter_id=encryption_config.get("snowflake", {}).get("datacenter_id", 1)
-        or 1,
+        worker_id=_resolve_snowflake_id(snowflake_config.get("worker_id")),
+        datacenter_id=_resolve_snowflake_id(snowflake_config.get("datacenter_id")),
         argon2_time_cost=encryption_config.get("argon2", {}).get("time_cost", 3),
         argon2_memory_cost=encryption_config.get("argon2", {}).get(
             "memory_cost", 65536

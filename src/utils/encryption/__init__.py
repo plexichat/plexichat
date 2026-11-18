@@ -51,8 +51,8 @@ _setup_called = False
 
 
 def setup(
-    worker_id: int = 1,
-    datacenter_id: int = 1,
+    worker_id: Optional[int] = None,
+    datacenter_id: Optional[int] = None,
     epoch_timestamp: Optional[int] = None,
     argon2_time_cost: int = 3,
     argon2_memory_cost: int = 65536,
@@ -62,8 +62,12 @@ def setup(
     Setup the encryption utilities. Optional - uses defaults if not called.
 
     Args:
-        worker_id (int): Worker ID for Snowflake generation (0-31, 5-bit).
-        datacenter_id (int): Datacenter ID for Snowflake generation (0-31, 5-bit).
+        worker_id (int | None): Worker ID for Snowflake generation (0-31,
+            5-bit). ``None`` (the default) derives a per-replica identity
+            from ``PLEXICHAT_WORKER_ID`` / hostname / PID so scaled workers
+            cannot collide; pass an int only for explicit pinning.
+        datacenter_id (int | None): Datacenter ID for Snowflake generation
+            (0-31, 5-bit). ``None`` derives it the same way as worker_id.
         epoch_timestamp (int): Custom epoch timestamp in milliseconds.
         argon2_time_cost (int): Time cost for Argon2 (iterations).
         argon2_memory_cost (int): Memory cost for Argon2 in KiB.

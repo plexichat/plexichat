@@ -3,6 +3,9 @@ Base service with common functionality.
 """
 
 from typing import Any, Optional
+import hashlib
+import os
+import threading
 import time
 
 from src.core.base import SnowflakeID
@@ -23,6 +26,35 @@ def get_encrypt_messages_default() -> bool:
     return bool(
         config.get("messaging", {}).get("encrypt_messages", ENCRYPT_MESSAGES_DEFAULT)
     )
+
+
+def _default_machine_id() -> int:
+    """Derive this replica's 10-bit machine id for the legacy snowflake generator.
+
+    Message/conversation/attachment/pin services still use
+    :meth:`BaseService._generate_id`, which packs a 10-bit machine id into the
+    ID. The old hardcoded default of ``1`` meant every replica of a
+    ``--scale backend=N`` deployment produced the *same* ID for a given
+    millisecond and sequence — duplicate primary keys. Derive the id from the
+    replica's hostname (unique per container) mixed with the PID, mirroring the
+    main ``SnowflakeGenerator``; ``PLEXICHAT_MACHINE_ID`` pins it explicitly.
+    """
+    raw = os.environ.get("PLEXICHAT_MACHINE_ID")
+    if raw is not None:
+        try:
+            return int(raw) & 0x3FF
+        except ValueError:
+            pass
+    import socket
+
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        hostname = "plexichat"
+    digest = hashlib.sha256(hostname.encode()).digest()
+    node = int.from_bytes(digest[:2], "big") & 0x3FF
+    node ^= os.getpid() & 0x3FF
+    return node
 
 
 def _get_relationships_module():
@@ -74,10 +106,22 @@ class BaseService:
         self._cache: CappedDict = CappedDict(max_size=max_cache)
         self._cache_ttl = 60.0  # 60 second cache TTL
 
-        # Snowflake ID generation
+        # Snowflake ID generation. The machine id must be unique per replica
+        # or scaled workers mint identical IDs in the same millisecond.
+        configured_machine_id = config.get("machine_id")
+        try:
+            self._machine_id = (
+                int(configured_machine_id) & 0x3FF
+                if configured_machine_id is not None
+                else _default_machine_id()
+            )
+        except (TypeError, ValueError):
+            self._machine_id = _default_machine_id()
         self._id_counter = 0
         self._last_timestamp = 0
-        self._machine_id = config.get("machine_id", 1) & 0x3FF  # 10 bits
+        # Guard the counter/timestamp state: the sync request threadpool can
+        # call _generate_id concurrently even within a single worker.
+        self._id_lock = threading.Lock()
 
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
@@ -85,26 +129,27 @@ class BaseService:
 
     def _generate_id(self) -> SnowflakeID:
         """Generate a unique Snowflake ID."""
-        timestamp = self._get_timestamp()
+        with self._id_lock:
+            timestamp = self._get_timestamp()
 
-        if timestamp == self._last_timestamp:
-            self._id_counter = (self._id_counter + 1) & 0xFFF  # 12 bits
-            if self._id_counter == 0:
-                # Wait for next millisecond
-                while timestamp <= self._last_timestamp:
-                    timestamp = self._get_timestamp()
-        else:
-            self._id_counter = 0
+            if timestamp == self._last_timestamp:
+                self._id_counter = (self._id_counter + 1) & 0xFFF  # 12 bits
+                if self._id_counter == 0:
+                    # Wait for next millisecond
+                    while timestamp <= self._last_timestamp:
+                        timestamp = self._get_timestamp()
+            else:
+                self._id_counter = 0
 
-        self._last_timestamp = timestamp
+            self._last_timestamp = timestamp
 
-        # Snowflake format: timestamp (42 bits) | machine_id (10 bits) | sequence (12 bits)
-        snowflake = (
-            ((timestamp - 1420070400000) << 22)
-            | (self._machine_id << 12)
-            | self._id_counter
-        )
-        return snowflake
+            # Snowflake format: timestamp (42 bits) | machine_id (10 bits) | sequence (12 bits)
+            snowflake = (
+                ((timestamp - 1420070400000) << 22)
+                | (self._machine_id << 12)
+                | self._id_counter
+            )
+            return snowflake
 
     def _cache_get(self, key: Any, default: Optional[Any] = None) -> Optional[Any]:
         """Get value from cache (Local memory first, then Valkey)."""

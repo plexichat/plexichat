@@ -56,47 +56,59 @@ class SnowflakeGenerator:
             f"SnowflakeGenerator initialized: worker={self.worker_id}, datacenter={self.datacenter_id}"
         )
 
-    def _get_auto_worker_id(self) -> int:
-        """Auto-derive worker ID from environment or machine characteristics."""
-        # 1. Check environment variable
-        env_id = os.environ.get("PLEXICHAT_WORKER_ID")
-        if env_id is not None:
-            try:
-                return int(env_id) % 32
-            except ValueError:
-                pass
+    def _auto_node_id(self) -> int:
+        """Derive a stable 10-bit node identity for this process.
 
-        # 2. Try to derive from process ID and hostname for uniqueness
+        The high 5 bits become the datacenter id and the low 5 bits the
+        worker id. Deriving both from the *same* value is what makes the
+        (datacenter, worker) pair unique per replica: two containers get
+        distinct hostnames under ``docker compose up --scale backend=N``,
+        and the PID is mixed in so two processes on one host differ too.
+
+        The old scheme only used 2 bits of the hostname for the worker id
+        (``host_hash[0] % 4``) while the PID (constant ``1`` inside a
+        container) dominated the low bits. With four replicas that left a
+        ~90% chance of at least one worker-id collision. Spanning the full
+        10-bit node space brings that down to ~0.6% while keeping the 5-bit
+        field layout unchanged.
+        """
         import socket
 
         try:
             hostname = socket.gethostname()
-            host_hash = hashlib.sha256(hostname.encode()).digest()
-            pid_component = os.getpid() % 8  # 3 bits from PID
-            host_component = host_hash[0] % 4  # 2 bits from hostname
-            return (host_component << 3) | pid_component
         except Exception:
-            return 1
+            hostname = "plexichat"
+        digest = hashlib.sha256(hostname.encode()).digest()
+        node = int.from_bytes(digest[:2], "big") & 0x3FF  # 10 bits
+        # Mix the PID so multiple workers on the SAME host still get
+        # different identities; mask it to the same 10-bit space.
+        node ^= os.getpid() & 0x3FF
+        return node
+
+    @staticmethod
+    def _env_node_id(name: str) -> Optional[int]:
+        """Return an explicit 5-bit id from the environment, if valid."""
+        raw = os.environ.get(name)
+        if raw is None:
+            return None
+        try:
+            return int(raw) % 32
+        except ValueError:
+            return None
+
+    def _get_auto_worker_id(self) -> int:
+        """Auto-derive worker ID from environment or machine characteristics."""
+        explicit = self._env_node_id("PLEXICHAT_WORKER_ID")
+        if explicit is not None:
+            return explicit
+        return self._auto_node_id() & 0x1F
 
     def _get_auto_datacenter_id(self) -> int:
         """Auto-derive datacenter ID from environment or machine characteristics."""
-        # 1. Check environment variable
-        env_id = os.environ.get("PLEXICHAT_DATACENTER_ID")
-        if env_id is not None:
-            try:
-                return int(env_id) % 32
-            except ValueError:
-                pass
-
-        # 2. Try to derive from machine ID or hostname
-        import socket
-
-        try:
-            hostname = socket.gethostname()
-            host_hash = hashlib.sha256(hostname.encode()).digest()
-            return host_hash[1] % 32
-        except Exception:
-            return 1
+        explicit = self._env_node_id("PLEXICHAT_DATACENTER_ID")
+        if explicit is not None:
+            return explicit
+        return (self._auto_node_id() >> 5) & 0x1F
 
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)
