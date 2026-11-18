@@ -10,16 +10,49 @@ Supports:
 """
 
 import re
-from typing import List
+from typing import List, Optional
 
 from .models import Mention, MentionType
+from src.core.security.hardening import HardeningViolation, parse_id
 
-
-USER_MENTION_PATTERN = re.compile(r"<@(\d+)>")
-ROLE_MENTION_PATTERN = re.compile(r"<@&(\d+)>")
-CHANNEL_MENTION_PATTERN = re.compile(r"<#(\d+)>")
+# SECURITY: use an explicit ASCII digit class instead of ``\d``. Python's
+# ``\d`` also matches Unicode decimal digits (Arabic-Indic ``٤``, fullwidth
+# ``４``, ...), and ``int()`` maps them onto the same value as their ASCII
+# counterparts. Clients highlight/render mentions with ASCII-only patterns, so
+# accepting a homoglyph id here is a parser differential: ``<@٤٢>`` would
+# notify the real user 42 on the backend while displaying as plain text in the
+# UI. Only canonical ASCII digits may form a mention id.
+USER_MENTION_PATTERN = re.compile(r"<@([0-9]+)>")
+ROLE_MENTION_PATTERN = re.compile(r"<@&([0-9]+)>")
+CHANNEL_MENTION_PATTERN = re.compile(r"<#([0-9]+)>")
 EVERYONE_PATTERN = re.compile(r"(?<!\w)@everyone\b")
 HERE_PATTERN = re.compile(r"(?<!\w)@here\b")
+
+# ``2**63 - 1`` (the largest snowflake) has 19 decimal digits. Bounding the
+# token length keeps an out-of-range id from ever reaching int() (Python raises
+# ValueError above 4300 digits, which previously crashed notification
+# creation) and rejects leading-zero-padded, non-canonical ids that clients do
+# not render as mentions.
+_MAX_ID_DIGITS = 19
+
+
+def _parse_target_id(raw: str) -> Optional[int]:
+    """Return a canonical snowflake id, or ``None`` for an unusable token.
+
+    ``parse_id`` enforces the ASCII grammar and the ``[1, 2**63 - 1]`` snowflake
+    range. A token that cannot name a real user/role/channel is ignored so it
+    fails closed instead of being treated as a mention of a bogus id.
+    """
+    if not raw or len(raw) > _MAX_ID_DIGITS:
+        return None
+    if len(raw) > 1 and raw[0] == "0":
+        return None
+    try:
+        return parse_id(raw, "mention id")
+    except (HardeningViolation, ValueError):
+        # Out-of-range/zero ids and any unexpected conversion failure are all
+        # unusable mention targets. Never fail open on a malformed token.
+        return None
 
 
 def parse_mentions(content: str) -> List[Mention]:
@@ -30,7 +63,9 @@ def parse_mentions(content: str) -> List[Mention]:
         content: Message content to parse
 
     Returns:
-        List of Mention objects found in content
+        List of Mention objects found in content. Tokens whose id is not a
+        canonical, in-range snowflake are ignored (they cannot reference a
+        real object and would create a client/server parser differential).
     """
     if not content:
         return []
@@ -38,10 +73,13 @@ def parse_mentions(content: str) -> List[Mention]:
     mentions = []
 
     for match in USER_MENTION_PATTERN.finditer(content):
+        target_id = _parse_target_id(match.group(1))
+        if target_id is None:
+            continue
         mentions.append(
             Mention(
                 mention_type=MentionType.USER,
-                target_id=int(match.group(1)),
+                target_id=target_id,
                 raw_text=match.group(0),
                 start_pos=match.start(),
                 end_pos=match.end(),
@@ -49,10 +87,13 @@ def parse_mentions(content: str) -> List[Mention]:
         )
 
     for match in ROLE_MENTION_PATTERN.finditer(content):
+        target_id = _parse_target_id(match.group(1))
+        if target_id is None:
+            continue
         mentions.append(
             Mention(
                 mention_type=MentionType.ROLE,
-                target_id=int(match.group(1)),
+                target_id=target_id,
                 raw_text=match.group(0),
                 start_pos=match.start(),
                 end_pos=match.end(),
@@ -60,10 +101,13 @@ def parse_mentions(content: str) -> List[Mention]:
         )
 
     for match in CHANNEL_MENTION_PATTERN.finditer(content):
+        target_id = _parse_target_id(match.group(1))
+        if target_id is None:
+            continue
         mentions.append(
             Mention(
                 mention_type=MentionType.CHANNEL,
-                target_id=int(match.group(1)),
+                target_id=target_id,
                 raw_text=match.group(0),
                 start_pos=match.start(),
                 end_pos=match.end(),
