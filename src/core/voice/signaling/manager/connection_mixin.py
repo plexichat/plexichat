@@ -16,6 +16,16 @@ from ..models import SignalingState, VoiceServerInfo, VoiceConnection
 # with VoiceServerInfo must be re-obtained after expiry.
 MEDIA_TOKEN_TTL_MS = 4 * 60 * 60 * 1000
 
+# Cap the in-process media-token registry. ``get_voice_server_info`` mints a
+# fresh bearer token on EVERY call, including the read-only
+# ``GET /channels/{id}/info`` route (which does not even return the token to
+# the client). Tokens were otherwise only removed when explicitly validated
+# or revoked, so an authenticated caller could repeatedly request voice info
+# and grow ``_media_tokens`` without bound -- a memory-exhaustion vector.
+# Expired entries are reclaimed on each mint; once the cap is reached the
+# oldest issuances are evicted first.
+MAX_MEDIA_TOKENS = 4096
+
 
 class ConnectionManagementMixin:
     """Mixin handling connection lifecycle methods."""
@@ -135,8 +145,8 @@ class ConnectionManagementMixin:
         # only roomId/peerId with NO auth material. Mint a bearer token,
         # persist it for later verification, and attach it to the endpoint so
         # the media plane can authenticate the bearer.
-        token = secrets.token_urlsafe(32)
         now = self._get_timestamp()
+        token = secrets.token_urlsafe(32)
         self._media_tokens[token] = {
             "user_id": user_id,
             "channel_id": channel_id,
@@ -144,6 +154,10 @@ class ConnectionManagementMixin:
             "issued_at": now,
             "expires_at": now + MEDIA_TOKEN_TTL_MS,
         }
+        # Reclaim expired tokens and enforce the registry cap right after
+        # minting so repeated info requests cannot grow the registry without
+        # limit. The freshly minted token is the newest and always survives.
+        self._prune_media_tokens(now)
 
         from urllib.parse import urlencode
 
@@ -160,6 +174,30 @@ class ConnectionManagementMixin:
             user_id=user_id,
             bitrate=bitrate,
         )
+
+    def _prune_media_tokens(self, now: int) -> None:
+        """Reclaim expired tokens and cap the registry at MAX_MEDIA_TOKENS.
+
+        Called on every token mint. Expired entries are always dropped; if the
+        registry is still over budget the oldest issuances are evicted first
+        (they are the least likely to still back a live media session). This
+        keeps repeated read-only voice-info requests from exhausting memory.
+        """
+        registry = self._media_tokens
+        for token in [
+            token
+            for token, entry in registry.items()
+            if entry.get("expires_at", 0) < now
+        ]:
+            registry.pop(token, None)
+        overflow = len(registry) - MAX_MEDIA_TOKENS
+        if overflow <= 0:
+            return
+        oldest_first = sorted(
+            registry.items(), key=lambda item: item[1].get("issued_at", 0)
+        )
+        for token, _ in oldest_first[:overflow]:
+            registry.pop(token, None)
 
     def validate_media_token(
         self,
