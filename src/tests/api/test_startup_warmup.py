@@ -64,7 +64,7 @@ def test_warmup_runs_once_when_enabled(monkeypatch):
     monkeypatch.setattr(warmup, "_warmup_enabled", lambda: True)
     monkeypatch.setattr(warmup, "_warmup_delay", lambda: 0.0)
     called = []
-    monkeypatch.setattr(warmup, "warm_once", lambda: called.append(True) or 1.5)
+    monkeypatch.setattr(warmup, "warm_once", lambda app=None: called.append(True) or 1.5)
 
     asyncio.run(warmup.warmup_loop())
 

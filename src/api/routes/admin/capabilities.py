@@ -51,6 +51,20 @@ def clear_admin_capabilities_payload_cache() -> None:
     _payload_cache = None
 
 
+def warm_admin_capabilities_payload_cache() -> None:
+    """Prime the admin catalog off the request path (best-effort, never fatal).
+
+    Shares the cold voice-transcription provider probe with the launcher
+    catalog. The host-restriction and admin-token gates in ``get_admin_capabilities``
+    still run on every request; only the shared, admin-independent payload is
+    primed here. Failures are swallowed so boot can never depend on them.
+    """
+    try:
+        _get_payload()
+    except Exception as e:
+        logger.debug(f"Admin capability catalog warm-up skipped: {e}")
+
+
 def _build_payload() -> Dict[str, Any]:
     """Evaluate and serialize the bounded raw catalog + summary."""
     capabilities = get_artifact_capabilities()

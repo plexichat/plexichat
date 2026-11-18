@@ -94,6 +94,31 @@ def _warm_profile_path(api_mod: Any) -> None:
     ProfileManager(db).get_profile(0)
 
 
+def _warm_capability_catalogs() -> None:
+    """Prime the launcher and admin capability payload caches off-request.
+
+    Both caches hold the fully evaluated capability catalog; the first build
+    runs every evaluator, including the voice-transcription provider probe that
+    imports the provider factory on a cold process. They are process-wide,
+    short-TTL, single-entry caches, so warming them is bounded work. This runs
+    on the same worker thread as the rest of ``warm_once`` and never touches the
+    per-request auth gates, which continue to run before either cached payload
+    can be served.
+    """
+    try:
+        from src.api.routes import capabilities as launcher_caps
+
+        launcher_caps.warm_capabilities_payload_cache()
+    except Exception as e:
+        logger.debug(f"Startup warm-up launcher catalog skipped: {e}")
+    try:
+        from src.api.routes.admin import capabilities as admin_caps
+
+        admin_caps.warm_admin_capabilities_payload_cache()
+    except Exception as e:
+        logger.debug(f"Startup warm-up admin catalog skipped: {e}")
+
+
 def _warm_openapi(app: Any) -> None:
     """Generate and cache the OpenAPI schema off the request path."""
     if app is None:
@@ -130,6 +155,11 @@ def warm_once(app: Any = None) -> float:
         _warm_profile_path(api)
     except Exception as e:
         logger.debug(f"Startup warm-up profile probe failed: {e}")
+
+    try:
+        _warm_capability_catalogs()
+    except Exception as e:
+        logger.debug(f"Startup warm-up capability catalogs failed: {e}")
 
     try:
         _db_probe(api)

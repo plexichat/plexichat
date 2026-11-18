@@ -95,6 +95,23 @@ def clear_capabilities_payload_cache() -> None:
     _capabilities_payload_cache = None
 
 
+def warm_capabilities_payload_cache() -> None:
+    """Prime the catalog off the request path (best-effort, never fatal).
+
+    The first evaluation runs every evaluator, including the voice-transcription
+    provider probe that imports the provider factory. Calling this from the
+    boot warm-up moves that one-off cost onto a worker thread so the first
+    authenticated launcher poll is a cache hit. The auth dependency (and every
+    bound/filter) still runs on each request; only the shared, user-independent
+    payload is primed. A failure is logged and swallowed - the route rebuilds
+    the payload on demand exactly as before.
+    """
+    try:
+        _get_capabilities_payload()
+    except Exception as e:
+        logger.debug(f"Capability catalog warm-up skipped: {e}")
+
+
 def bound_capabilities(
     payload: Dict[str, Any],
     *,
