@@ -13,6 +13,23 @@ from .helpers import row_to_settings, row_to_channel_override
 from .protocol import NotificationProtocol
 
 
+# The recipient list for these helpers comes from mention fan-out and is not
+# bounded here: one ``@everyone``/role mention in a large server can yield tens
+# of thousands of ids. Building a single ``IN (?,?,...)`` with one bind
+# variable per id crosses SQLite's bind-variable cap (999 on older builds,
+# 32766 on newer ones) and raises "too many SQL variables", turning a
+# legitimate mention into a crashed send path. Chunk well under both limits
+# (Postgres allows ~32k but chunking costs nothing) — the same pattern the
+# search indexer uses for its bulk id lookups.
+_BULK_ID_CHUNK_SIZE = 500
+
+
+def _id_chunks(items: List[SnowflakeID]):
+    """Yield successive bounded slices of ``items`` for IN-clause binding."""
+    for start in range(0, len(items), _BULK_ID_CHUNK_SIZE):
+        yield items[start : start + _BULK_ID_CHUNK_SIZE]
+
+
 class SettingsMixin(NotificationProtocol):
     def get_notification_settings_bulk(
         self, user_ids: List[SnowflakeID], server_id: Optional[SnowflakeID] = None
@@ -20,21 +37,26 @@ class SettingsMixin(NotificationProtocol):
         if not user_ids:
             return {}
 
-        placeholders = ",".join(["?"] * len(user_ids))
-        if server_id:
-            rows = self._db.fetch_all(
-                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id = ?",
-                (*user_ids, server_id),
-            )
-        else:
-            rows = self._db.fetch_all(
-                f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id IS NULL",
-                tuple(user_ids),
-            )
+        # Materialise once so every chunk binds from a stable, ordered list
+        # (callers may pass a set or other iterable).
+        ids = list(user_ids)
+        results: Dict[int, NotificationSettings] = {}
+        for chunk in _id_chunks(ids):
+            placeholders = ",".join(["?"] * len(chunk))
+            if server_id:
+                rows = self._db.fetch_all(
+                    f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id = ?",
+                    (*chunk, server_id),
+                )
+            else:
+                rows = self._db.fetch_all(
+                    f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id IS NULL",
+                    tuple(chunk),
+                )
+            for row in rows:
+                results[row["user_id"]] = row_to_settings(row)
 
-        results = {row["user_id"]: row_to_settings(row) for row in rows}
-
-        for uid in user_ids:
+        for uid in ids:
             if uid not in results:
                 results[uid] = NotificationSettings(
                     user_id=uid,
@@ -53,13 +75,17 @@ class SettingsMixin(NotificationProtocol):
         if not user_ids:
             return {}
 
-        placeholders = ",".join(["?"] * len(user_ids))
-        rows = self._db.fetch_all(
-            f"SELECT * FROM notif_channel_overrides WHERE channel_id = ? AND user_id IN ({placeholders})",
-            (channel_id, *user_ids),
-        )
+        results: Dict[int, ChannelNotificationOverride] = {}
+        for chunk in _id_chunks(list(user_ids)):
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                f"SELECT * FROM notif_channel_overrides WHERE channel_id = ? AND user_id IN ({placeholders})",
+                (channel_id, *chunk),
+            )
+            for row in rows:
+                results[row["user_id"]] = row_to_channel_override(row)
 
-        return {row["user_id"]: row_to_channel_override(row) for row in rows}
+        return results
 
     def get_notification_settings(
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
