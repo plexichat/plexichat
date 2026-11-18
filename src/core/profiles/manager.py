@@ -125,11 +125,25 @@ def _ssrf_guard_url(url: str, field_name: str) -> None:
     :mod:`src.core.security.outbound`.
     """
     try:
-        hostname = (urlparse(url).hostname or "").lower()
+        parsed = urlparse(url)
     except ValueError as exc:
         raise OutboundUrlRejected(
             f"{field_name} is not a valid URL", field=field_name
         ) from exc
+    # A literal backslash in the authority is a parser differential: urlparse
+    # leaves it in ``netloc`` and reports the host to the RIGHT of an ``@``,
+    # while browsers and http(s) clients read ``\`` as ``/`` and open the
+    # address on the LEFT. ``https://169.254.169.254\@public.example/`` would
+    # otherwise be stored as a public link and open the metadata address in a
+    # viewer's browser. Percent-encoded ``%5C`` and path backslashes are data,
+    # not authority, and stay allowed. Mirrors outbound.parse_outbound_url and
+    # web_push._require_public_endpoint.
+    if "\\" in (parsed.netloc or ""):
+        raise OutboundUrlRejected(
+            f"{field_name} must not contain a backslash in the URL authority",
+            field=field_name,
+        )
+    hostname = (parsed.hostname or "").lower()
     if not hostname:
         raise OutboundUrlRejected(f"{field_name} is missing a host", field=field_name)
     host = hostname.rstrip(".")

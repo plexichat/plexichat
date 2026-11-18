@@ -217,6 +217,18 @@ def _is_safe_url(url: str) -> bool:
             return False
         if parsed.username or parsed.password:
             return False
+        # A literal backslash in the authority is a parser differential:
+        # ``urlparse`` keeps it in ``netloc`` and derives the host from the text
+        # to the RIGHT of an ``@``, but http(s) clients (requests/urllib3 and
+        # browsers) follow the WHATWG rule and read ``\`` as ``/``, connecting to
+        # the address on the LEFT. Without this check
+        # ``http://169.254.169.254\@public.example/x`` is validated as the
+        # public host but fetched at the cloud metadata address. A literal
+        # backslash has no legitimate place in a URL authority (one meant as
+        # data must be percent-encoded, which keeps it out of the authority).
+        # Mirrors outbound.parse_outbound_url and web_push._require_public_endpoint.
+        if "\\" in (parsed.netloc or ""):
+            return False
         host = parsed.hostname.rstrip(".")
         try:
             addresses = [ipaddress.ip_address(host)]
