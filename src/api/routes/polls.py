@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Depends
 
 from src.core.polls.limits import validate_option_ids
 from src.core.security.hardening import HardeningViolation, parse_id
+from src.core.database import cached, invalidate_pattern
+from src.api.routes.users.helpers import authenticated_cache_key
 
 import src.api as api
 import utils.logger as logger
@@ -52,6 +54,25 @@ def _parse_poll_id(raw: str) -> int:
 
 
 router = APIRouter(prefix="/polls", tags=["Polls"])
+
+
+# Poll detail/results are the hottest reads in this module: each cold call
+# hydrates the poll row, its options, a voter aggregate and (for results) a
+# per-option vote aggregation, then serializes the whole response. Memoize the
+# serialized response for a short window. The key is partitioned per credential
+# by ``authenticated_cache_key`` (bot tokens get their own namespace), and the
+# caller re-checks channel access on every request *before* consulting the
+# cache, so a revoked membership can never be served a cached body. Any poll
+# mutation drops the whole namespace because counts are visible to other users.
+_POLL_READ_CACHE_TTL = 10
+_POLL_READ_DETAIL_PREFIX = "poll_read_detail_api"
+_POLL_READ_RESULTS_PREFIX = "poll_read_results_api"
+
+
+def _invalidate_poll_read_cache() -> None:
+    """Drop all cached poll detail/results bodies after a mutation."""
+    invalidate_pattern(f"{_POLL_READ_DETAIL_PREFIX}:*")
+    invalidate_pattern(f"{_POLL_READ_RESULTS_PREFIX}:*")
 
 
 def _poll_to_response(poll, include_vote_counts: bool = False) -> PollResponse:
@@ -104,6 +125,36 @@ def _results_to_response(results) -> PollResultsResponse:
     )
 
 
+@cached(
+    ttl=_POLL_READ_CACHE_TTL,
+    prefix=_POLL_READ_DETAIL_PREFIX,
+    key_builder=authenticated_cache_key(_POLL_READ_DETAIL_PREFIX),
+)
+async def _load_poll_detail(*, poll_id: int, current_user: TokenInfo) -> dict:
+    """Cold path for GET /polls/{id}: hydrate and serialize a poll.
+
+    Returns a plain JSON-safe dict so a cache hit (which yields a dict) and a
+    miss are byte-for-byte identical after the caller re-validates the model.
+    """
+    polls_module = api.get_polls()
+    poll = polls_module.get_poll(poll_id, current_user.user_id)
+    if not poll:
+        raise PollNotFoundError("Poll not found")
+    return _poll_to_response(poll).model_dump(mode="json")
+
+
+@cached(
+    ttl=_POLL_READ_CACHE_TTL,
+    prefix=_POLL_READ_RESULTS_PREFIX,
+    key_builder=authenticated_cache_key(_POLL_READ_RESULTS_PREFIX),
+)
+async def _load_poll_results(*, poll_id: int, current_user: TokenInfo) -> dict:
+    """Cold path for GET /polls/{id}/results."""
+    polls_module = api.get_polls()
+    results = polls_module.get_results(poll_id, current_user.user_id)
+    return _results_to_response(results).model_dump(mode="json")
+
+
 @router.post(
     "",
     response_model=PollResponse,
@@ -151,6 +202,7 @@ async def create_poll(
             except Exception:
                 logger.debug("Failed to update poll metadata on message")
 
+        _invalidate_poll_read_cache()
         return _poll_to_response(poll)
     except (
         InvalidPollQuestionError,
@@ -216,10 +268,12 @@ async def get_poll(
     pid = _parse_poll_id(poll_id)
 
     try:
-        poll = polls_module.get_poll(pid, current_user.user_id)
-        if not poll:
+        # Authz gate runs on EVERY request, before the cache lookup: a viewer
+        # who lost channel access must not receive a still-warm cache body.
+        if not polls_module.can_access_poll(pid, current_user.user_id):
             raise PollNotFoundError("Poll not found")
-        return _poll_to_response(poll)
+        data = await _load_poll_detail(poll_id=pid, current_user=current_user)
+        return PollResponse.model_validate(data)
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -262,8 +316,11 @@ async def get_poll_results(
     pid = _parse_poll_id(poll_id)
 
     try:
-        results = polls_module.get_results(pid, current_user.user_id)
-        return _results_to_response(results)
+        # Same live authz gate as get_poll, ahead of the cache lookup.
+        if not polls_module.can_access_poll(pid, current_user.user_id):
+            raise PollNotFoundError("Poll not found")
+        data = await _load_poll_results(poll_id=pid, current_user=current_user)
+        return PollResultsResponse.model_validate(data)
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -368,6 +425,7 @@ async def vote_on_poll(
             poll_id=pid,
             option_ids=validate_option_ids(body.option_ids),
         )
+        _invalidate_poll_read_cache()
         return _results_to_response(results)
     except (
         PollOptionNotFoundError,
@@ -433,6 +491,7 @@ async def change_vote_on_poll(
             poll_id=pid,
             option_ids=validate_option_ids(body.option_ids),
         )
+        _invalidate_poll_read_cache()
         return _results_to_response(results)
     except (
         PollOptionNotFoundError,
@@ -488,6 +547,7 @@ async def close_poll(
 
     try:
         poll = polls_module.close_poll(current_user.user_id, pid)
+        _invalidate_poll_read_cache()
         return _poll_to_response(poll)
     except (PollEndedError, InvalidPollDurationError):
         raise HTTPException(
@@ -543,6 +603,7 @@ async def delete_poll(
 
     try:
         polls_module.delete_poll(current_user.user_id, pid)
+        _invalidate_poll_read_cache()
         return SuccessResponse(success=True, message=None)
     except PollNotFoundError:
         raise HTTPException(

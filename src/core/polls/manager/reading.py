@@ -12,6 +12,24 @@ from .base import PollManagerBase
 class ReadingMixin(PollManagerBase):
     """Read polls and decide what a viewer is allowed to see."""
 
+    def can_access_poll(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> bool:
+        """Cheap, live authorization gate for poll reads.
+
+        Fetches only the poll's message id and re-checks the caller's channel
+        access through the messaging layer. Unlike :meth:`get_poll` it does
+        not hydrate options or reconcile vote totals, so callers can run it on
+        *every* request -- before any response-cache lookup -- without paying
+        for the expensive part of a poll read. A missing poll or a viewer
+        without message access returns ``False`` (existence is concealed).
+        """
+        row = self._db.fetch_one(
+            "SELECT message_id FROM poll_polls WHERE id = ?", (poll_id,)
+        )
+        if not row:
+            return False
+        messaging = self._require_messaging()
+        return bool(messaging.get_message(user_id, row["message_id"]))
+
     def get_poll(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Poll]:
         """Get a poll by ID."""
         row = self._db.fetch_one("SELECT * FROM poll_polls WHERE id = ?", (poll_id,))

@@ -65,6 +65,7 @@ __all__ = [
     "is_setup",
     "create_poll",
     "get_poll",
+    "can_access_poll",
     "vote",
     "change_vote",
     "get_results",
@@ -136,6 +137,15 @@ def create_poll(
 def get_poll(poll_id: int, user_id: int) -> Optional[Poll]:
     """Get a poll by ID."""
     return _get_manager().get_poll(poll_id, user_id)
+
+
+def can_access_poll(poll_id: int, user_id: int) -> bool:
+    """Live authorization gate: does the viewer have access to this poll?
+
+    Cheap enough to call on every request, including cache hits. See
+    :meth:`PollManager.can_access_poll`.
+    """
+    return _get_manager().can_access_poll(poll_id, user_id)
 
 
 def vote(user_id: int, poll_id: int, option_ids: List[int]) -> PollResults:
