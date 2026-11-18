@@ -6,6 +6,7 @@ from typing import Literal, Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
 from src.api.schemas.common import SnowflakeID
+from .auth import MAX_PASSWORD_INPUT_LENGTH
 
 
 class DSARRequestBody(BaseModel):
@@ -13,7 +14,17 @@ class DSARRequestBody(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    password: str = Field(..., description="Current password for verification")
+    # This value is passed straight to ``verify_password`` (a synchronous
+    # peppered-Argon2 verification that pre-hashes the whole input with HMAC).
+    # Every other password-bearing request schema is bounded at the boundary;
+    # without the same ceiling here a 10 MB body (the configured request cap)
+    # reaches the hasher and blocks the event loop. Keep the single source of
+    # truth shared with the auth schemas so the two cannot drift apart.
+    password: str = Field(
+        ...,
+        max_length=MAX_PASSWORD_INPUT_LENGTH,
+        description="Current password for verification",
+    )
     format: Optional[Literal["json", "zip"]] = Field(
         default="json", description="Export format ('json' or 'zip')"
     )

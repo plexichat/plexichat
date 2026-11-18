@@ -158,7 +158,13 @@ class ConvertUploadRequest(BaseModel):
     server_id: Optional[SnowflakeID] = Field(
         None, description="Server the artifact belongs to"
     )
-    title: Optional[str] = Field(None, description="Display title override")
+    # Mirror the title ceiling used by ArtifactCreateRequest/ArtifactUpdateRequest:
+    # the converted artifact is stored and echoed through ArtifactResponse.title,
+    # so an unbounded value here would let a single upload persist a multi-megabyte
+    # title that every client then renders.
+    title: Optional[str] = Field(
+        None, description="Display title override", min_length=1, max_length=500
+    )
 
 
 class ArtifactListResponse(BaseModel):
