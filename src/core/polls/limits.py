@@ -16,7 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    parse_id,
+    reject_control_characters,
+)
 
 # Outer envelope. These are not configurable: ``bound_count`` clamps any
 # configured value into these ranges.
@@ -174,6 +179,17 @@ def validate_question_text(value: Any, config: Mapping[str, Any]) -> str:
     text = str(value or "").strip()
     if not text:
         raise InvalidPollQuestionError("Poll question cannot be empty")
+    # A question is stored verbatim and delivered to every viewer in the REST
+    # response and gateway payloads. Control characters (CR/LF, NUL, DEL/C1,
+    # Unicode line/paragraph separators) can forge a log line or a downstream
+    # frame and are never legitimate in human-readable poll text, so refuse
+    # them outright rather than relying on each client to parse around them.
+    try:
+        text = reject_control_characters(text, "poll question")
+    except HardeningViolation as exc:
+        raise InvalidPollQuestionError(
+            "Poll question contains control characters"
+        ) from exc
     max_len = resolve_field_limits(config).max_question_length
     if len(text) > max_len:
         raise InvalidPollQuestionError(
@@ -189,6 +205,15 @@ def validate_option_text(value: Any, config: Mapping[str, Any]) -> str:
     text = str(value or "").strip()
     if not text:
         raise InvalidPollOptionError("Poll option cannot be empty")
+    # Same rule as the question: option text is broadcast to every viewer, so
+    # embedded control characters that could split a log line or WS frame are
+    # refused instead of persisted.
+    try:
+        text = reject_control_characters(text, "poll option")
+    except HardeningViolation as exc:
+        raise InvalidPollOptionError(
+            "Poll option contains control characters"
+        ) from exc
     max_len = resolve_field_limits(config).max_option_length
     if len(text) > max_len:
         raise InvalidPollOptionError(f"Poll option cannot exceed {max_len} characters")

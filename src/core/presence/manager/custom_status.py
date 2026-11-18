@@ -8,11 +8,18 @@ from typing import Optional
 
 import utils.logger as logger
 
-from src.core.security.hardening import bounded_int
+from src.core.security.hardening import HardeningViolation, bounded_int
 
 from .base import PresenceManagerBase
+from ..exceptions import InvalidStatusError
 from ..models import Presence, CustomStatus
 from ..validation import MAX_STATUS_TEXT_CHARS, validate_emoji, validate_status_text
+
+# Custom-status expiry is an epoch-millisecond value persisted as a DB integer
+# and later coerced with ``int()`` on the read path. Refuse anything outside a
+# signed 64-bit range (and non-integers) so a hostile value cannot overflow the
+# column or crash presence reads with a ValueError.
+_MAX_EXPIRES_AT = 2**63 - 1
 
 
 class CustomStatusMixin(PresenceManagerBase):
@@ -60,6 +67,17 @@ class CustomStatusMixin(PresenceManagerBase):
         )
         normalized_text = validate_status_text(text, max_len)
         emoji = validate_emoji(emoji)
+
+        if expires_at is not None:
+            try:
+                expires_at = bounded_int(
+                    expires_at,
+                    "expires_at",
+                    minimum=0,
+                    maximum=_MAX_EXPIRES_AT,
+                )
+            except HardeningViolation as exc:
+                raise InvalidStatusError("Invalid custom status expiry") from exc
 
         if not normalized_text and not emoji:
             return self.clear_custom_status(user_id)
