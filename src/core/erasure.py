@@ -61,6 +61,13 @@ _RESIDUE_TABLES = (
     "msg_scheduled",
     "msg_forwarded",
     "webhook_retry_queue",
+    # Credential material whose owning column has no FK to ``auth_users``.
+    # Deleting the account row does NOT cascade these, so they must be purged
+    # explicitly or a deleted account leaves still-usable credentials behind.
+    "auth_api_access_tokens",
+    "auth_api_access_token_scopes",
+    "auth_api_access_token_events",
+    "auth_passkey_challenges",
 )
 
 
@@ -536,6 +543,55 @@ def purge_user_personal_rows(db: Any, user_id: int) -> int:
     return affected
 
 
+def purge_user_credentials(db: Any, user_id: int) -> int:
+    """Delete credentials that outlive the ``auth_users`` row.
+
+    ``auth_api_access_tokens.created_by`` and ``auth_passkey_challenges.user_id``
+    have no foreign key to ``auth_users``, so dropping the account leaves the
+    user's API tokens (encrypted token material, last-used IP/UA/path) and any
+    pending passkey challenges behind under a dead id. Those are live
+    credentials: an attacker who reached the database could still replay a
+    token or complete a challenge attributed to an account that no longer
+    exists. The reaper's own purge only reaps *expired* passkey challenges and
+    never touches API tokens, so this is the one place they are removed.
+
+    Returns the number of rows deleted (children counted separately).
+    """
+    uid = int(user_id)
+    affected = 0
+
+    # Scope/event rows cascade from the token on PostgreSQL, but SQLite foreign
+    # keys are OFF in several deployment/purge paths. Remove them explicitly
+    # first, keyed on the creator's tokens, so no sensitive row is orphaned.
+    for table in ("auth_api_access_token_scopes", "auth_api_access_token_events"):
+        try:
+            cursor = db.execute(
+                f"DELETE FROM {table} WHERE token_id IN "
+                "(SELECT id FROM auth_api_access_tokens WHERE created_by = ?)",
+                (uid,),
+            )
+            affected += int(getattr(cursor, "rowcount", 0) or 0)
+        except Exception as exc:
+            logger.debug(
+                "Erase: optional credential child cleanup skipped (%s): %s", table, exc
+            )
+
+    for table, column in (
+        ("auth_api_access_tokens", "created_by"),
+        ("auth_passkey_challenges", "user_id"),
+    ):
+        try:
+            cursor = db.execute(f"DELETE FROM {table} WHERE {column} = ?", (uid,))
+            affected += int(getattr(cursor, "rowcount", 0) or 0)
+        except Exception as exc:
+            if table not in _RESIDUE_TABLES:
+                raise
+            logger.debug(
+                "Erase: optional credential cleanup skipped (%s): %s", table, exc
+            )
+    return affected
+
+
 # === orchestration ===
 
 
@@ -547,17 +603,26 @@ def erase_user_residue(
     # conversation/message deletes below and leak message previews.
     notifications = purge_user_notifications(db, user_id)
     personal_rows = purge_user_personal_rows(db, user_id)
+    credentials = purge_user_credentials(db, user_id)
     servers = purge_owned_servers(db, user_id)
     conversations = purge_user_conversations(db, user_id)
     unswept_media = purge_user_media(db, user_id, media=media)
-    if servers or conversations or unswept_media or notifications or personal_rows:
+    if (
+        servers
+        or conversations
+        or unswept_media
+        or notifications
+        or personal_rows
+        or credentials
+    ):
         logger.info(
             "Erase: user %s left %s notification(s), %s personal row(s), "
-            "%s server(s), %s conversation(s), %s unswept media object(s) "
-            "cleaned up",
+            "%s credential row(s), %s server(s), %s conversation(s), "
+            "%s unswept media object(s) cleaned up",
             user_id,
             notifications,
             personal_rows,
+            credentials,
             len(servers),
             len(conversations),
             len(unswept_media),
@@ -565,6 +630,7 @@ def erase_user_residue(
     return {
         "notifications": notifications,
         "personal_rows": personal_rows,
+        "credentials": credentials,
         "servers": servers,
         "conversations": conversations,
         "media_unswept": unswept_media,
@@ -606,18 +672,50 @@ def sweep_orphans(db: Any, media: Optional[Any] = None) -> Dict[str, List]:
     for uploader in orphan_uploaders:
         unswept.extend(purge_user_media(db, uploader, media=media))
 
+    # Accounts purged by an older build kept their API tokens and passkey
+    # challenges (no FK cascade). Find the dead owners and reap the residue so
+    # a pre-fix deployment cannot keep live credentials for deleted accounts.
+    orphan_credential_owners = set()
+    for query, column in (
+        (
+            "SELECT DISTINCT a.created_by AS owner FROM auth_api_access_tokens a "
+            "LEFT JOIN auth_users u ON u.id = a.created_by WHERE u.id IS NULL",
+            "owner",
+        ),
+        (
+            "SELECT DISTINCT p.user_id AS owner FROM auth_passkey_challenges p "
+            "LEFT JOIN auth_users u ON u.id = p.user_id WHERE u.id IS NULL",
+            "owner",
+        ),
+    ):
+        try:
+            for row in _rows(db, query):
+                if row[column] is not None:
+                    orphan_credential_owners.add(int(row[column]))
+        except Exception as exc:
+            logger.debug("Erase: orphan credential sweep query skipped: %s", exc)
+    for owner in orphan_credential_owners:
+        purge_user_credentials(db, owner)
+
     result = {
         "servers": sweep_orphaned_servers(db),
         "conversations": purge_orphaned_conversations(db),
         "media_unswept": unswept,
+        "credentials": sorted(orphan_credential_owners),
     }
-    if result["servers"] or result["conversations"] or unswept:
+    if (
+        result["servers"]
+        or result["conversations"]
+        or unswept
+        or orphan_credential_owners
+    ):
         logger.info(
             "Erase: swept %s orphan server(s), %s orphan conversation(s), "
-            "%s unswept media object(s)",
+            "%s unswept media object(s), %s orphan credential owner(s)",
             len(result["servers"]),
             len(result["conversations"]),
             len(unswept),
+            len(orphan_credential_owners),
         )
     return result
 
@@ -630,6 +728,7 @@ __all__ = [
     "purge_owned_servers",
     "purge_server_recursive",
     "purge_user_conversations",
+    "purge_user_credentials",
     "purge_user_media",
     "purge_user_notifications",
     "purge_user_personal_rows",
