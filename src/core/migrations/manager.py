@@ -5,6 +5,7 @@ This module provides the MigrationManager class which coordinates the
 entire migration process including discovery, validation, execution, and tracking.
 """
 
+import hashlib
 import logging
 import os
 import threading
@@ -39,12 +40,35 @@ def _clear_integrity_cache() -> None:
 
 
 def _file_stamp(path: str) -> Tuple[int, int]:
-    """Cheap content-change fingerprint for a migration file."""
+    """Cheap metadata fingerprint for a migration file (mtime + size)."""
     try:
         stat = os.stat(path)
         return (stat.st_mtime_ns, stat.st_size)
     except OSError:
         return (-1, -1)
+
+
+def _file_content_fingerprint(path: str) -> str:
+    """Content-based fingerprint used to invalidate cached integrity verdicts.
+
+    ``_file_stamp`` is only metadata: both mtime and size are attacker-
+    controllable. Rewriting a migration with the same number of bytes and then
+    restoring its mtime (``os.utime``) leaves that stamp unchanged, which would
+    otherwise keep serving a stale cached ``{"valid": True}`` verdict and
+    silently skip the checksum comparison for the tampered file. Hashing the
+    actual bytes makes the cache key change on *any* content change.
+
+    This deliberately uses hashlib directly rather than
+    ``validator.calculate_checksum`` so the perf regression that counts
+    checksum calls observes only the real verification pass.
+    """
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        # An unreadable file still gets a distinct stamp from the (-1, -1)
+        # metadata case, and the integrity loop below surfaces the read error.
+        return ""
 
 
 def _migration_status_cache_key(manager: "MigrationManager") -> str:
@@ -576,7 +600,10 @@ class MigrationManager:
                 (record.get("version"), record.get("status"), record.get("checksum"))
                 for record in records
             ),
-            tuple((v, p, _file_stamp(p)) for v, p in migration_files),
+            tuple(
+                (v, p, _file_stamp(p), _file_content_fingerprint(p))
+                for v, p in migration_files
+            ),
         )
         with _INTEGRITY_CACHE_LOCK:
             cached = _INTEGRITY_CACHE.get(stamp)
@@ -655,45 +682,58 @@ class MigrationManager:
                 # Validate checksum if already recorded
                 existing_status = self.tracker.get_migration_status(migration.version)
                 if existing_status:
+                    recorded_checksum = existing_status.get("checksum")
+                    if not isinstance(recorded_checksum, str) or not recorded_checksum:
+                        # No trustworthy baseline to compare against: fail closed
+                        # rather than running a migration whose history row cannot
+                        # be verified.
+                        raise ValueError(
+                            f"Migration {migration.version} is BLOCKED: recorded "
+                            "history has no checksum to verify against."
+                        )
+
                     try:
-                        # Check if checksum matches
                         with open(migration.file_path, "rb") as f:
                             content = f.read()
-                            actual_checksum = validator.calculate_checksum(content)
-
-                        if actual_checksum != existing_status["checksum"]:
-                            # TAMPERING GUARD: a migration file that differs from
-                            # the recorded checksum must never silently re-execute
-                            # against production data. Block unless the operator
-                            # explicitly consumes a valid single-use emergency
-                            # override token.
-                            logger.error(
-                                f"BLOCKED migration {migration.version}: checksum "
-                                f"mismatch (recorded={existing_status['checksum']}, "
-                                f"actual={actual_checksum}). The migration file was "
-                                "modified after being recorded. Execution is blocked; "
-                                "set a valid single-use EMERGENCY_MIGRATION_OVERRIDE "
-                                "token to proceed."
-                            )
-                            if (
-                                not _override_consumed
-                                and not self.tracker.try_consume_emergency_override_from_env()
-                            ):
-                                raise ValueError(
-                                    f"Migration {migration.version} is BLOCKED: "
-                                    "checksum mismatch with recorded history and no "
-                                    "valid EMERGENCY_MIGRATION_OVERRIDE token was "
-                                    "provided."
-                                )
-                            logger.error(
-                                f"Emergency override accepted (single-use) for tampered "
-                                f"migration {migration.version}; proceeding once"
-                            )
-                    except ValueError:
-                        raise
+                        actual_checksum = validator.calculate_checksum(content)
                     except Exception as e:
-                        logger.warning(
-                            f"Could not verify checksum for migration {migration.version}: {e}"
+                        # FAIL CLOSED: a read/hash failure must never skip the
+                        # tamper guard. Previously this only logged a warning and
+                        # carried on, letting the module execute with an unverified
+                        # checksum.
+                        raise ValueError(
+                            f"Cannot verify checksum for migration "
+                            f"{migration.version}: {e}. Failing closed; the "
+                            "migration will not execute."
+                        ) from e
+
+                    if actual_checksum != recorded_checksum:
+                        # TAMPERING GUARD: a migration file that differs from
+                        # the recorded checksum must never silently re-execute
+                        # against production data. Block unless the operator
+                        # explicitly consumes a valid single-use emergency
+                        # override token.
+                        logger.error(
+                            f"BLOCKED migration {migration.version}: checksum "
+                            f"mismatch (recorded={recorded_checksum}, "
+                            f"actual={actual_checksum}). The migration file was "
+                            "modified after being recorded. Execution is blocked; "
+                            "set a valid single-use EMERGENCY_MIGRATION_OVERRIDE "
+                            "token to proceed."
+                        )
+                        if (
+                            not _override_consumed
+                            and not self.tracker.try_consume_emergency_override_from_env()
+                        ):
+                            raise ValueError(
+                                f"Migration {migration.version} is BLOCKED: "
+                                "checksum mismatch with recorded history and no "
+                                "valid EMERGENCY_MIGRATION_OVERRIDE token was "
+                                "provided."
+                            )
+                        logger.error(
+                            f"Emergency override accepted (single-use) for tampered "
+                            f"migration {migration.version}; proceeding once"
                         )
 
                 # Record migration start
