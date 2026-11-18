@@ -64,7 +64,8 @@ class TestArtifactListBatching:
         items, total = artifacts_routes._list_with_total(db, 100, 0)
 
         assert len(db.calls) == 1
-        assert "COUNT(*) OVER()" in db.calls[0][0]
+        assert "(SELECT COUNT(*) FROM artifacts) AS _total" in db.calls[0][0]
+        assert "COUNT(*) OVER()" not in db.calls[0][0]
         assert db.calls[0][1] == (100, 0)
         assert total == 3
         assert [int(a.id) for a in items] == [1, 2]

@@ -37,19 +37,24 @@ router = APIRouter(prefix="/artifacts", tags=["Admin", "Artifacts"])
 
 
 def _list_with_total(db, limit: int, offset: int):
-    """Fetch one page and the unpaged total in a single database round trip.
+    """Fetch one page and the unpaged total in a single, index-friendly query.
 
-    ``COUNT(*) OVER()`` is evaluated across every row that satisfies the
-    (empty) filter before ``LIMIT``/``OFFSET`` trims the page, so it returns
-    exactly what a separate ``SELECT COUNT(*)`` would. The previous code issued
-    two queries for every list request; this folds them into one.
+    The total comes from a scalar ``SELECT COUNT(*)`` subquery rather than a
+    ``COUNT(*) OVER()`` window. Both return the same value, but the window
+    forces the database to materialise and sort *every* matching row before
+    applying ``LIMIT``/``OFFSET`` — on a large artifacts table that scan
+    dominated this endpoint. The scalar form is evaluated once against the
+    index and the page itself still uses ``idx_artifacts_created``.
+
+    Keeping the count in the same statement preserves the single round trip
+    and a consistent snapshot (unlike a separate count query).
 
     Returns ``(items, total_or_None)``. ``total`` is ``None`` when the requested
-    page is past the end (no rows carry the window value); the caller then
+    page is past the end (no row carries a ``_total`` value); the caller then
     falls back to an explicit count so the response contract is unchanged.
     """
     rows = db.fetch_all(
-        "SELECT a.*, COUNT(*) OVER() AS _total FROM artifacts a "
+        "SELECT a.*, (SELECT COUNT(*) FROM artifacts) AS _total FROM artifacts a "
         "ORDER BY a.created_at DESC LIMIT ? OFFSET ?",
         (limit, offset),
     )

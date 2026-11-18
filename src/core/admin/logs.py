@@ -179,22 +179,46 @@ def _read_filtered(
                     continue
 
                 total_count += 1
-                # Log lines are untrusted free text: redact secrets first, then
-                # neutralise embedded newlines, carriage returns and ANSI escape
-                # sequences so a low-privileged user whose input reached a log
-                # cannot repaint, clear or forge entries in the admin viewer.
-                # Search still runs on the raw line; neither served field leaks
-                # a secret or a control sequence.
+                # Keep the raw line here. Redaction/scrubbing is applied in
+                # ``_render_lines`` only to the slice actually returned to the
+                # caller: the scan above has to inspect every line to count and
+                # filter, but a page contains at most ``limit`` lines. Doing the
+                # expensive scrubbing per scanned line made a cold read cost
+                # tens of microseconds *per line in the whole file* while only
+                # a handful of lines were ever served. The cached tail keeps
+                # untrusted text, but no value leaves this module without first
+                # passing through redaction + control-character scrubbing.
                 processed_lines.append(
                     {
                         "timestamp": timestamp,
                         "level": level,
-                        "message": scrub_control_characters(redact_secrets(message)),
-                        "raw": scrub_control_characters(redact_secrets(line)),
+                        "message": message,
+                        "raw": line,
                     }
                 )
 
     return total_count, list(processed_lines)
+
+
+def _render_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Redact and scrub only the lines that will be sent to the caller.
+
+    Log lines are untrusted free text: redact secrets first, then neutralise
+    embedded newlines, carriage returns and ANSI/C1 escape sequences so a
+    low-privileged user whose input reached a log cannot repaint, clear or
+    forge entries in the admin viewer. Fresh dicts are returned so mutating a
+    response cannot corrupt the cached filter result served to the next
+    request.
+    """
+    return [
+        {
+            "timestamp": line["timestamp"],
+            "level": line["level"],
+            "message": scrub_control_characters(redact_secrets(line["message"])),
+            "raw": scrub_control_characters(redact_secrets(line["raw"])),
+        }
+        for line in lines
+    ]
 
 
 def _indexed_filtered(
@@ -242,7 +266,13 @@ def read_log_lines(
 ) -> Dict[str, Any]:
     """Read lines from a log file with filtering and pagination."""
     log_dir = get_log_dir().resolve()
-    if Path(filename).name != filename or ".." in Path(filename).parts:
+    if (
+        not filename
+        or Path(filename).name != filename
+        or ".." in Path(filename).parts
+        or "\\" in filename
+        or "\x00" in filename
+    ):
         raise FileNotFoundError(f"Log file {filename} not found")
     if not (filename.endswith(".log") or _is_compressed_log(filename)):
         raise FileNotFoundError(f"Log file {filename} not found")
@@ -279,9 +309,7 @@ def read_log_lines(
     return {
         "filename": filename,
         "total_lines": total_count,
-        # Hand back fresh dicts so mutating a response cannot corrupt the
-        # cached filter result served to the next request.
-        "lines": [dict(line) for line in processed_lines[start:end]],
+        "lines": _render_lines(processed_lines[start:end]),
         "limit": limit,
         "offset": offset,
     }
