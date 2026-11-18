@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS pres_custom_status (
     created_at INTEGER NOT NULL
 );
 
+-- Bulk custom-status cleanup scans expires_at.
+CREATE INDEX IF NOT EXISTS idx_pres_custom_status_expires
+    ON pres_custom_status(expires_at);
+
 -- Activity table
 CREATE TABLE IF NOT EXISTS pres_activity (
     user_id INTEGER PRIMARY KEY,
@@ -59,6 +63,10 @@ CREATE TABLE IF NOT EXISTS pres_typing (
 -- Typing indexes
 CREATE INDEX IF NOT EXISTS idx_pres_typing_channel ON pres_typing(channel_id);
 CREATE INDEX IF NOT EXISTS idx_pres_typing_expires ON pres_typing(expires_at);
+-- Typing state is read/deleted by user (and user+channel).
+CREATE INDEX IF NOT EXISTS idx_pres_typing_user ON pres_typing(user_id);
+CREATE INDEX IF NOT EXISTS idx_pres_typing_user_channel
+    ON pres_typing(user_id, channel_id);
 """
 
 
