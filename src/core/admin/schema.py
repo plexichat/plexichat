@@ -111,6 +111,9 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 
 -- Admin audit log indexes
 CREATE INDEX IF NOT EXISTS idx_admin_audit_admin ON admin_audit_log(admin_id);
+-- Admin audit history lists one admin's actions newest-first.
+CREATE INDEX IF NOT EXISTS idx_admin_audit_admin_created
+    ON admin_audit_log(admin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
