@@ -7,6 +7,7 @@ bot directory browsing, and OAuth authorized application management.
 
 from typing import Optional, List, Annotated
 import logging
+import re
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 
 import src.api as api
@@ -116,6 +117,21 @@ class AuthorizedAppResponse(BaseModel):
     last_used_at: Optional[int] = None
 
 
+# Directory text is rendered by the public client. Tags are ``UIText`` at the
+# write boundary, but free-form descriptions are deliberately unrestricted and
+# rows written before that policy (plus the application-description fallback,
+# owned by another module) can contain tag-like text. Strip it on the way out
+# so the public directory never serves executable markup regardless of how the
+# stored value got there.
+_HTML_TAG_LIKE = re.compile(r"<[^>]*>")
+
+
+def _neutralize_markup(value):
+    if not value or ("<" not in value and ">" not in value):
+        return value
+    return _HTML_TAG_LIKE.sub("", value)
+
+
 class BotDirectoryEntry(BaseModel):
     """A bot entry in the directory listing."""
 
@@ -126,6 +142,18 @@ class BotDirectoryEntry(BaseModel):
     bot_id: Optional[str] = None
     tags: List[str] = []
     nsfw: bool = False
+
+    @field_validator("name", "description", mode="before")
+    @classmethod
+    def _strip_markup(cls, value):
+        return _neutralize_markup(value)
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _strip_markup_tags(cls, value):
+        if not value:
+            return value
+        return [_neutralize_markup(tag) for tag in value]
 
 
 class ApproveBotRequest(BaseModel):
@@ -153,6 +181,8 @@ class ReviewBotRequest(BaseModel):
 class UpdateBotProfileRequest(BaseModel):
     """Request to update a bot profile."""
 
+    # Plain free text (the public directory neutralizes markup on output in
+    # ``BotDirectoryEntry``). Length is still bounded; tags above use ``UIText``.
     description: Optional[str] = Field(None, max_length=2000)
     short_description: Optional[str] = Field(None, max_length=200)
     avatar_url: Optional[str] = Field(None, max_length=2048)
