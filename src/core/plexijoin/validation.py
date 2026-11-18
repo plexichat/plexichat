@@ -38,7 +38,12 @@ _DIRECTIONS = frozenset({"inbound", "outbound"})
 # Federation tokens are urlsafe base64 (letters, digits, ``-`` and ``_``).
 # A restrictive character class here stops control characters, CRLF and
 # delimiter injection before a token is used as a signature or header value.
-_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Use ``fullmatch`` (no anchors) rather than ``match`` with a ``$`` anchor: in
+# Python ``$`` also matches immediately before a trailing newline, so a value
+# such as ``"token\n"`` used to pass validation and flow into HMAC signature
+# material, the replay-nonce key and HTTP headers — even though every other
+# field validator here rejects control characters.
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+")
 MAX_TOKEN_LENGTH = 256
 MAX_JOIN_CODE_LENGTH = 64
 MIN_JOIN_CODE_LENGTH = 8
@@ -54,8 +59,12 @@ def validate_token(
         raise HardeningViolation(f"{field} must be a non-empty token")
     if len(value) > max_length:
         raise HardeningViolation(f"{field} exceeds {max_length} characters")
-    if not _TOKEN_RE.match(value):
+    if not _TOKEN_RE.fullmatch(value):
         raise HardeningViolation(f"{field} has an invalid format")
+    # Defence in depth: keep token validation consistent with ``bound_text``,
+    # which rejects C0/DEL controls. fullmatch already excludes them, but the
+    # explicit check documents the contract and survives future regex edits.
+    reject_control_characters(value, field)
     return value
 
 
@@ -83,8 +92,9 @@ def validate_join_code(value: Any, field: str = "join_code") -> str:
         raise HardeningViolation(f"{field} must be a string")
     if not (MIN_JOIN_CODE_LENGTH <= len(value) <= MAX_JOIN_CODE_LENGTH):
         raise HardeningViolation(f"{field} has an invalid length")
-    if not _TOKEN_RE.match(value):
+    if not _TOKEN_RE.fullmatch(value):
         raise HardeningViolation(f"{field} has an invalid format")
+    reject_control_characters(value, field)
     return value
 
 
@@ -92,9 +102,19 @@ def validate_timestamp(value: Any, field: str = "timestamp") -> int:
     """Parse a unix-seconds federation timestamp with a sane ceiling."""
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise HardeningViolation(f"{field} must be an integer")
-    if isinstance(value, str) and not value.isdigit():
-        raise HardeningViolation(f"{field} must be an integer")
-    seconds = int(value)
+    if isinstance(value, str):
+        # ``str.isdigit()`` is True for non-ASCII digits (superscripts, digits
+        # from other scripts) that ``int()`` either cannot parse at all —
+        # leaking a bare ValueError instead of a HardeningViolation — or parses
+        # inconsistently. Federation timestamps are ASCII decimal strings.
+        if not value.isascii() or not value.isdigit():
+            raise HardeningViolation(f"{field} must be an integer")
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        # Very long digit strings trip CPython's int() digit limit; report it
+        # through the same HardeningViolation every caller already handles.
+        raise HardeningViolation(f"{field} must be an integer") from exc
     if seconds < 0 or seconds > 4_102_444_800:
         raise HardeningViolation(f"{field} is outside the allowed range")
     return seconds
