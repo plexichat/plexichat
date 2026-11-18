@@ -506,7 +506,15 @@ async def _read_federation_body(request: Request) -> bytes:
     return await read_body_capped(request, MAX_FEDERATION_BODY)
 
 
-async def _relay_op(artifact_id, op, actor_id) -> int:
+async def _relay_op(artifact_id: int, op, actor_id: int) -> int:
+    """Relay a validated op.
+
+    Callers must pass ids already checked by :func:`validate_numeric_id`. The
+    former bare ``int()`` here accepted zero, negatives and Python-only
+    spellings such as ``"1_2"`` (parsed as 12) — a signed envelope could name
+    one artifact/actor but have a different one looked up and broadcast to
+    local subscribers.
+    """
     from src.api.websocket import get_dispatcher
     from src.api.websocket.artifacts import relay_artifact_op
 
@@ -515,9 +523,9 @@ async def _relay_op(artifact_id, op, actor_id) -> int:
         return 0
     return await relay_artifact_op(
         dispatcher,
-        int(artifact_id),
+        artifact_id,
         op,
-        int(actor_id) if actor_id is not None else 0,
+        actor_id,
         forward_to_federation=False,
     )
 
@@ -542,14 +550,25 @@ async def artifact_op_inbound(request: Request):
 
     payload = _parse_json_body(body)
 
-    artifact_id = payload.get("artifact_id")
     op = payload.get("op")
-    actor_id = payload.get("actor_id", 0)
-    if artifact_id is None or not isinstance(op, dict) or not op.get("op_type"):
+    if (
+        payload.get("artifact_id") is None
+        or not isinstance(op, dict)
+        or not op.get("op_type")
+    ):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Malformed artifact op payload"}},
         )
+
+    # A valid HMAC only proves the peer sent these values; it does not make
+    # them safe to use. ``int()`` accepted negatives, zero and Python-only
+    # spellings (``"1_2"`` -> 12), which then reached the artifact lookup and
+    # the relayed event as a *different* id than the peer wrote. Route both
+    # ids through the snowflake guard so a signed envelope cannot spoof the
+    # target artifact or actor.
+    artifact_id = validate_numeric_id(payload.get("artifact_id"), "artifact_id")
+    actor_id = validate_numeric_id(payload.get("actor_id", 0), "actor_id", minimum=0)
 
     delivered = await _relay_op(artifact_id, op, actor_id)
     return {"ok": True, "delivered": delivered}

@@ -433,7 +433,10 @@ async def search_health(
         }
     except Exception as e:
         logger.error(f"Search health failed: {e}", exc_info=True)
-        return {"enabled": True, "healthy": False, "error": str(e)}
+        # Do not reflect the raw exception: it can carry backend hostnames,
+        # credentials or query text into a response any authenticated user
+        # can read. Keep the diagnostic shape, omit the detail.
+        return {"enabled": True, "healthy": False}
 
 
 @router.get(

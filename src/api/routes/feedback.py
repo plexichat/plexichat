@@ -212,7 +212,7 @@ async def submit_feedback(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to submit feedback: {str(e)}",
+                        "message": "Failed to submit feedback",
                     }
                 },
             )

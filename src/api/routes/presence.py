@@ -314,7 +314,7 @@ async def update_presence(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to update presence: {str(e)}",
+                        "message": "Failed to update presence",
                     }
                 },
             )
@@ -434,7 +434,7 @@ def get_user_presence(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to fetch presence: {str(e)}",
+                        "message": "Failed to fetch presence",
                     }
                 },
             )
