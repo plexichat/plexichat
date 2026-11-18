@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS reports (
 
 -- Unified reports indexes
 CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_id);
+-- Reporter history lists a reporter's reports newest-first.
+CREATE INDEX IF NOT EXISTS idx_reports_reporter_created ON reports(reporter_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
 CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_id);
 CREATE INDEX IF NOT EXISTS idx_reports_server ON reports(server_id);
