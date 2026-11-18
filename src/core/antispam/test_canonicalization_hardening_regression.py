@@ -13,8 +13,15 @@ Covers two real weaknesses in ``_canonical_text``:
    compatibility character can expand ~18x, so a 10k-character message could
    become a ~180k-character canonical string fed to hashing/matching.
 
-These tests FAIL on pre-fix code and PASS with the category-based strip and
-post-normalization length bound.
+3. Whitespace/invisible ordering bypass: the old code collapsed whitespace
+   BEFORE stripping invisibles. Since ZWSP/bidi marks are not ``\\s``, splicing
+   one between two spaces left a *double* space in the canonical form after
+   the invisible was removed. A spammer could vary that invisible to mint
+   unlimited distinct hashes/globs for a visually identical message, evading
+   duplicate counters and recipient pattern filters. Stripping invisibles
+   first makes the canonical form identical again.
+
+These tests FAIL on pre-fix code and PASS with the reordered canonicalizer.
 """
 
 from __future__ import annotations
@@ -114,3 +121,56 @@ def test_canonical_length_bounded_after_nfkc_expansion():
     # ~18,000-character canonical string despite the 10k input cap.
     canonical = _canonical_text("\ufdfa" * 1000)
     assert len(canonical) <= detector_mod.MAX_DM_CONTENT_LENGTH
+
+
+# --- Regression: invisible characters adjacent to whitespace ----------------
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "buy \u200b crypto \u200b now",  # ZWSP between spaces
+        "buy \u200e crypto now",  # LRM next to a space
+        "buy\t\u200b crypto now",  # tab followed by invisible
+        "buy \u2060 crypto now",  # word joiner
+    ],
+)
+def test_canonical_text_folds_invisible_next_to_whitespace(variant):
+    """An invisible between spaces must not survive as a doubled space."""
+    assert _canonical_text(variant) == _canonical_text("buy crypto now")
+
+
+def test_duplicate_counter_not_bypassed_by_invisible_adjacent_to_whitespace():
+    """Visually identical spam with spliced invisibles still trips dedup."""
+    detector = DMSpamDetector(_FakeDB())
+    base = "buy crypto now"
+    for _ in range(DMSpamDetector.DEFAULT_DUPLICATE_THRESHOLD):
+        assert detector.check_message(11, RECIPIENT, base)[0] is True
+
+    # Each variant used to hash differently because the canonical form kept a
+    # double space; after the fix all of them fold to the base form.
+    for variant in (
+        "buy \u200b crypto now",
+        "buy \u200e crypto \u200b now",
+        "buy\t\u2060 crypto now",
+    ):
+        allowed, reason = detector.check_message(11, RECIPIENT, variant)
+        assert allowed is False
+        assert reason == "Duplicate message detected"
+
+
+def test_pattern_filter_not_bypassed_by_invisible_adjacent_to_whitespace(monkeypatch):
+    """A glob that matches the plain text must also match spaced invisibles."""
+    detector = DMSpamDetector(_FakeDB())
+    monkeypatch.setattr(
+        detector,
+        "_get_user_filters",
+        lambda recipient, sender: [
+            {"filter_type": "pattern", "pattern": "*buy crypto now*", "action": "block"}
+        ],
+    )
+    allowed, reason = detector.check_message(
+        12, RECIPIENT + 3, "buy \u200b crypto \u200e now"
+    )
+    assert allowed is False
+    assert reason == "Message matched your DM spam filter"

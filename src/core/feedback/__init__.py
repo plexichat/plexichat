@@ -2,6 +2,7 @@
 Feedback module - Handles user feedback submission and management.
 """
 
+import re
 import time
 from typing import Optional, Any
 from dataclasses import dataclass
@@ -11,6 +12,82 @@ from src.utils.encryption import generate_snowflake_id
 
 _db: Any = None
 _setup_complete = False
+
+
+# The HTTP route validates these fields, but ``submit_feedback`` is also a
+# public core helper (see the module README and internal callers such as the
+# self-test ticket bootstrap). Enforce the same shape at the storage boundary:
+# feedback is rendered verbatim in moderator/admin UIs and log lines, so an
+# unvalidated direct caller can otherwise persist log-forging control bytes or
+# bidi/invisible text that spoofs what a moderator sees.
+MAX_FEEDBACK_CONTENT_LENGTH = 2000
+MAX_CATEGORY_LENGTH = 50
+_CATEGORY_RE = re.compile(r"^[a-z0-9_-]+$")
+MIN_RATING = 1
+MAX_RATING = 5
+
+# Ordinary newlines/tabs keep multi-line feedback usable; everything else in
+# the C0/C1 + DEL range can terminate a log line or break out of a UI attribute.
+_ALLOWED_CONTROLS = frozenset("\n\t")
+_INVISIBLE_CODEPOINTS = frozenset(
+    {
+        0x200B,  # zero-width space
+        0x200C,  # zero-width non-joiner
+        0x200D,  # zero-width joiner
+        0x200E,  # left-to-right mark
+        0x200F,  # right-to-left mark
+        0x202A,  # left-to-right embedding
+        0x202B,  # right-to-left embedding
+        0x202C,  # pop directional formatting
+        0x202D,  # left-to-right override
+        0x202E,  # right-to-left override
+        0x2066,  # left-to-right isolate
+        0x2067,  # right-to-left isolate
+        0x2068,  # first strong isolate
+        0x2069,  # pop directional isolate
+        0xFEFF,  # zero-width no-break space / BOM
+    }
+)
+
+
+def _validated_content(content: Any) -> str:
+    """Return feedback text safe to store, or raise ``ValueError``."""
+    if not isinstance(content, str):
+        raise ValueError("feedback content must be a string")
+    if not content or len(content) > MAX_FEEDBACK_CONTENT_LENGTH:
+        raise ValueError("invalid feedback content length")
+    for ch in content:
+        code = ord(ch)
+        if (code < 0x20 or code == 0x7F) and ch not in _ALLOWED_CONTROLS:
+            raise ValueError("feedback content contains control characters")
+        if code in _INVISIBLE_CODEPOINTS:
+            raise ValueError("feedback content contains invisible characters")
+    return content
+
+
+def _validated_category(category: Any) -> Optional[str]:
+    """Return a safe category label, or raise ``ValueError``."""
+    if category is None:
+        return None
+    if not isinstance(category, str):
+        raise ValueError("feedback category must be a string")
+    if not category or len(category) > MAX_CATEGORY_LENGTH:
+        raise ValueError("invalid feedback category length")
+    if not _CATEGORY_RE.fullmatch(category):
+        raise ValueError("invalid feedback category")
+    return category
+
+
+def _validated_rating(rating: Any) -> Optional[int]:
+    """Return a rating in the documented 1-5 range, or raise ``ValueError``."""
+    if rating is None:
+        return None
+    # bool is an int subclass but is never a valid rating.
+    if isinstance(rating, bool) or not isinstance(rating, int):
+        raise ValueError("feedback rating must be an integer")
+    if not MIN_RATING <= rating <= MAX_RATING:
+        raise ValueError("feedback rating out of range")
+    return rating
 
 
 @dataclass
@@ -92,6 +169,12 @@ def submit_feedback(
 
     Returns the generated feedback ID.
     """
+    # Validate at the storage boundary, before any side effect: direct callers
+    # must obey the same constraints the HTTP route enforces.
+    content = _validated_content(content)
+    category = _validated_category(category)
+    rating = _validated_rating(rating)
+
     db = _get_db()
     feedback_id = generate_snowflake_id()
     now = int(time.time() * 1000)

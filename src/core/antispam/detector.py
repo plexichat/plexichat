@@ -101,6 +101,10 @@ def _canonical_text(content: Any) -> str:
     into many (e.g. U+FDFA -> 18 codepoints); without re-truncating, the
     pre-canonicalization cap in ``_check_message`` can be amplified ~18x and
     make every hash/glob/indicator scan work on an unbounded string.
+
+    Invisible characters are removed *before* whitespace is collapsed so that
+    an invisible next to a space cannot leave behind a doubled whitespace run
+    (a normalization bypass that otherwise changes the canonical hash).
     """
     if content is None:
         return ""
@@ -108,11 +112,17 @@ def _canonical_text(content: Any) -> str:
         content = str(content)
     text = unicodedata.normalize("NFKC", content)
     text = text.casefold()
-    # Collapse whitespace first so real tabs/newlines still delimit words,
-    # then remove the invisible characters that would otherwise let one
-    # visible message map to arbitrarily many distinct canonical forms.
-    text = _WS_RUN_PATTERN.sub(" ", text)
+    # Strip invisible format/control characters BEFORE collapsing whitespace.
+    # The two steps do not commute: an invisible code point (e.g. U+200B) is
+    # not \\s, so "buy <ZWSP> crypto" survives the whitespace collapse and only
+    # AFTERwards loses the ZWSP -- leaving a double space in the canonical
+    # form. A sender could splice invisibles next to spaces to generate
+    # arbitrarily many distinct hashes/globs for a visually identical message,
+    # defeating duplicate counters and pattern filters. Removing invisibles
+    # first lets the following whitespace collapse fold those runs back to the
+    # single-space form a human actually sees.
     text = _strip_invisible(text)
+    text = _WS_RUN_PATTERN.sub(" ", text)
     text = text.strip()
     if len(text) > MAX_DM_CONTENT_LENGTH:
         text = text[:MAX_DM_CONTENT_LENGTH]
