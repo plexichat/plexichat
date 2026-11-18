@@ -5,8 +5,10 @@ Read receipt routes - Message acknowledgment and unread counts.
 from src.core.security.hardening import parse_id
 
 from typing import Optional, Dict
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from starlette.concurrency import run_in_threadpool
+
+from src.api.request_guards import read_body_capped
 
 import src.api as api
 import utils.logger as logger
@@ -31,6 +33,18 @@ from src.core.servers.exceptions import (
 from .helpers import require_snowflake
 
 router = APIRouter(tags=["Messages"])
+
+# The bulk ACK body is a small id->cursor map (at most ``max_channels`` short
+# entries). Without an endpoint-level cap, a crafted multi-megabyte JSON object
+# is fully parsed and validated into a Python dict before the handler's entry
+# count check can reject it. Cap the raw bytes first, the same way the channel
+# PATCH route bounds its body.
+MAX_BULK_ACK_BODY = 32 * 1024
+
+
+async def _cap_bulk_ack_body(request: Request) -> None:
+    """Reject oversized bulk-ACK bodies before Pydantic parses them."""
+    await read_body_capped(request, MAX_BULK_ACK_BODY)
 
 
 @router.get(
@@ -454,8 +468,10 @@ async def _dispatch_message_ack_broadcast(
     "/channels/ack/bulk",
     response_model=SuccessResponse,
     summary="Bulk acknowledge messages",
+    dependencies=[Depends(_cap_bulk_ack_body)],
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
+        413: {"model": ErrorResponse, "description": "Payload too large"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )

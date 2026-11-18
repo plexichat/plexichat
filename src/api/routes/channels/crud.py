@@ -281,18 +281,24 @@ class ChannelCRUDMixin(ChannelBase):
                         if ws_is_setup():
                             dispatcher = get_dispatcher()
 
-                            def _get_member_ids_sync():
-                                import src.api as api_module
-
-                                db = api_module.get_db()
-                                try:
-                                    return servers_mod.get_member_user_ids(sid)
-                                finally:
-                                    if db:
-                                        db.close()
+                            # SECURITY: CHANNEL_UPDATE carries the full channel
+                            # representation (name, topic, slowmode, ...). A raw
+                            # get_member_user_ids(sid) fan-out delivered that
+                            # payload to *every* member of the server, including
+                            # members who cannot view a restricted/private
+                            # channel. Scope to viewers with channels.view via
+                            # the shared resolver (which fails closed) so a
+                            # channel's existence and settings are not leaked.
+                            from src.core.events.gateway_emit import (
+                                resolve_channel_event_recipients,
+                            )
 
                             user_ids = bounded_bulk_batch(
-                                await run_in_threadpool(_get_member_ids_sync),
+                                resolve_channel_event_recipients(
+                                    cid,
+                                    guild_id=sid,
+                                    actor_id=current_user.user_id,
+                                ),
                                 "user_ids",
                             )
 
@@ -382,6 +388,31 @@ class ChannelCRUDMixin(ChannelBase):
 
                 sid = channel.server_id
 
+                # Resolve the delete event's audience while the channel still
+                # exists. After the mutation a channels.view lookup can no
+                # longer resolve the row and the shared resolver fails closed
+                # to nobody; resolving first keeps the legitimate clients in
+                # the audience without leaking the deletion to non-viewers.
+                try:
+                    from src.core.events.gateway_emit import (
+                        resolve_channel_event_recipients,
+                    )
+
+                    delete_user_ids = bounded_bulk_batch(
+                        resolve_channel_event_recipients(
+                            cid,
+                            guild_id=sid,
+                            actor_id=current_user.user_id,
+                        ),
+                        "user_ids",
+                    )
+                except Exception as audience_error:
+                    logger.debug(
+                        f"Failed to scope CHANNEL_DELETE recipients for {cid}: "
+                        f"{audience_error}"
+                    )
+                    delete_user_ids = []
+
                 servers_mod.delete_channel(current_user.user_id, cid)
 
                 async def dispatch_channel_delete():
@@ -395,9 +426,9 @@ class ChannelCRUDMixin(ChannelBase):
 
                         if ws_is_setup():
                             dispatcher = get_dispatcher()
-                            user_ids = bounded_bulk_batch(
-                                servers_mod.get_member_user_ids(sid), "user_ids"
-                            )
+                            # Pre-resolved before the delete so the audience
+                            # reflects the channel's pre-deletion viewer set.
+                            user_ids = delete_user_ids
 
                             if user_ids:
                                 event = Event(
