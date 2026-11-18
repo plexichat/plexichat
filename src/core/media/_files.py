@@ -27,6 +27,35 @@ def _is_db_lock_error(exc: BaseException) -> bool:
     return "locked" in msg or "busy" in msg
 
 
+def _is_local_media_reference(url: Any, filename: str) -> bool:
+    """Return True only for a same-origin path that ends in ``filename``.
+
+    ``check_file_access`` used to treat any stored avatar/icon URL whose text
+    ended with a media filename as a public reference to that file. Because
+    those columns can hold attacker-chosen absolute URLs, the suffix match
+    let a caller "publish" somebody else's private attachment by putting its
+    filename in their own server icon URL. Canonical icon/avatar URLs are
+    local API paths (e.g. ``/api/v1/avatars/servers/123``), so restricting the
+    grant to local, path-only references preserves legitimate values while
+    removing the cross-user file-access bypass.
+    """
+    if not isinstance(url, str) or not filename:
+        return False
+    candidate = url.strip()
+    # Only a local absolute path is trusted. Remote URLs (http/https and
+    # protocol-relative ``//host/...``) must never unlock a private file.
+    if not candidate.startswith("/") or candidate.startswith("//"):
+        return False
+    if any(ch in candidate for ch in ("://", "\\", "?", "#", "\x00")):
+        return False
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in candidate):
+        return False
+    segments = [part for part in candidate.split("/") if part]
+    if not segments or ".." in segments or "." in segments:
+        return False
+    return segments[-1] == filename
+
+
 class _FilesMixin:
     """File CRUD + access-control methods mixed into MediaManager."""
 
@@ -647,21 +676,38 @@ class _FilesMixin:
                         f"Participant check failed for conversation {conv_id}: {e}"
                     )
 
-        # 3. Public resources (avatar / server icon)
-        avatar_row = self._db.fetch_one(
-            "SELECT 1 FROM auth_users WHERE avatar_url LIKE '%' || ?",
+        # 3. Public resources (avatar / server icon).
+        # SECURITY: a bare suffix match here was an access-control bypass.
+        # Server ``icon_url`` is an absolute http(s) URL accepted from any
+        # server owner (ServerCreate/UpdateRequest), so an owner could point it
+        # at a *private* attachment's filename and this query would grant every
+        # member of that server access to the file. Avatar URLs have been
+        # abused the same way by flows that store external URLs. Only a local,
+        # path-only reference that names the exact file may confer access.
+        avatar_rows = self._db.fetch_all(
+            "SELECT avatar_url FROM auth_users WHERE avatar_url LIKE '%' || ?",
             (search_filename,),
         )
-        if avatar_row:
+        if any(
+            _is_local_media_reference(
+                row["avatar_url"] if isinstance(row, dict) else row[0], search_filename
+            )
+            for row in (avatar_rows or [])
+        ):
             return True
 
-        icon_row = self._db.fetch_one(
-            "SELECT 1 FROM srv_servers s JOIN srv_members m "
+        icon_rows = self._db.fetch_all(
+            "SELECT s.icon_url FROM srv_servers s JOIN srv_members m "
             "ON s.id = m.server_id "
             "WHERE s.icon_url LIKE '%' || ? AND m.user_id = ? AND s.deleted = 0",
             (search_filename, user_id),
         )
-        if icon_row:
+        if any(
+            _is_local_media_reference(
+                row["icon_url"] if isinstance(row, dict) else row[0], search_filename
+            )
+            for row in (icon_rows or [])
+        ):
             return True
 
         return False
