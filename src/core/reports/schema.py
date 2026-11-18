@@ -131,6 +131,9 @@ CREATE INDEX IF NOT EXISTS idx_message_reports_reported_status
 CREATE INDEX IF NOT EXISTS idx_message_reports_message ON message_reports(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_reports_message_at
     ON message_reports(message_id, reported_at);
+-- Per-message queue filtered by status.
+CREATE INDEX IF NOT EXISTS idx_message_reports_message_status
+    ON message_reports(message_id, status);
 CREATE INDEX IF NOT EXISTS idx_message_reports_priority ON message_reports(priority);
 CREATE INDEX IF NOT EXISTS idx_message_reports_priority_at
     ON message_reports(priority, reported_at);
