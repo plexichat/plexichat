@@ -26,6 +26,12 @@ from .serialization import generate_cache_key, ensure_serializable, reconstruct_
 
 _cache_stats: dict = {"hits": 0, "misses": 0, "errors": 0}
 
+# Hard absolute ceiling (seconds) for an opt-in process-local L1 entry. Even
+# when a caller passes a large ``ttl``/``l1_ttl``, the staged copy dies within
+# this window, bounding how stale another worker's invalidation can leave us.
+# Only opt-in routes are affected; the default Valkey-first path is unchanged.
+_L1_MAX_TTL_SECONDS = 30
+
 # First-parameter names that mark the decorated callable as a method. The
 # bound instance is part of every call's ``args`` but must not participate in
 # the default cache key: its ``repr`` carries the object's memory address, so
@@ -73,12 +79,14 @@ def cached(
         l1_ttl: When set, enable a bounded process-local (L1) read-through tier
             that is checked *before* Valkey. Warm requests avoid the Valkey
             round-trip entirely. The local entry lives at most ``l1_ttl``
-            seconds (and never longer than ``ttl``), which bounds stale reads
-            after another worker invalidates/refreshes the shared entry.
-            Callers MUST key the entry per credential (e.g. via
-            ``authenticated_cache_key``) so one credential's private response
-            is never served from another's L1 entry. Default ``None`` keeps
-            the legacy Valkey-first behaviour for every other cached route.
+            seconds, never longer than ``ttl``, and never longer than the hard
+            ``_L1_MAX_TTL_SECONDS`` ceiling -- bounding stale reads after
+            another worker invalidates/refreshes the shared entry even when a
+            large TTL is configured. Callers MUST key the entry per credential
+            (e.g. via ``authenticated_cache_key``) so one credential's private
+            response is never served from another's L1 entry. Default ``None``
+            keeps the legacy Valkey-first behaviour for every other cached
+            route.
 
     When applied to a method (first parameter named ``self``/``cls``), the
     bound instance is excluded from the default cache key so that cache
@@ -98,11 +106,18 @@ def cached(
             return args
 
         def _local_ttl() -> int:
-            """Bounded L1 lifetime; never outlives the shared Valkey entry."""
+            """Bounded L1 lifetime; never outlives the shared Valkey entry.
+
+            For opt-in routes the lifetime is capped three ways: by ``l1_ttl``,
+            by the shared ``ttl``, and by an absolute hard ceiling. The hard
+            ceiling is what bounds cross-worker staleness when someone asks
+            for a very long TTL. Default (non-opt-in) routes keep the full
+            ``ttl`` so their fallback-tier behaviour is unchanged.
+            """
             cache_ttl = ttl if ttl is not None else default_cache_ttl()
             if l1_ttl is None:
                 return cache_ttl
-            return min(cache_ttl, l1_ttl)
+            return min(cache_ttl, l1_ttl, _L1_MAX_TTL_SECONDS)
 
         @wraps(func)
         async def async_wrapper(*args, **kwargs) -> Any:

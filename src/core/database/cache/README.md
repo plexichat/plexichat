@@ -108,7 +108,15 @@ Default TTLs are resolved from `valkey.ttl.<kind>` in the application config, fa
 | `presence` | 300 seconds |
 | `session` | 1800 seconds |
 
-The in-memory tier caps at 1000 entries with LRU-style eviction when full.
+The in-memory tier caps at 1000 entries (with LRU-style eviction when full)
+and at roughly 8 MiB of cached values; a single value larger than the byte
+ceiling is never staged. Warm L1 reads are lock-free; only expiry cleanup and
+writes/evictions take the tier lock.
+
+For `@cached(l1_ttl=...)`, the process-local entry's lifetime is additionally
+capped at 30 seconds regardless of the configured `ttl`/`l1_ttl`, bounding how
+stale another worker's invalidation can leave a given node. Callers must keep
+partitioning those keys per credential.
 
 Rate limiting fails closed by default on backend errors. Set `rate_limiting.fail_open_on_backend_error: true` in config to fail open.
 
