@@ -11,6 +11,7 @@ import pyotp
 
 from .dataclasses import AdminLoginResult
 from .helpers import _create_otp_challenge, _verify_admin_password
+from .otp_mixin import _check_admin_otp_budget
 
 
 class OTPSetupMixin:
@@ -64,6 +65,11 @@ class OTPSetupMixin:
         from .helpers import _check_otp_attempt_limit
 
         if not _check_otp_attempt_limit(f"disable:{admin_id}"):
+            return False, "Too many OTP attempts"
+        # Keep the disable flow on the same account-wide budget as login/setup.
+        # Without this, an attacker with the password could alternate between
+        # verify-otp and disable-otp and double their guessing allowance.
+        if not _check_admin_otp_budget(admin_id):
             return False, "Too many OTP attempts"
 
         # The password-verification read above already selected every OTP

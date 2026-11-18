@@ -20,6 +20,26 @@ from .session_mixin import SessionMixin
 from .password_mixin import PasswordMixin
 
 
+# A correct password mints a fresh, single-use OTP challenge on every login,
+# and the successful password phase resets the IP login bucket. Bounding
+# guesses per challenge alone therefore does not bound guesses per account:
+# an attacker holding only the password can request unlimited challenges and
+# try one code against each. Every OTP verification entry point (setup, login,
+# and disable) shares this account-scoped budget so rotating challenges or
+# switching flows cannot extend it.
+ADMIN_OTP_MAX_ATTEMPTS = 5
+ADMIN_OTP_WINDOW_SECONDS = 900
+
+
+def _check_admin_otp_budget(admin_id: int) -> bool:
+    """Consume one account-wide OTP guess, independent of the challenge token."""
+    return _check_otp_attempt_limit(
+        f"admin_otp_account:{admin_id}",
+        max_attempts=ADMIN_OTP_MAX_ATTEMPTS,
+        window_seconds=ADMIN_OTP_WINDOW_SECONDS,
+    )
+
+
 class OTPMixin(SessionMixin, PasswordMixin):
     _db: Any
 
@@ -33,6 +53,11 @@ class OTPMixin(SessionMixin, PasswordMixin):
             return AdminLoginResult(
                 success=False, error="Invalid or expired OTP challenge"
             )
+        # Account-scoped budget first: a new challenge must not restore the
+        # guesses already spent against this admin in another flow.
+        if not _check_admin_otp_budget(admin_id):
+            _consume_otp_challenge(challenge_token)
+            return AdminLoginResult(success=False, error="Too many OTP attempts")
         if not _check_otp_attempt_limit(challenge_token):
             _consume_otp_challenge(challenge_token)
             return AdminLoginResult(success=False, error="Too many OTP attempts")
@@ -130,6 +155,11 @@ class OTPMixin(SessionMixin, PasswordMixin):
             return AdminLoginResult(
                 success=False, error="Invalid or expired OTP challenge"
             )
+        # Account-scoped budget first: a fresh challenge obtained by another
+        # password phase must not restore the account's exhausted guess budget.
+        if not _check_admin_otp_budget(admin_id):
+            _consume_otp_challenge(challenge_token)
+            return AdminLoginResult(success=False, error="Too many OTP attempts")
         if not _check_otp_attempt_limit(challenge_token):
             _consume_otp_challenge(challenge_token)
             return AdminLoginResult(success=False, error="Too many OTP attempts")
