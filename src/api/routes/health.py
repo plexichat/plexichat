@@ -13,6 +13,12 @@ from src.api.schemas.common import ErrorResponse
 
 router = APIRouter(tags=["Health"])
 
+# Constant, pre-serialized body. Orchestrators poll this continuously, so
+# returning a ready-made Response skips FastAPI's response-model validation
+# and dict encoding on every hit. The payload is static and public — nothing
+# is user-controlled and nothing is read from config or storage.
+_READY_BODY = b'{"status":"ready"}'
+
 
 @router.get(
     "/ready",
@@ -22,7 +28,7 @@ router = APIRouter(tags=["Health"])
         200: {"description": "Server is alive and accepting requests"},
     },
 )
-async def readiness_probe(response: Response) -> dict:
+async def readiness_probe(response: Response) -> Response:
     """Minimal readiness probe for container orchestrators.
 
     Returns 200 as soon as the HTTP server is bound.  No database,
@@ -31,9 +37,15 @@ async def readiness_probe(response: Response) -> dict:
     health checks (DB, events, cross-worker listener) use ``/health``.
     """
     # Orchestrators poll this continuously; a cached "ready" could outlive a
-    # failing dependency, so never store it.
-    response.headers["Cache-Control"] = "no-store"
-    return {"status": "ready"}
+    # failing dependency, so never store it. The injected Response is kept in
+    # the signature for backwards compatibility; headers are set on the value
+    # actually returned so they reach the client.
+    return Response(
+        content=_READY_BODY,
+        status_code=200,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 class HealthResponse(BaseModel):

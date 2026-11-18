@@ -2,6 +2,9 @@
 Configuration and capabilities routes - Expose public server constants.
 """
 
+import time
+from typing import Optional, Tuple
+
 from fastapi import APIRouter, HTTPException, status
 import utils.config as config
 import utils.logger as logger
@@ -11,6 +14,20 @@ from src.api.schemas.common import ErrorResponse
 from src.api.routes.auth.oauth_config import OAUTH_PROVIDERS
 
 router = APIRouter(tags=["System"])
+
+# These are public, process-wide constants (avatar limits, feature flags,
+# configured OAuth providers, version). Reading the config sections and the
+# auth module on every poll is pure repeated work; snapshot the finished,
+# validated response for a short TTL. A restart always rebuilds it, and the
+# TTL bounds staleness after a config hot-reload.
+_SNAPSHOT_TTL_SECONDS = 30.0
+_snapshot_cache: Optional[Tuple[float, ServerCapabilitiesResponse]] = None
+
+
+def clear_capabilities_snapshot_cache() -> None:
+    """Drop the memoized public-capabilities snapshot (after a config reload)."""
+    global _snapshot_cache
+    _snapshot_cache = None
 
 
 @router.get(
@@ -29,6 +46,12 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
     This includes UI constants like avatar color palettes, size limits,
     and supported features.
     """
+    global _snapshot_cache
+    now = time.monotonic()
+    cached = _snapshot_cache
+    if cached is not None and (now - cached[0]) < _SNAPSHOT_TTL_SECONDS:
+        return cached[1]
+
     try:
         avatar_cfg = config.get("avatars", {})
         auth_cfg = config.get("authentication", {}) or {}
@@ -66,7 +89,7 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
         else:
             age_gate_mode = "checkbox"
 
-        return ServerCapabilitiesResponse(
+        snapshot = ServerCapabilitiesResponse(
             avatars=AvatarConfigResponse(
                 default_colors=avatar_cfg.get(
                     "default_colors",
@@ -85,6 +108,8 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
             oauth_providers=oauth_providers,
             age_gate_mode=age_gate_mode,
         )
+        _snapshot_cache = (now, snapshot)
+        return snapshot
     except Exception as e:
         logger.error(f"Failed to fetch server capabilities: {e}", exc_info=True)
         raise HTTPException(

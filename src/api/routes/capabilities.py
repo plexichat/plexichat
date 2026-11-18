@@ -19,7 +19,7 @@ import time
 from enum import Enum
 from typing import Annotated, Any, Dict, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -194,4 +194,10 @@ async def get_capabilities(
         return bound_capabilities(payload, feature=feature, state=state)
     except Exception as e:
         logger.error(f"Failed to compute capabilities: {e}", exc_info=True)
-        raise
+        # Never propagate the raw exception: internal errors routinely carry
+        # file paths / config details (CWE-209). Keep the full trace in the log
+        # and return a generic, bounded error to the client.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )

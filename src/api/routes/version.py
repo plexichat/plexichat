@@ -9,7 +9,6 @@ from typing import Optional
 import utils.version as version_util
 from utils.version import InvalidVersionError
 import utils.logger as logger
-from src.core.database.cache import cached, invalidate_pattern
 from src.core.security.hardening.text import strip_control_characters
 
 from ..schemas.version import (
@@ -44,6 +43,12 @@ _update_url: Optional[str] = None
 # used for the client's and minimum-supported versions too, and letting it
 # write to this cache made /status report whichever version was converted last.
 _cached_version_info: Optional[VersionInfo] = None
+
+# The server version is fixed for the life of a process (``version.setup()``
+# runs at boot). Build the /version payload once instead of paying the
+# ``@cached`` decorator's Valkey get/set + serialization round trip on every
+# cold cache (the decorator's hour-long TTL also went stale across upgrades).
+_cached_server_version: Optional[ServerVersionResponse] = None
 
 
 def _version_to_info(ver) -> VersionInfo:
@@ -80,7 +85,6 @@ def _server_version_info() -> VersionInfo:
 @router.get(
     "/version", response_model=ServerVersionResponse, summary="Get server version"
 )
-@cached(ttl=3600, prefix="api_version")
 def get_server_version() -> ServerVersionResponse:
     """
     Get server version information.
@@ -88,22 +92,25 @@ def get_server_version() -> ServerVersionResponse:
     Returns the current server version and minimum supported client version.
     Clients should call this on startup to verify compatibility.
     """
-    try:
-        min_supported = version_util.min_supported()
+    global _cached_server_version
+    if _cached_server_version is None:
+        try:
+            min_supported = version_util.min_supported()
 
-        return ServerVersionResponse(
-            version=_server_version_info(),
-            min_supported_version=_version_to_info(min_supported)
-            if min_supported
-            else None,
-            api_version="v1",
-        )
-    except Exception as e:
-        logger.error(f"Error in get_server_version: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
-        )
+            _cached_server_version = ServerVersionResponse(
+                version=_server_version_info(),
+                min_supported_version=_version_to_info(min_supported)
+                if min_supported
+                else None,
+                api_version="v1",
+            )
+        except Exception as e:
+            logger.error(f"Error in get_server_version: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            )
+    return _cached_server_version
 
 
 @router.post(
@@ -264,7 +271,6 @@ def negotiate_version(
 
 
 @router.get("/status", response_model=ServerStatusResponse, summary="Get server status")
-@cached(ttl=10, prefix="api_status")
 def get_server_status() -> ServerStatusResponse:
     """
     Get current server status.
@@ -275,6 +281,10 @@ def get_server_status() -> ServerStatusResponse:
     Recommended polling interval: 60 seconds during normal operation,
     5 seconds when state is not 'running'.
     """
+    # Uptime advances every second, so a 10s cross-process cache (the old
+    # ``@cached(ttl=10, prefix="api_status")``) both rounded uptime and paid a
+    # Valkey round trip. Building the small response directly is cheaper and
+    # keeps uptime accurate; the version payload it embeds is already memoised.
     try:
         ver_info = _server_version_info()
 
@@ -319,7 +329,8 @@ def set_server_state(
     _maintenance_message = message
     _estimated_downtime = estimated_downtime
     _restart_at = restart_at
-    invalidate_pattern("api_status*")
+    # /status is no longer served from the Valkey ``api_status*`` cache, so
+    # there is nothing to invalidate; the next call reads these values directly.
 
 
 def set_update_url(url: Optional[str]):

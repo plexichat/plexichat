@@ -8,11 +8,17 @@ Unlike the public ``GET /capabilities/artifacts`` route (which scrubs
 ``details`` to launcher-safe scalars), this admin route intentionally returns
 raw evaluator details such as the transcription ``provider``: it is
 host-restricted + admin-authenticated and admins need full diagnostics.
+
+The catalog is memoised for a short TTL: evaluating every capability re-runs
+the voice-transcription provider probe, which is identical for every caller.
+The response is also bounded so a registry/config glitch cannot turn this
+diagnostic endpoint into an unbounded JSON document.
 """
 
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Optional, Tuple
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException, status
 
 import utils.logger as logger
 from src.core.artifacts.capabilities import (
@@ -24,6 +30,84 @@ from .utils import check_host_restriction, get_admin_from_token
 from src.api.schemas.common import ErrorResponse
 
 router = APIRouter(prefix="/capabilities", tags=["Admin", "Capabilities"])
+
+# Bounds keep the diagnostic payload finite. They are generous enough that a
+# normal catalog is returned byte-for-byte unchanged.
+MAX_CAPABILITIES = 100
+MAX_FEATURE_LENGTH = 128
+MAX_MESSAGE_LENGTH = 1000
+MAX_DETAIL_KEYS = 20
+MAX_DETAIL_VALUE_LENGTH = 512
+
+# Short TTL bounds staleness after a license/config hot-swap while collapsing
+# a burst of admin-panel polls into one evaluation.
+_CAPABILITIES_TTL_SECONDS = 5.0
+_payload_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+
+
+def clear_admin_capabilities_payload_cache() -> None:
+    """Drop the memoized admin payload (call after a license/config change)."""
+    global _payload_cache
+    _payload_cache = None
+
+
+def _build_payload() -> Dict[str, Any]:
+    """Evaluate and serialize the bounded raw catalog + summary."""
+    capabilities = get_artifact_capabilities()
+
+    capabilities_dict: Dict[str, Any] = {}
+    for feature, info in list(capabilities.items())[:MAX_CAPABILITIES]:
+        if (
+            not isinstance(feature, str)
+            or not feature
+            or len(feature) > MAX_FEATURE_LENGTH
+        ):
+            continue
+        payload = capability_to_dict(info)
+        message = payload.get("message")
+        if isinstance(message, str):
+            payload["message"] = message[:MAX_MESSAGE_LENGTH]
+        details = payload.get("details")
+        if isinstance(details, dict):
+            payload["details"] = {
+                str(key)[:MAX_FEATURE_LENGTH]: (
+                    value[:MAX_DETAIL_VALUE_LENGTH] if isinstance(value, str) else value
+                )
+                for key, value in list(details.items())[:MAX_DETAIL_KEYS]
+            }
+        capabilities_dict[feature] = payload
+
+    def _state_of(feature: str) -> Any:
+        state = capabilities[feature].state
+        return state.value if isinstance(state, CapabilityState) else state
+
+    available = [f for f in capabilities_dict if _state_of(f) == CapabilityState.AVAILABLE.value]
+    unavailable = [f for f in capabilities_dict if _state_of(f) != CapabilityState.AVAILABLE.value]
+
+    summary = {
+        "total": len(capabilities_dict),
+        "available_count": len(available),
+        "unavailable_count": len(unavailable),
+        "available": available,
+        "unavailable": unavailable,
+        "by_state": {
+            state.value: [f for f in capabilities_dict if _state_of(f) == state.value]
+            for state in CapabilityState
+        },
+    }
+    return {"capabilities": capabilities_dict, "summary": summary}
+
+
+def _get_payload() -> Dict[str, Any]:
+    """Return the current admin payload, recomputing at most every TTL."""
+    global _payload_cache
+    now = time.monotonic()
+    cached = _payload_cache
+    if cached is not None and (now - cached[0]) < _CAPABILITIES_TTL_SECONDS:
+        return cached[1]
+    payload = _build_payload()
+    _payload_cache = (now, payload)
+    return payload
 
 
 @router.get(
@@ -40,46 +124,16 @@ async def get_admin_capabilities(request: Request) -> Dict[str, Any]:
     including a top-level summary of how many features are available versus
     unavailable and why.
     """
+    # Security gates stay first and unchanged: host restriction + admin token.
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    get_admin_from_token(request)
 
     try:
-        capabilities = get_artifact_capabilities()
-        capabilities_dict = {
-            feature: capability_to_dict(info) for feature, info in capabilities.items()
-        }
-
-        available = [
-            feature
-            for feature, info in capabilities.items()
-            if info.state == CapabilityState.AVAILABLE
-        ]
-        unavailable = [
-            feature
-            for feature, info in capabilities.items()
-            if info.state != CapabilityState.AVAILABLE
-        ]
-
-        summary = {
-            "total": len(capabilities),
-            "available_count": len(available),
-            "unavailable_count": len(unavailable),
-            "available": available,
-            "unavailable": unavailable,
-            "by_state": {
-                state.value: [
-                    feature
-                    for feature, info in capabilities.items()
-                    if info.state == state
-                ]
-                for state in CapabilityState
-            },
-        }
-
-        return {
-            "capabilities": capabilities_dict,
-            "summary": summary,
-        }
+        return _get_payload()
     except Exception as e:
         logger.error(f"Failed to compute admin capabilities: {e}", exc_info=True)
-        raise
+        # Never leak the raw exception (paths/config internals) to the client.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
