@@ -17,23 +17,73 @@ from typing import Any
 # (or merely whitespace-collapsed) statement therefore lets a destructive
 # statement slip past the denylist simply by hiding its keywords behind a
 # comment used as a separator. Strip comments first, then match.
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_UNTERMINATED_BLOCK_COMMENT_RE = re.compile(r"/\*.*\Z", re.DOTALL)
-_LINE_COMMENT_RE = re.compile(r"--[^\r\n]*")
 
 
 def _normalize_sql(statement: str) -> str:
     """Strip SQL comments and collapse whitespace before denylist matching.
 
-    Replacing each comment with a single space preserves keyword boundaries
-    (so ``DELETE/**/FROM`` is still recognized as ``DELETE FROM``) and makes
-    trailing comments irrelevant: a ``WHERE`` that only exists inside a
-    comment is not a scope restriction and must not disable the guard.
+    PostgreSQL nests block comments: in ``/* a /* b */ c */`` the first ``*/``
+    closes only the inner comment, and the text after it is still a comment to
+    the database. A non-greedy ``/\\*.*?\\*/`` substitution stops at that first
+    ``*/`` and leaves live-looking SQL behind (e.g. ``DELETE /* a /* b */ FROM
+    t */ FROM t`` normalizes to ``DELETE FROM t */ FROM t``), which both hides
+    keywords and can expose a fake ``WHERE`` that is still inside the real
+    comment. Track block-comment depth instead and emit a single separator
+    only when the outermost comment closes.
+
+    That single space preserves keyword boundaries (so ``DELETE/**/FROM`` is
+    still recognized as ``DELETE FROM``) and makes trailing comments
+    irrelevant: a ``WHERE`` that only exists inside a comment is not a scope
+    restriction and must not disable the guard. An unterminated comment
+    swallows everything after it, as it does for the database.
     """
-    text = _BLOCK_COMMENT_RE.sub(" ", statement)
-    text = _UNTERMINATED_BLOCK_COMMENT_RE.sub(" ", text)
-    text = _LINE_COMMENT_RE.sub(" ", text)
-    return " ".join(text.split())
+    out: list[str] = []
+    depth = 0
+    in_line_comment = False
+    index = 0
+    length = len(statement)
+
+    while index < length:
+        char = statement[index]
+        following = statement[index + 1] if index + 1 < length else ""
+
+        if in_line_comment:
+            if char in "\r\n":
+                # The comment ends at the newline; the newline is a separator.
+                out.append(" ")
+                in_line_comment = False
+            index += 1
+            continue
+
+        if depth:
+            # Inside a block comment only /* and */ are significant. PostgreSQL
+            # nests them: -- here is ordinary comment text, not a line comment.
+            if char == "/" and following == "*":
+                depth += 1
+                index += 2
+                continue
+            if char == "*" and following == "/":
+                depth -= 1
+                index += 2
+                if depth == 0:
+                    out.append(" ")
+                continue
+            index += 1
+            continue
+
+        if char == "/" and following == "*":
+            depth = 1
+            index += 2
+            continue
+        if char == "-" and following == "-":
+            in_line_comment = True
+            index += 2
+            continue
+
+        out.append(char)
+        index += 1
+
+    return " ".join("".join(out).split())
 
 
 # Statements that would destroy shared data if executed unscoped. Cleanup
