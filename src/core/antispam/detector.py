@@ -71,21 +71,52 @@ def _bounded_filter_int(value, field, minimum, maximum, default):
 # case change, fullwidth Unicode, zero-width joiners) evade blocking, so every
 # content and pattern comparison below goes through _canonical_text first:
 # NFKC (folds fullwidth/compat forms to ASCII), casefold (stronger than
-# lower()), zero-width/format char removal, whitespace-run collapsing, trim.
+# lower()), invisible/control char removal, whitespace-run collapsing, trim.
 _WS_RUN_PATTERN = re.compile(r"\s+")
-_ZERO_WIDTH_PATTERN = re.compile("[\u200b\u200c\u200d\ufeff\u2060]")
+
+# Unicode general categories that are visually invisible but still change the
+# bytes of a message. Cf = format (zero-width joiners, bidi overrides,
+# direction marks, word joiners, soft hyphen, BOM, ...), Cc = control
+# (C0/C1 including NUL). A sender can splice these anywhere into spam to make
+# the canonical hash/glob/mention scan differ on every send while the text
+# looks identical to the recipient. Removing every Cf/Cc char (rather than a
+# fixed 5-character denylist) closes that whole class of normalization
+# bypasses, not just the handful originally enumerated.
+_INVISIBLE_CATEGORIES = frozenset({"Cf", "Cc"})
+
+
+def _strip_invisible(text: str) -> str:
+    """Drop invisible format/control characters from ``text``."""
+    return "".join(
+        ch for ch in text if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES
+    )
 
 
 def _canonical_text(content: Any) -> str:
-    """Canonicalize text before matching, hashing, or counting."""
+    """Canonicalize text before matching, hashing, or counting.
+
+    Besides folding case/width/whitespace, this strips every invisible format
+    and control character and enforces a hard length bound *after* NFKC. The
+    latter matters because NFKC can expand a single compatibility character
+    into many (e.g. U+FDFA -> 18 codepoints); without re-truncating, the
+    pre-canonicalization cap in ``_check_message`` can be amplified ~18x and
+    make every hash/glob/indicator scan work on an unbounded string.
+    """
     if content is None:
         return ""
     if not isinstance(content, str):
         content = str(content)
     text = unicodedata.normalize("NFKC", content)
     text = text.casefold()
-    text = _ZERO_WIDTH_PATTERN.sub("", text)
-    return _WS_RUN_PATTERN.sub(" ", text).strip()
+    # Collapse whitespace first so real tabs/newlines still delimit words,
+    # then remove the invisible characters that would otherwise let one
+    # visible message map to arbitrarily many distinct canonical forms.
+    text = _WS_RUN_PATTERN.sub(" ", text)
+    text = _strip_invisible(text)
+    text = text.strip()
+    if len(text) > MAX_DM_CONTENT_LENGTH:
+        text = text[:MAX_DM_CONTENT_LENGTH]
+    return text
 
 
 def _is_unique_violation(exc: BaseException) -> bool:
