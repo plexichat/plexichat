@@ -1,4 +1,5 @@
 import json
+import threading
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
@@ -35,6 +36,23 @@ from src.core.security.hardening import (
 from .row_mappers import row_to_application
 from .protocol import ApplicationManagerProtocol
 from .bot_management import invalidate_bot_directory_cache
+from .lookup_cache import (
+    CACHE_MISS,
+    BoundedTTLCache,
+    application_byte_size,
+    copy_application,
+)
+
+
+# Application metadata is read on several hot per-request paths (OAuth,
+# interactions, installations, bot profiles) and the same row is often resolved
+# more than once. A short-lived, bounded per-manager cache collapses those
+# repeats into a single DB read; writes to ``app_applications`` invalidate the
+# affected id explicitly (see ``_invalidate_app_meta_cache`` call sites).
+_APP_META_CACHE_TTL_SECONDS = 2.0
+_APP_META_CACHE_MAX_ENTRIES = 128
+_APP_META_CACHE_MAX_BYTES = 256 * 1024
+_APP_CACHE_INIT_LOCK = threading.Lock()
 
 
 def validate_allowed_scopes_for_app(value: Optional[List[str]]) -> List[str]:
@@ -45,6 +63,32 @@ def validate_allowed_scopes_for_app(value: Optional[List[str]]) -> List[str]:
 
 
 class AppCRUDMixin(ApplicationManagerProtocol):
+    def _get_app_meta_cache(self) -> BoundedTTLCache:
+        """Return this manager's metadata cache, creating it on first use.
+
+        The cache lives on the manager (not at module scope) so separate
+        managers/DB handles never share entries.
+        """
+        cache = getattr(self, "_app_meta_cache", None)
+        if cache is None:
+            with _APP_CACHE_INIT_LOCK:
+                cache = getattr(self, "_app_meta_cache", None)
+                if cache is None:
+                    cache = BoundedTTLCache(
+                        max_entries=_APP_META_CACHE_MAX_ENTRIES,
+                        max_bytes=_APP_META_CACHE_MAX_BYTES,
+                        ttl_seconds=_APP_META_CACHE_TTL_SECONDS,
+                        sizer=application_byte_size,
+                    )
+                    self._app_meta_cache = cache
+        return cache
+
+    def _invalidate_app_meta_cache(
+        self, application_id: Optional[SnowflakeID] = None
+    ) -> None:
+        """Drop cached metadata for ``application_id`` after a write."""
+        self._get_app_meta_cache().invalidate(application_id)
+
     def create_application(
         self,
         owner_id: SnowflakeID,
@@ -144,28 +188,38 @@ class AppCRUDMixin(ApplicationManagerProtocol):
     def get_application(
         self, application_id: SnowflakeID, user_id: Optional[SnowflakeID] = None
     ) -> Optional[Application]:
-        row = self._db.fetch_one(
-            """SELECT id, owner_id, name, description, icon_url, bot_id, bot_public,
-                      bot_require_code_grant, terms_of_service_url, privacy_policy_url,
-                      redirect_uris, allowed_scopes, interactions_endpoint_url,
-                      created_at, updated_at
-               FROM app_applications WHERE id = ?""",
-            (application_id,),
-        )
+        cache = self._get_app_meta_cache()
+        app = cache.get(application_id)
+        if app is CACHE_MISS:
+            row = self._db.fetch_one(
+                """SELECT id, owner_id, name, description, icon_url, bot_id, bot_public,
+                       bot_require_code_grant, terms_of_service_url, privacy_policy_url,
+                       redirect_uris, allowed_scopes, interactions_endpoint_url,
+                       created_at, updated_at
+                FROM app_applications WHERE id = ?""",
+                (application_id,),
+            )
 
-        if not row:
-            return None
+            if not row:
+                # Do not cache misses: a just-created application must be
+                # visible immediately without waiting out the TTL.
+                return None
 
-        app = row_to_application(row)
+            app = row_to_application(row)
+            cache.put(application_id, app)
 
         # SECURITY: when a caller context is supplied, enforce ownership at
         # the core layer so route-level gaps cannot leak application
         # metadata (name, redirect URIs, bot ID, timestamps) to other users.
         # Internal callers omit ``user_id`` and keep unrestricted access.
+        # This check runs on cache hits too: caching the shared row never
+        # bypasses authorization, which stays a per-caller decision.
         if user_id is not None and app.owner_id != user_id:
             raise ApplicationAccessDeniedError("You do not own this application")
 
-        return app
+        # Hand out an independent copy: callers must not be able to mutate the
+        # cached snapshot (redirect_uris / allowed_scopes are mutable lists).
+        return copy_application(app)
 
     def get_user_applications(
         self,
@@ -303,6 +357,9 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             logger.debug(f"Application updated: {application_id}")
             # Name/icon are surfaced in bot directory entries.
             invalidate_bot_directory_cache()
+            # The cached row carries the updated columns; drop it so the read
+            # below (and every later caller) observes the committed write.
+            self._invalidate_app_meta_cache(application_id)
 
         result = self.get_application(application_id)
         if result is None:
@@ -330,6 +387,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         self._db.execute("DELETE FROM app_applications WHERE id = ?", (application_id,))
         logger.info(f"Application deleted: {application_id}")
         invalidate_bot_directory_cache()
+        self._invalidate_app_meta_cache(application_id)
         return True
 
     def _validate_app_name(self, name: str) -> str:
@@ -358,6 +416,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         )
 
         logger.info(f"Client secret regenerated for application: {application_id}")
+        # updated_at is part of the cached metadata snapshot.
+        self._invalidate_app_meta_cache(application_id)
         return client_secret
 
     def create_bot_for_application(
@@ -408,6 +468,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         logger.info(f"Bot created for application {application_id}: {bot.id}")
         # Setting bot_id is what makes an application appear in the directory.
         invalidate_bot_directory_cache()
+        # bot_id is part of the cached metadata snapshot.
+        self._invalidate_app_meta_cache(application_id)
 
         return {
             "bot_id": bot.id,
