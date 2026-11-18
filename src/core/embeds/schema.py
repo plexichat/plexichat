@@ -92,6 +92,9 @@ CREATE INDEX IF NOT EXISTS idx_embed_fields_embed ON embed_fields(embed_id);
 CREATE INDEX IF NOT EXISTS idx_embed_message ON embed_message_embeds(message_id);
 CREATE INDEX IF NOT EXISTS idx_embed_embed ON embed_message_embeds(embed_id);
 CREATE INDEX IF NOT EXISTS idx_embed_preview_cache_hash ON embed_preview_cache(url_hash);
+-- Cache lookups filter url_hash and check expires_at.
+CREATE INDEX IF NOT EXISTS idx_embed_preview_cache_hash_expires
+    ON embed_preview_cache(url_hash, expires_at);
 CREATE INDEX IF NOT EXISTS idx_embed_preview_cache_expires ON embed_preview_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_embed_preview_rate_user ON embed_preview_rate_limits(user_id);
 -- The hot path is (user_id, window_start); the cleanup scans window_start.
