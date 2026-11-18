@@ -46,17 +46,11 @@ def _identified(session_manager, user_id, intents):
 async def test_remote_dm_is_withheld_from_guild_only_intent(session_manager):
     """A DM event from a sibling worker must not reach a guild-only client."""
     dispatcher = GatewayDispatcher(session_manager=session_manager)
-    _, guild_ws = _identified(
-        session_manager, 111, int(GatewayIntent.GUILD_MESSAGES)
-    )
-    _, dm_ws = _identified(
-        session_manager, 222, int(GatewayIntent.DIRECT_MESSAGES)
-    )
+    _, guild_ws = _identified(session_manager, 111, int(GatewayIntent.GUILD_MESSAGES))
+    _, dm_ws = _identified(session_manager, 222, int(GatewayIntent.DIRECT_MESSAGES))
 
     payload = {"id": "1", "channel_id": "999", "content": "private-dm-body"}
-    sent = await dispatcher.dispatch_remote_event(
-        "MESSAGE_CREATE", payload, [111, 222]
-    )
+    sent = await dispatcher.dispatch_remote_event("MESSAGE_CREATE", payload, [111, 222])
 
     assert sent == 1, "only the DIRECT_MESSAGES client should receive the DM"
     guild_ws.send_json.assert_not_called()
@@ -68,9 +62,7 @@ async def test_remote_dm_is_withheld_from_guild_only_intent(session_manager):
 async def test_remote_guild_message_reaches_guild_intent(session_manager):
     """Guild scope is recovered from server_id/guild_id in the payload."""
     dispatcher = GatewayDispatcher(session_manager=session_manager)
-    _, guild_ws = _identified(
-        session_manager, 333, int(GatewayIntent.GUILD_MESSAGES)
-    )
+    _, guild_ws = _identified(session_manager, 333, int(GatewayIntent.GUILD_MESSAGES))
 
     payload = {
         "id": "2",
@@ -109,9 +101,7 @@ async def test_remote_typing_scope_is_preserved(
     _, allowed_ws = _identified(session_manager, 444, int(allowed_intent))
     _, denied_ws = _identified(session_manager, 555, int(denied_intent))
 
-    sent = await dispatcher.dispatch_remote_event(
-        "TYPING_START", data, [444, 555]
-    )
+    sent = await dispatcher.dispatch_remote_event("TYPING_START", data, [444, 555])
 
     assert sent == 1
     allowed_ws.send_json.assert_called_once()
@@ -122,9 +112,7 @@ async def test_remote_typing_scope_is_preserved(
 async def test_remote_event_with_unparseable_scope_does_not_crash(session_manager):
     """A malformed scope never raises out of the pub/sub receive path."""
     dispatcher = GatewayDispatcher(session_manager=session_manager)
-    _, ws = _identified(
-        session_manager, 666, int(GatewayIntent.GUILD_MESSAGES)
-    )
+    _, ws = _identified(session_manager, 666, int(GatewayIntent.GUILD_MESSAGES))
 
     sent = await dispatcher.dispatch_remote_event(
         "MESSAGE_CREATE", {"channel_id": object()}, [666]
@@ -152,9 +140,7 @@ async def test_voice_state_update_loop_is_capped_before_dispatch(monkeypatch):
     """Over-budget VOICE_STATE_UPDATE frames never reach the handler."""
     handler = OpcodeHandler(session_manager=SessionManager())
     op_mock = AsyncMock(return_value=(None, None, None))
-    monkeypatch.setattr(
-        handler._voice_handler, "handle_voice_state_update", op_mock
-    )
+    monkeypatch.setattr(handler._voice_handler, "handle_voice_state_update", op_mock)
 
     conn = SimpleNamespace(
         connection_id="throttle-conn",

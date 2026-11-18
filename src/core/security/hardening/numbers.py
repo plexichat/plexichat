@@ -27,6 +27,9 @@ SNOWFLAKE_MAX = 2**63 - 1
 _ASCII_INTEGER = re.compile(r"[+-]?[0-9]+")
 
 
+_MAX_INTEGER_DIGITS = 4096
+
+
 def bounded_int(
     value: Any,
     field: str,
@@ -64,6 +67,11 @@ def bounded_int(
         stripped = value.strip()
         if not _ASCII_INTEGER.fullmatch(stripped):
             raise HardeningViolation(f"{field} must be an integer")
+        # int() raises an uncaught ValueError past CPython's 4300-digit
+        # conversion cap, so a 5000-digit token escaped as a 500 instead of a
+        # validation error. Nothing this long is in range for any caller.
+        if len(stripped.lstrip("+-")) > _MAX_INTEGER_DIGITS:
+            raise HardeningViolation(f"{field} is outside the allowed range")
         number = int(stripped)
     else:
         try:

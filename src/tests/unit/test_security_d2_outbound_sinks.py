@@ -66,13 +66,11 @@ OPERATOR_OR_SELFTEST_SINKS: dict[str, str] = {
     "src/core/selftest/services/fake_remote.py": "self-test fake remote, not production",
 }
 
-# The inbound federation transport resolves *signed* remote endpoints and must
-# keep the resolved address pinned across redirects; it implements that with a
-# dedicated, stricter path rather than the store-only gate. It is the single
-# API-layer exception and must carry all three companion guards.
-DIRECT_VALIDATOR_API_SINKS: dict[str, str] = {
-    "src/api/routes/federation.py": "signed federation endpoints; pins resolved IP per redirect",
-}
+# The inbound federation transport used to run the validator itself so it could
+# pin the resolved address across redirects. It now delegates to the shared
+# outbound gate (and keeps the pinning for the connection it opens), so no
+# API-layer module reaches the validator directly.
+DIRECT_VALIDATOR_API_SINKS: dict[str, str] = {}
 
 
 def _python_files(base: Path):

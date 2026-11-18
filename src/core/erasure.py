@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
+from src.core.security.hardening import require_identifier
 
 
 # Tables that only exist when an optional domain is installed. A missing table
@@ -534,7 +535,12 @@ def purge_user_personal_rows(db: Any, user_id: int) -> int:
             else ("forwarded_by" if table == "msg_forwarded" else "user_id")
         )
         try:
-            cursor = db.execute(f"DELETE FROM {table} WHERE {column} = ?", (uid,))
+            # Both names come from the fixed tuples above, never from input,
+            # but the audit gate wants the column to pass through the identifier
+            # guard rather than be trusted by convention.
+            cursor = db.execute(
+                f"DELETE FROM {table} WHERE {require_identifier(column)} = ?", (uid,)
+            )
             affected += int(getattr(cursor, "rowcount", 0) or 0)
         except Exception as exc:
             if table not in _RESIDUE_TABLES:

@@ -64,7 +64,9 @@ def test_xlsx_export_keeps_formula_like_text_as_text(db, two_users, server_manag
     )
 
     result = manager.export_xlsx(owner.id, wb_id, sheet_id)
-    sheet = openpyxl.load_workbook(io.BytesIO(base64.b64decode(result["content"]))).active
+    sheet = openpyxl.load_workbook(
+        io.BytesIO(base64.b64decode(result["content"]))
+    ).active
 
     # The text cell must stay literal text, not become an executable formula.
     assert sheet["A1"].data_type == "s"
@@ -125,7 +127,10 @@ def test_cyclic_named_ranges_answer_ref_instead_of_recursing():
         # The public helper takes the same guarded construction path.
         assert (
             compute_value(
-                "formula", None, next(iter(named_ranges)), _resolver,
+                "formula",
+                None,
+                next(iter(named_ranges)),
+                _resolver,
                 named_ranges=named_ranges,
             )
             == "#REF!"

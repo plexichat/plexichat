@@ -70,8 +70,11 @@ class TestCandidateSizeBounds:
     """Oversized candidates and unbounded candidate counts are refused."""
 
     def test_oversized_candidate_rejected(self):
-        huge = "candidate:" + "A" * (MAX_ICE_CANDIDATE_LENGTH + 1) + \
-            " 1 udp 2130706431 192.168.1.100 54321 typ host"
+        huge = (
+            "candidate:"
+            + "A" * (MAX_ICE_CANDIDATE_LENGTH + 1)
+            + " 1 udp 2130706431 192.168.1.100 54321 typ host"
+        )
         with pytest.raises(ICECandidateError):
             ICECandidateParser().parse(huge)
         assert validate_ice_candidate(huge) is False

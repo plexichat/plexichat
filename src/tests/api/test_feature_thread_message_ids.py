@@ -65,7 +65,6 @@ async def test_add_bookmark_stringifies_ids(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_bookmarks_stringifies_ids(monkeypatch):
     import src.api.routes.features.bookmarks as bookmarks_module
-    import src.core.messaging.services.bookmarks as bookmarks_svc_module
 
     class _BookmarkSvc:
         def __init__(self, db, messaging=None):
@@ -83,7 +82,9 @@ async def test_list_bookmarks_stringifies_ids(monkeypatch):
                 }
             ]
 
-    monkeypatch.setattr(bookmarks_svc_module, "BookmarkService", _BookmarkSvc)
+    # Patch the name the route module imported; patching the service module
+    # leaves the already-bound reference in place and runs the real service.
+    monkeypatch.setattr(bookmarks_module, "BookmarkService", _BookmarkSvc)
     monkeypatch.setattr(bookmarks_module.api, "get_db", lambda: object())
     monkeypatch.setattr(bookmarks_module.api, "get_messaging", lambda: None)
 
@@ -106,7 +107,6 @@ async def test_list_bookmarks_stringifies_ids(monkeypatch):
 @pytest.mark.asyncio
 async def test_forward_message_stringifies_ids(monkeypatch):
     import src.api.routes.features.forwarding as forwarding_module
-    import src.core.messaging.services.forwarding as forwarding_svc_module
 
     class _ForwardingSvc:
         def __init__(self, db, messaging=None, participant_svc=None):
@@ -124,7 +124,7 @@ async def test_forward_message_stringifies_ids(monkeypatch):
                 "created_at": 1700000000002,
             }
 
-    monkeypatch.setattr(forwarding_svc_module, "ForwardingService", _ForwardingSvc)
+    monkeypatch.setattr(forwarding_module, "ForwardingService", _ForwardingSvc)
     monkeypatch.setattr(forwarding_module.api, "get_db", lambda: object())
     monkeypatch.setattr(forwarding_module.api, "get_messaging", lambda: None)
 
@@ -152,7 +152,6 @@ async def test_forward_message_stringifies_ids(monkeypatch):
 @pytest.mark.asyncio
 async def test_scheduled_message_routes_stringify_ids(monkeypatch):
     import src.api.routes.features.scheduled_messages as scheduled_module
-    import src.core.messaging.services.scheduled as scheduled_svc_module
 
     row = {
         "id": BIG,
@@ -176,7 +175,7 @@ async def test_scheduled_message_routes_stringify_ids(monkeypatch):
         def list_scheduled_messages(self, user_id, conv_id=None, status=None, limit=50):
             return [dict(row)]
 
-    monkeypatch.setattr(scheduled_svc_module, "ScheduledMessageService", _ScheduledSvc)
+    monkeypatch.setattr(scheduled_module, "ScheduledMessageService", _ScheduledSvc)
     monkeypatch.setattr(scheduled_module.api, "get_db", lambda: object())
     monkeypatch.setattr(scheduled_module.api, "get_messaging", lambda: None)
 
@@ -210,7 +209,6 @@ async def test_scheduled_message_routes_stringify_ids(monkeypatch):
 @pytest.mark.asyncio
 async def test_last_chat_routes_stringify_ids(monkeypatch):
     import src.api.routes.features.last_chat as last_chat_module
-    import src.core.messaging.services.last_chat as last_chat_svc_module
 
     state = {
         "conversation_id": BIG,
@@ -234,7 +232,7 @@ async def test_last_chat_routes_stringify_ids(monkeypatch):
         def get_recent_chats(self, user_id, limit=10):
             return [dict(state)]
 
-    monkeypatch.setattr(last_chat_svc_module, "LastChatService", _LastChatSvc)
+    monkeypatch.setattr(last_chat_module, "LastChatService", _LastChatSvc)
     monkeypatch.setattr(last_chat_module.api, "get_db", lambda: object())
     monkeypatch.setattr(last_chat_module.api, "get_messaging", lambda: None)
 

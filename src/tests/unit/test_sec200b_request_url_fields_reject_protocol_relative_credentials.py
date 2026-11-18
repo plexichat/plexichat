@@ -165,7 +165,9 @@ def test_every_url_field_carries_the_http_url_policy():
     "model,field_name", URL_FIELDS, ids=[f"{m.__name__}.{f}" for m, f in URL_FIELDS]
 )
 @pytest.mark.parametrize("bad_url", BAD_URLS)
-def test_request_url_fields_reject_relative_and_credentialed(model, field_name, bad_url):
+def test_request_url_fields_reject_relative_and_credentialed(
+    model, field_name, bad_url
+):
     with pytest.raises(ValidationError):
         _adapter(model, field_name).validate_python(bad_url)
 

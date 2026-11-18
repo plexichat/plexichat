@@ -211,9 +211,7 @@ def validate_option_text(value: Any, config: Mapping[str, Any]) -> str:
     try:
         text = reject_control_characters(text, "poll option")
     except HardeningViolation as exc:
-        raise InvalidPollOptionError(
-            "Poll option contains control characters"
-        ) from exc
+        raise InvalidPollOptionError("Poll option contains control characters") from exc
     max_len = resolve_field_limits(config).max_option_length
     if len(text) > max_len:
         raise InvalidPollOptionError(f"Poll option cannot exceed {max_len} characters")

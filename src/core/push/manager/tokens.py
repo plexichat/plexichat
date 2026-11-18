@@ -1,7 +1,7 @@
 """Push token lifecycle: registration, lookup, and at-rest migration."""
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, overload
 
 import utils.logger as logger
 from src.core.notifications.manager.push import (
@@ -24,6 +24,18 @@ MAX_P256DH_LENGTH = 512
 MAX_AUTH_LENGTH = 512
 MAX_DEVICE_ID_LENGTH = 256
 MAX_APP_VERSION_LENGTH = 64
+
+
+@overload
+def _bounded_credential(
+    value: Any, field: str, maximum: int, *, required: Literal[True]
+) -> str: ...
+
+
+@overload
+def _bounded_credential(
+    value: Any, field: str, maximum: int, *, required: bool = False
+) -> Optional[str]: ...
 
 
 def _bounded_credential(

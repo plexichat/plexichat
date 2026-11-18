@@ -227,7 +227,14 @@ class SumManagerData(SumManagerProtocol):
                 # into an executable payload when opened in Excel/Sheets. Quote
                 # only genuine string values: numbers, including negatives, keep
                 # their numeric meaning in the CSV.
-                if isinstance(value, str) and text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+                if isinstance(value, str) and text[:1] in (
+                    "=",
+                    "+",
+                    "-",
+                    "@",
+                    "\t",
+                    "\r",
+                ):
                     return "'" + text
                 return text
 

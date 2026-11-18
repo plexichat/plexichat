@@ -158,14 +158,32 @@ def test_page_size_is_bounded_and_snowflakes_validated():
         param = inspect.signature(func).parameters[name].default
         return [m for m in getattr(param, "metadata", []) if type(m).__name__ == cls]
 
-    assert any(getattr(m, "le", None) == 100 for m in _constraint(get_channel_messages, "limit", "Le"))
-    assert any(getattr(m, "ge", None) == 1 for m in _constraint(get_channel_messages, "limit", "Ge"))
+    assert any(
+        getattr(m, "le", None) == 100
+        for m in _constraint(get_channel_messages, "limit", "Le")
+    )
+    assert any(
+        getattr(m, "ge", None) == 1
+        for m in _constraint(get_channel_messages, "limit", "Ge")
+    )
 
     bad = ("0", "-1", "99000000000000000000", "abc")
     for value in bad:
         for coro, args in (
-            (get_channel_messages, (value, 50, None, None, _token_info(SimpleNamespace(id=1, username="u")))),
-            (get_unread_count, (value, _token_info(SimpleNamespace(id=1, username="u")))),
+            (
+                get_channel_messages,
+                (
+                    value,
+                    50,
+                    None,
+                    None,
+                    _token_info(SimpleNamespace(id=1, username="u")),
+                ),
+            ),
+            (
+                get_unread_count,
+                (value, _token_info(SimpleNamespace(id=1, username="u"))),
+            ),
         ):
             with pytest.raises(HTTPException) as exc:
                 asyncio.run(coro(*args))
@@ -221,7 +239,11 @@ def test_warm_read_paths_stay_under_budget(
     async def run():
         samples = {}
         for label, coro, args in (
-            ("messages", ml.get_channel_messages, (str(channel.id), 50, None, None, user)),
+            (
+                "messages",
+                ml.get_channel_messages,
+                (str(channel.id), 50, None, None, user),
+            ),
             ("unread", rr.get_unread_count, (str(channel.id), user)),
         ):
             _clear_caches()

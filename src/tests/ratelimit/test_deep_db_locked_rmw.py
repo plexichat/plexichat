@@ -17,7 +17,6 @@ from src.core.ratelimit.storage.database import DatabaseStorage
 
 def _increment(storage: DatabaseStorage, key: str, n: int) -> int:
     barrier = threading.Barrier(n)
-    out: list = [None] * n
 
     def worker(idx: int) -> None:
         barrier.wait()

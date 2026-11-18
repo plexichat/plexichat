@@ -72,9 +72,7 @@ async def test_artifact_op_rejects_non_snowflake_ids(bad_id):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "bad_actor", [-1, "-2", "1_2", "abc", "9223372036854775808"]
-)
+@pytest.mark.parametrize("bad_actor", [-1, "-2", "1_2", "abc", "9223372036854775808"])
 async def test_artifact_op_rejects_non_snowflake_actor_ids(bad_actor):
     """The actor id is spoofable in the relayed event if left unchecked."""
     payload = _op_payload(actor_id=bad_actor)

@@ -145,13 +145,12 @@ def content_disposition_header(
         title, export_format, max_stem_len=max_stem_len
     )
     kind = "inline" if inline else "attachment"
-    return (
-        f'{kind}; filename="{ascii_name}"; '
-        f"filename*=UTF-8''{utf8_name}"
-    )
+    return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
 
 
-def enforce_export_limit(data: bytes | bytearray, *, max_bytes: int | None = None) -> bytes:
+def enforce_export_limit(
+    data: bytes | bytearray, *, max_bytes: int | None = None
+) -> bytes:
     """Return ``data`` only if it fits the export byte budget."""
     limit = MAX_EXPORT_BYTES if max_bytes is None else max_bytes
     if limit < 0:
@@ -199,9 +198,12 @@ def _address_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
         return False
     if ip.is_multicast or ip.is_unspecified or ip.is_reserved:
         return False
-    if getattr(ip, "ipv4_mapped", None) is not None:
+    # Only IPv6 addresses can carry an IPv4-mapped address. Judging the mapped
+    # IPv4 address directly is what stops ``::ffff:10.0.0.1`` from passing on
+    # the IPv6 object's own flags.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         mapped = ip.ipv4_mapped
-        return bool(mapped and mapped.is_global and not mapped.is_private)
+        return bool(mapped.is_global and not mapped.is_private)
     return True
 
 

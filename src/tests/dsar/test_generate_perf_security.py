@@ -67,9 +67,7 @@ def _parallel_collect_all(db, user_id, config):
     }
     items = list(collector._collectors.items())
     with ThreadPoolExecutor(max_workers=min(8, len(items))) as pool:
-        futures = {
-            pool.submit(c.collect, user_id): name for name, c in items
-        }
+        futures = {pool.submit(c.collect, user_id): name for name, c in items}
         for future in as_completed(futures):
             result[futures[future]] = future.result()
     # Apply the same post-processing the production collector applies.
@@ -213,7 +211,14 @@ def test_bounded_export_fails_closed_on_oversized_category():
     assert data["export_metadata"]["complete"] is False
 
     with pytest.raises(ExportIncompleteError):
-        assert_export_ready(data, {"max_records_per_category": 100, "max_total_records": 100, "max_export_bytes": 10**9})
+        assert_export_ready(
+            data,
+            {
+                "max_records_per_category": 100,
+                "max_total_records": 100,
+                "max_export_bytes": 10**9,
+            },
+        )
 
 
 def test_bounded_export_leaves_normal_payload_untouched():

@@ -31,7 +31,9 @@ def _clean_log_index():
     admin_logs.clear_log_filter_index()
 
 
-def _request(query: bytes = b"", path: str = "/api/v1/admin/logs/latest.log") -> Request:
+def _request(
+    query: bytes = b"", path: str = "/api/v1/admin/logs/latest.log"
+) -> Request:
     return Request(
         {
             "type": "http",
@@ -134,7 +136,9 @@ def test_log_output_matches_reference_scrubbing(tmp_path, monkeypatch):
                 if "12:00:00" in raw
                 else "2026-11-16 12:00:01,000",
                 "level": "INFO" if "INFO" in raw else "ERROR",
-                "message": scrub_control_characters(redact_secrets(raw.split(" - ", 2)[2])),
+                "message": scrub_control_characters(
+                    redact_secrets(raw.split(" - ", 2)[2])
+                ),
                 "raw": scrub_control_characters(redact_secrets(raw)),
             }
         )
@@ -192,7 +196,9 @@ def test_log_path_traversal_rejected_at_route(filename, monkeypatch):
     assert exc.value.status_code == 400
 
 
-@pytest.mark.parametrize("filename", ["../secret.log", "..\\..\\secret.log", "/etc/passwd"])
+@pytest.mark.parametrize(
+    "filename", ["../secret.log", "..\\..\\secret.log", "/etc/passwd"]
+)
 def test_log_path_traversal_rejected_in_core(filename, tmp_path, monkeypatch):
     monkeypatch.setattr(admin_logs, "get_log_dir", lambda: tmp_path)
     with pytest.raises(FileNotFoundError):
@@ -304,5 +310,9 @@ def test_artifact_route_requires_manage_scope(monkeypatch):
     monkeypatch.setattr(api_mod, "get_db", lambda: object())
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(artifacts_route.admin_list_artifacts(_request(path="/api/v1/admin/artifacts")))
+        asyncio.run(
+            artifacts_route.admin_list_artifacts(
+                _request(path="/api/v1/admin/artifacts")
+            )
+        )
     assert exc.value.status_code == 403

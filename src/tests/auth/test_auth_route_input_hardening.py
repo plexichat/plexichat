@@ -144,7 +144,7 @@ class TestTwoFactorAccountStateRecheck:
     async def test_active_account_still_completes(self):
         fake = self._fake_auth(account_locked=False)
         response = await self._complete(fake)
-        assert any(
-            k.lower() == b"set-cookie" for k, _ in response.raw_headers
-        ), "a healthy account must still receive the session cookie"
+        assert any(k.lower() == b"set-cookie" for k, _ in response.raw_headers), (
+            "a healthy account must still receive the session cookie"
+        )
         fake.revoke_session.assert_not_called()

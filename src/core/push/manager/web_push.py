@@ -3,7 +3,7 @@
 import ipaddress
 import json
 import socket
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 from urllib.parse import urlparse
 
 import utils.logger as logger
@@ -223,7 +223,11 @@ class WebPushMixin(PushManagerBase):
                     vapid_private_key=push_config["vapid_private_key"],
                     vapid_claims={"sub": push_config["vapid_subject"]},
                     content_encoding="aes128gcm",
-                    requests_session=session,
+                    # pywebpush annotates this as ``requests.Session`` but only
+                    # calls ``.post()``; the shim above is deliberately not a
+                    # Session (it must never follow a redirect), so cast keeps
+                    # the duck-typed contract explicit instead of lying.
+                    requests_session=cast(Any, session),
                 )
             logger.debug(f"Web Push sent to {endpoint[:16]}...")
             return True

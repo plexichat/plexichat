@@ -107,29 +107,35 @@ def test_erase_purges_api_tokens_and_passkey_challenges(
     db.execute(
         challenge_cols, (1, "challenge-alice", aid, b"secret", NOW + 60_000, NOW)
     )
-    db.execute(
-        challenge_cols, (2, "challenge-bob", bid, b"secret", NOW + 60_000, NOW)
-    )
+    db.execute(challenge_cols, (2, "challenge-bob", bid, b"secret", NOW + 60_000, NOW))
 
     result = erase_user_residue(db, aid)
 
     # Every credential owned by the erased subject is gone.
-    assert db.fetch_one(
-        "SELECT 1 FROM auth_api_access_tokens WHERE created_by = ?", (aid,)
-    ) is None
-    assert db.fetch_one(
-        "SELECT 1 FROM auth_api_access_token_scopes WHERE token_id IN "
-        "(?, ?)",
-        (alice_t1, alice_t2),
-    ) is None
-    assert db.fetch_one(
-        "SELECT 1 FROM auth_api_access_token_events WHERE token_id IN "
-        "(?, ?)",
-        (alice_t1, alice_t2),
-    ) is None
-    assert db.fetch_one(
-        "SELECT 1 FROM auth_passkey_challenges WHERE user_id = ?", (aid,)
-    ) is None
+    assert (
+        db.fetch_one(
+            "SELECT 1 FROM auth_api_access_tokens WHERE created_by = ?", (aid,)
+        )
+        is None
+    )
+    assert (
+        db.fetch_one(
+            "SELECT 1 FROM auth_api_access_token_scopes WHERE token_id IN (?, ?)",
+            (alice_t1, alice_t2),
+        )
+        is None
+    )
+    assert (
+        db.fetch_one(
+            "SELECT 1 FROM auth_api_access_token_events WHERE token_id IN (?, ?)",
+            (alice_t1, alice_t2),
+        )
+        is None
+    )
+    assert (
+        db.fetch_one("SELECT 1 FROM auth_passkey_challenges WHERE user_id = ?", (aid,))
+        is None
+    )
     assert result["credentials"] >= 4  # 2 tokens + scope + event + challenge
 
     # The other subject's credentials are preserved verbatim.
@@ -141,9 +147,7 @@ def test_erase_purges_api_tokens_and_passkey_challenges(
         == f"ENCRYPTED-TOKEN-{bob_t}"
     )
     assert (
-        db.fetch_one(
-            "SELECT 1 FROM auth_passkey_challenges WHERE user_id = ?", (bid,)
-        )
+        db.fetch_one("SELECT 1 FROM auth_passkey_challenges WHERE user_id = ?", (bid,))
         is not None
     )
 

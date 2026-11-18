@@ -378,7 +378,10 @@ class DSARManager:
         request = self._db.fetch_one(
             "SELECT * FROM dsar_requests WHERE id = ?", (req_id,)
         )
-        if not request or validate_export_id(request.get("id"), "stored request id") != req_id:
+        if (
+            not request
+            or validate_export_id(request.get("id"), "stored request id") != req_id
+        ):
             raise ValueError(f"DSAR request {req_id} not found")
 
         if request["status"] not in ("pending", "approved"):

@@ -69,9 +69,9 @@ class TestVerificationTokenReplay:
         # Read the persisted flag directly: get_user() serves a 60s cached
         # snapshot that is not refreshed by the verification write.
         assert (
-            db.fetch_one("SELECT email_verified FROM auth_users WHERE id = ?", (user.id,))[
-                "email_verified"
-            ]
+            db.fetch_one(
+                "SELECT email_verified FROM auth_users WHERE id = ?", (user.id,)
+            )["email_verified"]
             == 1
         )
 
@@ -103,7 +103,9 @@ class TestUnboundedRegistrationFields:
                 password="TestPass123!",
             )
         assert (
-            db.fetch_one("SELECT id FROM auth_users WHERE username = ?", ("hugeemailuser",))
+            db.fetch_one(
+                "SELECT id FROM auth_users WHERE username = ?", ("hugeemailuser",)
+            )
             is None
         )
 

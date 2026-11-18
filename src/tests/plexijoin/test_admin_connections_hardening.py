@@ -108,9 +108,7 @@ def _route_env(db, encryption, *, on_permission=None, patch_encryption=True):
 
 
 def _call_list(req):
-    return asyncio.run(
-        route.list_connections(req, status=None, page=1, per_page=50)
-    )
+    return asyncio.run(route.list_connections(req, status=None, page=1, per_page=50))
 
 
 def _call_get(req, connection_id):

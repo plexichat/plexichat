@@ -160,18 +160,20 @@ def test_unknown_report_returns_404(monkeypatch):
     assert exc.value.status_code == 404
 
 
-def test_invalid_priority_returns_400_and_keeps_stored_value(monkeypatch):
-    # Submit validates priority but the status update did not, so garbage
-    # priority strings were stored in the moderation queue.
+def test_invalid_priority_is_rejected_before_the_row_is_touched(monkeypatch):
+    # Priority used to be an unvalidated string on the update body, so garbage
+    # was written into the moderation queue. It is validated on the request
+    # model now: the body never builds, FastAPI answers 422, and the stored row
+    # keeps its value. (The handler-level 400 that this test used to expect is
+    # unreachable for priority.)
+    from pydantic import ValidationError
+
     db = _make_db()
     monkeypatch.setattr(reports_route.api, "get_db", lambda: db)
-    body = ReportStatusUpdateRequest(status="investigating", priority="garbage")
-    current_user = SimpleNamespace(user_id=ADMIN_ID)
 
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(update_report_status(1, body, current_user))
+    with pytest.raises(ValidationError):
+        ReportStatusUpdateRequest(status="investigating", priority="garbage")
 
-    assert exc.value.status_code == 400
     assert _row(db)["priority"] == "high"
 
 

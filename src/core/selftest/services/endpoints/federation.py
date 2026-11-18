@@ -38,6 +38,9 @@ def federation_headers(shared_key: str, body: bytes):
     """Build the x-plexijoin-* header set for *body*."""
     signature, timestamp, nonce = sign_federation_payload(shared_key, body)
     return {
+        # The inbound federation routes reject a payload unless it declares
+        # JSON, and the signature covers the raw body rather than the type.
+        "Content-Type": "application/json",
         "x-plexijoin-signature": signature,
         "x-plexijoin-timestamp": timestamp,
         "x-plexijoin-nonce": nonce,

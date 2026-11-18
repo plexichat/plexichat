@@ -173,11 +173,11 @@ async def list_approvals(
         params.extend((limit, offset))
 
         rows = db.fetch_all(query, params)
-        return _render_json({"approvals": [_serialize_approval_row(row) for row in rows]})
+        return _render_json(
+            {"approvals": [_serialize_approval_row(row) for row in rows]}
+        )
 
-    body = get_or_render(
-        "approvals", (status, action_type, limit, offset), _render
-    )
+    body = get_or_render("approvals", (status, action_type, limit, offset), _render)
     return Response(content=body, media_type="application/json")
 
 

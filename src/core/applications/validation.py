@@ -238,9 +238,7 @@ def validate_bot_tags(value: Any, *, field: str = "tags") -> List[str]:
     except TypeError as exc:
         raise HardeningViolation(f"{field} must be a list of tags") from exc
     if len(candidates) > MAX_BOT_TAGS:
-        raise HardeningViolation(
-            f"{field} may contain at most {MAX_BOT_TAGS} entries"
-        )
+        raise HardeningViolation(f"{field} may contain at most {MAX_BOT_TAGS} entries")
     tags: List[str] = []
     for index, candidate in enumerate(candidates):
         label = f"{field}[{index}]"
@@ -253,9 +251,7 @@ def validate_bot_tags(value: Any, *, field: str = "tags") -> List[str]:
     return tags
 
 
-def validate_bot_display_name(
-    value: Any, *, field: str = "bot_name"
-) -> Optional[str]:
+def validate_bot_display_name(value: Any, *, field: str = "bot_name") -> Optional[str]:
     """Bound a bot's display name, which is persisted and shown publicly."""
     if value is None:
         return None

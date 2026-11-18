@@ -27,7 +27,12 @@ from src.core.security.hardening import (
     bounded_int,
     require_https_url,
 )
-from src.utils.security import URLValidator, pinned_request_target
+from src.core.security.outbound import (
+    OutboundUrlRejected,
+    parse_outbound_url,
+    reject_forbidden_ip_literal,
+)
+from src.utils.security import pinned_request_target
 
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
@@ -79,21 +84,19 @@ class ResolvedEndpoint:
 def _reject_forbidden_address(host: str, field: str) -> None:
     """Reject an IP literal in a non-global range (defence in depth).
 
-    ``URLValidator.is_private_ip`` already covers loopback, link-local (the
-    ``169.254.0.0/16`` metadata range), CGNAT, NAT64, IPv4-mapped IPv6,
-    multicast, reserved and unspecified addresses. Running it on literals
-    before DNS (and again on the resolved IP) means an obfuscated numeric host
-    that a resolver accepts cannot slip past the gate.
+    The shared outbound gate is the only place allowed to run the IP rules; it
+    covers loopback, link-local (the ``169.254.0.0/16`` metadata range), CGNAT,
+    NAT64, IPv4-mapped IPv6, multicast, reserved and unspecified addresses.
+    Running it on literals before DNS (and the gate then re-checking the
+    resolved address) means an obfuscated numeric host that a resolver accepts
+    cannot slip past.
     """
-    import ipaddress
-
-    candidate = host.strip("[]")
     try:
-        addr = ipaddress.ip_address(candidate)
-    except ValueError:
-        return  # a DNS name; its resolved addresses are checked by the caller
-    if URLValidator().is_private_ip(str(addr)):
-        raise FederationEndpointRejected(f"{field} targets a non-public address")
+        reject_forbidden_ip_literal(host, field)
+    except OutboundUrlRejected as exc:
+        raise FederationEndpointRejected(
+            f"{field} targets a non-public address"
+        ) from exc
 
 
 def resolve_remote_endpoint(
@@ -126,15 +129,16 @@ def resolve_remote_endpoint(
     _reject_forbidden_address(parsed.hostname, field)
 
     try:
-        hostname, address = URLValidator().validate_url_for_request(candidate)
-    except Exception as exc:
+        resolved = parse_outbound_url(candidate, field)
+    except OutboundUrlRejected as exc:
         # Log the reason server-side; the caller sees only the field name.
         logger.warning("Rejected federation %s failing SSRF check: %s", field, exc)
         raise FederationEndpointRejected(
             f"{field} resolves to a forbidden address"
         ) from exc
-    _reject_forbidden_address(address, field)
-    return ResolvedEndpoint(url=candidate, hostname=hostname, address=address)
+    return ResolvedEndpoint(
+        url=resolved.url, hostname=resolved.hostname, address=resolved.address
+    )
 
 
 def validate_redirect_chain(

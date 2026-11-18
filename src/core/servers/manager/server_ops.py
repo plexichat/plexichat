@@ -341,7 +341,10 @@ class ServerOpsMixin(ServerProtocol):
             changes["name"] = {"old": server.name, "new": name}
 
         if description is not None:
-            description = validate_server_description(description)
+            # The validator only returns None for a None input, so the fallback
+            # below never changes the value; it keeps the encrypted-write path
+            # typed as ``str`` instead of ``str | None``.
+            description = validate_server_description(description) or description
             if self._encrypt_descriptions:
                 from src.utils.encryption import encrypt_data
 

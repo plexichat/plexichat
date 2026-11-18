@@ -66,17 +66,17 @@ def _mock_fetch(data=_PNG, content_type="image/png", **meta):
 
 
 class TestMemoryCacheHits:
-    def test_second_request_served_without_second_fetch_or_dns(
-        self, db, tmp_path
-    ):
+    def test_second_request_served_without_second_fetch_or_dns(self, db, tmp_path):
         proxy = _make_proxy(db, tmp_path)
         fetch = _mock_fetch()
         validate = Mock(return_value=("example.com", "93.184.216.34"))
         structure = Mock(wraps=proxy._assert_safe_url_structure)
 
-        with patch.object(proxy, "_fetch_url", fetch), patch.object(
-            proxy._url_validator, "validate_url_for_request", validate
-        ), patch.object(proxy, "_assert_safe_url_structure", structure):
+        with (
+            patch.object(proxy, "_fetch_url", fetch),
+            patch.object(proxy._url_validator, "validate_url_for_request", validate),
+            patch.object(proxy, "_assert_safe_url_structure", structure),
+        ):
             first = proxy.get_content(_URL)
             second = proxy.get_content(_URL)
 
@@ -90,10 +90,13 @@ class TestMemoryCacheHits:
 
     def test_cache_stats_report_bounded_entry(self, db, tmp_path):
         proxy = _make_proxy(db, tmp_path)
-        with patch.object(proxy, "_fetch_url", _mock_fetch()), patch.object(
-            proxy._url_validator,
-            "validate_url_for_request",
-            return_value=("example.com", "93.184.216.34"),
+        with (
+            patch.object(proxy, "_fetch_url", _mock_fetch()),
+            patch.object(
+                proxy._url_validator,
+                "validate_url_for_request",
+                return_value=("example.com", "93.184.216.34"),
+            ),
         ):
             proxy.get_content(_URL)
         stats = proxy.content_cache_stats()
@@ -107,10 +110,13 @@ class TestSecurityPreserved:
     def test_ssrf_scheme_gate_still_rejects_on_every_request(self, db, tmp_path):
         proxy = _make_proxy(db, tmp_path)
         # A cached legitimate URL must not make a forbidden URL serveable.
-        with patch.object(proxy, "_fetch_url", _mock_fetch()), patch.object(
-            proxy._url_validator,
-            "validate_url_for_request",
-            return_value=("example.com", "93.184.216.34"),
+        with (
+            patch.object(proxy, "_fetch_url", _mock_fetch()),
+            patch.object(
+                proxy._url_validator,
+                "validate_url_for_request",
+                return_value=("example.com", "93.184.216.34"),
+            ),
         ):
             proxy.get_content(_URL)
 
@@ -126,8 +132,9 @@ class TestSecurityPreserved:
         proxy = _make_proxy(db, tmp_path)
         fetch = _mock_fetch()
         validate = Mock(side_effect=ValueError("resolves to forbidden IP 10.0.0.5"))
-        with patch.object(proxy, "_fetch_url", fetch), patch.object(
-            proxy._url_validator, "validate_url_for_request", validate
+        with (
+            patch.object(proxy, "_fetch_url", fetch),
+            patch.object(proxy._url_validator, "validate_url_for_request", validate),
         ):
             with pytest.raises(ProxyFetchError, match="forbidden IP"):
                 proxy.get_content(_URL)
@@ -143,10 +150,13 @@ class TestSecurityPreserved:
         # just like the production fetch path does.
         wrapper = ResponseStreamWrapper(iter([big]), max_size=64)
         fetch = Mock(return_value=("image/png", wrapper))
-        with patch.object(proxy, "_fetch_url", fetch), patch.object(
-            proxy._url_validator,
-            "validate_url_for_request",
-            return_value=("example.com", "93.184.216.34"),
+        with (
+            patch.object(proxy, "_fetch_url", fetch),
+            patch.object(
+                proxy._url_validator,
+                "validate_url_for_request",
+                return_value=("example.com", "93.184.216.34"),
+            ),
         ):
             with pytest.raises(ProxyCacheError):
                 proxy.get_content(_URL)
@@ -155,10 +165,13 @@ class TestSecurityPreserved:
     def test_failed_fetch_is_not_cached(self, db, tmp_path):
         proxy = _make_proxy(db, tmp_path)
         failing = Mock(side_effect=ProxyFetchError("boom", _URL))
-        with patch.object(proxy, "_fetch_url", failing), patch.object(
-            proxy._url_validator,
-            "validate_url_for_request",
-            return_value=("example.com", "93.184.216.34"),
+        with (
+            patch.object(proxy, "_fetch_url", failing),
+            patch.object(
+                proxy._url_validator,
+                "validate_url_for_request",
+                return_value=("example.com", "93.184.216.34"),
+            ),
         ):
             with pytest.raises(ProxyFetchError):
                 proxy.get_content(_URL)
@@ -179,24 +192,28 @@ class TestSecurityPreserved:
     )
     def test_cache_control_honoured(self, db, tmp_path, cache_control, cached):
         proxy = _make_proxy(db, tmp_path)
-        with patch.object(
-            proxy, "_fetch_url", _mock_fetch(cache_control=cache_control)
-        ), patch.object(
-            proxy._url_validator,
-            "validate_url_for_request",
-            return_value=("example.com", "93.184.216.34"),
+        with (
+            patch.object(proxy, "_fetch_url", _mock_fetch(cache_control=cache_control)),
+            patch.object(
+                proxy._url_validator,
+                "validate_url_for_request",
+                return_value=("example.com", "93.184.216.34"),
+            ),
         ):
             proxy.get_content(_URL)
         assert (proxy.content_cache_stats()["size"] == 1) is cached
 
     def test_max_age_shortens_memory_ttl(self, db, tmp_path):
         proxy = _make_proxy(db, tmp_path, cache_ttl=86400)
-        with patch.object(
-            proxy, "_fetch_url", _mock_fetch(cache_control="public, max-age=0")
-        ), patch.object(
-            proxy._url_validator,
-            "validate_url_for_request",
-            return_value=("example.com", "93.184.216.34"),
+        with (
+            patch.object(
+                proxy, "_fetch_url", _mock_fetch(cache_control="public, max-age=0")
+            ),
+            patch.object(
+                proxy._url_validator,
+                "validate_url_for_request",
+                return_value=("example.com", "93.184.216.34"),
+            ),
         ):
             proxy.get_content(_URL)
             # max-age=0 → expires immediately → next call is a miss and refetches.
@@ -205,10 +222,13 @@ class TestSecurityPreserved:
 
     def test_invalidate_drops_memory_entry(self, db, tmp_path):
         proxy = _make_proxy(db, tmp_path)
-        with patch.object(proxy, "_fetch_url", _mock_fetch()), patch.object(
-            proxy._url_validator,
-            "validate_url_for_request",
-            return_value=("example.com", "93.184.216.34"),
+        with (
+            patch.object(proxy, "_fetch_url", _mock_fetch()),
+            patch.object(
+                proxy._url_validator,
+                "validate_url_for_request",
+                return_value=("example.com", "93.184.216.34"),
+            ),
         ):
             proxy.get_content(_URL)
 

@@ -70,7 +70,13 @@ def test_get_thread_messages_strips_ciphertext(monkeypatch):
         },
     ]
     _patch_threads(monkeypatch, _StubThreads(messages=stored))
-    result = _run(threads_route.get_thread_messages("5", current_user=_user()))
+    # The route's pagination parameters default to ``Query(...)`` objects, which
+    # only FastAPI resolves, so a direct call has to pass them.
+    result = _run(
+        threads_route.get_thread_messages(
+            "5", limit=50, before_id=None, after_id=None, current_user=_user()
+        )
+    )
     assert len(result) == 2
     for msg in result:
         assert "content_encrypted" not in msg

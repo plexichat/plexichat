@@ -27,6 +27,10 @@ class TestPlexiJoinIdContract:
         patchers = (
             patch.object(plexijoin_routes, "check_host_restriction"),
             patch.object(plexijoin_routes, "get_admin_from_token", return_value=1),
+            # The connections endpoints authorize through require_admin_permission,
+            # which resolves the token inside ``admin.utils``; the route module's
+            # own reference is what has to be stubbed here.
+            patch.object(plexijoin_routes, "require_admin_permission", return_value=1),
             patch.object(
                 plexijoin_routes, "_get_plexijoin_manager", return_value=manager
             ),
@@ -51,7 +55,15 @@ class TestPlexiJoinIdContract:
         }
 
         class _Manager:
-            def list_connections(self, status=None, page=1, per_page=50):
+            def __init__(self):
+                self.decrypt_keys = None
+
+            def list_connections(
+                self, status=None, page=1, per_page=50, decrypt_keys=True
+            ):
+                # Admin reads never need the shared key, so the route must ask
+                # for the undecrypted rows and skip the AEAD work.
+                self.decrypt_keys = decrypt_keys
                 return {
                     "connections": [connection],
                     "total": 1,
@@ -60,13 +72,16 @@ class TestPlexiJoinIdContract:
                     "pages": 1,
                 }
 
-            def get_connection(self, connection_id):
+            def get_connection(self, connection_id, decrypt_keys=True):
+                self.decrypt_keys = decrypt_keys
                 return connection
 
-        client, patchers = self._client(_Manager())
+        manager = _Manager()
+        client, patchers = self._client(manager)
         try:
             listed = client.get("/api/v1/admin/plexijoin/connections")
             assert listed.status_code == 200, listed.text
+            assert manager.decrypt_keys is False
             row = listed.json()["connections"][0]
             assert isinstance(row["created_by"], str)
             assert row["created_by"] == str(BIG)

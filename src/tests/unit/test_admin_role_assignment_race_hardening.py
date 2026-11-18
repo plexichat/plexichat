@@ -104,8 +104,14 @@ def _request() -> Request:
     )
 
 
-def _seed(*, actor_position=50, target_position=10, role_position=5,
-          permissions=None, is_system=0):
+def _seed(
+    *,
+    actor_position=50,
+    target_position=10,
+    role_position=5,
+    permissions=None,
+    is_system=0,
+):
     db = _DB()
     for admin_id in (1, 2):
         db.conn.execute(
@@ -133,9 +139,7 @@ def _patches(db):
         patch.object(routes, "check_host_restriction"),
         patch.object(routes, "_require_role_manager", return_value=1),
         patch("src.api.get_db", return_value=db),
-        patch(
-            "src.core.admin.permissions.can_delegate_permissions", return_value=True
-        ),
+        patch("src.core.admin.permissions.can_delegate_permissions", return_value=True),
         patch.object(routes, "invalidate_privilege_caches"),
         patch("src.core.admin.permissions.log_admin_action"),
     )
@@ -220,9 +224,7 @@ class TestRevocationWriteGuard:
                 "(id, name, permissions, created_at, created_by, position) "
                 "VALUES (22, 'elevated', '{}', 0, 1, 60)"
             )
-            conn.execute(
-                "INSERT INTO admin_role_assignments VALUES (2, 22, 0, 1)"
-            )
+            conn.execute("INSERT INTO admin_role_assignments VALUES (2, 22, 0, 1)")
 
         db.after_hierarchy = promote_target
         with pytest.raises(HTTPException) as exc:

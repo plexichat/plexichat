@@ -168,9 +168,7 @@ def _handlers():
 
 
 @pytest.mark.parametrize("name,handler", _handlers())
-def test_warm_me_reads_are_fast_and_identical(
-    monkeypatch, slow_valkey, name, handler
-):
+def test_warm_me_reads_are_fast_and_identical(monkeypatch, slow_valkey, name, handler):
     messaging, auth = _channel_modules()
     _install(
         monkeypatch,

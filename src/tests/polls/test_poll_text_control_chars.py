@@ -17,14 +17,14 @@ from src.core.polls.limits import validate_option_text, validate_question_text
 
 
 CONTROL_VALUES = [
-    "Yes\nNo",            # LF — log/frame forging
-    "Yes\rNo",            # CR
-    "Yes\x00No",          # NUL
-    "Yes\tNo",            # TAB
-    "Yes\x7fNo",          # DEL
-    "Yes\x85No",          # C1 NEL — treated as a newline by many shippers
-    "Yes\u2028No",        # LINE SEPARATOR
-    "Yes\u2029No",        # PARAGRAPH SEPARATOR
+    "Yes\nNo",  # LF — log/frame forging
+    "Yes\rNo",  # CR
+    "Yes\x00No",  # NUL
+    "Yes\tNo",  # TAB
+    "Yes\x7fNo",  # DEL
+    "Yes\x85No",  # C1 NEL — treated as a newline by many shippers
+    "Yes\u2028No",  # LINE SEPARATOR
+    "Yes\u2029No",  # PARAGRAPH SEPARATOR
 ]
 
 

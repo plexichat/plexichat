@@ -113,6 +113,25 @@ def parse_outbound_url(value: str, field: str = "url") -> OutboundUrl:
     return OutboundUrl(url=candidate, hostname=hostname, address=address)
 
 
+def reject_forbidden_ip_literal(host: str, field: str = "url") -> None:
+    """Reject an IP literal in a non-global range, before any DNS lookup.
+
+    A resolver only ever sees names, and a numeric host can be handed to one in
+    several forms (decimal, hex, shortened), so literal addresses are checked on
+    their face here as well as after resolution. A non-literal passes through
+    untouched: the caller still runs ``parse_outbound_url`` on it.
+    """
+    import ipaddress
+
+    candidate = host.strip("[]")
+    try:
+        addr = ipaddress.ip_address(candidate)
+    except ValueError:
+        return
+    if URLValidator().is_private_ip(str(addr)):
+        raise OutboundUrlRejected(f"{field} targets a non-public address", field=field)
+
+
 def resolve_outbound_url(value: Optional[str], field: str = "url") -> Optional[str]:
     """``parse_outbound_url`` for optional fields, returning the URL string.
 

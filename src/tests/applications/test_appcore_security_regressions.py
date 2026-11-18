@@ -23,18 +23,14 @@ class TestCommandUpdatePermissionValidation:
         from src.core.applications.commands.validation import validate_command_update
 
         for bad in ("*", "-1", "admin", "8;drop", "9" * 100):
-            valid, issues = validate_command_update(
-                {"default_member_permissions": bad}
-            )
+            valid, issues = validate_command_update({"default_member_permissions": bad})
             assert valid is False
             assert any("permission" in issue.lower() for issue in issues)
 
     def test_update_validator_accepts_valid_permission_string(self):
         from src.core.applications.commands.validation import validate_command_update
 
-        valid, issues = validate_command_update(
-            {"default_member_permissions": "8"}
-        )
+        valid, issues = validate_command_update({"default_member_permissions": "8"})
         assert valid is True, issues
 
     def test_update_command_does_not_write_invalid_permission_string(self):
@@ -143,9 +139,7 @@ class TestBotDataBounds:
         )
 
         with pytest.raises(HardeningViolation):
-            manager.update_bot_profile(
-                application_id=1, user_id=2, tags=["x"] * 100
-            )
+            manager.update_bot_profile(application_id=1, user_id=2, tags=["x"] * 100)
         db.execute.assert_not_called()
 
     def test_approve_bot_rejects_unbounded_bot_name(self):

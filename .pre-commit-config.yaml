@@ -54,6 +54,10 @@ repos:
         exclude: |
           (?x)^(
               src/tests/.*|
+              # Test modules that live next to the code they exercise hold
+              # deliberate fake credentials (leak-detection fixtures).
+              src/.*/tests?/.*|
+              src/.*/test_.*\.py|
               docs/.*|
               .*/README\.md|
               \.bandit-baseline\.json|

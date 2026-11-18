@@ -493,9 +493,29 @@ class TestServersManagerPropertyBased:
             assert sanitized == name.strip()
         except InvalidServerNameError:
             stripped = name.strip()
-            assert not stripped or len(stripped) < 2 or len(stripped) > 100
+            # Control characters are rejected independently of length: they can
+            # terminate a header or forge a log line.
+            # Checked on the raw input: ``strip()`` already removed the
+            # trailing \n/\r that the validator rejects.
+            has_control = any(
+                ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ch in "\u2028\u2029"
+                for ch in name
+            )
+            assert (
+                not stripped or len(stripped) < 2 or len(stripped) > 100 or has_control
+            )
 
-    @given(st.text(min_size=2, max_size=100).filter(lambda x: x.strip()))
+    @given(
+        st.text(min_size=2, max_size=100).filter(
+            lambda x: (
+                x.strip()
+                and not any(
+                    ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or c in "\u2028\u2029"
+                    for c in x
+                )
+            )
+        )
+    )
     @settings(max_examples=40, deadline=None)
     @example("Valid Server")
     @example("My Gaming Server 123")

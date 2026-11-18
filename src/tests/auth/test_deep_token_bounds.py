@@ -18,6 +18,13 @@ def _secret():
     return tokens.generate_token_secret(32)
 
 
+# Parametrize ids are built at import time, so a random secret differed between
+# pytest-xdist workers and the whole shard failed with "Different tests were
+# collected between gw0 and gw1". A fixed, correctly-shaped secret keeps the
+# ids identical everywhere.
+_FIXED_SECRET = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0UvW"
+
+
 def test_minted_tokens_parse():
     for token, kind in [
         (tokens.create_session_token(123)[0], "session"),
@@ -41,17 +48,17 @@ def test_minted_tokens_parse():
         12345,
         "",
         "x" * (tokens.MAX_TOKEN_LENGTH + 1),
-        "0." + _secret(),
-        "0001." + _secret(),
-        "-1." + _secret(),
-        "+1." + _secret(),
-        "1_2." + _secret(),
-        " " + "1." + _secret(),
-        "1." + _secret() + "\n",
+        "0." + _FIXED_SECRET,
+        "0001." + _FIXED_SECRET,
+        "-1." + _FIXED_SECRET,
+        "+1." + _FIXED_SECRET,
+        "1_2." + _FIXED_SECRET,
+        " " + "1." + _FIXED_SECRET,
+        "1." + _FIXED_SECRET + "\n",
         "1.short",
         "1." + "!" * tokens.MIN_TOKEN_SECRET_LENGTH,
-        "1." + _secret() + ".extra",
-        "unknown.1." + _secret(),
+        "1." + _FIXED_SECRET + ".extra",
+        "unknown.1." + _FIXED_SECRET,
     ],
 )
 def test_malformed_tokens_rejected(token):

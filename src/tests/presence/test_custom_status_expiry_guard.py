@@ -13,13 +13,13 @@ from src.core.presence.exceptions import InvalidStatusError
 
 
 BAD_EXPIRIES = [
-    "not-a-number",   # junk string -> int() ValueError on read
-    "1_000",          # int() accepts PEP-515 underscores; not a real timestamp
-    "١٢٣",            # Arabic-Indic digits — homoglyph, not ASCII
-    1.5,              # fraction must not be truncated
-    True,             # bool is not an integer timestamp
-    2**63,            # above signed-64-bit -> DB overflow
-    -(10**9),         # negative epoch
+    "not-a-number",  # junk string -> int() ValueError on read
+    "1_000",  # int() accepts PEP-515 underscores; not a real timestamp
+    "١٢٣",  # Arabic-Indic digits — homoglyph, not ASCII
+    1.5,  # fraction must not be truncated
+    True,  # bool is not an integer timestamp
+    2**63,  # above signed-64-bit -> DB overflow
+    -(10**9),  # negative epoch
 ]
 
 
@@ -29,9 +29,7 @@ class TestCustomStatusExpiryGuard:
     def test_invalid_expiry_rejected(self, fresh_users, bad):
         user1, _user2, presence = fresh_users
         with pytest.raises(InvalidStatusError):
-            presence.set_custom_status(
-                user_id=user1.id, text="status", expires_at=bad
-            )
+            presence.set_custom_status(user_id=user1.id, text="status", expires_at=bad)
 
     def test_valid_future_expiry_accepted(self, fresh_users):
         user1, _user2, presence = fresh_users
