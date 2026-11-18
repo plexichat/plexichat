@@ -87,6 +87,17 @@ class SumManagerExchange(SumManagerProtocol):
                         value = self._decode(cell["value_json"])
                         if value is not None:
                             target_cell.value = value
+                            # SECURITY (spreadsheet/formula injection on export):
+                            # openpyxl infers a formula for any string cell whose
+                            # text starts with "=". A *text* cell can legitimately
+                            # hold such a string (the operation write path accepts
+                            # arbitrary text values), so writing it verbatim would
+                            # make that text execute as a live formula when the
+                            # exported workbook is opened. Keep the exact text but
+                            # force a string cell. Genuine formula cells (branch
+                            # above) are still exported as live formulas.
+                            if target_cell.data_type == "f":
+                                target_cell.data_type = "s"
             buffer = io_module.BytesIO()
             wb.save(buffer)
             content = base64_module.b64encode(buffer.getvalue()).decode("ascii")

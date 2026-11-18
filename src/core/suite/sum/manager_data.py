@@ -219,7 +219,17 @@ class SumManagerData(SumManagerProtocol):
                 # trailing ``.0`` so ``7*3`` exports as ``21``, not ``21.0``.
                 if isinstance(value, float) and value.is_integer():
                     return str(int(value))
-                return str(value)
+                text = str(value)
+                # SECURITY (CSV formula injection): spreadsheet applications read
+                # a leading =, +, - or @ (and tab/CR) as the start of a formula.
+                # A text cell -- or a string computed by a formula -- can carry
+                # such a prefix, so writing it verbatim would turn this export
+                # into an executable payload when opened in Excel/Sheets. Quote
+                # only genuine string values: numbers, including negatives, keep
+                # their numeric meaning in the CSV.
+                if isinstance(value, str) and text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+                    return "'" + text
+                return text
 
             # Formula cells export their computed value (like a spreadsheet),
             # so round-tripping through CSV preserves the numbers users see.

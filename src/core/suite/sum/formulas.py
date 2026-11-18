@@ -55,8 +55,70 @@ from ._formula_shared import (
 )
 
 
+# Named ranges are workbook-controlled data: ``parse_cell_ref`` follows a
+# named range's definition recursively, so a self-reference or a cycle such as
+# {"A": "B", "B": "A"} exhausted the Python stack with a ``RecursionError``.
+# The evaluator's reference handlers only catch ``ValueError``, so that
+# exception escaped the engine and could take down a viewport/export read.
+# Resolve every definition down to a concrete cell reference before handing
+# the table to the evaluator, and drop definitions that cycle, run too long,
+# or never terminate. Referencing a dropped name still answers #REF! through
+# the normal path; it just cannot recurse forever.
+_MAX_NAMED_RANGE_HOPS = 128
+
+
+def _safe_named_ranges(named_ranges: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Flatten named-range aliases into bounded, acyclic cell references."""
+    if not named_ranges:
+        return {}
+    safe: Dict[str, str] = {}
+
+    def is_direct_ref(text: str) -> bool:
+        try:
+            parse_cell_ref(text)
+        except (ValueError, TypeError):
+            return False
+        return True
+
+    for name, definition in named_ranges.items():
+        if not isinstance(name, str) or not isinstance(definition, str):
+            continue
+        current: Optional[str] = definition
+        seen: set = set()
+        for _ in range(_MAX_NAMED_RANGE_HOPS):
+            if current is None:
+                break
+            key = current.upper()
+            if key in seen:
+                # Cycle: drop the alias so it resolves to #REF!, not a loop.
+                current = None
+                break
+            seen.add(key)
+            if is_direct_ref(current):
+                safe[name] = current
+                break
+            following = named_ranges.get(key)
+            if not isinstance(following, str):
+                current = None
+                break
+            current = following
+    return safe
+
+
 class FormulaEvaluator(FormulaEvaluatorAdvanced, FormulaEvaluatorCore):
     """Bounded lazy evaluator over parsed formula ASTs."""
+
+    def __init__(
+        self,
+        resolver: CellResolver,
+        dependencies: int = MAX_DEPENDENCIES,
+        named_ranges: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            resolver,
+            dependencies=dependencies,
+            named_ranges=_safe_named_ranges(named_ranges),
+        )
 
 
 def compute_value(
