@@ -95,6 +95,8 @@ CREATE INDEX IF NOT EXISTS idx_message_reports_reported ON message_reports(repor
 CREATE INDEX IF NOT EXISTS idx_message_reports_message ON message_reports(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_reports_priority ON message_reports(priority);
 CREATE INDEX IF NOT EXISTS idx_message_reports_assigned ON message_reports(assigned_to);
+-- Moderation queues order by reported_at.
+CREATE INDEX IF NOT EXISTS idx_message_reports_reported_at ON message_reports(reported_at);
 
 -- User reports
 CREATE TABLE IF NOT EXISTS user_reports (
@@ -124,6 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id
 CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports(reported_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_reports_priority ON user_reports(priority);
 CREATE INDEX IF NOT EXISTS idx_user_reports_assigned ON user_reports(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_user_reports_reported_at ON user_reports(reported_at);
 """
 
 
