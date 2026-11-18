@@ -6,6 +6,7 @@ verification (uid-bound), auth fallback, per-file access checks,
 malware-scan gating and range-aware streaming.
 """
 
+import io
 import unicodedata
 from typing import Optional
 
@@ -31,6 +32,17 @@ _media_metadata_cache = LRUCache(maxsize=1024)
 # so recomputing the unicode normalisation, regex sanitisation and content-type
 # verdict on every range/chunk request is pure waste.
 _media_response_meta_cache = LRUCache(maxsize=1024)
+
+# Immutable-attachment body cache. Uploaded media is content-addressed and
+# never mutated in place, so a body keyed by (stored filename, file id) is
+# byte-for-byte stable. Crucially, every security gate in the handler below --
+# signed-URL verification, authentication, per-file access (IDOR) check and the
+# fresh malware-scan/deleted check -- still runs on EVERY request *before* this
+# cache is consulted. A hit therefore only removes repeated storage path
+# resolution / stat / open syscalls for small files; it never bypasses access
+# control. Memory is bounded by both the entry cap and the per-file size cap.
+_MEDIA_BODY_MAX_FILE_BYTES = 1024 * 1024
+_media_body_cache = LRUCache(maxsize=32)
 
 
 def _cors_headers(
@@ -161,9 +173,16 @@ def register_attachment_route(app: FastAPI) -> None:
         """Serve uploaded attachment files. Handles local and S3 storage with redirect optimization."""
         import src.api as api_module
 
-        # SECURITY: Prevent path traversal. Filenames must be a single segment.
-        # If a traversal attempt is made, reject immediately before touching media/auth.
-        if not filename or ".." in filename or "/" in filename or "\\" in filename:
+        # SECURITY: Prevent path traversal. Filenames must be a single segment
+        # with no traversal markers, separators or NUL bytes. Reject immediately
+        # before touching media/auth.
+        if (
+            not filename
+            or ".." in filename
+            or "/" in filename
+            or "\\" in filename
+            or "\x00" in filename
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"error": {"code": 400, "message": "Invalid filename"}},
@@ -440,10 +459,40 @@ def register_attachment_route(app: FastAPI) -> None:
             # 2. Authentication works (we use our own session/cookie)
             # 3. CORS/AccessDenied issues with direct S3 redirects are avoided
             try:
-                # Optimized: Use metadata we already have to skip DB lookup
-                stream, size, ct = media.get_file_stream_optimized(
-                    row["storage_path"], row["content_type"], row["storage_backend"]
-                )
+                # Warm path: reuse an already-validated small body. The auth,
+                # per-file access (IDOR) and fresh scan/deleted checks above all
+                # ran on this request, so a hit skips only storage syscalls.
+                body_key = (filename, file_id)
+                cached_body = _media_body_cache.get(body_key)
+                if cached_body is not None:
+                    body_bytes, ct, size = cached_body
+                    stream = io.BytesIO(body_bytes)
+                else:
+                    # Optimized: Use metadata we already have to skip DB lookup
+                    stream, size, ct = media.get_file_stream_optimized(
+                        row["storage_path"],
+                        row["content_type"],
+                        row["storage_backend"],
+                    )
+                    # Materialise only small, seekable sources: this bounds
+                    # memory and preserves range semantics for push streams.
+                    # The original handle is closed as soon as its bytes are
+                    # captured so no file descriptor is leaked.
+                    if size <= _MEDIA_BODY_MAX_FILE_BYTES and is_seekable_stream(
+                        stream
+                    ):
+                        try:
+                            stream.seek(0)
+                            body_bytes = stream.read(size)
+                        finally:
+                            try:
+                                stream.close()
+                            except Exception:
+                                pass
+                        if len(body_bytes) == size:
+                            _media_body_cache[body_key] = (body_bytes, ct, size)
+                        stream = io.BytesIO(body_bytes)
+                        size = len(body_bytes)
 
                 # Derived, request-independent response metadata. The inline
                 # verdict is intentionally based on ``ct`` -- the type the

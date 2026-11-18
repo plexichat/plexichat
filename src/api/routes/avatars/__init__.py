@@ -54,6 +54,7 @@ from .storage import (
     _user_initials_cache as _user_initials_cache,
     _server_initials_cache as _server_initials_cache,
     _default_svg_cache as _default_svg_cache,
+    _icon_payload_cache as _icon_payload_cache,
     _invalidate_user_avatar_cache as _invalidate_user_avatar_cache,
     _invalidate_server_icon_cache as _invalidate_server_icon_cache,
 )
@@ -126,6 +127,7 @@ __all__ = [
     "_user_initials_cache",
     "_server_initials_cache",
     "_default_svg_cache",
+    "_icon_payload_cache",
     "_MAX_CHECKSUM_CACHE_ENTRIES",
     "_CHECKSUM_CACHE_TTL_SEC",
     # Cache invalidation helpers (private names re-used across the repo)

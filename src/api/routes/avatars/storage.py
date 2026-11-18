@@ -13,6 +13,8 @@ import time
 from collections import OrderedDict
 from typing import Any, Optional
 
+from src.api.lru_cache import LRUCache
+
 from .constants import _CHECKSUM_CACHE_TTL_SEC, _MAX_CHECKSUM_CACHE_ENTRIES
 
 import utils.logger as logger
@@ -164,6 +166,14 @@ _user_initials_cache = _BoundedChecksumCache()
 _server_initials_cache = _BoundedChecksumCache()
 _default_svg_cache = _BoundedSvgCache()
 
+# Resolved, already-validated server icon payloads keyed by server id. Without
+# a live Valkey the manager re-reads the icon row from the DB on every single
+# GET; an icon is immutable until an upload/delete (both of which call
+# ``_invalidate_server_icon_cache``), so the validated
+# ``(bytes, content_type, checksum)`` triple can be safely reused. This removes
+# the whole checksum + binary lookup round-trip from the warm request path.
+_icon_payload_cache = LRUCache(maxsize=256)
+
 
 def _cache_set_checksum(cache: Any, key: int, checksum: str) -> None:
     """Insert into a checksum cache, evicting the oldest entry at the cap."""
@@ -207,6 +217,7 @@ def _invalidate_server_icon_cache(server_id: int) -> None:
     _icon_checksum_cache.pop(server_id, None)
     _icon_absent_cache.pop(server_id, None)
     _server_initials_cache.pop(server_id, None)
+    _icon_payload_cache.pop(server_id, None)
 
     try:
         from src.core.database import invalidate_pattern
@@ -239,6 +250,7 @@ __all__ = [
     "_user_initials_cache",
     "_server_initials_cache",
     "_default_svg_cache",
+    "_icon_payload_cache",
     "_invalidate_user_avatar_cache",
     "_invalidate_server_icon_cache",
     "invalidate_avatar_caches",

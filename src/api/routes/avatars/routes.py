@@ -54,6 +54,7 @@ from .storage import (
     _user_initials_cache,
     _server_initials_cache,
     _default_svg_cache,
+    _icon_payload_cache,
     _invalidate_user_avatar_cache,
     _invalidate_server_icon_cache,
 )
@@ -538,18 +539,25 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
             if checksum and etag_client == f'"{checksum}"':
                 return Response(status_code=304)
 
-        # 2. Fetch full data
+        # 2. Fetch full data (resolved-payload cache first). An entry is only
+        # stored after the serve-safety verdict below has passed, and uploads/
+        # deletions invalidate it, so a warm hit skips the manager's checksum
+        # and binary DB/Valkey lookups without changing the bytes served.
         try:
-            result = None if icon_absent else avatars.get_server_icon_data(sid)
-            if result is not None:
-                # SECURITY: defense in depth - never serve a script-carrying
-                # SVG raw. Fall through to the safe generated default below.
-                _payload, _ctype, _avatar_checksum = result
-                if not is_serve_safe(_ctype, _payload, _avatar_checksum):
-                    logger.warning(
-                        f"Blocked unsafe stored server icon serve {sid} (type={_ctype})"
-                    )
-                    result = None
+            result = None if icon_absent else _icon_payload_cache.get(sid)
+            if result is None and not icon_absent:
+                result = avatars.get_server_icon_data(sid)
+                if result is not None:
+                    # SECURITY: defense in depth - never serve a script-carrying
+                    # SVG raw. Only validated payloads enter the resolved cache.
+                    _payload, _ctype, _avatar_checksum = result
+                    if is_serve_safe(_ctype, _payload, _avatar_checksum):
+                        _icon_payload_cache[sid] = result
+                    else:
+                        logger.warning(
+                            f"Blocked unsafe stored server icon serve {sid} (type={_ctype})"
+                        )
+                        result = None
             if not result:
                 # Remember the negative lookup so repeat requests skip both
                 # the checksum and the binary read for this server.
