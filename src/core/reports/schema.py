@@ -49,6 +49,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
 CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_id);
 -- Target history lists reports against a user newest-first.
 CREATE INDEX IF NOT EXISTS idx_reports_target_created ON reports(target_id, created_at);
+-- Target queue filters target_id + status.
+CREATE INDEX IF NOT EXISTS idx_reports_target_status ON reports(target_id, status);
 CREATE INDEX IF NOT EXISTS idx_reports_server ON reports(server_id);
 -- Server-scoped report lists order by created_at.
 CREATE INDEX IF NOT EXISTS idx_reports_server_created ON reports(server_id, created_at);
