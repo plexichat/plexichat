@@ -271,6 +271,18 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_auth_bots_owner ON auth_bots(owner_id);
 CREATE INDEX IF NOT EXISTS idx_auth_devices_user ON auth_devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log(user_id);
+-- The per-user audit feed filters by user_id and pages newest-first. The
+-- single-column index finds the rows but forces a temporary sort B-tree; this
+-- composite serves the ordered scan directly. Migration 008 adds it to
+-- databases created before the index was defined.
+CREATE INDEX IF NOT EXISTS idx_auth_audit_user_timestamp
+    ON auth_audit_log(user_id, timestamp);
+-- Password-reset throttling counts recent tokens for (user_id, token_type)
+-- and verification reads the newest one. With no index this is a full scan of
+-- every email token ever issued; the composite serves both lookups in order.
+-- Migration 008 adds it to existing databases.
+CREATE INDEX IF NOT EXISTS idx_auth_email_tokens_user_type_created
+    ON auth_email_tokens(user_id, token_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_index ON auth_api_access_tokens(token_index);
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_revoked ON auth_api_access_tokens(revoked);
 CREATE INDEX IF NOT EXISTS idx_auth_api_access_tokens_expires ON auth_api_access_tokens(expires_at);
