@@ -101,6 +101,54 @@ def sanitize_value(key: str, value: Any) -> Any:
     return value
 
 
+# Credential-only key set for logging %-style mapping args. ``SENSITIVE_KEYS``
+# above is intentionally broad (it scrubs PII such as usernames and emails),
+# but applying it at the formatting layer would destroy ordinary operational
+# logs. These are the values that must never be written verbatim.
+_CREDENTIAL_KEY_PARTS = (
+    "password",
+    "token",
+    "secret",
+    "api_key",
+    "cookie",
+    "session",
+    "credential",
+)
+_CREDENTIAL_KEYS_EXACT = frozenset(
+    {"authorization", "auth", "bearer", "private_key", "set-cookie"}
+)
+
+
+def _is_credential_key(key: Any) -> bool:
+    lowered = str(key).lower()
+    return lowered in _CREDENTIAL_KEYS_EXACT or any(
+        part in lowered for part in _CREDENTIAL_KEY_PARTS
+    )
+
+
+def sanitize_log_args(args: Any) -> Any:
+    """Redact credential-bearing values in logging ``%``-style args by key.
+
+    ``logging`` substitutes ``record.args`` only after every filter has run, so
+    by the time the rendered line can be scanned the mapping's key names are
+    gone. Mask by name here instead. Only mappings (and mappings nested in the
+    positional tuple) are touched; plain string args are handled by
+    ``sanitize_log_message`` on the rendered line.
+    """
+    if isinstance(args, dict):
+        return {
+            key: mask_string(value)
+            if isinstance(value, str) and _is_credential_key(key)
+            else value
+            for key, value in args.items()
+        }
+    if isinstance(args, tuple):
+        return tuple(
+            sanitize_log_args(arg) if isinstance(arg, dict) else arg for arg in args
+        )
+    return args
+
+
 def sanitize_data(data: Union[Dict, List, str, Any]) -> Any:
     """
     Recursively sanitizes sensitive data in dictionaries, lists, or strings.

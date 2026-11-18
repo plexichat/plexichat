@@ -16,14 +16,54 @@ _LOG_ARCHIVE_SUFFIX = ".log.zst"
 _LEGACY_ARCHIVE_SUFFIX = ".log.zip"
 
 
+# Reused to pre-render exception tracebacks so their text can be sanitized
+# before the handler's Formatter appends it (see SanitizingFilter.filter).
+_EXC_FORMATTER = logging.Formatter()
+
+
 class SanitizingFilter(logging.Filter):
     """Filter that sanitizes log records to prevent PII leakage."""
 
     def filter(self, record):
-        if hasattr(record, "msg") and isinstance(record.msg, str):
-            from .sanitizer import sanitize_log_message
+        from .sanitizer import sanitize_log_args, sanitize_log_message
 
-            record.msg = sanitize_log_message(record.msg)
+        # Mapping args are keyed by name (``"%(password)s", data``): by the
+        # time the line is rendered the key is gone, so a value-level scan of
+        # the final string cannot tell it was a credential. Mask by key first.
+        record.args = sanitize_log_args(record.args)
+
+        # Render the record first, then sanitize the *complete* line. Most call
+        # sites use lazy %-formatting (``logger.info("token %s", token)``) or
+        # mapping args (``logger.info("%(password)s", data)``): the credential
+        # lives in ``record.args``, while ``record.msg`` is only a harmless
+        # template. The Formatter substitutes args AFTER every filter has run,
+        # so inspecting ``record.msg`` alone let the real secret reach disk
+        # verbatim (CWE-532). Render once here, sanitize the result, and clear
+        # args so nothing can be substituted a second time downstream.
+        try:
+            rendered = record.getMessage()
+        except Exception:
+            # A malformed format string/args would raise at format time too;
+            # keep the record schedulable and sanitize the raw message instead.
+            rendered = str(getattr(record, "msg", ""))
+        record.msg = sanitize_log_message(rendered)
+        record.args = ()
+
+        # Tracebacks and explicit stack info are rendered by the Formatter from
+        # fields a normal filter never sees. Exception messages routinely carry
+        # the failing token/path, so pre-render and sanitize those too — once
+        # ``exc_text`` is set the Formatter reuses it instead of regenerating
+        # an unsanitized copy (same for the pre-formatted ``stack_info``).
+        if getattr(record, "exc_info", None):
+            try:
+                record.exc_text = sanitize_log_message(
+                    _EXC_FORMATTER.formatException(record.exc_info)
+                )
+            except Exception:
+                record.exc_text = ""
+        stack_info = getattr(record, "stack_info", None)
+        if isinstance(stack_info, str) and stack_info:
+            record.stack_info = sanitize_log_message(stack_info)
         return True
 
 
