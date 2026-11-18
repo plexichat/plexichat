@@ -8,9 +8,20 @@ from urllib.parse import urlparse
 
 import utils.logger as logger
 from src.core.webhooks.exceptions import WebhookAvatarError, WebhookNameError
+from src.core.webhooks.url_safety import redact_url
 
 from .base import WebhookManagerTrait
 from .constants import WEBHOOK_NAME_MAX_LENGTH
+
+
+def _log_safe_url(url: str) -> str:
+    """Return an untrusted URL safe to interpolate into a log record.
+
+    Drop credentials and the query string (which routinely carry presigned
+    tokens/signatures) and neutralize CR/LF so a rejected URL cannot forge
+    additional log lines.
+    """
+    return redact_url(url).replace("\r", "\\r").replace("\n", "\\n")
 
 
 class ValidationMixin(WebhookManagerTrait):
@@ -91,7 +102,12 @@ class ValidationMixin(WebhookManagerTrait):
             validator = URLValidator()
             validator.validate_url_for_request(url)
         except ValueError as e:
-            logger.warning(f"Blocked unsafe webhook avatar URL: {url} - {e}")
+            # SECURITY: never log the raw untrusted URL. Query strings and
+            # userinfo can carry secrets (presigned signatures, tokens) and
+            # embedded control characters can forge log lines.
+            logger.warning(
+                f"Blocked unsafe webhook avatar URL: {_log_safe_url(url)} - {e}"
+            )
             raise WebhookAvatarError(f"Unsafe avatar URL: {str(e)}")
 
         return url

@@ -143,10 +143,23 @@ class WebhookExecutionMixin(WebhookManagerTrait):
             conversation_id = channel_row["conversation_id"]
 
         if thread_id:
+            # SECURITY: ``thread_id`` comes from the webhook caller. Letting an
+            # arbitrary channel row redirect the delivery to its
+            # ``conversation_id`` allowed a webhook bound to guild A to post
+            # into a channel belonging to guild B (cross-tenant message
+            # injection). A resolved target must belong to the SAME server as
+            # the webhook. Ids that resolve to no channel never move the
+            # conversation and are left untouched (they are only recorded on
+            # the webhook_messages tracking row).
             thread_row = self._db.fetch_one(
-                "SELECT conversation_id FROM srv_channels WHERE id = ?",
+                "SELECT server_id, conversation_id FROM srv_channels WHERE id = ?",
                 (thread_id,),
             )
+            if thread_row and int(thread_row["server_id"]) != int(row["server_id"]):
+                raise InvalidWebhookContentError(
+                    "Thread does not belong to the webhook's server",
+                    ["invalid_thread"],
+                )
             if thread_row and thread_row["conversation_id"]:
                 conversation_id = thread_row["conversation_id"]
 
