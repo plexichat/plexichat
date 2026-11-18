@@ -202,6 +202,9 @@ CREATE TABLE IF NOT EXISTS system_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_system_alerts_source ON system_alerts(source);
 CREATE INDEX IF NOT EXISTS idx_system_alerts_severity ON system_alerts(severity);
+-- The alerts tab filters severity and orders by created_at.
+CREATE INDEX IF NOT EXISTS idx_system_alerts_severity_created
+    ON system_alerts(severity, created_at);
 CREATE INDEX IF NOT EXISTS idx_system_alerts_type ON system_alerts(event_type);
 CREATE INDEX IF NOT EXISTS idx_system_alerts_created ON system_alerts(created_at);
 """
