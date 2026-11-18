@@ -12,6 +12,41 @@ class _ServerQueryDatabase(Protocol):
     def fetch_all(self, query: str, params: tuple = ()) -> list[dict[str, Any]]: ...
 
 
+# Holds the process-wide Valkey lease so its refresh thread and atexit release
+# stay alive for the whole server lifetime.
+_snowflake_node_lease = None
+
+
+def _coordinate_snowflake_node_id(valkey_client) -> None:
+    """Claim a unique Snowflake node id and rebind every ID generator.
+
+    ``docker compose up --scale backend=N`` gives every replica the same
+    environment, so ids cannot be pinned by compose env. A shared Valkey lease
+    guarantees distinct live workers; hostname/PID derivation alone is only
+    probabilistic (and used to fall back to a constant). Explicitly configured
+    ids are left untouched.
+    """
+    from src.utils import encryption
+    from src.core.messaging.services import base as messaging_base
+    from src.core.database.valkey_node_id import claim_node_id
+
+    if encryption.snowflake_node_id_is_explicit() or os.environ.get(
+        "PLEXICHAT_MACHINE_ID"
+    ):
+        logger.info(
+            "Snowflake node ids are explicitly configured; skipping Valkey coordination"
+        )
+        return
+
+    global _snowflake_node_lease
+    _snowflake_node_lease = claim_node_id(valkey_client)
+    encryption.set_snowflake_node_id(_snowflake_node_lease.node_id)
+    messaging_base.set_machine_id(_snowflake_node_lease.node_id)
+    logger.info(
+        "Coordinated Snowflake node id %d via Valkey", _snowflake_node_lease.node_id
+    )
+
+
 def initialize_modules(
     modules_store: dict, worker_id: str
 ) -> Tuple[Any, Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]]:
@@ -102,6 +137,14 @@ def initialize_modules(
             logger.info(
                 f"Connected to Valkey at {valkey_config.get('host', 'localhost')}:{valkey_config.get('port', 6379)} (Worker ID: {worker_id})"
             )
+            try:
+                _coordinate_snowflake_node_id(valkey_client)
+            except Exception as e:
+                logger.warning(
+                    "Could not coordinate Snowflake node id via Valkey "
+                    "(falling back to hostname/PID derivation): %s",
+                    e,
+                )
         else:
             logger.warning(
                 "Valkey is enabled but connection failed - continuing without Valkey"

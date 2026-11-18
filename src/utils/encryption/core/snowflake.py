@@ -77,7 +77,10 @@ class SnowflakeGenerator:
         try:
             hostname = socket.gethostname()
         except Exception:
-            hostname = "plexichat"
+            # A constant fallback would give every replica the same node id
+            # (container PIDs are often constant too), so use a per-process
+            # random value instead — never a shared constant.
+            hostname = "plexichat-" + os.urandom(16).hex()
         digest = hashlib.sha256(hostname.encode()).digest()
         node = int.from_bytes(digest[:2], "big") & 0x3FF  # 10 bits
         # Mix the PID so multiple workers on the SAME host still get
@@ -109,6 +112,21 @@ class SnowflakeGenerator:
         if explicit is not None:
             return explicit
         return (self._auto_node_id() >> 5) & 0x1F
+
+    def rebind_node_id(self, worker_id: int, datacenter_id: int) -> None:
+        """Rebind this generator to a coordinated (datacenter, worker) pair.
+
+        Called once at startup after Valkey assigns a unique node id to this
+        replica, before the server serves requests. The lock keeps the
+        reassignment safe against any concurrent generator use.
+        """
+        if not (0 <= worker_id <= 31):
+            raise ValueError(f"worker_id must be 0-31, got {worker_id}")
+        if not (0 <= datacenter_id <= 31):
+            raise ValueError(f"datacenter_id must be 0-31, got {datacenter_id}")
+        with self._lock:
+            self.worker_id = worker_id & 0x1F
+            self.datacenter_id = datacenter_id & 0x1F
 
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)

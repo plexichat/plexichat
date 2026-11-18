@@ -20,6 +20,17 @@ import utils.logger as logger
 # stored flag can never disagree with what send_message actually does.
 ENCRYPT_MESSAGES_DEFAULT = True
 
+# Set once at startup to the 10-bit node id claimed from Valkey. Every
+# BaseService created afterwards uses it, so all generators in a replica
+# share one coordinated identity and no two live replicas collide.
+_coordinated_machine_id: Optional[int] = None
+
+
+def set_machine_id(node_id: int) -> None:
+    """Pin the legacy generator's machine id to a coordinated node id."""
+    global _coordinated_machine_id
+    _coordinated_machine_id = int(node_id) & 0x3FF
+
 
 def get_encrypt_messages_default() -> bool:
     """Configured encryption-at-rest default (single source of truth)."""
@@ -45,12 +56,16 @@ def _default_machine_id() -> int:
             return int(raw) & 0x3FF
         except ValueError:
             pass
+    if _coordinated_machine_id is not None:
+        return _coordinated_machine_id
     import socket
 
     try:
         hostname = socket.gethostname()
     except Exception:
-        hostname = "plexichat"
+        # A constant fallback would collide across replicas (container PIDs
+        # are often identical), so use a per-process random value instead.
+        hostname = "plexichat-" + os.urandom(16).hex()
     digest = hashlib.sha256(hostname.encode()).digest()
     node = int.from_bytes(digest[:2], "big") & 0x3FF
     node ^= os.getpid() & 0x3FF

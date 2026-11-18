@@ -25,6 +25,7 @@ Usage:
     verified = encryption.verify_signature(b"message", signature, public_key)
 """
 
+import os
 from typing import Any, Optional, Tuple, cast
 from .core import (
     EncryptionManager,
@@ -48,6 +49,9 @@ _snowflake_generator: Optional[SnowflakeGenerator] = None
 _message_encryptor: Optional[MessageEncryptor] = None
 _ratchet_manager: Optional[_ChannelRatchetManager] = None
 _setup_called = False
+# True when worker/datacenter ids were pinned via config or env; in that case
+# Valkey coordination must not overwrite the operator's explicit choice.
+_snowflake_node_id_explicit = False
 
 
 def setup(
@@ -74,6 +78,14 @@ def setup(
         argon2_parallelism (int): Parallelism factor for Argon2.
     """
     global _encryption_manager, _snowflake_generator, _setup_called
+    global _snowflake_node_id_explicit
+
+    _snowflake_node_id_explicit = (
+        worker_id is not None
+        or datacenter_id is not None
+        or os.environ.get("PLEXICHAT_WORKER_ID") is not None
+        or os.environ.get("PLEXICHAT_DATACENTER_ID") is not None
+    )
 
     _encryption_manager = EncryptionManager(
         argon2_time_cost=argon2_time_cost,
@@ -100,6 +112,21 @@ def setup(
         import utils.logger as logger
 
         logger.debug(f"pepper store reset failed during setup: {exc}")
+
+
+def snowflake_node_id_is_explicit() -> bool:
+    """True when worker/datacenter ids were pinned via config or environment."""
+    return _snowflake_node_id_explicit
+
+
+def set_snowflake_node_id(node_id: int) -> None:
+    """Rebind the process-wide Snowflake generator to a coordinated node id.
+
+    ``node_id`` is the shared 10-bit identity (5-bit datacenter in the high
+    bits, 5-bit worker in the low bits) claimed from Valkey at startup.
+    """
+    node_id &= 0x3FF
+    _get_snowflake().rebind_node_id(node_id & 0x1F, (node_id >> 5) & 0x1F)
 
 
 def _get_manager() -> EncryptionManager:
@@ -564,6 +591,8 @@ __all__ = [
     "verify_signature",
     "generate_snowflake_id",
     "parse_snowflake_id",
+    "snowflake_node_id_is_explicit",
+    "set_snowflake_node_id",
     "encrypt_message",
     "decrypt_message",
     "is_message_encrypted",
