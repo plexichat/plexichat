@@ -18,6 +18,23 @@ import importlib
 
 import utils.logger as logger
 import utils.config as config
+from src.core.security.hardening import bounded_int
+
+
+# A pHash forces a full pixel decode (``imagehash`` resizes the decoded image
+# to run the DCT), so a tiny crafted file that declares enormous dimensions in
+# its header can make the decoder allocate gigabytes. The media compressor and
+# the image processor already reject such decompression bombs; the hashing
+# path is the remaining decode entry point and needs the same guard. Keep the
+# value independent of Pillow's process-wide ``Image.MAX_IMAGE_PIXELS`` global,
+# which is mutated by other modules and can even be disabled entirely.
+DEFAULT_MAX_IMAGE_PIXELS = 178956970
+
+# ``imagehash`` resizes the decoded image to ``hash_size * highfreq_factor``
+# before the DCT. These are config values, but an unbounded one still turns a
+# small upload into a large allocation, so bound them at the point of use.
+MAX_HASH_SIZE = 64
+MAX_HIGHFREQ_FACTOR = 16
 
 
 class HashType(Enum):
@@ -58,13 +75,51 @@ def get_config() -> Dict[str, Any]:
 
     return {
         "enabled": phash_config.get("enabled", True),
-        "hash_size": phash_config.get("hash_size", 8),  # 8 = 64-bit hash
+        "hash_size": bounded_int(
+            phash_config.get("hash_size", 8),
+            "phash hash_size",
+            minimum=1,
+            maximum=MAX_HASH_SIZE,
+        ),  # 8 = 64-bit hash
         "algorithm": phash_config.get(
             "algorithm", "phash"
         ),  # phash, dhash, ahash, whash
         "similarity_threshold": phash_config.get("similarity_threshold", 10),
-        "highfreq_factor": phash_config.get("highfreq_factor", 4),  # For pHash DCT
+        "highfreq_factor": bounded_int(
+            phash_config.get("highfreq_factor", 4),
+            "phash highfreq_factor",
+            minimum=1,
+            maximum=MAX_HIGHFREQ_FACTOR,
+        ),  # For pHash DCT
+        "max_pixels": phash_config.get("max_pixels", DEFAULT_MAX_IMAGE_PIXELS),
     }
+
+
+def _open_validated_image(image_data: bytes):
+    """Open an image header and reject decompression bombs before any decode.
+
+    ``Image.open`` is lazy: it reads the header but not the pixels. Validating
+    ``img.size`` here rejects a bomb *before* ``imagehash`` forces a full
+    decode, and does not depend on Pillow's mutable process-wide limit.
+    """
+    import io
+
+    Image = importlib.import_module("PIL.Image")
+    max_pixels = bounded_int(
+        get_config()["max_pixels"],
+        "phash max_pixels",
+        minimum=1,
+        maximum=2**31 - 1,
+    )
+    img = Image.open(io.BytesIO(image_data))
+    width, height = img.size
+    if width <= 0 or height <= 0:
+        raise ValueError("phash image has invalid dimensions")
+    if width * height > max_pixels:
+        raise ValueError(
+            f"phash image exceeds decompression-bomb limit of {max_pixels} pixels"
+        )
+    return img
 
 
 def compute_phash(image_data: bytes, hash_size: Optional[int] = None) -> Optional[str]:
@@ -85,14 +140,16 @@ def compute_phash(image_data: bytes, hash_size: Optional[int] = None) -> Optiona
     cfg = get_config()
     if hash_size is None:
         hash_size = cfg["hash_size"]
+    # An explicit hash_size is just as capable of driving a huge allocation as
+    # a bad config value; never let either escape the ceiling.
+    hash_size = bounded_int(
+        hash_size, "phash hash_size", minimum=1, maximum=MAX_HASH_SIZE
+    )
 
     try:
-        import io
-
-        Image = importlib.import_module("PIL.Image")
         imagehash = importlib.import_module("imagehash")
 
-        img = Image.open(io.BytesIO(image_data))
+        img = _open_validated_image(image_data)
 
         # Compute pHash using imagehash library
         phash = imagehash.phash(
@@ -123,14 +180,14 @@ def compute_dhash(image_data: bytes, hash_size: Optional[int] = None) -> Optiona
     cfg = get_config()
     if hash_size is None:
         hash_size = cfg["hash_size"]
+    hash_size = bounded_int(
+        hash_size, "phash hash_size", minimum=1, maximum=MAX_HASH_SIZE
+    )
 
     try:
-        import io
-
-        Image = importlib.import_module("PIL.Image")
         imagehash = importlib.import_module("imagehash")
 
-        img = Image.open(io.BytesIO(image_data))
+        img = _open_validated_image(image_data)
 
         dhash = imagehash.dhash(img, hash_size=hash_size)
         return str(dhash)
@@ -158,14 +215,14 @@ def compute_ahash(image_data: bytes, hash_size: Optional[int] = None) -> Optiona
     cfg = get_config()
     if hash_size is None:
         hash_size = cfg["hash_size"]
+    hash_size = bounded_int(
+        hash_size, "phash hash_size", minimum=1, maximum=MAX_HASH_SIZE
+    )
 
     try:
-        import io
-
-        Image = importlib.import_module("PIL.Image")
         imagehash = importlib.import_module("imagehash")
 
-        img = Image.open(io.BytesIO(image_data))
+        img = _open_validated_image(image_data)
 
         ahash = imagehash.average_hash(img, hash_size=hash_size)
         return str(ahash)
@@ -193,14 +250,14 @@ def compute_whash(image_data: bytes, hash_size: Optional[int] = None) -> Optiona
     cfg = get_config()
     if hash_size is None:
         hash_size = cfg["hash_size"]
+    hash_size = bounded_int(
+        hash_size, "phash hash_size", minimum=1, maximum=MAX_HASH_SIZE
+    )
 
     try:
-        import io
-
-        Image = importlib.import_module("PIL.Image")
         imagehash = importlib.import_module("imagehash")
 
-        img = Image.open(io.BytesIO(image_data))
+        img = _open_validated_image(image_data)
 
         whash = imagehash.whash(img, hash_size=hash_size)
         return str(whash)
