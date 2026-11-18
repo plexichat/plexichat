@@ -125,18 +125,18 @@ async def get_channel_messages(
             except (
                 ServerNotFoundError,
                 ChannelNotFoundError,
-                ChannelAccessDeniedError,
                 ChannelTypeError,
-                PermissionDeniedError,
             ) as e:
-                # Expected for any id that is not a readable server text
-                # channel (a DM/group conversation id lands here as well), so
-                # fall back to the conversation lookup below. ONLY these
-                # outcomes fall back: catching everything here turned an
-                # internal read failure into a silently empty channel
-                # (200 []), which is indistinguishable from "no messages".
+                # Expected for any id that is NOT a server text channel (a
+                # DM/group conversation id lands here as well), so fall back
+                # to the conversation lookup below. Access/permission errors
+                # are deliberately NOT caught here: a server channel the
+                # caller cannot view must never be re-read through the DM
+                # fallback with the channel id used as a conversation id —
+                # that bypasses the channel-view permission check. Those
+                # errors propagate to the 404 mapping below.
                 logger.debug(
-                    f"Channel {cid} is not a readable server channel "
+                    f"Channel {cid} is not a server text channel "
                     f"({type(e).__name__}); trying conversation lookup"
                 )
                 messages = None
@@ -175,6 +175,13 @@ async def get_channel_messages(
                 detail={"error": {"code": 404, "message": "Channel not found"}},
             )
 
+        # Defense in depth: a storage backend that ignores the LIMIT (or a
+        # compromised/corrupt row set) must not turn into an unbounded
+        # enrichment fan-out or response. The route already caps ``limit`` at
+        # 100; slice again so the invariant holds even for a misbehaving
+        # manager. Valid callers see byte-identical output.
+        messages = messages[: min(limit, 100)]
+
         # Bulk fetch all author usernames and avatars in single query (avoids N+1)
         author_ids = list(
             {
@@ -199,15 +206,15 @@ async def get_channel_messages(
             except Exception as user_error:
                 logger.debug(f"message list author enrichment failed: {user_error}")
 
+        # Get media module once (URL signing + attachment hydration below).
+        media_mod = api.get_media()
+
         # Resolve attachment file ids in one batched lookup so serialization
         # never falls back to a per-attachment get_file_by_filename() query.
         # Shared with the pins/search routes, which had the same N+1.
         await run_in_threadpool(
-            batch_attachment_file_ids, messages, media_mod=api.get_media()
+            batch_attachment_file_ids, messages, media_mod=media_mod
         )
-
-        # Get media module for URL signing
-        media_mod = api.get_media()
 
         # Fetch reactions for all messages in a single batch query (avoids N+1)
         reactions_module = api.get_reactions()
@@ -319,6 +326,14 @@ async def get_channel_messages(
         return result
     except HTTPException:
         raise
+    except (ChannelAccessDeniedError, PermissionDeniedError):
+        # A server channel the caller may not view is indistinguishable from
+        # a missing one at this boundary — never disclose its existence or
+        # fall back to the DM path with the channel id.
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Channel not found"}},
+        )
     except Exception as e:
         logger.error(
             f"Failed to get messages for channel {channel_id}: {e}", exc_info=True

@@ -82,18 +82,18 @@ async def get_unread_count(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        # Resolve channel_id to conversation_id for server channels
+        # Resolve channel_id to conversation_id for server channels. Only
+        # "not a server channel" outcomes may fall back to treating the id as
+        # a DM conversation id: swallowing access/permission errors here used
+        # to fail OPEN and could route a blocked channel id into the unread
+        # lookup. Those now propagate to the 404 mapping below.
         conv_id = cid
         if servers_mod:
             try:
                 channel = servers_mod.get_channel(cid, current_user.user_id)
-                if (
-                    channel
-                    and hasattr(channel, "conversation_id")
-                    and channel.conversation_id
-                ):
+                if channel and getattr(channel, "conversation_id", None):
                     conv_id = channel.conversation_id
-            except Exception as channel_error:
+            except (ServerNotFoundError, ChannelNotFoundError) as channel_error:
                 logger.debug(f"read receipt channel resolution failed: {channel_error}")
 
         counts = await run_in_threadpool(

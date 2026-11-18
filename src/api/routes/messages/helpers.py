@@ -52,12 +52,7 @@ def batch_embed_suppressed_ids(message_ids, embeds_mod=None) -> set:
     if embeds_mod is None:
         embeds_mod = api.get_embeds()
 
-    db = None
-    if embeds_mod is not None:
-        try:
-            db = getattr(embeds_mod._get_manager(), "_db", None)
-        except Exception:
-            db = None
+    db = _resolve_db(embeds_mod)
 
     suppressed: set = set()
     if db is not None and hasattr(db, "fetch_all"):
@@ -90,6 +85,29 @@ def batch_embed_suppressed_ids(message_ids, embeds_mod=None) -> set:
         except Exception as e:
             logger.debug(f"embed suppression lookup failed for {mid}: {e}")
     return suppressed
+
+
+def _resolve_db(module_or_manager) -> Any:
+    """Return a DB handle from either a core module or a manager instance.
+
+    ``api.get_embeds()`` is the embeds *module* in production (it exposes
+    ``_get_manager()``), but some deployments/tests wire the manager itself
+    (which exposes ``_db``). The old code only handled the former: with a
+    manager it raised on ``_get_manager()``, dropped the batched query and
+    silently fell back to one ``are_embeds_suppressed()`` query per message.
+    Accepting both wirings keeps the single-query path everywhere, with the
+    per-id fallback retained only for genuine schema/module failures.
+    """
+    if module_or_manager is None:
+        return None
+    db = getattr(module_or_manager, "_db", None)
+    if db is not None:
+        return db
+    try:
+        manager = module_or_manager._get_manager()
+    except Exception:
+        return None
+    return getattr(manager, "_db", None)
 
 
 def _get_attr(obj, name, default=None):
