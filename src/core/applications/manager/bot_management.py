@@ -45,6 +45,19 @@ from .protocol import ApplicationManagerProtocol
 MAX_DIRECTORY_PAGE_SIZE = 100
 
 
+def _escape_like(text: str) -> str:
+    """Escape LIKE metacharacters so a directory filter matches literally.
+
+    ``q`` and ``tag`` are caller-supplied (HTTP query params). Parameterizing
+    the value blocks SQL injection but not ``%``/``_`` acting as wildcards: a
+    bare ``%`` search silently matched every bot, and a crafted ``tag`` could
+    widen the filter to enumerate rows outside the requested tag. Escape the
+    three metacharacters and declare ``ESCAPE '\\'`` on every clause so these
+    filters mean exactly what the caller typed.
+    """
+    return str(text).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # The directory is read far more often than it changes, and each read ran a
 # COUNT query plus a page query with LIKE/tag filters. Keep a small, short-lived
 # cache of fully built slices so repeated directory requests skip both the SQL
@@ -714,14 +727,16 @@ class BotManagementMixin(ApplicationManagerProtocol):
             params.append(server_id)
 
         if q:
-            base_where.append("(a.name LIKE ? OR bp.short_description LIKE ?)")
-            like_q = f"%{q}%"
+            base_where.append(
+                "(a.name LIKE ? ESCAPE '\\' OR bp.short_description LIKE ? ESCAPE '\\')"
+            )
+            like_q = f"%{_escape_like(q)}%"
             params.append(like_q)
             params.append(like_q)
 
         if tag:
-            base_where.append("bp.tags LIKE ?")
-            params.append(f'%"{tag}"%')
+            base_where.append("bp.tags LIKE ? ESCAPE '\\'")
+            params.append(f'%"{_escape_like(tag)}"%')
 
         where_clause = " AND ".join(base_where)
 
