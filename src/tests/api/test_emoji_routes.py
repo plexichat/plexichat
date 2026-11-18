@@ -44,9 +44,11 @@ class TestEmojiCacheInvalidation:
 
         _invalidate_emoji_cache(server_id=123, emoji_id=None)
 
-        # Exactly one invalidation: the server list pattern.
+        # Exactly one invalidation: the server list pattern. It must match the
+        # keys actually produced by the read path (which carry :sid:), not the
+        # old :str: glob that never matched a kwarg-built key.
         assert len(invalidated) == 1
-        assert ":str:123:*" in invalidated[0]
+        assert "emoji_list_api:sid:123:*" in invalidated[0]
 
     def test_invalidate_emoji_cache_clears_server_list_and_detail(self, monkeypatch):
         """List and detail cache invalidation with an emoji ID."""
@@ -61,5 +63,8 @@ class TestEmojiCacheInvalidation:
 
         # One invalidation for the server list plus one for the detail.
         assert len(invalidated) == 2
-        assert any(":str:123:" in pattern for pattern in invalidated)
-        assert any(":str:456:" in pattern for pattern in invalidated)
+        assert any("emoji_list_api:sid:123:" in pattern for pattern in invalidated)
+        assert any(
+            "emoji_detail_api:sid:123:eid:456:" in pattern
+            for pattern in invalidated
+        )

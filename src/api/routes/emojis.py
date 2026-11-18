@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key
 from src.core.security.hardening import parse_id
 from src.core.database.cache import cached, invalidate_pattern
 from src.api.schemas.emojis import (
@@ -30,6 +31,50 @@ from src.core.avatars.manager.upload_guard import (
 )
 
 router = APIRouter(tags=["Emojis"])
+
+# Read-path caches for server emoji lists and single emoji details. The old
+# 300s/3600s TTLs let a deleted/renamed emoji (or a revoked membership) keep
+# being served from cache for far too long; they are now short and bounded,
+# with a 2s process-local tier that never outlives the shared Valkey entry.
+_EMOJI_LIST_CACHE_PREFIX = "emoji_list_api"
+_EMOJI_DETAIL_CACHE_PREFIX = "emoji_detail_api"
+_EMOJI_CACHE_TTL = 10
+_EMOJI_CACHE_L1_TTL = 2
+
+
+def _cache_id(value):
+    """Normalize a path id so reads and mutations build the same key segment."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _emoji_cache_key_builder(prefix: str):
+    """Partition emoji cache keys by credential and by resource id.
+
+    ``authenticated_cache_key`` keeps a bot token and its owner's user token in
+    separate namespaces (both carry the same ``user_id``). The server id (and,
+    for details, the emoji id) is placed in a fixed leading segment so a single
+    invalidation glob per resource clears every credential's entry. FastAPI
+    passes route params as kwargs, so the previous ``<prefix>:str:<sid>:*``
+    glob never matched the real ``<prefix>:current_user:TokenInfo:<uid>:...``
+    keys and mutations left permanently stale responses behind.
+    """
+
+    def _builder(*args, **kwargs):
+        server_id = _cache_id(kwargs.get("server_id", args[0] if args else ""))
+        emoji_id = _cache_id(kwargs.get("emoji_id", args[1] if len(args) > 1 else ""))
+        resource = f"{prefix}:sid:{server_id}"
+        if emoji_id != "" and emoji_id is not None:
+            resource = f"{resource}:eid:{emoji_id}"
+        return authenticated_cache_key(resource)(*args, **kwargs)
+
+    return _builder
+
+
+_emoji_list_cache_key = _emoji_cache_key_builder(_EMOJI_LIST_CACHE_PREFIX)
+_emoji_detail_cache_key = _emoji_cache_key_builder(_EMOJI_DETAIL_CACHE_PREFIX)
 
 
 def _bounded_id(value: object, field: str) -> int:
@@ -53,13 +98,17 @@ def _emoji_to_response(emoji) -> EmojiResponse:
 
 
 def _invalidate_emoji_cache(server_id: int, emoji_id: Optional[int] = None) -> None:
-    """Invalidate cached emoji list/detail entries for all viewers of a server."""
-    invalidate_pattern(
-        f"{getattr(get_server_emojis, 'cache_key_prefix', '')}:str:{server_id}:*"
-    )
+    """Invalidate cached emoji list/detail entries for every credential.
+
+    The glob must match the keys produced by ``_emoji_cache_key_builder`` —
+    ``<prefix>:sid:<sid>:...`` and ``<prefix>:sid:<sid>:eid:<eid>:...`` — for
+    both user and bot credentials. Create/update/delete all call this from
+    their success path, so no mutation leaves a stale response behind.
+    """
+    invalidate_pattern(f"{_EMOJI_LIST_CACHE_PREFIX}:sid:{server_id}:*")
     if emoji_id is not None:
         invalidate_pattern(
-            f"{getattr(get_emoji, 'cache_key_prefix', '')}:str:{server_id}:str:{emoji_id}:*"
+            f"{_EMOJI_DETAIL_CACHE_PREFIX}:sid:{server_id}:eid:{emoji_id}:*"
         )
 
 
@@ -197,7 +246,12 @@ async def _dispatch_emoji_update(server_id: int):
         503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
-@cached(ttl=300)
+@cached(
+    ttl=_EMOJI_CACHE_TTL,
+    prefix=_EMOJI_LIST_CACHE_PREFIX,
+    key_builder=_emoji_list_cache_key,
+    l1_ttl=_EMOJI_CACHE_L1_TTL,
+)
 async def get_server_emojis(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[EmojiResponse]:
@@ -343,7 +397,12 @@ async def get_emoji_counts(
         503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
-@cached(ttl=3600)
+@cached(
+    ttl=_EMOJI_CACHE_TTL,
+    prefix=_EMOJI_DETAIL_CACHE_PREFIX,
+    key_builder=_emoji_detail_cache_key,
+    l1_ttl=_EMOJI_CACHE_L1_TTL,
+)
 async def get_emoji(
     server_id: str, emoji_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> EmojiResponse:

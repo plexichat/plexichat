@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 import utils.logger as logger
 from src.core.database.cache import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key
 from src.api.schemas.voice import (
     ICEServerConfig,
     ICEServersResponse,
@@ -34,7 +35,17 @@ router = APIRouter(prefix="/voice", tags=["Voice"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=300, prefix="ice_servers")
+# The ICE payload embeds per-user TURN credentials derived from
+# ``current_user.user_id``. A bot token carries its owner's ``user_id``, so the
+# default key (``TokenInfo:<user_id>``) collides with the owner's user session.
+# ``authenticated_cache_key`` gives bots a dedicated namespace, and the 2s L1
+# tier bounds how long a credential can be served after a config change.
+@cached(
+    ttl=300,
+    prefix="ice_servers",
+    key_builder=authenticated_cache_key("ice_servers"),
+    l1_ttl=2,
+)
 async def get_ice_servers(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ICEServersResponse:
