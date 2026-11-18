@@ -16,6 +16,17 @@ The forbidden set is deliberately wider than just C0 + DEL:
   newline; a value that survives this check can still split a downstream
   header or forge a log entry.
 
+* bidi and other invisible format controls -- the Arabic letter mark, LRM/RLM,
+  the Syriac abbreviation mark, the bidi embedding/override band, the isolate
+  and legacy directional-format band, the word joiner and the BOM. These do not
+  split a line, but they let one string *render* as another: a URL or header
+  filename that passes here can show a reviewer a different host/name than the
+  one actually stored and fetched. The request-schema boundary already rejects
+  this same set via ``policy_types.UNSAFE_UNICODE``; keeping the two lists in
+  lockstep closes the differential for the many callers that use these
+  primitives directly. The zero-width joiner is deliberately excluded: it is
+  part of ordinary emoji sequences.
+
 Rejecting them all here keeps every consumer (headers, URLs, filenames, logs)
 on the same side of the parser differential instead of trusting each one to
 happen to reject the same characters.
@@ -28,7 +39,13 @@ from typing import Any
 
 from .errors import HardeningViolation
 
-CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+CONTROL_CHARACTERS = re.compile(
+    r"[\x00-\x1f\x7f-\x9f"  # C0, DEL and C1 controls (incl. NEL)
+    r"\u061c\u200e\u200f\u070f"  # Arabic/LR/RL marks + Syriac abbreviation mark
+    r"\u202a-\u202e"  # bidi embedding and overrides
+    r"\u2066-\u206f"  # bidi isolates + legacy directional formats
+    r"\u2028\u2029\u2060\ufeff]"  # line/para separators, word joiner, BOM
+)
 
 
 def reject_control_characters(value: Any, field: str = "value") -> str:

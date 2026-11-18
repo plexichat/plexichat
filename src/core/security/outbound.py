@@ -85,10 +85,21 @@ def parse_outbound_url(value: str, field: str = "url") -> OutboundUrl:
     if not candidate:
         raise OutboundUrlRejected(f"{field} must not be empty", field=field)
 
-    scheme = (urlparse(candidate).scheme or "").lower()
+    parsed = urlparse(candidate)
+    scheme = (parsed.scheme or "").lower()
     if scheme not in ALLOWED_SCHEMES:
         logger.warning(f"Rejected {field}: scheme {scheme or 'none'} not allowed")
         raise OutboundUrlRejected(f"{field} must use http or https", field=field)
+
+    # This gate is the single choke point for URLs the server persists as
+    # outbound targets. Every shape validator on the request path already
+    # refuses embedded credentials, so accepting them here would let a caller
+    # that goes straight to the gate store a ``user:pass@host`` URL whose
+    # secret is then echoed to clients, written to logs and re-sent on fetch.
+    # Reject before DNS resolution, like the other cheap structural checks.
+    if parsed.username or parsed.password:
+        logger.warning(f"Rejected {field}: credentials in URL")
+        raise OutboundUrlRejected(f"{field} must not embed credentials", field=field)
 
     # A backslash in the authority makes urlparse (this gate) and the HTTP
     # client that later fetches the URL disagree about which host to contact.
