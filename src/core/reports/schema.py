@@ -179,6 +179,9 @@ CREATE INDEX IF NOT EXISTS idx_user_reports_priority_at
 CREATE INDEX IF NOT EXISTS idx_user_reports_assigned ON user_reports(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_user_reports_assigned_at
     ON user_reports(assigned_to, reported_at);
+-- Assigned queue filtered by priority.
+CREATE INDEX IF NOT EXISTS idx_user_reports_assigned_priority
+    ON user_reports(assigned_to, priority);
 CREATE INDEX IF NOT EXISTS idx_user_reports_reported_at ON user_reports(reported_at);
 """
 
