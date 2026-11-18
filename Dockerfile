@@ -13,16 +13,27 @@ WORKDIR /app
 # already has the old library would keep it. Naming it installs the security
 # candidate; ``docker run --rm <image> dpkg -l libbrotli1`` should show
 # ``+deb13u1``.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    ffmpeg \
-    libpq-dev \
-    libopus-dev \
-    libsrtp2-dev \
-    libvpx-dev \
-    libbrotli1 \
-    curl \
+# `apt-get upgrade` is not optional hygiene here: the pinned base image still
+# ships stale copies of packages that receive security fixes via
+# trixie-security (observed on python:3.14.8-slim-trixie: apt/ca-certificates,
+# liblzma5, zlib1g). A plain `apt-get install` does not touch those already on
+# the image, so they would stay vulnerable in every build until the base tag
+# moves. `upgrade` only refreshes already-installed packages (no new packages,
+# no removals), so it cannot change the dependency set we assemble above.
+# DEBIAN_FRONTEND keeps tzdata's reconfiguration non-interactive.
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        ffmpeg \
+        libpq-dev \
+        libopus-dev \
+        libsrtp2-dev \
+        libvpx-dev \
+        libbrotli1 \
+        curl \
+    && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt

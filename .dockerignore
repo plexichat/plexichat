@@ -15,6 +15,44 @@ uploads
 config/config.yaml
 config/docker-config.yaml
 
+# Operator secrets and local state must never enter the build context. The
+# compose stack reads .env at deploy time; COPY . /app would otherwise bake it
+# (and any stray key/cert) into a registry-pushed layer. `**/` forms cover
+# nested copies; the negations keep the documented example file available.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.crt
+**/*.pem
+**/*.key
+**/*.crt
+certs/
+.secrets.baseline
+# Root-level runtime config and local instance state (gitignored, but present
+# on developer/CI checkouts that build images).
+config.yaml
+temp_config.yaml
+.plexichat
+
+# Tests and their reports/artifacts are not part of the runtime image. Keeping
+# them out shrinks the COPY layer and prevents test fixtures or recorded
+# secrets from shipping. CI runs the suite from the source checkout.
+src/tests
+tests/
+test_*.py
+*_test.py
+conftest.py
+test-results.xml
+test_artifacts
+trivy-report.json
+osv-report.json
+.bandit-baseline.json
+
 # CI scratch that lands inside the checkout ($CI_PROJECT_DIR). PIP_CACHE_DIR
 # points at $CI_PROJECT_DIR/.cache/pip, so without this the image carried a
 # ~370 MB pip wheel cache in its COPY layer -- bigger than the source tree and
