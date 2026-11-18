@@ -75,6 +75,9 @@ CREATE TABLE IF NOT EXISTS thread_messages (
 
 -- Thread message indexes
 CREATE INDEX IF NOT EXISTS idx_thread_msg_thread ON thread_messages(thread_id);
+-- Thread message history lists a thread's messages newest-first.
+CREATE INDEX IF NOT EXISTS idx_thread_msg_thread_created
+    ON thread_messages(thread_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_thread_msg_message ON thread_messages(message_id);
 CREATE INDEX IF NOT EXISTS idx_thread_msg_user ON thread_messages(user_id);
 """
