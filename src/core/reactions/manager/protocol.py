@@ -93,3 +93,8 @@ class ReactionProtocol:
         self, viewer_id: Optional[SnowflakeID]
     ) -> "Set[SnowflakeID]":
         return cast(ReactionProtocol, super())._get_blocked_user_ids(viewer_id)
+
+    def _blocked_users_clause(
+        self, column: str, viewer_id: Optional[SnowflakeID]
+    ) -> tuple[str, list]:
+        return cast(ReactionProtocol, super())._blocked_users_clause(column, viewer_id)

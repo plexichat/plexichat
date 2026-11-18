@@ -4,6 +4,7 @@ import utils.logger as logger
 from src.core.base import SnowflakeID
 
 
+from .bounds import blocked_users_not_in
 from .protocol import ReactionProtocol
 
 
@@ -181,3 +182,18 @@ class ReactionPermissionsMixin(ReactionProtocol):
         for row in rows:
             blocked.add(row["blocker_id"])
         return blocked
+
+    def _blocked_users_clause(
+        self, column: str, viewer_id: Optional[SnowflakeID]
+    ) -> tuple[str, list]:
+        """Bounded SQL form of ``_get_blocked_user_ids`` for read queries.
+
+        Both directions of ``rel_blocked`` are resolved in-database so the
+        number of bind variables never grows with the size of the block list.
+        When no relationships module is wired the legacy behaviour (no
+        filtering) is preserved by failing open here, matching
+        ``_get_blocked_user_ids``.
+        """
+        if not viewer_id or not self._relationships:
+            return "", []
+        return blocked_users_not_in(column, viewer_id)

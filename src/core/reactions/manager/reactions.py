@@ -348,8 +348,6 @@ class ReactionOpsMixin(ReactionProtocol):
         if not self._is_participant(msg["conversation_id"], user_id):
             raise MessageNotFoundError("Message not found")
 
-        blocked_users = self._get_blocked_user_ids(user_id)
-
         query = """SELECT r.emoji, r.is_custom, r.custom_emoji_id, e.url, COUNT(*) as count,
                           MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
                    FROM react_reactions r
@@ -358,12 +356,9 @@ class ReactionOpsMixin(ReactionProtocol):
 
         params = [user_id, message_id]
 
-        if blocked_users:
-            placeholders = ",".join("?" * len(blocked_users))
-            query += f" AND r.user_id NOT IN ({placeholders})"
-            # L6: iterate in sorted order so parameter ordering is
-            # deterministic across runs (sets have arbitrary iteration order).
-            params.extend(sorted(blocked_users))
+        clause, blocked_params = self._blocked_users_clause("r.user_id", user_id)
+        query += clause
+        params.extend(blocked_params)
 
         query += """ GROUP BY r.emoji, r.is_custom, r.custom_emoji_id, e.url
                      ORDER BY MIN(r.created_at)"""
@@ -420,18 +415,13 @@ class ReactionOpsMixin(ReactionProtocol):
         # negative limit would bypass the page cap and dump every reactor.
         limit = max(0, min(limit, max_per_page))
 
-        blocked_users = self._get_blocked_user_ids(user_id)
-
         query = """SELECT user_id, created_at FROM react_reactions 
                    WHERE message_id = ? AND emoji = ?"""
         params = [message_id, normalized_emoji]
 
-        if blocked_users:
-            query += " AND user_id NOT IN ({})".format(
-                ",".join("?" * len(blocked_users))
-            )
-            # L6: deterministic parameter order (sets iterate arbitrarily).
-            params.extend(sorted(blocked_users))
+        clause, blocked_params = self._blocked_users_clause("user_id", user_id)
+        query += clause
+        params.extend(blocked_params)
 
         if after_user_id:
             query += " AND user_id > ?"
@@ -473,8 +463,6 @@ class ReactionOpsMixin(ReactionProtocol):
 
         logger.debug(f"Batch fetching reactions for {len(message_ids)} messages")
 
-        blocked_users = self._get_blocked_user_ids(user_id)
-
         placeholders = ",".join("?" * len(message_ids))
 
         query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
@@ -498,11 +486,9 @@ class ReactionOpsMixin(ReactionProtocol):
                       )"""
         params = [user_id] + list(message_ids) + [user_id, user_id]
 
-        if blocked_users:
-            blocked_placeholders = ",".join("?" * len(blocked_users))
-            query += f" AND r.user_id NOT IN ({blocked_placeholders})"
-            # L6: deterministic parameter order (sets iterate arbitrarily).
-            params.extend(sorted(blocked_users))
+        clause, blocked_params = self._blocked_users_clause("r.user_id", user_id)
+        query += clause
+        params.extend(blocked_params)
 
         query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
 
@@ -535,11 +521,9 @@ class ReactionOpsMixin(ReactionProtocol):
         params: List[Any] = [message_id]
 
         # Keep internal counters consistent with the filtered list APIs.
-        blocked_users = self._get_blocked_user_ids(viewer_id)
-        if blocked_users:
-            placeholders = ",".join("?" * len(blocked_users))
-            query += f" AND user_id NOT IN ({placeholders})"
-            params.extend(sorted(blocked_users))
+        clause, blocked_params = self._blocked_users_clause("user_id", viewer_id)
+        query += clause
+        params.extend(blocked_params)
 
         row = self._db.fetch_one(query, tuple(params))
         return row["count"] if row else 0
@@ -564,11 +548,9 @@ class ReactionOpsMixin(ReactionProtocol):
             query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND emoji = ? AND is_custom = 0"
             params = [message_id, normalized]
 
-        blocked_users = self._get_blocked_user_ids(viewer_id)
-        if blocked_users:
-            placeholders = ",".join("?" * len(blocked_users))
-            query += f" AND user_id NOT IN ({placeholders})"
-            params.extend(sorted(blocked_users))
+        clause, blocked_params = self._blocked_users_clause("user_id", viewer_id)
+        query += clause
+        params.extend(blocked_params)
 
         row = self._db.fetch_one(query, tuple(params))
         return row["count"] if row else 0

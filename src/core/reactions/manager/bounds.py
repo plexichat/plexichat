@@ -62,6 +62,27 @@ def validate_route_emoji(emoji: object) -> str:
     return decoded
 
 
+def blocked_users_not_in(column: str, viewer_id: object) -> tuple[str, List[object]]:
+    """Predicate excluding a viewer's blocked users with only two binds.
+
+    A viewer's blocked set is bidirectional and has no configured cap. Binding
+    one ``?`` per id (splitting them across several ``NOT IN`` conjuncts does
+    not help -- SQLite caps the TOTAL number of binds per statement) crossed
+    the 999/32766 variable limit and made every reaction read for that viewer
+    fail with "too many SQL variables". Resolve the same bidirectional set in
+    the database instead, so the number of binds stays constant no matter how
+    many blocks exist. Only ``column`` is interpolated; it is always a
+    hard-coded identifier supplied by the caller, never user input.
+    """
+    if not viewer_id:
+        return "", []
+    sql = (
+        f" AND {column} NOT IN (SELECT blocked_id FROM rel_blocked WHERE blocker_id = ?)"
+        f" AND {column} NOT IN (SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?)"
+    )
+    return sql, [viewer_id, viewer_id]
+
+
 def validate_bulk_message_ids(ids: Iterable[object]) -> List[int]:
     """Bound, parse and de-duplicate a list of message ids for batch queries.
 

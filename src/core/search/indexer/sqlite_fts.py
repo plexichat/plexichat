@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional
 import utils.logger as logger
 
 from src.core.database.builder.sql_safety import sql_identifier, sql_placeholders
-from src.core.security.hardening import HardeningViolation
+from src.core.security.hardening import HardeningViolation, reject_control_characters
 
 from .base import BaseIndexer, IndexerConfig
 from ..models import (
@@ -348,7 +348,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Search failed: {e}")
@@ -436,7 +436,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"User search failed: {e}")
@@ -547,7 +547,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Server search failed: {e}")
@@ -617,10 +617,18 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
     def _build_fts_query(self, query: str) -> str:
         """Build FTS5 query from user query (bounded in length and terms)."""
+        # Control characters must never reach the MATCH expression. The
+        # manager rejects them at its HTTP entry points, but indexers are also
+        # called directly (rebuilds, tests, internal callers): a NUL embedded
+        # in even a single quoted phrase survives into the bound MATCH string
+        # where sqlite3 raises "unterminated string", turning a search into a
+        # 500. Fail closed here too rather than trusting every caller.
+        query = reject_control_characters(query, "fts query")
+
         # Cap before any tokenization: a hostile caller cannot make SQLite
         # parse an arbitrarily large MATCH expression. Truncation keeps normal
         # queries untouched and avoids turning a search into an error.
-        query = str(query or "").strip()[:_FTS_MAX_QUERY_CHARS]
+        query = query.strip()[:_FTS_MAX_QUERY_CHARS]
 
         special_chars = ["(", ")", "*", ":", "-", "+", "^", "~"]
         clean_query = query
@@ -635,14 +643,25 @@ class SQLiteFTS5Indexer(BaseIndexer):
         terms = [t.strip() for t in remaining.split() if t.strip()]
 
         all_tokens = []
+        # ONE shared budget for quoted phrases and bare terms. Applying
+        # ``_FTS_MAX_TERMS`` only to bare terms let a 256-char needle composed
+        # of '"a" "b" ...' produce dozens of phrase tokens, defeating the cap
+        # and multiplying FTS5 query-planning work on every search.
+        budget = _FTS_MAX_TERMS
         for phrase in phrases:
-            safe_phrase = phrase.replace('"', "")
+            if budget <= 0:
+                break
+            safe_phrase = phrase.replace('"', "")[:_FTS_MAX_TERM_CHARS]
             if safe_phrase:
                 all_tokens.append(f'"{safe_phrase}"')
-        for term in terms[:_FTS_MAX_TERMS]:
+                budget -= 1
+        for term in terms:
+            if budget <= 0:
+                break
             safe_term = term.replace('"', "")[:_FTS_MAX_TERM_CHARS]
             if safe_term:
                 all_tokens.append(f'"{safe_term}"*')
+                budget -= 1
 
         if not all_tokens:
             return '""'
