@@ -182,6 +182,7 @@ There is no `reports.resolve` scope. To review message, user, or hash reports, u
 |-------|-------------|
 | `data_export.read` | View and manage data-export requests |
 | `data_export.process` | Approve, deny, and generate data exports |
+| `admin.bots.read` | View system-wide application and bot oversight data |
 | `admin.migrations.execute` | Run, apply, and roll back database migrations |
 | `admin.data.reindex` | Rebuild the search index (bulk message decryption) |
 | `admin.dashboard.tuning` | Tune dashboard limits with hot-reload |

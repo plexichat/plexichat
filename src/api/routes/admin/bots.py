@@ -9,18 +9,12 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pydantic import BaseModel
 
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import applications
 import utils.logger as logger
 
 router = APIRouter(prefix="/bots", tags=["Admin Bots"])
-
-
-def _require_admin(request: Request) -> int:
-    """Validate admin access for bot admin routes."""
-    check_host_restriction(request)
-    return get_admin_from_token(request)
 
 
 class BotStatsResponse(BaseModel):
@@ -76,7 +70,8 @@ async def admin_bot_stats(
 ):
     """Get bot statistics for the admin dashboard."""
     try:
-        _require_admin(request)
+        check_host_restriction(request)
+        require_admin_permission(request, "admin.bots.read")
         stats = applications.get_admin_bot_stats()
         return BotStatsResponse(**stats)
     except HTTPException:
@@ -106,7 +101,8 @@ async def admin_list_applications(
 ):
     """List all applications with bot stats for the admin panel."""
     try:
-        _require_admin(request)
+        check_host_restriction(request)
+        require_admin_permission(request, "admin.bots.read")
         rows = applications.get_admin_bot_applications(limit=limit, offset=offset)
         return [AdminBotEntry(**row) for row in rows]
     except HTTPException:
@@ -137,7 +133,8 @@ async def admin_list_requests(
 ):
     """List bot requests for the admin panel."""
     try:
-        _require_admin(request)
+        check_host_restriction(request)
+        require_admin_permission(request, "admin.bots.read")
         rows = applications.get_admin_bot_requests(
             status_filter=status_filter, limit=limit, offset=offset
         )
