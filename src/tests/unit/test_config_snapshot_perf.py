@@ -109,3 +109,73 @@ def test_version_fn_overrides_paths():
     version[0] = "v2"
     snapshot.snapshot()
     assert len(calls) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Staleness ceiling                                                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_max_age_throttles_version_checks_without_rebuilding():
+    """The ceiling keeps hot reads free of even the version-check cost."""
+    version_checks = []
+    calls = []
+
+    def version_fn():
+        version_checks.append(1)
+        return "stable"
+
+    snapshot = VersionedConfigSnapshot(
+        _counter_loader(calls, "x"), version_fn=version_fn, max_age=60.0
+    )
+
+    for _ in range(100):
+        assert snapshot.snapshot() == snapshot.snapshot()
+
+    assert len(version_checks) == 1, "version check must be throttled"
+    assert snapshot.stats()["version_checks"] == 1
+    assert len(calls) == 1
+
+    # Ceiling elapses but the source is unchanged: re-check, no rebuild.
+    snapshot._version_checked_at -= 61.0
+    snapshot.snapshot()
+    assert len(version_checks) == 2
+    assert len(calls) == 1, "unchanged version must not rebuild"
+    assert snapshot.stats()["rebuilds"] == 1
+
+
+def test_max_age_change_observed_after_ceiling():
+    """A real change is picked up on the first check after the ceiling."""
+    version = ["v1"]
+    calls = []
+    snapshot = VersionedConfigSnapshot(
+        _counter_loader(calls, "x"), version_fn=lambda: tuple(version), max_age=60.0
+    )
+
+    snapshot.snapshot()
+    assert len(calls) == 1
+
+    # Still inside the ceiling: the edit is intentionally not observed yet.
+    version[0] = "v2"
+    snapshot.snapshot()
+    assert len(calls) == 1
+
+    # Ceiling elapses: exactly one rebuild picks up the new version.
+    snapshot._version_checked_at -= 61.0
+    snapshot.snapshot()
+    assert len(calls) == 2
+    assert snapshot.stats()["rebuilds"] == 2
+
+
+def test_default_snapshot_still_checks_version_every_access():
+    """Backwards compatibility: no ceiling means unchanged behaviour."""
+    version_checks = []
+    snapshot = VersionedConfigSnapshot(
+        lambda: {"v": 1}, version_fn=lambda: version_checks.append(1) or "stable"
+    )
+
+    for _ in range(10):
+        snapshot.snapshot()
+
+    assert len(version_checks) == 10
+    assert snapshot.stats()["max_age"] is None

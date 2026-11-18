@@ -4,7 +4,9 @@ User Features data models.
 
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+
 from src.core.base import SnowflakeID
+from src.core.config.snapshot import VersionedConfigSnapshot, config_source_version
 
 
 # Available badge types
@@ -32,75 +34,105 @@ class Badge:
 
     @staticmethod
     def get_badge_info(badge_name: str) -> "Badge":
-        """Get display info for a badge."""
-        badges = {
-            "alpha_tester": Badge(
-                name="alpha_tester",
-                display_name="Alpha Tester",
-                description="Participated in Plexichat alpha testing",
-                icon="🧪",
-                color="#9333ea",
-            ),
-            "early_supporter": Badge(
-                name="early_supporter",
-                display_name="Early Supporter",
-                description="Supported Plexichat early on",
-                icon="💎",
-                color="#06b6d4",
-            ),
-            "staff": Badge(
-                name="staff",
-                display_name="Staff",
-                description="Plexichat team member",
-                icon="⚡",
-                color="#ef4444",
-            ),
-            "verified": Badge(
-                name="verified",
-                display_name="Verified",
-                description="Verified account",
-                icon="✓",
-                color="#22c55e",
-            ),
-            "bug_hunter": Badge(
-                name="bug_hunter",
-                display_name="Bug Hunter",
-                description="Found and reported bugs",
-                icon="🐛",
-                color="#84cc16",
-            ),
-            "contributor": Badge(
-                name="contributor",
-                display_name="Contributor",
-                description="Contributed to Plexichat",
-                icon="🔧",
-                color="#3b82f6",
-            ),
-            "moderator": Badge(
-                name="moderator",
-                display_name="Moderator",
-                description="Community moderator",
-                icon="🛡️",
-                color="#8b5cf6",
-            ),
-            "partner": Badge(
-                name="partner",
-                display_name="Partner",
-                description="Plexichat partner",
-                icon="🤝",
-                color="#ec4899",
-            ),
-        }
-        return badges.get(
-            badge_name,
-            Badge(
-                name=badge_name,
-                display_name=badge_name.replace("_", " ").title(),
-                description="",
-                icon="🏷️",
-                color="#6b7280",
-            ),
+        """Get display info for a badge.
+
+        The badge catalogue is static operator/feature data, but this helper is
+        on the profile/message hot path and used to rebuild the entire catalogue
+        (eight ``Badge`` objects) on every call just to pick one entry.  It now
+        reads a versioned snapshot instead.  A fresh ``Badge`` is returned so
+        callers can never mutate the cached templates.
+        """
+        template = _badge_catalog_snapshot.snapshot().get(badge_name)
+        if template is not None:
+            return Badge(**vars(template))
+        return Badge(
+            name=badge_name,
+            display_name=badge_name.replace("_", " ").title(),
+            description="",
+            icon="🏷️",
+            color="#6b7280",
         )
+
+
+def _build_badge_catalog() -> Dict[str, Badge]:
+    """Build the static badge catalogue (only runs on a snapshot miss)."""
+    return {
+        "alpha_tester": Badge(
+            name="alpha_tester",
+            display_name="Alpha Tester",
+            description="Participated in Plexichat alpha testing",
+            icon="🧪",
+            color="#9333ea",
+        ),
+        "early_supporter": Badge(
+            name="early_supporter",
+            display_name="Early Supporter",
+            description="Supported Plexichat early on",
+            icon="💎",
+            color="#06b6d4",
+        ),
+        "staff": Badge(
+            name="staff",
+            display_name="Staff",
+            description="Plexichat team member",
+            icon="⚡",
+            color="#ef4444",
+        ),
+        "verified": Badge(
+            name="verified",
+            display_name="Verified",
+            description="Verified account",
+            icon="✓",
+            color="#22c55e",
+        ),
+        "bug_hunter": Badge(
+            name="bug_hunter",
+            display_name="Bug Hunter",
+            description="Found and reported bugs",
+            icon="🐛",
+            color="#84cc16",
+        ),
+        "contributor": Badge(
+            name="contributor",
+            display_name="Contributor",
+            description="Contributed to Plexichat",
+            icon="🔧",
+            color="#3b82f6",
+        ),
+        "moderator": Badge(
+            name="moderator",
+            display_name="Moderator",
+            description="Community moderator",
+            icon="🛡️",
+            color="#8b5cf6",
+        ),
+        "partner": Badge(
+            name="partner",
+            display_name="Partner",
+            description="Plexichat partner",
+            icon="🤝",
+            color="#ec4899",
+        ),
+    }
+
+
+# The catalogue only changes when the config source does, so it is cached
+# against the live loader identity + config file mtime/size (see
+# ``config_source_version``).  A short staleness ceiling keeps the hot path
+# free of even the version-check stat for five seconds at a time, while an
+# explicit invalidate remains available for reload/admin paths.
+_BADGE_CATALOG_MAX_AGE_SECONDS = 5.0
+
+_badge_catalog_snapshot = VersionedConfigSnapshot(
+    _build_badge_catalog,
+    version_fn=lambda: config_source_version(repr(AVAILABLE_BADGES)),
+    max_age=_BADGE_CATALOG_MAX_AGE_SECONDS,
+)
+
+
+def invalidate_badge_catalog_cache() -> None:
+    """Drop the cached badge catalogue so the next access rebuilds it."""
+    _badge_catalog_snapshot.invalidate()
 
 
 @dataclass
