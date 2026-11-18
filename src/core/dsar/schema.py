@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS dsar_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dsar_requests_user ON dsar_requests(user_id);
+-- A user's requests are listed by status (pending/approved/...).
+CREATE INDEX IF NOT EXISTS idx_dsar_requests_user_status
+    ON dsar_requests(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_dsar_requests_status ON dsar_requests(status);
 CREATE INDEX IF NOT EXISTS idx_dsar_requests_expires ON dsar_requests(expires_at);
 
