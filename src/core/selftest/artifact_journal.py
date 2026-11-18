@@ -12,11 +12,30 @@ removing recorded elevated accounts) and only then clears it.
 
 import json
 import os
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
 
 _DEFAULT_PATH = os.path.join("data", "selftest_artifact_journal.json")
+
+
+def _safe_path(path: Any) -> str:
+    """Reject a journal path that could traverse the filesystem.
+
+    ``config_guard`` confines the operator-supplied path at the runner
+    boundary, but ``ArtifactJournal`` is also constructed directly (status
+    mode, tests, future callers). Re-check at the filesystem sink so a NUL
+    byte or a ``..`` component can never turn the journal into an arbitrary
+    read/write target. Refuse the path by falling back to the shipped
+    default rather than raising: a hostile path must not break the harness.
+    """
+    if not isinstance(path, str) or not path or "\x00" in path:
+        return _DEFAULT_PATH
+    if ".." in path.replace("\\", "/").split("/"):
+        return _DEFAULT_PATH
+    return path
+
 
 # The journal is a JSON file on disk. Anything that can write to the data
 # directory can forge or replay entries, so reconciliation treats it as fully
@@ -30,7 +49,7 @@ class ArtifactJournal:
     """Crash-safe record of privileged test artifacts awaiting cleanup."""
 
     def __init__(self, path: Optional[str] = None):
-        self.path = path or _DEFAULT_PATH
+        self.path = _safe_path(path) if path is not None else _DEFAULT_PATH
         self._entries: List[Dict[str, Any]] = []
         self._load()
 
@@ -51,17 +70,32 @@ class ArtifactJournal:
     def _flush(self) -> None:
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, exist_ok=True)
-        tmp_path = f"{self.path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as fh:
-            json.dump(self._entries, fh, indent=2)
-        # The journal records privileged artifact metadata (elevated selftest
-        # usernames and granted wildcard permissions). Keep it unreadable to
-        # other local users where the platform honours POSIX modes.
+        # Never write through a predictable ``<journal>.tmp`` name: an attacker
+        # with write access to the data directory could plant a symlink there
+        # and turn the next flush into an arbitrary-file overwrite (and reset
+        # that file's mode to 0o600). mkstemp creates a unique file with
+        # O_CREAT | O_EXCL and mode 0o600 in the same directory, so the atomic
+        # os.replace below can never follow a pre-planted symlink.
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".selftest_artifact_journal.", suffix=".tmp", dir=directory
+        )
         try:
-            os.chmod(tmp_path, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp_path, self.path)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(self._entries, fh, indent=2)
+            # The journal records privileged artifact metadata (elevated
+            # selftest usernames and granted wildcard permissions). Keep it
+            # unreadable to other local users where POSIX modes are honoured.
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
+            os.replace(tmp_path, self.path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     # -- recording ---------------------------------------------------
 
