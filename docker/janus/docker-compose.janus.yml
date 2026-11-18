@@ -13,9 +13,10 @@
 #   docker inspect --format '{{index .RepoDigests 0}}' canyan/janus-gateway:0.10.7
 #
 # This is a DEVELOPMENT gateway, not a deployment. The Janus API is
-# unauthenticated (no ``api_secret``), the HTTP endpoint is published on the
-# host, and nothing here is hardened. Do not run it on a shared or production
-# host, and do not point a production voice deployment at it.
+# unauthenticated (no ``api_secret``), so its HTTP/WS ports are published on
+# LOOPBACK (127.0.0.1) only -- never on 0.0.0.0 where any host on the network
+# could reconfigure it. Do not expose them to a shared or production network,
+# and do not point a production voice deployment at it.
 #
 # Networking: only the API is published. WebRTC media candidates are gathered
 # inside the container, so real RTP between peers needs host networking, or
@@ -30,6 +31,8 @@ services:
     image: canyan/janus-gateway:0.10.7
     command: ["/usr/local/bin/janus", "-F", "/usr/local/etc/janus"]
     ports:
-      - "8088:8088" # HTTP API: http://localhost:8088/janus (the adapter default)
-      - "8188:8188" # WebSocket API; the REST adapter does not use it
+      # Loopback-only: the API is unauthenticated, so a 0.0.0.0 bind would let
+      # anyone on the LAN create/destroy VideoRooms or read its state.
+      - "127.0.0.1:8088:8088" # HTTP API: http://127.0.0.1:8088/janus
+      - "127.0.0.1:8188:8188" # WebSocket API; the REST adapter does not use it
     restart: unless-stopped
