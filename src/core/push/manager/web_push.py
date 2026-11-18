@@ -88,7 +88,21 @@ def _require_public_endpoint(endpoint: str) -> str:
     literal IPs in every reserved range plus internal/loopback hostnames.
     Ordinary public DNS names are returned unchanged.
     """
-    host = (urlparse(endpoint).hostname or "").lower().rstrip(".")
+    parsed = urlparse(endpoint)
+    # A literal backslash in the authority is a parser differential that lets
+    # this whole gate be bypassed. ``urlparse`` treats ``\`` as an ordinary
+    # character, so ``https://169.254.169.254\push.example/ep`` is read as the
+    # (public-looking) hostname ``169.254.169.254\push.example`` and passes
+    # every check below. urllib3/requests -- the client pywebpush uses -- apply
+    # WHATWG rules and treat ``\`` as ``/`` in an http(s) URL, so they connect
+    # to the address to the LEFT of the backslash (the metadata service). A
+    # literal backslash has no legitimate place in a URL authority: one meant
+    # as data must be percent-encoded (``%5C``), which keeps it in the path
+    # where it cannot influence host selection. Refuse it before any host
+    # matching. This mirrors the gate in ``outbound.parse_outbound_url``.
+    if "\\" in (parsed.netloc or ""):
+        raise ValueError("endpoint URL authority contains a backslash")
+    host = (parsed.hostname or "").lower().rstrip(".")
     if not host:
         raise ValueError("endpoint has no host")
     if host in _BLOCKED_ENDPOINT_HOSTS or host.endswith(_BLOCKED_ENDPOINT_SUFFIXES):
