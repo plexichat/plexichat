@@ -24,7 +24,12 @@ from ..base import BaseService, get_encrypt_messages_default
 from .protocol import MessageServiceProtocol
 from .search_helpers import search_index_message, search_remove_from_index
 
-BULK_DELETE_MAX_IDS = 100
+# A single bulk request must never be able to grow without bound. Both the
+# delete and archive paths draw from the same cap so one cannot silently
+# drift past the other (the archive path previously had no cap at all).
+BULK_OPERATION_MAX_IDS = 100
+BULK_DELETE_MAX_IDS = BULK_OPERATION_MAX_IDS
+BULK_ARCHIVE_MAX_IDS = BULK_OPERATION_MAX_IDS
 
 
 def _get_servers_module():
@@ -682,7 +687,17 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         user_id: SnowflakeID,
         message_ids: List[SnowflakeID],
     ) -> Dict[str, Any]:
-        """Archive multiple messages."""
+        """Archive multiple messages.
+
+        Request size is capped at ``BULK_ARCHIVE_MAX_IDS`` (100) so a single
+        call cannot be used to drive unbounded database work — the same bound
+        the bulk-delete path enforces.
+        """
+        if len(message_ids) > BULK_ARCHIVE_MAX_IDS:
+            raise InvalidContentError(
+                f"Cannot bulk-archive more than {BULK_ARCHIVE_MAX_IDS} messages"
+            )
+
         import json
 
         success_count = 0

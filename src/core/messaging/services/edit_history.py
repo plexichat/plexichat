@@ -2,11 +2,11 @@
 Edit history service - Business logic for message edit history tracking.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import time
 
 from .base import BaseService
-from ..repositories.edit_history import EditHistoryRepository
+from ..repositories.edit_history import EditHistoryRepository, _bounded_history_limit
 from ..repositories.message import MessageRepository
 from ..exceptions import MessageNotFoundError, ConversationAccessDeniedError
 from .participant import ParticipantService
@@ -113,13 +113,20 @@ class EditHistoryService(BaseService):
         self,
         user_id: SnowflakeID,
         message_id: SnowflakeID,
+        limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get edit history for a message.
 
+        The number of returned entries is always bounded: ``limit`` is
+        clamped to at most ``MAX_EDIT_HISTORY_ROWS`` and the newest versions
+        are retained, so a message with an oversized history cannot exhaust
+        memory on read.
+
         Args:
             user_id: ID of the user requesting history
             message_id: ID of the message
+            limit: Optional maximum number of entries (clamped to a safe cap)
 
         Returns:
             List of edit history entries
@@ -140,7 +147,9 @@ class EditHistoryService(BaseService):
                 "Not a participant in this conversation"
             )
 
-        rows = self._repo.get_by_message(message_id)
+        rows = self._repo.get_by_message(
+            message_id, limit=_bounded_history_limit(limit)
+        )
 
         # Decrypt if needed
         history = []
