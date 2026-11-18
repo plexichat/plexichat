@@ -300,10 +300,11 @@ def test_consuming_an_approval_invalidates_the_list_cache(monkeypatch):
             return _Cur()
 
     calls = {"n": 0}
+    real_invalidate = read_cache.invalidate_approval_caches
 
     def _spy():
         calls["n"] += 1
-        read_cache.invalidate_approval_caches()
+        real_invalidate()
 
     monkeypatch.setattr(read_cache, "invalidate_approval_caches", _spy)
     monkeypatch.setattr(
