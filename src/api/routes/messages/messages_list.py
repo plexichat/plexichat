@@ -26,6 +26,7 @@ from src.core.messaging.exceptions import (
     ConversationAccessDeniedError,
 )
 from src.core.messaging.render_generation import get as get_render_generation
+from src.api.routes.users.helpers import authenticated_cache_key
 from .render_cache import get_render_cache
 from .helpers import (
     _message_to_response,
@@ -48,7 +49,16 @@ router = APIRouter(tags=["Messages"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=10, prefix="messages_api")
+# Cache entries for private channel content MUST be partitioned by credential,
+# not just by user_id: generate_cache_key() collapses a TokenInfo to
+# ``TokenInfo:<user_id>``, and bot tokens carry their owner's user_id. Without
+# authenticated_cache_key a bot and its owner collide on the same key, so one
+# credential's message page is replayed to the other (cross-credential leak).
+@cached(
+    ttl=10,
+    prefix="messages_api",
+    key_builder=authenticated_cache_key("messages_api"),
+)
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -355,7 +365,11 @@ async def get_channel_messages(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=120, prefix="channel_pins_api")
+@cached(
+    ttl=120,
+    prefix="channel_pins_api",
+    key_builder=authenticated_cache_key("channel_pins_api"),
+)
 async def get_pinned_messages(
     channel_id: str,
     # Pins used to be returned in full with no bound. A channel with a very

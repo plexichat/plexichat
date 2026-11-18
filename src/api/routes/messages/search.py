@@ -12,6 +12,7 @@ import src.api as api
 import utils.logger as logger
 from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key
 from src.api.schemas.messages import MessageResponse
 from src.api.schemas.common import ErrorResponse
 from .helpers import (
@@ -34,7 +35,14 @@ router = APIRouter(tags=["Messages"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=60, prefix="search_messages_api")
+# Partition search-result cache entries by credential: generate_cache_key()
+# reduces TokenInfo to TokenInfo:<user_id>, which a bot shares with its owner.
+# Without this, a bot's search hits can be served to the owner (or vice versa).
+@cached(
+    ttl=60,
+    prefix="search_messages_api",
+    key_builder=authenticated_cache_key("search_messages_api"),
+)
 async def search_messages(
     channel_id: str,
     # A search term is fed to the messaging engine's (blind-index) query
