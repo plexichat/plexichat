@@ -208,6 +208,18 @@ class ThreadMembershipMixin(ThreadProtocol):
             raise PermissionDeniedError("Cannot remove thread owner", "threads.manage")
 
         if user_id != member_user_id:
+            # Private-thread audiences are invite-only and invisible to
+            # non-members. A channel-level ``threads.manage`` grant must not
+            # let someone who is not in the thread's audience strip its
+            # roster: ``add_member`` applies the same caller-membership rule.
+            # Check membership first so a non-member gets the same denial
+            # regardless of whether they happen to hold the manage grant.
+            if thread.thread_type == ThreadType.PRIVATE and not self._is_member(
+                user_id, thread_id
+            ):
+                raise ThreadAccessDeniedError(
+                    "Must be a member to manage a private thread's members"
+                )
             if not self.can_manage_thread(user_id, thread_id):
                 raise PermissionDeniedError("Cannot remove members", "threads.manage")
 
@@ -233,6 +245,12 @@ class ThreadMembershipMixin(ThreadProtocol):
     ) -> List[ThreadMember]:
         if not self.can_view_thread(user_id, thread_id):
             raise ThreadAccessDeniedError("Cannot access this thread")
+
+        # Clamp from below: SQLite treats ``LIMIT -1`` as *unlimited*, so a
+        # negative limit would dump the entire membership roster instead of
+        # returning an empty page. Mirrors the clamp in get_messages() and
+        # the relationship/blocking listings.
+        limit = max(0, limit)
 
         if after_user_id:
             rows = self._db.fetch_all(
