@@ -42,6 +42,11 @@ class ScheduledMessageService:
     """Service for managing scheduled messages."""
 
     MAX_SCHEDULED_PER_USER = 50
+    # A hard upper bound on a single listing. Only 50 pending messages are
+    # allowed per user, but cancelled/dispatched rows accumulate forever; an
+    # unbounded ``limit`` on those could dump the user's entire history (and
+    # each row carries the scheduled plaintext) in one read.
+    MAX_LIST_LIMIT = 200
     MIN_SCHEDULE_AHEAD_MS = 60000  # 1 minute minimum
     MAX_SCHEDULE_AHEAD_MS = 7 * 24 * 3600 * 1000  # 7 days maximum
 
@@ -160,9 +165,14 @@ class ScheduledMessageService:
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
         """List scheduled messages for a user."""
-        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
-        # negative limit would bypass the page cap and dump the whole list.
-        limit = max(0, limit)
+        # Clamp on BOTH sides. SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit dumped the list; an arbitrarily large positive limit
+        # (e.g. 10**12) did the same by bypassing the page cap from above.
+        try:
+            requested = int(limit)
+        except (TypeError, ValueError):
+            requested = 0
+        limit = max(0, min(requested, self.MAX_LIST_LIMIT))
         query = "SELECT * FROM msg_scheduled WHERE author_id = ?"
         params: list = [user_id]
 

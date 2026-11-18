@@ -25,9 +25,22 @@ from typing import Any, Dict, List, Optional
 import utils.logger as logger
 
 
-# Tables that only exist when an optional domain is installed. A missing table
-# is a schema older than the domain, not an error in the purge.
+# Marker written over message content that survives erasure. Keep it identical
+# to the reaper's anonymization text so a direct ``erase_user_residue`` call and
+# a full ``AccountReaper.purge_user`` render the same tombstone.
+ANONYMIZED_CONTENT = "[This message was sent by a deleted user]"
+REDACTED_HISTORY_CONTENT = "[redacted]"
+
+
+# Tables that only exist when an optional domain is installed, or that were
+# added after the first schema release. A missing table is an older/partial
+# install, not an error in the purge.
 _OPTIONAL_TABLES = (
+    # Blind-index children of msg_messages. They cascade on PostgreSQL, but
+    # SQLite purges run with foreign keys off, so the erasure must delete them
+    # explicitly or they survive as keyed-hash residue keyed by a dead author.
+    "msg_message_tokens",
+    "msg_edit_history",
     "automod_rules",
     "automod_violations",
     "automod_audit",
@@ -229,6 +242,16 @@ def delete_conversation(db: Any, conversation_id: int) -> None:
         (cid,),
     )
     _execute(db, "DELETE FROM thread_threads WHERE conversation_id = ?", (cid,))
+    # msg_message_tokens has an ON DELETE CASCADE on PostgreSQL, but SQLite
+    # purge paths run with foreign keys disabled. Without this explicit delete
+    # the per-word blind indexes of every message in the erased conversation
+    # remain behind, still keyed by (now dead) message ids.
+    _execute(
+        db,
+        "DELETE FROM msg_message_tokens WHERE message_id IN "
+        "(SELECT id FROM msg_messages WHERE conversation_id = ?)",
+        (cid,),
+    )
     _execute(db, "DELETE FROM msg_messages WHERE conversation_id = ?", (cid,))
     _execute(db, "DELETE FROM msg_participants WHERE conversation_id = ?", (cid,))
     _execute(db, "DELETE FROM msg_conversations WHERE id = ?", (cid,))
@@ -592,6 +615,76 @@ def purge_user_credentials(db: Any, user_id: int) -> int:
     return affected
 
 
+# === message content residue ===
+
+
+def purge_user_message_residue(db: Any, user_id: int) -> int:
+    """Scrub every residual representation of a user's message content.
+
+    ``AccountReaper.purge_user`` (with the default ``anonymize_content``
+    policy) only overwrites ``msg_messages.content``. It leaves behind the
+    other copies of the same content, all keyed by the erased user id:
+
+    * ``content_encrypted`` — the legacy ciphertext mirror of the plaintext;
+    * ``content_index`` — a keyed blind index of the whole plaintext;
+    * ``msg_message_tokens`` — one keyed blind index per plaintext word;
+    * ``msg_edit_history.old_content`` / ``old_content_encrypted`` — previous
+      (often plaintext) versions of the user's messages, keyed by editor id.
+
+    On PostgreSQL most of these have FK cascades from ``auth_users`` or
+    ``msg_messages``; the SQLite purge paths do not enforce foreign keys, so
+    the rows survive after the account row is gone. Worse, a message the user
+    authored in a conversation that stays alive for other participants keeps
+    all of them even on PostgreSQL. Erasing only ``content`` therefore leaves
+    the substance of the user's speech queryable under a dead id.
+
+    This must run BEFORE the conversation/server purges so the token children
+    are still reachable by their parent message id. Returns the number of rows
+    touched (children counted separately); a missing optional table is
+    tolerated so partial/older installs do not abort the erasure.
+    """
+    uid = int(user_id)
+    affected = 0
+
+    # Messages that survive erasure (shared DMs/groups) keep their row, so
+    # blank every content-bearing column, not just ``content``.
+    try:
+        cursor = db.execute(
+            """UPDATE msg_messages
+               SET content = ?, content_encrypted = NULL, content_index = NULL,
+                   metadata = NULL
+             WHERE author_id = ?""",
+            (ANONYMIZED_CONTENT, uid),
+        )
+        affected += int(getattr(cursor, "rowcount", 0) or 0)
+    except Exception as exc:
+        logger.debug("Erase: message content scrub skipped: %s", exc)
+
+    try:
+        cursor = db.execute(
+            "DELETE FROM msg_message_tokens WHERE message_id IN "
+            "(SELECT id FROM msg_messages WHERE author_id = ?)",
+            (uid,),
+        )
+        affected += int(getattr(cursor, "rowcount", 0) or 0)
+    except Exception as exc:
+        logger.debug("Erase: message token blind-index scrub skipped: %s", exc)
+
+    # Edit history is keyed by editor_id, so messages the user edited but a
+    # surviving conversation still holds are covered here as well.
+    for column in ("old_content", "old_content_encrypted"):
+        try:
+            cursor = db.execute(
+                f"UPDATE msg_edit_history SET {column} = ? WHERE editor_id = ?",
+                (REDACTED_HISTORY_CONTENT if column == "old_content" else None, uid),
+            )
+            affected += int(getattr(cursor, "rowcount", 0) or 0)
+        except Exception as exc:
+            logger.debug("Erase: edit-history %s scrub skipped: %s", column, exc)
+
+    return affected
+
+
 # === orchestration ===
 
 
@@ -599,7 +692,12 @@ def erase_user_residue(
     db: Any, user_id: int, media: Optional[Any] = None
 ) -> Dict[str, Any]:
     """Erase everything the account owned outside the ``auth_users`` row."""
-    # Notifications first: their un-cascaded FKs would otherwise block the
+    # Message content residue first, while the parent messages still exist to
+    # resolve their blind-index children. A shared conversation keeps its
+    # messages (and therefore their ciphertext/index residue) alive, so this
+    # cannot wait for the conversation purges below.
+    message_residue = purge_user_message_residue(db, user_id)
+    # Notifications next: their un-cascaded FKs would otherwise block the
     # conversation/message deletes below and leak message previews.
     notifications = purge_user_notifications(db, user_id)
     personal_rows = purge_user_personal_rows(db, user_id)
@@ -614,12 +712,15 @@ def erase_user_residue(
         or notifications
         or personal_rows
         or credentials
+        or message_residue
     ):
         logger.info(
-            "Erase: user %s left %s notification(s), %s personal row(s), "
+            "Erase: user %s left %s message-residue row(s), "
+            "%s notification(s), %s personal row(s), "
             "%s credential row(s), %s server(s), %s conversation(s), "
             "%s unswept media object(s) cleaned up",
             user_id,
+            message_residue,
             notifications,
             personal_rows,
             credentials,
@@ -628,6 +729,7 @@ def erase_user_residue(
             len(unswept_media),
         )
     return {
+        "message_residue": message_residue,
         "notifications": notifications,
         "personal_rows": personal_rows,
         "credentials": credentials,
@@ -721,6 +823,8 @@ def sweep_orphans(db: Any, media: Optional[Any] = None) -> Dict[str, List]:
 
 
 __all__ = [
+    "ANONYMIZED_CONTENT",
+    "REDACTED_HISTORY_CONTENT",
     "delete_conversation",
     "erase_user_residue",
     "has_other_participants",
@@ -728,6 +832,7 @@ __all__ = [
     "purge_owned_servers",
     "purge_server_recursive",
     "purge_user_conversations",
+    "purge_user_message_residue",
     "purge_user_credentials",
     "purge_user_media",
     "purge_user_notifications",

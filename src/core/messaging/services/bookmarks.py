@@ -16,6 +16,10 @@ class BookmarkService:
     """Service for managing per-user message bookmarks."""
 
     MAX_BOOKMARKS_PER_USER = 200
+    # Enforce the same ceiling on reads as on writes: a single listing must
+    # never be able to dump more rows than a user is allowed to create, and
+    # every row triggers a per-message enrichment query.
+    MAX_LIST_LIMIT = 200
     MAX_LABEL_LENGTH = 100
 
     def __init__(self, db, messaging_module=None):
@@ -284,9 +288,15 @@ class BookmarkService:
         # Gate the conversation filter first so probing conversation IDs
         # cannot distinguish "empty" from "no access" (route maps to 404).
         self._ensure_list_access(user_id, conversation_id)
-        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
-        # negative limit would bypass the page cap and dump every bookmark.
-        limit = max(0, limit)
+        # Clamp on BOTH sides: SQLite treats LIMIT -1 as *unlimited*, and a
+        # huge positive limit bypassed the page cap just as effectively. Each
+        # returned row also costs a message-fetch/enrichment query, making an
+        # unbounded read a cheap denial-of-service primitive.
+        try:
+            requested = int(limit)
+        except (TypeError, ValueError):
+            requested = 0
+        limit = max(0, min(requested, self.MAX_LIST_LIMIT))
         query = "SELECT * FROM user_bookmarks WHERE user_id = ?"
         params: list = [user_id]
 
