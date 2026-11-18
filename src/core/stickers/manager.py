@@ -13,6 +13,7 @@ from src.core.avatars.manager.upload_guard import (
     sanitize_upload_filename,
     verify_upload_content,
 )
+from src.core.avatars.manager.url_guard import is_safe_media_url
 from src.core.base import timestamp_ms, generate_id
 
 from ._discovery import StickerUsageDiscoveryMixin
@@ -478,18 +479,14 @@ class StickerManager(StickerUsageDiscoveryMixin):
         name = self._validate_sticker_name(name)
         # M4: sticker URLs render into <img src> contexts — reject active
         # schemes (javascript:, data:, vbscript:, ...) and only allow
-        # http(s) or schemeless (relative) URLs.
-        if isinstance(url, str):
-            _scheme = url.strip().split(":", 1)[0].lower() if ":" in url else ""
-            if _scheme in ("javascript", "data", "vbscript", "file", "ftp") or (
-                ":" in url and _scheme not in ("http", "https", "")
-            ):
-                # A bare ':' with an unknown scheme (or no '://') is not an
-                # http(s) URL — reject. Schemeless relative values pass.
-                if _scheme not in ("http", "https"):
-                    raise InvalidStickerNameError(
-                        "Sticker URL must be an http(s) URL or site-relative path"
-                    )
+        # http(s) or schemeless (relative) URLs. The scheme is derived from a
+        # browser-normalised copy of the value so entity-encoded or
+        # control-character-obfuscated schemes (``javascript&#58;``) cannot
+        # slip past the raw-string check once rendered into HTML.
+        if not is_safe_media_url(url):
+            raise InvalidStickerNameError(
+                "Sticker URL must be an http(s) URL or site-relative path"
+            )
         allowed = self._config.get("allowed_formats", ["png", "apng", "json"])
         if format.value not in allowed:
             raise InvalidStickerFormatError(

@@ -74,6 +74,36 @@ class TestUrlGuard:
         with pytest.raises(InvalidSoundUrlError):
             wired.update_sound(1, sound.id, url="javascript:alert(1)")
 
+    def test_browser_normalized_schemes_rejected(self, wired):
+        """HTML entities / control chars must not hide a dangerous scheme.
+
+        Browsers decode character references in ``<audio src>`` and strip
+        ASCII tab/newline/C0 controls before resolving a URL scheme, so a
+        raw-string scheme check can be bypassed by these payloads.
+        """
+        from src.core.soundboard.exceptions import InvalidSoundUrlError
+
+        payloads = (
+            "javascript&#58;alert(1)",
+            "javascript&#x3a;alert(1)",
+            "javascript&colon;alert(1)",
+            "&#106;avascript:alert(1)",
+            "java\nscript:alert(1)",
+            "java\tscript:alert(1)",
+            "\x01javascript:alert(1)",
+            "data&#58;text/html;base64,AAAA",
+            "file&#58:///etc/passwd",
+        )
+        for bad in payloads:
+            with pytest.raises(InvalidSoundUrlError):
+                wired._validate_sound_url(bad)
+
+    def test_safe_relative_and_absolute_urls_still_accepted(self, wired):
+        assert wired._validate_sound_url("/media/sounds/airhorn.mp3") == (
+            "/media/sounds/airhorn.mp3"
+        )
+        assert wired._validate_sound_url("https://cdn/x.mp3") == "https://cdn/x.mp3"
+
 
 class TestPermissionSemantics:
     @pytest.fixture

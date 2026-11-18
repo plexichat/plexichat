@@ -17,6 +17,7 @@ from src.core.avatars.manager.upload_guard import (
     sanitize_upload_filename,
     verify_upload_content,
 )
+from src.core.avatars.manager.url_guard import is_safe_media_url
 from src.core.base import BaseManager
 
 from .models import (
@@ -181,32 +182,26 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
                 return True
         return False
 
-    _URL_ALLOWED_SCHEMES = ("http://", "https://")
-
     def _validate_sound_url(self, url: str) -> str:
         """Validate a sound URL, rejecting dangerous schemes.
 
         Only absolute ``http(s)`` URLs and server-relative media paths
         (``/...``) are accepted; ``javascript:``, ``data:``, ``file:`` and
         friends are rejected as a stored-XSS / SSRF defence.
-        Returns the trimmed URL.
+
+        The check is performed on a browser-normalised copy of the value:
+        HTML character references (``javascript&#58;``) and WHATWG control
+        character stripping (``java\\nscript:``) can turn an otherwise
+        innocuous-looking string into a script-bearing scheme once it is
+        rendered into an ``<audio src>`` attribute. Matching the raw string
+        let those payloads through.
+        Returns the trimmed, original URL.
         """
         if not isinstance(url, str) or not url.strip():
             raise InvalidSoundUrlError("Sound URL must be a non-empty string")
         url = url.strip()
-        lowered = url.lower()
-        if lowered.startswith(self._URL_ALLOWED_SCHEMES):
-            return url
-        # Server-relative media paths produced by the shared pipeline.
-        if url.startswith("/") and not lowered.startswith("//"):
-            return url
-        # Scheme-relative or scheme-less opaque strings carry no scheme the
-        # browser could abuse; anything with an explicit scheme other than
-        # http(s) (javascript:, data:, file:, ...) is rejected.
-        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", url):
-            raise InvalidSoundUrlError(
-                f"Sound URL scheme is not allowed: {url.split(':', 1)[0]}"
-            )
+        if not is_safe_media_url(url):
+            raise InvalidSoundUrlError("Sound URL scheme is not allowed")
         return url
 
     _MP3_FRAME_SYNC = 0xE0
