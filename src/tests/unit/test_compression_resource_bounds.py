@@ -54,6 +54,73 @@ def test_image_decompression_bomb_rejected_before_decode(monkeypatch):
     assert "decompression" in (result.error or "").lower()
 
 
+def test_animated_frame_sequence_decompression_bomb_rejected(monkeypatch):
+    """A per-frame pixel check is not enough for animated containers.
+
+    Pillow decodes every frame when the image is re-encoded, so a tiny upload
+    with a large frame count must be bounded on the *total* pixel budget too.
+    """
+    Image = pytest.importorskip("PIL.Image")
+    _patch_media(
+        monkeypatch,
+        {
+            "compression": {
+                "enabled": True,
+                "image": {
+                    "format": "gif",
+                    "quality": 85,
+                    "max_dimension": 4096,
+                    # 16x16 = 256 px/frame passes the per-frame check; four
+                    # frames total 1024 px, above the configured ceiling.
+                    "max_pixels": 300,
+                },
+            }
+        },
+    )
+    compressor = ImageCompressor()
+
+    frames = [Image.new("RGB", (16, 16), (i * 40, 0, 0)) for i in range(4)]
+    buf = io.BytesIO()
+    frames[0].save(
+        buf,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=100,
+        loop=0,
+    )
+    image = Image.open(io.BytesIO(buf.getvalue()))
+    assert image.n_frames == 4
+
+    result = compressor.compress(buf.getvalue())
+    assert result.success is False
+    assert "decompression" in (result.error or "").lower()
+    assert "4 frames" in (result.error or "")
+
+
+def test_forged_frame_count_fails_closed(monkeypatch):
+    """A bad ``n_frames`` header cannot disable the frame-aware check."""
+    _patch_media(
+        monkeypatch,
+        {
+            "compression": {
+                "enabled": True,
+                "image": {
+                    "format": "png",
+                    "quality": 85,
+                    "max_dimension": 4096,
+                    "max_pixels": 300,
+                },
+            }
+        },
+    )
+    compressor = ImageCompressor()
+    for bogus in (None, "not-a-number", 0, -1):
+        image = SimpleNamespace(size=(16, 16), n_frames=bogus)
+        # Falls back to one frame; 256 px is within the 300 px ceiling.
+        compressor._reject_decompression_bomb(image)
+
+
 def test_image_within_pixel_limit_still_compresses(monkeypatch):
     Image = pytest.importorskip("PIL.Image")
     _patch_media(

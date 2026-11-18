@@ -186,14 +186,35 @@ class ImageCompressor:
         down to ``max_dimension``. Pillow's process-wide ``MAX_IMAGE_PIXELS``
         global is deliberately not touched -- it belongs to the shared decoder
         and would affect unrelated code paths.
+
+        An animated container (GIF/APNG/animated WebP) is a *sequence*: Pillow
+        decodes every frame when the image is re-encoded by ``compress()``, so
+        a per-frame pixel check alone lets a tiny upload declare thousands of
+        frames and force gigabytes of allocation. The pixel budget is
+        therefore also enforced on the sum across all frames.
         """
         width, height = img.size
         if width <= 0 or height <= 0:
             raise HardeningViolation("compression image has invalid dimensions")
-        if width * height > self._max_pixels:
+        per_frame_pixels = width * height
+        if per_frame_pixels > self._max_pixels:
             raise HardeningViolation(
                 f"compression image exceeds decompression-bomb limit of "
                 f"{self._max_pixels} pixels"
+            )
+
+        # ``n_frames`` is read from the header without decoding any pixels. A
+        # malformed/missing value fails closed as a single frame, which the
+        # per-frame check above already bounded.
+        try:
+            frames = max(1, int(getattr(img, "n_frames", 1) or 1))
+        except (TypeError, ValueError):
+            frames = 1
+        total_pixels = per_frame_pixels * frames
+        if total_pixels > self._max_pixels:
+            raise HardeningViolation(
+                f"compression image sequence ({frames} frames) exceeds "
+                f"decompression-bomb limit of {self._max_pixels} pixels"
             )
 
     def compress(
