@@ -27,11 +27,10 @@ CREATE TABLE IF NOT EXISTS application_settings (
     updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_application_settings_key ON application_settings(key);
-
 -- Indexes for performance
--- Note: idx_user_settings_key removed - redundant with UNIQUE(user_id, key) constraint
-CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(user_id);
+CREATE INDEX IF NOT EXISTS idx_application_settings_key ON application_settings(key);
+-- No standalone user_id index: UNIQUE(user_id, key) already indexes user_id as
+-- its leftmost column, so a second index would only add write cost.
 """
 
 SCHEMA_STATEMENTS = split_sql_statements(SCHEMA_SQLITE)
