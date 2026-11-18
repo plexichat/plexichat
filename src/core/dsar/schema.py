@@ -31,6 +31,9 @@ CREATE INDEX IF NOT EXISTS idx_dsar_requests_user_status
     ON dsar_requests(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_dsar_requests_status ON dsar_requests(status);
 CREATE INDEX IF NOT EXISTS idx_dsar_requests_expires ON dsar_requests(expires_at);
+-- Expiry sweeps filter status + expires_at.
+CREATE INDEX IF NOT EXISTS idx_dsar_requests_status_expires
+    ON dsar_requests(status, expires_at);
 
 -- DSAR export manifest
 CREATE TABLE IF NOT EXISTS dsar_export_manifest (
