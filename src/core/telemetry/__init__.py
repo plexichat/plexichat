@@ -387,6 +387,12 @@ def submit_response_times(
             )
             if len(method) > MAX_METHOD_CHARS:
                 raise HardeningViolation("method exceeds the length limit")
+            # A client-chosen method is a free-form metric label, not a trusted
+            # enum. Collapse anything outside the known HTTP method set into a
+            # single bucket so it cannot multiply the GROUP BY cardinality.
+            if method not in KNOWN_HTTP_METHODS:
+                method = OVERFLOW_METHOD
+                _cardinality_rejections += 1
 
             # Parse numeric status codes; fall back to a leading numeric
             # prefix, else classify as an error (>=400 semantics preserved)

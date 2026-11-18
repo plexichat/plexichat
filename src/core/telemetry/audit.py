@@ -94,6 +94,20 @@ def _clean_text(value: Any, field: str, maximum: int, required: bool = False) ->
     return text
 
 
+def _clean_and_redact(
+    value: Any, field: str, maximum: int, required: bool = False
+) -> str:
+    """Validate a short metadata field and scrub secrets *before* persisting.
+
+    ``_public_record`` redacts these fields again on read as a defence in depth
+    for legacy rows, but the audit file itself must never contain the secret in
+    the first place. Scrubbing here (before the entry is canonicalised and
+    hashed) also keeps verification consistent: the stored entry is exactly the
+    one whose checksum we commit to.
+    """
+    return str(redact_secrets(_clean_text(value, field, maximum, required=required)))
+
+
 def _canonical(entry: Dict[str, Any]) -> str:
     """Deterministic serialization used for both writing and verifying."""
     return json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -207,10 +221,15 @@ class AuditChain:
         No method on this class mutates an existing record -- ``open(..., "a")``
         is the only write mode used for the audit file itself.
         """
-        clean_action = _clean_text(action, "action", MAX_ACTION_CHARS, required=True)
-        clean_actor = _clean_text(actor_id, "actor_id", MAX_ACTOR_CHARS, required=True)
+        clean_action = _clean_and_redact(
+            action, "action", MAX_ACTION_CHARS, required=True
+        )
+        clean_actor = _clean_and_redact(
+            actor_id, "actor_id", MAX_ACTOR_CHARS, required=True
+        )
         clean_status = (
-            _clean_text(status, "status", MAX_STATUS_CHARS, required=True) or "success"
+            _clean_and_redact(status, "status", MAX_STATUS_CHARS, required=True)
+            or "success"
         )
         if target_type is not None:
             target_type = _clean_text(target_type, "target_type", MAX_STATUS_CHARS)
