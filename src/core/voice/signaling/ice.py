@@ -37,6 +37,39 @@ CANDIDATE_TYPES = {"host", "srflx", "prflx", "relay"}
 # Valid transports
 VALID_TRANSPORTS = {"udp", "tcp", "UDP", "TCP"}
 
+# --- input boundaries (candidate-driven SDP injection / memory DoS) ---
+# A single ICE candidate has a short, fixed grammar. Anything larger is abuse,
+# not a candidate. Bounding it also caps the cost of the regex below.
+MAX_ICE_CANDIDATE_LENGTH = 512
+MAX_CANDIDATES_PER_SESSION = 100
+
+# Unicode line/paragraph separators, bidi overrides and format/invisible chars
+# that some SDP/WebSocket consumers treat as delimiters or that can spoof a
+# value during display/logging even though ord(ch) >= 0x20.
+_UNICODE_CONTROL_CHARS = frozenset(
+    {
+        0x0085,  # NEXT LINE
+        0x2028,  # LINE SEPARATOR
+        0x2029,  # PARAGRAPH SEPARATOR
+        0x200B,  # ZERO WIDTH SPACE
+        0x200C,  # ZERO WIDTH NON-JOINER
+        0x200D,  # ZERO WIDTH JOINER
+        0x200E,  # LEFT-TO-RIGHT MARK
+        0x200F,  # RIGHT-TO-LEFT MARK
+        0x202A, 0x202B, 0x202C, 0x202D, 0x202E,  # bidi embedding/override
+        0x2066, 0x2067, 0x2068, 0x2069,  # bidi isolates
+        0xFEFF,  # ZERO WIDTH NO-BREAK SPACE / BOM
+    }
+)
+
+
+def _has_control_chars(text: str) -> bool:
+    """True when ``text`` carries ASCII or unicode control/separator chars."""
+    return any(
+        ord(ch) < 0x20 or ord(ch) == 0x7F or ord(ch) in _UNICODE_CONTROL_CHARS
+        for ch in text
+    )
+
 
 class ICECandidateParser:
     """Parser for ICE candidates."""
@@ -54,17 +87,44 @@ class ICECandidateParser:
         Raises:
             ICECandidateError: If candidate is malformed
         """
+        if not isinstance(candidate_str, str):
+            raise ICECandidateError("ICE candidate must be a string")
+
+        # SECURITY: bound the input before any regex work. The grammar uses
+        # unbounded "\\S+" groups, so an oversized foundation/address could
+        # otherwise drive CPU/memory abuse, and the raw value is stored on the
+        # connection and echoed to clients (``ICECandidate.to_dict``).
+        if len(candidate_str) > MAX_ICE_CANDIDATE_LENGTH:
+            raise ICECandidateError(
+                f"ICE candidate too long ({len(candidate_str)} > "
+                f"{MAX_ICE_CANDIDATE_LENGTH})"
+            )
+
         candidate_str = candidate_str.strip()
 
         if not candidate_str:
             raise ICECandidateError("Empty candidate string", candidate=candidate_str)
+
+        # SECURITY (SDP control-char injection): the candidate string is later
+        # emitted into SDP attributes and log records. A value with a valid
+        # grammar prefix followed by CR/LF (or NUL/DEL/unicode separators) was
+        # previously accepted and stored verbatim, letting a caller forge extra
+        # SDP lines (e.g. "a=ice-pwd:...") or log entries. Reject every control
+        # byte anywhere in the value.
+        if _has_control_chars(candidate_str):
+            raise ICECandidateError(
+                "Control character in ICE candidate", candidate=candidate_str[:100]
+            )
 
         # Handle end-of-candidates
         if "end-of-candidates" in candidate_str.lower():
             return {"type": "end-of-candidates"}
 
         match = ICE_CANDIDATE_PATTERN.match(candidate_str)
-        if not match:
+        # ``match`` only consumes a prefix: trailing garbage (including a
+        # forged SDP extension) used to be silently ignored while the FULL raw
+        # string was stored. Require the grammar to consume the whole value.
+        if not match or match.end() != len(candidate_str):
             raise ICECandidateError(
                 "Invalid ICE candidate format", candidate=candidate_str[:100]
             )
@@ -280,10 +340,18 @@ class ICECandidateManager:
 
         candidate = self._parser.to_candidate(candidate_str, sdp_mid, sdp_mline_index)
 
-        if session_id not in self._candidates:
-            self._candidates[session_id] = []
+        # SECURITY: trickle ICE lets a client stream candidates indefinitely.
+        # Without a cap, a single session can grow ``_candidates`` without
+        # bound (memory exhaustion) and ``get_best_candidate`` re-parses every
+        # entry. Fail closed once the session has a sane number of candidates.
+        candidates = self._candidates.setdefault(session_id, [])
+        if len(candidates) >= MAX_CANDIDATES_PER_SESSION:
+            raise ICECandidateError(
+                f"Too many ICE candidates for session "
+                f"(max {MAX_CANDIDATES_PER_SESSION})"
+            )
 
-        self._candidates[session_id].append(candidate)
+        candidates.append(candidate)
         return candidate
 
     def get_candidates(self, session_id: str) -> List[ICECandidate]:
