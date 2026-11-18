@@ -1,9 +1,32 @@
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
+
+from src.core.servers.permission_utils import has_permission as _check_permission
 
 from .base import SearchManagerBase
 
+# Chunk ``IN (...)`` binds so SQLite's default 999-variable cap is never
+# approached; Postgres accepts far more but chunking is harmless there.
+_BIND_CHUNK = 500
+
 
 class AccessControlMixin(SearchManagerBase):
+    @staticmethod
+    def _as_id(value) -> Optional[int]:
+        """Coerce an indexed id to a positive int, or ``None`` if malformed."""
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @classmethod
+    def _chunks(cls, values: Iterable[int]):
+        uniq = sorted({parsed for v in values if (parsed := cls._as_id(v)) is not None})
+        for start in range(0, len(uniq), _BIND_CHUNK):
+            yield uniq[start : start + _BIND_CHUNK]
+
     def _can_access_server(self, user_id: int, server_id: int) -> bool:
         member = self._db.fetch_one(
             "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
@@ -37,6 +60,86 @@ class AccessControlMixin(SearchManagerBase):
             channel_id,
         )
 
+    def _can_access_conversations_bulk(
+        self, user_id: int, conversation_ids: Iterable[int]
+    ) -> Dict[int, bool]:
+        """Resolve DM/group conversation access for many ids in bounded queries.
+
+        One ``msg_participants`` lookup per chunk replaces the old per-result
+        ``SELECT 1`` loop. The answer is keyed by every requested id, with
+        ``False`` as the default so an unresolved id fails closed.
+        """
+        result: Dict[int, bool] = {}
+        for chunk in self._chunks(conversation_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                "SELECT conversation_id FROM msg_participants "
+                f"WHERE user_id = ? AND conversation_id IN ({placeholders})",
+                (user_id, *chunk),
+            )
+            allowed = {int(row["conversation_id"]) for row in rows}
+            for cid in chunk:
+                result[cid] = cid in allowed
+        return result
+
+    def _can_access_channels_bulk(
+        self, user_id: int, channel_ids: Iterable[int]
+    ) -> Dict[int, bool]:
+        """Resolve per-channel ``messages.read`` for many channels at once.
+
+        Previously every result (and every channel of a server-wide search)
+        issued its own ``srv_channels`` read plus a permission resolution.
+        Here the channel->server mapping is fetched in one bounded query and
+        permissions are computed in batch through the role handler's set-based
+        API, with a per-channel fallback for servers/modules that lack it.
+        The contract is unchanged: a channel that is missing, has no server,
+        or cannot be proven readable resolves to ``False`` (fail closed).
+        """
+        result: Dict[int, bool] = {
+            parsed: False
+            for cid in channel_ids
+            if (parsed := self._as_id(cid)) is not None
+        }
+        if not result or not self._servers:
+            return result
+
+        server_for: Dict[int, int] = {}
+        for chunk in self._chunks(result):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                f"SELECT id, server_id FROM srv_channels WHERE id IN ({placeholders})",
+                tuple(chunk),
+            )
+            for row in rows:
+                server_id = row["server_id"]
+                if server_id is not None:
+                    server_for[int(row["id"])] = int(server_id)
+
+        by_server: Dict[int, List[int]] = {}
+        for cid, server_id in server_for.items():
+            by_server.setdefault(server_id, []).append(cid)
+
+        role_handler = getattr(self._servers, "role_handler", None)
+        batch_api = getattr(role_handler, "get_permissions_batch", None)
+        for server_id, cids in by_server.items():
+            perms_map = None
+            if callable(batch_api):
+                try:
+                    perms_map = batch_api(user_id, server_id, cids)
+                except Exception:
+                    # Unknown/corrupt permission data must not turn into a
+                    # broader grant; fall back to the canonical single check.
+                    perms_map = None
+            for cid in cids:
+                if perms_map is not None:
+                    allowed = _check_permission(perms_map.get(cid, {}), "messages.read")
+                else:
+                    allowed = self._servers.has_permission(
+                        user_id, server_id, "messages.read", cid
+                    )
+                result[cid] = bool(allowed)
+        return result
+
     def _get_accessible_conversations(
         self,
         user_id: int,
@@ -69,12 +172,10 @@ class AccessControlMixin(SearchManagerBase):
 
         if server_id:
             rows = self._db.fetch_all(
-                "SELECT id, conversation_id FROM srv_channels WHERE server_id = ? AND conversation_id IS NOT NULL",
+                "SELECT id AS channel_id, conversation_id FROM srv_channels "
+                "WHERE server_id = ? AND conversation_id IS NOT NULL",
                 (server_id,),
             )
-            for row in rows:
-                if self._can_access_channel(user_id, row["id"]):
-                    conversations.append(row["conversation_id"])
         else:
             rows = self._db.fetch_all(
                 """SELECT c.id AS channel_id, c.conversation_id
@@ -83,12 +184,19 @@ class AccessControlMixin(SearchManagerBase):
                    WHERE m.user_id = ? AND c.conversation_id IS NOT NULL""",
                 (user_id,),
             )
-            for row in rows:
-                # Per-channel visibility re-check: membership of a server
-                # alone does not grant read access to every channel (private
-                # channels, role-gated channels, channel overrides).
-                if self._can_access_channel(user_id, row["channel_id"]):
-                    conversations.append(row["conversation_id"])
+
+        # Membership of a server alone does not grant read access to every
+        # channel (private / role-gated / overridden channels). Resolve the
+        # whole candidate set in bulk rather than issuing one permission query
+        # per channel; the per-channel result still fails closed.
+        channel_to_conv = {
+            int(row["channel_id"]): row["conversation_id"] for row in rows
+        }
+        if channel_to_conv:
+            readable = self._can_access_channels_bulk(user_id, channel_to_conv)
+            conversations.extend(
+                channel_to_conv[cid] for cid, allowed in readable.items() if allowed
+            )
 
         return list(set(conversations))
 
@@ -100,15 +208,34 @@ class AccessControlMixin(SearchManagerBase):
         conversation/channel the searcher can actually see.  Results that
         fail the check are dropped rather than leaked.
         """
+        # Collect the candidate ids first so access can be resolved with a
+        # bounded number of set-based queries instead of two queries per hit.
+        channel_ids = set()
+        conversation_ids = set()
+        for r in results:
+            channel_id = self._as_id(getattr(r, "channel_id", None))
+            conversation_id = self._as_id(getattr(r, "conversation_id", None))
+            # A row with a malformed channel id must not fall through to a
+            # conversation-id check and become visible by accident: keep the
+            # original "channel id present" intent and let it fail closed.
+            if getattr(r, "channel_id", None) is not None:
+                if channel_id is not None:
+                    channel_ids.add(channel_id)
+            elif conversation_id is not None:
+                conversation_ids.add(conversation_id)
+        channel_ok = self._can_access_channels_bulk(user_id, channel_ids)
+        conversation_ok = self._can_access_conversations_bulk(user_id, conversation_ids)
+
         verified = []
         for r in results:
-            channel_id = getattr(r, "channel_id", None)
-            conversation_id = getattr(r, "conversation_id", None)
-            if channel_id is not None:
-                if self._can_access_channel(user_id, channel_id):
+            raw_channel = getattr(r, "channel_id", None)
+            channel_id = self._as_id(raw_channel)
+            conversation_id = self._as_id(getattr(r, "conversation_id", None))
+            if raw_channel is not None:
+                if channel_id is not None and channel_ok.get(channel_id, False):
                     verified.append(r)
-            elif conversation_id:
-                if self._can_access_conversation(user_id, conversation_id):
+            elif conversation_id is not None:
+                if conversation_ok.get(conversation_id, False):
                     verified.append(r)
             # Rows with neither a channel nor a conversation id cannot be
             # proven visible to the searcher, so they are dropped

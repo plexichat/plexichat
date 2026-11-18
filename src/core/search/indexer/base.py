@@ -423,7 +423,11 @@ class BaseIndexer(ABC):
         if payload.get("kind") != expected_kind:
             return None
         try:
-            offset = max(0, int(payload.get("offset", 0)))
-        except (TypeError, ValueError):
+            # Cursors are plain base64 JSON (not signed), so ``offset`` is
+            # caller-controlled. Clamp it at the trust boundary to the same
+            # ceiling the backends enforce; otherwise a forged 2**62 offset
+            # survives into the manager's page loop and forces a huge scan.
+            offset = max(0, min(int(payload.get("offset", 0)), MAX_BACKEND_OFFSET))
+        except (TypeError, ValueError, OverflowError):
             return None
         return {"offset": offset}
