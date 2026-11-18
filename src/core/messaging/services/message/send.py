@@ -403,9 +403,14 @@ class SendMixin(BaseService, MessageServiceProtocol):
                 _fanout_job()
                 return
 
-            if not get_notification_dispatcher().submit(_fanout_job):
+            # Key by message id so a burst of duplicate scheduling for the
+            # same message cannot enqueue the same fan-out more than once.
+            if not get_notification_dispatcher().submit(
+                _fanout_job, key=("notify-fanout", str(msg_id))
+            ):
                 logger.debug(
-                    f"Notification dispatch queue full; skipped for message {msg_id}"
+                    f"Notification dispatch queue full or duplicate; "
+                    f"skipped for message {msg_id}"
                 )
         except Exception as e:
             logger.debug(f"Notification scheduling failed for message {msg_id}: {e}")

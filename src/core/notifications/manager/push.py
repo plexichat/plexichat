@@ -204,10 +204,16 @@ class PushMixin(NotificationProtocol):
             if is_sync_notification_dispatch():
                 _deliver_batch()
                 return
-            if not get_notification_dispatcher().submit(_deliver_batch):
+            # De-dupe by the exact notification set: repeated scheduling of the
+            # same batch must not enqueue duplicate push deliveries.
+            batch_key = (
+                "push-batch",
+                tuple(sorted(str(getattr(n, "id", "")) for n in batch)),
+            )
+            if not get_notification_dispatcher().submit(_deliver_batch, key=batch_key):
                 logger.debug(
-                    "Notification dispatch queue full; dropped push batch "
-                    f"of {len(batch)} notification(s)"
+                    "Notification dispatch queue full or duplicate; dropped "
+                    f"push batch of {len(batch)} notification(s)"
                 )
         except Exception as e:
             logger.debug(f"Failed to schedule push delivery: {e}")
