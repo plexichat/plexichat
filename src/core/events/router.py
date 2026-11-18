@@ -10,6 +10,20 @@ from .types import EventType, GatewayIntent
 from .models import Event
 
 
+# Hard ceiling on the number of recipients one event may resolve to. The
+# recipient list is a shared input to every delivery lane: critical
+# subscribers are invoked with it on the emitting request thread, the bounded
+# async queue stores it by value, and ``EventManager._publish_cross_worker``
+# serialises the whole list into the Valkey pub/sub payload that every sibling
+# worker re-fans out. Without a ceiling here, one caller-supplied ``user_ids``
+# list (or one @everyone-sized server) amplifies into unbounded work and memory
+# on every worker. Bounding at the router is the single choke point that
+# protects all of those downstream fans. Aligned with
+# ``EventManager._DISPATCH_QUEUE_MAX`` so a single event cannot dominate a
+# full queue.
+DEFAULT_MAX_RECIPIENTS = 4096
+
+
 EVENT_INTENT_MAP = {
     EventType.GUILD_CREATE: GatewayIntent.GUILDS,
     EventType.GUILD_UPDATE: GatewayIntent.GUILDS,
@@ -139,6 +153,10 @@ def filter_by_intents(event: Event, intents: int) -> bool:
 class EventRouter:
     """Routes events to appropriate users based on context."""
 
+    # Class attribute so tests / large deployments can raise the ceiling
+    # without changing code. See ``DEFAULT_MAX_RECIPIENTS`` for rationale.
+    MAX_RECIPIENTS = DEFAULT_MAX_RECIPIENTS
+
     def __init__(
         self,
         relationships_module=None,
@@ -156,6 +174,55 @@ class EventRouter:
         self._relationships = relationships_module
         self._servers = servers_module
         self._messaging = messaging_module
+        # Observability: how many resolutions hit the recipient ceiling.
+        # Surfaced via ``get_routing_metrics`` for health/dashboards.
+        self._truncated_recipient_fanouts = 0
+
+    def _bounded_unique_recipients(self, recipients) -> List[int]:
+        """Dedupe (preserving first-seen order) and hard-cap recipients.
+
+        Every delivery lane downstream of routing re-iterates this list, so two
+        invariants matter here:
+
+        * **dedupe** — an explicit ``user_ids`` list may repeat an id; without
+          collapsing it the same user receives the event multiple times, and
+          the duplicate is amplified across every sibling worker by the
+          cross-worker pub/sub fan-out.
+        * **bound** — both the accumulator and the seen-set are capped at
+          ``MAX_RECIPIENTS``, so even an adversarial multi-million-id input
+          cannot grow memory without limit. We stop at the first unique id
+          beyond the cap (a conservative "there was more" signal for the
+          warning) rather than materialising the full input first.
+        """
+        limit = max(1, int(self.MAX_RECIPIENTS))
+        seen: Set[int] = set()
+        ordered: List[int] = []
+        truncated = False
+        for uid in recipients:
+            if uid in seen:
+                continue
+            if len(ordered) >= limit:
+                truncated = True
+                break
+            seen.add(uid)
+            ordered.append(uid)
+        if truncated:
+            self._truncated_recipient_fanouts += 1
+            logger.warning(
+                "Event recipient fan-out hit MAX_RECIPIENTS=%d; an event was "
+                "truncated to keep cross-worker/local fan-out bounded "
+                "(total truncations: %d)",
+                limit,
+                self._truncated_recipient_fanouts,
+            )
+        return ordered
+
+    def get_routing_metrics(self) -> dict:
+        """Expose recipient-fan-out bounds for observability."""
+        return {
+            "max_recipients": self.MAX_RECIPIENTS,
+            "truncated_recipient_fanouts": self._truncated_recipient_fanouts,
+        }
 
     def get_recipients(
         self,
@@ -181,7 +248,12 @@ class EventRouter:
         exclude_set: Set[int] = set(exclude_user_ids or [])
 
         if user_ids is not None:
-            return [uid for uid in user_ids if uid not in exclude_set]
+            # Caller-supplied audiences (e.g. gateway emitters, workbook
+            # updates) are the main unbounded-work vector: dedupe + cap before
+            # the list reaches any delivery lane.
+            return self._bounded_unique_recipients(
+                uid for uid in user_ids if uid not in exclude_set
+            )
 
         recipients: Set[int] = set()
 
@@ -208,7 +280,12 @@ class EventRouter:
             if event.user_id and self._relationships:
                 recipients.update(self._get_presence_recipients(event.user_id))
 
-        return [uid for uid in recipients if uid not in exclude_set]
+        # Server/DM/presence resolution already dedupes via a set, but it has
+        # no size ceiling: a large server or friend graph would otherwise hand
+        # every downstream lane an unbounded list. Apply the same bound.
+        return self._bounded_unique_recipients(
+            uid for uid in recipients if uid not in exclude_set
+        )
 
     def _get_server_member_ids(self, server_id: int) -> List[int]:
         """Get all member user IDs for a server."""
@@ -240,16 +317,47 @@ class EventRouter:
 
         participant_set = set(participants)
         excluded: Set[int] = set()
-        for pid in participants:
+
+        # A group DM can hold many participants. Resolving the two-way block
+        # set with one cached lookup per participant is an N+1 fan-out on cold
+        # caches (and a burst of Valkey GETs even when warm). The relationship
+        # manager exposes a bounded, chunked bulk helper that returns the very
+        # same sets in one call; fall back to per-id lookups only for legacy
+        # stubs that do not implement it.
+        bulk_lookup = getattr(self._relationships, "get_all_blocked_ids_bulk", None)
+        if callable(bulk_lookup):
             try:
-                blocked_ids = self._relationships.get_all_blocked_ids(pid)
+                blocked_by_id = {
+                    int(uid): values
+                    for uid, values in bulk_lookup(participants).items()
+                }
             except Exception as e:
                 logger.debug(
-                    f"Failed to resolve blocked IDs for {pid} on channel "
+                    f"Failed to resolve bulk blocked IDs for channel "
                     f"{channel_id}: {e}"
                 )
-                continue
-            for bid in blocked_ids:
+                # Fail closed: without the authoritative block sets we cannot
+                # prove any participant is safe to receive this event, so
+                # deliver to nobody rather than risk leaking to a blocked pair.
+                return []
+        else:
+            blocked_by_id = {}
+            for pid in participants:
+                try:
+                    blocked_by_id[int(pid)] = self._relationships.get_all_blocked_ids(
+                        pid
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to resolve blocked IDs for {pid} on channel "
+                        f"{channel_id}: {e}"
+                    )
+                    # Same fail-closed rule on the compatibility path.
+                    return []
+
+        for pid in participants:
+            for bid in blocked_by_id.get(int(pid)) or []:
+                bid = int(bid)
                 if bid not in participant_set or bid == pid:
                     continue
                 # pid and bid must not see each other's events in this DM.
