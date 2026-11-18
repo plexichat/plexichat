@@ -5,6 +5,7 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.api.routes.users.helpers import require_user_token
 from .common import (
     parse_id,
     raise_bad_request,
@@ -39,6 +40,7 @@ async def set_channel_slowmode(
     body: ThreadSlowmodeRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     cid = parse_id(channel_id, "channel ID")
 
     interval_seconds = max(0, body.interval_ms // 1000)
@@ -133,6 +135,7 @@ async def set_channel_slowmode(
 async def get_channel_slowmode(
     channel_id: str, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     cid = parse_id(channel_id, "channel ID")
 
     db = api.get_db()
@@ -187,6 +190,7 @@ async def set_thread_slowmode(
     body: ThreadSlowmodeRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     tid = parse_id(thread_id, "thread ID")
 
     db = api.get_db()
@@ -222,6 +226,7 @@ async def set_thread_slowmode(
 async def get_thread_slowmode(
     thread_id: str, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     tid = parse_id(thread_id, "thread ID")
 
     db = api.get_db()

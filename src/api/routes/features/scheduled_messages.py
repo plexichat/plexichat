@@ -8,6 +8,7 @@ from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.messaging.services.scheduled import ScheduledMessageService
 from src.core.security.hardening import reject_control_characters
+from src.api.routes.users.helpers import require_user_token
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
@@ -57,6 +58,7 @@ class ScheduledMessageRequest(BaseModel):
 async def create_scheduled_message(
     body: ScheduledMessageRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     conversation_id = parse_id(body.conversation_id, "conversation ID")
 
     db = api.get_db()
@@ -88,6 +90,7 @@ async def list_scheduled_messages(
     limit: int = Query(50, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     if status is not None and status not in VALID_SCHEDULE_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -109,6 +112,7 @@ async def list_scheduled_messages(
 async def cancel_scheduled_message(
     scheduled_id: str, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     sid = parse_id(scheduled_id, "scheduled message ID")
 
     db = api.get_db()

@@ -10,6 +10,7 @@ from src.api.schemas.common import ErrorResponse, _reject_ui_text_chars
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.messaging.services.bookmarks import BookmarkService
 from src.core.security.hardening import reject_control_characters, require_http_url
+from src.api.routes.users.helpers import require_user_token
 from .common import parse_id, raise_internal
 import utils.logger as logger
 
@@ -119,6 +120,7 @@ async def _dispatch_bookmark_event(event_type: str, user_id: int, bookmark: dict
 async def add_bookmark(
     body: BookmarkRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     messaging = api.get_messaging()
     if not messaging:
         raise_internal("Internal server error")
@@ -181,6 +183,7 @@ async def add_bookmark(
 async def remove_bookmark(
     message_id: str, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     mid = parse_id(message_id, "message ID")
     messaging = api.get_messaging()
     db = api.get_db()
@@ -222,6 +225,7 @@ async def list_bookmarks(
     limit: int = Query(50, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     messaging = api.get_messaging()
     db = api.get_db()
 

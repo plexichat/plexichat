@@ -12,6 +12,7 @@ import src.api as api
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.api.routes.users.helpers import require_user_token
 from src.core.security.hardening import (
     HardeningViolation,
     parse_id,
@@ -223,6 +224,7 @@ class VoiceMessageRequest(BaseModel):
 async def send_voice_message(
     body: VoiceMessageRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     conv_id = legacy_parse_id(body.conversation_id, "conversation ID")
     # Validate the optional session scope even though persistence is unchanged;
     # the ids must still be well-formed snowflakes before any downstream use.
@@ -316,6 +318,7 @@ async def upload_voice_message(
     waveform: Optional[str] = Form(None, description="Base64 waveform data"),
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     allowed_content_types = {
         "audio/webm",
         "audio/ogg",

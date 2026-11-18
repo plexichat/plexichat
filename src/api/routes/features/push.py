@@ -7,6 +7,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.security.hardening import HardeningViolation, reject_control_characters
+from src.api.routes.users.helpers import require_user_token
 from .common import raise_bad_request
 from src.core.push.exceptions import PermissionDeniedError
 
@@ -79,6 +80,7 @@ class PushTokenRequest(BaseModel):
 async def register_push_token(
     body: PushTokenRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     if body.platform not in VALID_PLATFORMS:
         raise_bad_request("Invalid platform")
 
@@ -124,6 +126,7 @@ async def register_push_token(
 async def list_push_tokens(
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     db = api.get_db()
     from src.core.push.manager import PushManager
 
@@ -145,6 +148,7 @@ async def list_push_tokens(
 async def unregister_push_token_by_id(
     token_id: str, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     # Preferred removal flow: list responses expose only the row id plus a
     # token_hint (raw tokens are sanitized out), so clients unregister by id.
     try:
@@ -168,6 +172,7 @@ async def unregister_push_token_by_id(
 async def unregister_push_token(
     token_value: str, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     db = api.get_db()
     from src.core.push.manager import PushManager
 

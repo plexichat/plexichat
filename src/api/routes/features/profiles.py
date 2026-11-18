@@ -15,6 +15,7 @@ from src.core.security.hardening import (
     require_http_url,
 )
 from .common import raise_bad_request
+from src.api.routes.users.helpers import require_user_token
 import utils.logger as logger
 
 router = APIRouter()
@@ -364,6 +365,7 @@ async def get_user_profile(
 async def update_own_profile(
     body: ProfileUpdateRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     db = api.get_db()
 
     svc = ProfileManager(db)

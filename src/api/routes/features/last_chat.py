@@ -8,6 +8,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.messaging.services.last_chat import LastChatService
+from src.api.routes.users.helpers import require_user_token
 from .common import raise_bad_request, raise_forbidden, raise_internal
 
 router = APIRouter()
@@ -29,6 +30,7 @@ class LastChatRequest(BaseModel):
 async def save_last_chat(
     body: LastChatRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     try:
         conversation_id = int(body.conversation_id)
         last_message_id = int(body.last_message_id) if body.last_message_id else None
@@ -68,6 +70,7 @@ async def save_last_chat(
 async def get_last_chat(
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     db = api.get_db()
     messaging = api.get_messaging()
     participant_svc = (
@@ -91,6 +94,7 @@ async def get_recent_chats(
     limit: int = Query(10, ge=1, le=50),
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     db = api.get_db()
     messaging = api.get_messaging()
     participant_svc = (

@@ -5,6 +5,7 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.api.routes.users.helpers import require_user_token
 from .common import raise_bad_request, raise_forbidden, raise_internal
 
 router = APIRouter()
@@ -21,6 +22,7 @@ async def get_user_audit_logs(
     limit: int = Query(25, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise_internal("Servers module not available")

@@ -5,6 +5,7 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.api.routes.users.helpers import require_user_token
 from .common import parse_id, raise_bad_request, raise_forbidden, raise_internal
 
 router = APIRouter()
@@ -169,6 +170,7 @@ async def list_onboarding_presets(
 async def apply_onboarding_preset(
     body: OnboardingPresetRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     if body.preset not in ONBOARDING_PRESETS:
         raise_bad_request(
             f"Invalid preset. Available: {', '.join(ONBOARDING_PRESETS.keys())}"

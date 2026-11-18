@@ -17,6 +17,7 @@ from src.core.security.hardening import (
     require_http_url,
 )
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.api.routes.users.helpers import require_user_token
 from .common import (
     parse_id,
     raise_bad_request,
@@ -407,6 +408,7 @@ class ReportStatusUpdateRequest(BaseModel):
 async def submit_enhanced_report(
     body: EnhancedReportRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     _check_enhanced_report_rate_limit(current_user.user_id)
 
     if body.priority not in VALID_REPORT_PRIORITIES:
@@ -728,6 +730,7 @@ async def update_report_status(
 async def get_report_details(
     report_id: SnowflakeIDParam, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     db: DatabaseProtocol | None = api.get_db()
     if not db:
         raise_internal("Database not available")

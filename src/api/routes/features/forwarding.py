@@ -6,6 +6,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.messaging.services.forwarding import ForwardingService
+from src.api.routes.users.helpers import require_user_token
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
@@ -24,6 +25,7 @@ class ForwardMessageRequest(BaseModel):
 async def forward_message(
     body: ForwardMessageRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    require_user_token(current_user)
     message_id = parse_id(body.message_id, "message ID")
     target_conversation_id = parse_id(
         body.target_conversation_id, "target conversation ID"
