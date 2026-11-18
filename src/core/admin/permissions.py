@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 import utils.logger as logger
 
-from .request_roles import cached_session_roles
+from .request_roles import cached_session_roles, clear_session_roles
 
 
 @dataclass
@@ -657,6 +657,62 @@ def can_manage_role(db, admin_id: int, role_id: int) -> bool:
     return admin_pos > role_pos
 
 
+# Action identifiers that mutate a principal's privileges or account state.
+# These are the *route-level* action names the admin handlers pass to
+# ``log_admin_action`` (e.g. ``role.update`` / ``role.assign``), not permission
+# scope names.  The set is a single source of truth for two coupled decisions:
+# the audit log must always reach the database for these actions, AND the
+# request-scoped role payloads captured at session validation are stale the
+# moment one of them succeeds and must be discarded.  Keeping them together
+# guarantees a newly added privileged route cannot update one without the
+# other.
+PRIVILEGE_MUTATING_ACTIONS = frozenset(
+    {
+        # Legacy/direct callers that still use scope-style identifiers.
+        "users.force_purge",
+        "users.delete",
+        "servers.delete",
+        "config.modify",
+        "config.security",
+        "config.edit",
+        # Admin-account lifecycle and credential changes.
+        "admin_user.create",
+        "admin_user.update",
+        "admin_user.delete",
+        "admin_user.toggle_status",
+        "force_password_change",
+        # Role/privilege changes.
+        "role.create",
+        "role.update",
+        "role.delete",
+        "role.assign",
+        "role.revoke",
+        # Approval decisions (can grant the underlying privilege).
+        "approval.approve",
+        "approval.reject",
+        "approval.cancel",
+    }
+)
+
+
+def invalidate_admin_permission_caches() -> None:
+    """Drop authorization state that a privilege mutation just invalidated.
+
+    ``src.core.auth.privilege_cache.invalidate_privilege_caches`` clears the
+    memoised *user* auth context (``token_verify:*``, ``user_data:*`` ...) but
+    never touches the request-scoped role payloads that
+    :func:`check_permission` reuses via ``cached_session_roles``.  Without this
+    call, a role edit / assignment / revocation followed by any further
+    authorization check in the same request would be decided against the
+    pre-mutation permission set -- a just-revoked scope still appears granted.
+
+    Call this from the mutation point after the database write succeeds.  It is
+    safe to call more than once and is a no-op when no session was validated in
+    the current request.
+    """
+    clear_session_roles()
+
+
 def log_admin_action(
     db,
     admin_id: int,
@@ -698,39 +754,19 @@ def log_admin_action(
         # Privileged mutations must always reach the database audit table,
         # even when an operator has disabled DB logging in configuration
         # (file-only logging is not queryable through the audit UI and can be
-        # rotated away). These are the *action identifiers* the admin routes
-        # actually pass to ``log_admin_action`` -- e.g. ``role.delete`` and
-        # ``admin_user.delete`` -- not permission-scope names. The previous
-        # list mixed scope-style strings that no caller ever sends, so the
-        # override never fired and disabling DB logging silently erased the
-        # audit trail for every destructive admin action.
-        sensitive_actions = {
-            # Legacy/direct callers that still use scope-style identifiers.
-            "users.force_purge",
-            "users.delete",
-            "servers.delete",
-            "config.modify",
-            "config.security",
-            "config.edit",
-            # Admin-account lifecycle and credential changes.
-            "admin_user.create",
-            "admin_user.update",
-            "admin_user.delete",
-            "admin_user.toggle_status",
-            "force_password_change",
-            # Role/privilege changes.
-            "role.create",
-            "role.update",
-            "role.delete",
-            "role.assign",
-            "role.revoke",
-            # Approval decisions.
-            "approval.approve",
-            "approval.reject",
-            "approval.cancel",
-        }
-        if action in sensitive_actions:
+        # rotated away). See ``PRIVILEGE_MUTATING_ACTIONS`` for the rationale
+        # and the shared action-identifier vocabulary.
+        if action in PRIVILEGE_MUTATING_ACTIONS:
             log_to_db = True
+            # The mutation just changed the effective role/permission set. The
+            # request-scoped payloads captured at session validation are now
+            # stale, so drop them before doing anything else. This runs even
+            # if file/DB logging below fails: a subsequent check_permission in
+            # this request must never authorise against the pre-mutation roles
+            # (e.g. a revoked scope still appearing granted). The routes'
+            # invalidate_privilege_caches() call only clears user auth caches,
+            # not this request-local one.
+            invalidate_admin_permission_caches()
 
         # Use AdminLogger for dual logging
         from src.core.admin.logging import get_admin_logger, AdminLogEntry
