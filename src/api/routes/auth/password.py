@@ -8,6 +8,7 @@ from src.api.schemas.auth import (
     PasswordResetConfirm,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from .helpers import MAX_CREDENTIAL_TOKEN_LENGTH, validate_credential_input
 from src.core.auth.exceptions import (
     TokenInvalidError,
     WeakPasswordError,
@@ -152,6 +153,20 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
+    # The reset token is public, high-entropy credential material. Bound it and
+    # reject control characters at the HTTP boundary before the auth core
+    # hashes/looks it up. This mirrors the email-verification route and fails
+    # with a clean 400 instead of letting a malformed body reach token parsing.
+    try:
+        reset_token = validate_credential_input(
+            body.token, "token", MAX_CREDENTIAL_TOKEN_LENGTH
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+
     try:
         from fastapi.concurrency import run_in_threadpool
 
@@ -164,7 +179,7 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
                     db.close()
 
         success = await run_in_threadpool(
-            _reset_with_cleanup, body.token, body.new_password
+            _reset_with_cleanup, reset_token, body.new_password
         )
         if success:
             return SuccessResponse(success=True, message=None)

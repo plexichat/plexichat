@@ -6,7 +6,7 @@ import utils.logger as logger
 from utils.logger import mask_string
 from src.api.schemas.auth import LoginRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
-from .helpers import _user_to_response
+from .helpers import _user_to_response, validate_credential_input
 from .cookies import (
     set_session_cookie,
     session_expiry_seconds,
@@ -51,9 +51,22 @@ def login(request: Request, response: Response, body: LoginRequest) -> LoginResp
     # Trusted-device support: the client may send a stable fingerprint so the
     # server can recognize a previously trusted device and skip the 2FA
     # challenge. Server-side trust only — no client claim is honored by itself.
+    # The fingerprint is persisted as a device record and later compared when
+    # deciding whether to skip 2FA, so refuse control characters at the trust
+    # boundary (a newline/C0 byte here would otherwise reach storage/audit
+    # lines as a trust key) instead of failing deep in the auth core.
     device_info = None
     if body.device_fingerprint:
-        device_info = {"fingerprint": body.device_fingerprint}
+        try:
+            fingerprint = validate_credential_input(
+                body.device_fingerprint, "device_fingerprint", 256
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": str(e)}},
+            )
+        device_info = {"fingerprint": fingerprint}
 
     try:
         result = auth.login(

@@ -14,7 +14,12 @@ from src.api.schemas.auth import (
     TwoFactorDisableRequest,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
-from .helpers import _user_to_response
+from .helpers import (
+    _user_to_response,
+    MAX_2FA_CODE_LENGTH,
+    MAX_CREDENTIAL_TOKEN_LENGTH,
+    validate_credential_input,
+)
 from .cookies import (
     set_session_cookie,
     session_expiry_seconds,
@@ -95,10 +100,23 @@ async def complete_2fa(
     ip_address = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
+    # Reject malformed credentials at the trust boundary before the auth core
+    # hashes the challenge secret or runs TOTP/backup-code verification on the
+    # supplied value. Control characters and oversized bodies have no place in
+    # a token/code and would otherwise force needless work or a deep 500.
     try:
-        result = auth.complete_2fa(
-            body.challenge_token, body.code, ip_address, user_agent
+        challenge_token = validate_credential_input(
+            body.challenge_token, "challenge_token", MAX_CREDENTIAL_TOKEN_LENGTH
         )
+        code = validate_credential_input(body.code, "code", MAX_2FA_CODE_LENGTH)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        )
+
+    try:
+        result = auth.complete_2fa(challenge_token, code, ip_address, user_agent)
     except (TokenInvalidError, TokenExpiredError):
         logger.warning("2FA completion failed: invalid or expired challenge")
         raise HTTPException(
@@ -149,6 +167,37 @@ async def complete_2fa(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
+
+    # A challenge is created only after the login route has cleared the account
+    # state checks, but it stays valid for minutes. The core 2FA verifier does
+    # not re-check account state, so a challenge minted for a healthy account
+    # can otherwise still be exchanged for a fresh session after that account
+    # has been locked or scheduled for deletion. Fail closed and revoke the
+    # just-created session so no usable credential survives the refusal.
+    try:
+        current_user = auth.get_user(result.user.id) if result.user else None
+    except Exception as e:
+        logger.error(f"Failed to re-check account state after 2FA: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+    if current_user is None or (
+        getattr(current_user, "account_locked", False)
+        or getattr(current_user, "deletion_status", "active") == "frozen"
+    ):
+        session_id = getattr(result.session, "id", None)
+        if session_id is not None:
+            try:
+                auth.revoke_session(result.user.id, int(session_id))
+            except Exception as e:
+                logger.debug(f"Failed to revoke session after blocked 2FA: {e}")
+        logger.warning("2FA completion refused: account is no longer active")
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid or expired challenge"}},
+        )
+
     # M9 (same as login): the full session goes to browsers ONLY via the
     # HttpOnly cookie; the body carries a marker plus the session
     # lifetime, with the raw token echoed back solely for explicit
