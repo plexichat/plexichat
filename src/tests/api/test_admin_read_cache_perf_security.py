@@ -285,6 +285,37 @@ def test_approval_mutation_invalidation_refreshes_the_cache():
             p.stop()
 
 
+def test_consuming_an_approval_invalidates_the_list_cache(monkeypatch):
+    """A gated action that consumes an approval must refresh the cached list."""
+    import src.api.routes.admin.utils as admin_utils
+
+    class _GateDB:
+        def fetch_one(self, query, params=None):
+            return {"admin_count": 2, "approval_id": 4242}
+
+        def execute(self, query, params=None):
+            class _Cur:
+                rowcount = 1
+
+            return _Cur()
+
+    calls = {"n": 0}
+
+    def _spy():
+        calls["n"] += 1
+        read_cache.invalidate_approval_caches()
+
+    monkeypatch.setattr(read_cache, "invalidate_approval_caches", _spy)
+    monkeypatch.setattr(
+        admin_utils.config, "get", lambda key, default=None: {
+            "approval_workflows": {"single_admin_bypass": False}
+        } if key == "admin_ui" else default
+    )
+    with patch("src.api.get_db", return_value=_GateDB()):
+        assert admin_utils.require_approved_request("migrations.apply") == 4242
+    assert calls["n"] == 1
+
+
 @pytest.mark.parametrize(
     "module,row,path",
     [

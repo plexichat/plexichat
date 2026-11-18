@@ -451,6 +451,13 @@ def require_approved_request(action_type: str) -> Optional[int]:
             },
         )
 
+    # The approval row just moved to 'consumed'. The admin approval list is
+    # served from a short-lived response cache, so drop it here as well —
+    # otherwise a gated action could appear still 'approved' for the cache TTL.
+    from src.core.admin.read_cache import invalidate_approval_caches
+
+    invalidate_approval_caches()
+
     logger.info(f"'{action_type}' authorized and consumed approval {approval_id}")
     return approval_id
 
