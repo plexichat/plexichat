@@ -117,6 +117,11 @@ def create_tables(db: Any) -> None:
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint ON telemetry_response_times(method, endpoint)"
     )
+    # Time-series queries filter method + endpoint and order by timestamp.
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_method_endpoint_timestamp "
+        "ON telemetry_response_times(method, endpoint, timestamp)"
+    )
 
 
 def _create_tables() -> None:
