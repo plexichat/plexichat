@@ -34,6 +34,10 @@ def _invalidate_member_access_caches() -> None:
     invalidate_pattern("server_members_api:*")
     invalidate_pattern("user_servers_api:*")
     invalidate_pattern("server_channels_api:*")
+    # Sticker/soundboard libraries are memoized per viewer; a removed member
+    # must not keep reading a cached 200 past the kick/ban/leave.
+    invalidate_pattern("server_stickers_api:*")
+    invalidate_pattern("server_sounds_api:*")
 
 
 def _resolve_member_user_id(db, server_id: int, member_or_user_id: int):

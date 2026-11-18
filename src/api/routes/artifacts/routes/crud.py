@@ -206,6 +206,14 @@ async def list_artifacts(
             # Invalid type values are ignored rather than rejected: a list
             # filter should narrow results, not hard-fail on an unknown label.
 
+            # The base `artifacts` capability checked above does not cover the
+            # per-type gates (whiteboard / scribe / script). Without this, a
+            # `?artifact_type=whiteboard` filter listed those artifacts even
+            # when their license/config gate was disabled, which the single
+            # artifact GET correctly refuses. Same gate, no bypass.
+            for artifact_type_value in types:
+                _require_artifact_capability(artifact_type_value)
+
         filters: Dict[str, Any] = {
             "sort_by": sort_by,
             "sort_order": sort_order,

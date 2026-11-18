@@ -11,9 +11,11 @@ from src.api.request_guards import MAX_SOUND_UPLOAD, read_upload_capped
 from src.core.avatars.manager.upload_guard import sanitize_upload_filename
 from src.core.security.hardening import HardeningViolation, bounded_int
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Depends, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Depends, Query, UploadFile
+
+from src.core.database import cached, invalidate_pattern
 
 import src.api as api
 import utils.logger as logger
@@ -51,6 +53,13 @@ router = APIRouter(tags=["Soundboard"])
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
 _HTTP_UPLOAD_CEILING_BYTES = 10 * 1024 * 1024
+
+# A server's sound library is effectively static between manage operations.
+# Memoize the hydrated page for a short window; membership is checked live on
+# the cold path and the cache is dropped on every sound mutation and on member
+# kick/ban/leave (servers/members.py::_invalidate_member_access_caches).
+_SOUNDS_LIST_CACHE_TTL = 10
+_SOUNDS_LIST_CACHE_PREFIX = "server_sounds_api"
 
 
 def _bounded_sound_size(value: object) -> int:
@@ -272,6 +281,20 @@ def _map_soundboard_error(e: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Soundboard operation failed")
 
 
+@cached(ttl=_SOUNDS_LIST_CACHE_TTL, prefix=_SOUNDS_LIST_CACHE_PREFIX)
+async def _load_server_sounds_page(
+    sid: int, user_id: int, limit: int, offset: int
+) -> List[SoundResponse]:
+    """Cold path for a server's sound library (membership checked live)."""
+    soundboard = _get_soundboard()
+    sounds = soundboard.get_server_sounds(user_id, sid)
+    # IDOR defence in depth: never surface a sound owned by another server,
+    # even if a buggy manager returns one. Membership was already checked.
+    sounds = [s for s in sounds if int(getattr(s, "server_id", sid)) == int(sid)]
+    # Bounded page so one request cannot serialize an unbounded library.
+    return [_sound_to_response(s) for s in sounds[offset : offset + limit]]
+
+
 @router.get(
     "/{server_id}/soundboard",
     response_model=List[SoundResponse],
@@ -282,14 +305,20 @@ def _map_soundboard_error(e: Exception) -> HTTPException:
     },
 )
 async def list_server_sounds(
-    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str,
+    limit: Annotated[int, Query(ge=1, le=200)] = 200,
+    offset: Annotated[int, Query(ge=0, le=1000000)] = 0,
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> List[SoundResponse]:
-    """List all sounds in a server's soundboard (members only)."""
-    soundboard = _get_soundboard()
+    """List a bounded page of a server's sounds (members only)."""
     sid = _parse_server_id(server_id)
     try:
-        sounds = soundboard.get_server_sounds(current_user.user_id, sid)
-        return [_sound_to_response(s) for s in sounds]
+        page = await _load_server_sounds_page(sid, current_user.user_id, limit, offset)
+        # A cache hit may hand back plain dicts; re-validate so the response is
+        # identical whether the page came from the DB or the memo.
+        return [SoundResponse.model_validate(s) for s in page]
+    except HTTPException:
+        raise
     except SoundboardError as e:
         raise _map_soundboard_error(e)
     except Exception as e:
@@ -377,6 +406,7 @@ async def upload_sound(
             emoji=emoji,
             volume=max(0.0, min(1.0, float(volume))),
         )
+        invalidate_pattern(f"{_SOUNDS_LIST_CACHE_PREFIX}:*")
         return _sound_to_response(sound)
     except SoundboardError as e:
         raise _map_soundboard_error(e)
@@ -432,6 +462,7 @@ async def update_sound(
             volume=body.volume,
             cooldown=body.cooldown,
         )
+        invalidate_pattern(f"{_SOUNDS_LIST_CACHE_PREFIX}:*")
         return _sound_to_response(sound)
     except SoundboardError as e:
         raise _map_soundboard_error(e)
@@ -463,6 +494,8 @@ async def delete_sound(
 
     try:
         deleted = soundboard.delete_sound(current_user.user_id, sid_sound)
+        if deleted:
+            invalidate_pattern(f"{_SOUNDS_LIST_CACHE_PREFIX}:*")
         return {"success": bool(deleted)}
     except SoundboardError as e:
         raise _map_soundboard_error(e)
@@ -497,6 +530,7 @@ async def set_sound_permission(
         perm = soundboard.set_sound_permissions(
             current_user.user_id, sid_sound, rid, body.can_use
         )
+        invalidate_pattern(f"{_SOUNDS_LIST_CACHE_PREFIX}:*")
         return SoundPermissionResponse(
             id=str(perm.id),
             sound_id=str(perm.sound_id),

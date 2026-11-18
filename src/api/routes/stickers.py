@@ -4,7 +4,7 @@ Sticker routes - Sticker and pack management endpoints.
 
 from src.api.request_guards import read_upload_capped
 
-from typing import Any, List, NoReturn, Optional
+from typing import Annotated, Any, List, NoReturn, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
 
 import time
@@ -28,6 +28,7 @@ from src.core.stickers.exceptions import (
 from src.core import ratelimit
 from fastapi import Request
 from src.api.schemas.common import _reject_ui_text_chars
+from src.core.database import cached, invalidate_pattern
 
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
@@ -59,6 +60,14 @@ MAX_STICKER_SUGGESTION_QUERY = 256
 # run (module not wired, unexpected schema). Membership was already validated
 # by ``get_server_packs`` before this helper is called.
 _MAX_STICKER_BATCH_CHUNK = 400
+
+# A server's sticker library changes rarely (create/delete), so the *hydrated*
+# page can be memoized for a short window. Membership is still checked on the
+# cold path and the cache is invalidated on every sticker mutation and on
+# member kick/ban/leave (see servers/members.py::_invalidate_member_access_caches),
+# so a removed member cannot keep reading a cached 200.
+_STICKERS_LIST_CACHE_TTL = 10
+_STICKERS_LIST_CACHE_PREFIX = "server_stickers_api"
 
 
 def _batch_pack_stickers(stickers_mod, packs, user_id: int) -> dict:
@@ -267,6 +276,39 @@ async def _dispatch_stickers_update(server_id: int, user_id: int):
         logger.debug(f"Failed to dispatch sticker update for server {server_id}: {e}")
 
 
+@cached(ttl=_STICKERS_LIST_CACHE_TTL, prefix=_STICKERS_LIST_CACHE_PREFIX)
+async def _load_server_stickers_page(
+    sid: int, user_id: int, limit: int, offset: int
+) -> List[StickerPackResponse]:
+    """Cold path for a server's sticker library (membership is checked live)."""
+    stickers_mod = api.get_stickers()
+    if not stickers_mod:
+        raise HTTPException(status_code=500, detail="Stickers module not available")
+
+    packs = stickers_mod.get_server_packs(user_id, sid)
+    # IDOR defence in depth: only ever return packs that actually belong to the
+    # server in the URL, even if a buggy/compromised manager hands back a row
+    # from another server. Membership was already validated by get_server_packs.
+    packs = [
+        p
+        for p in packs
+        if getattr(p, "server_id", None) is not None and int(p.server_id) == int(sid)
+    ]
+
+    stickers_by_pack = _batch_pack_stickers(stickers_mod, packs, user_id)
+    response_packs = []
+    for pack in packs:
+        pack_response = StickerPackResponse.model_validate(pack)
+        pack_response.stickers = [
+            StickerResponse.model_validate(s)
+            for s in stickers_by_pack.get(int(pack.id), [])
+        ]
+        response_packs.append(pack_response)
+    # Bounded page: an attacker cannot force the server to serialize an
+    # unbounded pack/sticker library into a single response.
+    return response_packs[offset : offset + limit]
+
+
 @router.get(
     "/servers/{server_id}/stickers",
     response_model=List[StickerPackResponse],
@@ -277,48 +319,30 @@ async def _dispatch_stickers_update(server_id: int, user_id: int):
     },
 )
 async def get_server_stickers(
-    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str,
+    limit: Annotated[int, Query(ge=1, le=200)] = 200,
+    offset: Annotated[int, Query(ge=0, le=1000000)] = 0,
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> List[StickerPackResponse]:
-    """
-    Get all sticker packs for a server.
-    """
-    stickers_mod = api.get_stickers()
-    if not stickers_mod:
-        raise HTTPException(status_code=500, detail="Stickers module not available")
-
+    """Get a bounded page of the server's sticker packs (members only)."""
     try:
         sid = int(server_id)
-    except ValueError:
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid server ID")
 
     try:
-        packs = stickers_mod.get_server_packs(current_user.user_id, sid)
-
-        # Batch the sticker lookups for all packs into one query instead of
-        # one get_pack_stickers() call per pack (which re-checked membership
-        # and re-queried the stickers table every time).
-        stickers_by_pack = _batch_pack_stickers(
-            stickers_mod, packs, current_user.user_id
+        page = await _load_server_stickers_page(
+            sid, current_user.user_id, limit, offset
         )
-
-        # Hydrate packs with stickers
-        response_packs = []
-        for pack in packs:
-            pack_response = StickerPackResponse.model_validate(pack)
-            pack_response.stickers = [
-                StickerResponse.model_validate(s)
-                for s in stickers_by_pack.get(int(pack.id), [])
-            ]
-            response_packs.append(pack_response)
-
-        return response_packs
+        # A cache hit may hand back plain dicts, so always re-validate into the
+        # response model: cold and warm paths are byte-for-byte identical.
+        return [StickerPackResponse.model_validate(p) for p in page]
     except HTTPException:
         raise
     except PermissionDeniedError:
         # The manager refuses a non-member with PermissionDeniedError; the
         # blanket 500 made a refusal indistinguishable from an outage (the
         # route's own responses block documents 403 for exactly this case).
-        # Same mapping the sibling handlers in this module already use.
         raise HTTPException(
             status_code=403,
             detail={"error": {"code": 403, "message": "Access denied"}},
@@ -425,6 +449,10 @@ async def create_sticker(
             description=description,
         )
 
+        # A new sticker changes the cached library for every viewer of this
+        # server; drop the memoized pages before returning.
+        invalidate_pattern(f"{_STICKERS_LIST_CACHE_PREFIX}:*")
+
         # Dispatch update as background task (don't block response)
         import asyncio
 
@@ -480,6 +508,7 @@ async def delete_sticker(
         server_id = pack.server_id if pack else None
 
         stickers_mod.remove_sticker(current_user.user_id, sid)
+        invalidate_pattern(f"{_STICKERS_LIST_CACHE_PREFIX}:*")
 
         # Dispatch update if server sticker
         if server_id:
