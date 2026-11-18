@@ -46,6 +46,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
 CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_id);
 CREATE INDEX IF NOT EXISTS idx_reports_server ON reports(server_id);
+-- Server-scoped report lists order by created_at.
+CREATE INDEX IF NOT EXISTS idx_reports_server_created ON reports(server_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_assigned ON reports(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_reports_priority ON reports(priority);
 -- The moderator queue filters on status and orders by created_at DESC. A
