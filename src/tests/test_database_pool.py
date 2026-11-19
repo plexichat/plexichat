@@ -78,13 +78,15 @@ def test_connection_idle_eviction(setup_logging):
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    # Configure with very short max idle time (0.5 seconds)
+    # ``max_idle_time`` is validated as an integer number of seconds (a
+    # fractional value is rejected rather than truncated), so the shortest
+    # meaningful window is one second.
     db_config = {
         "database": {
             "type": "sqlite",
             "path": db_path,
             "connection_pool": {
-                "max_idle_time": 0.5,
+                "max_idle_time": 1,
                 "max_connection_age_hours": 1,  # 1 hour
             },
         }
@@ -105,7 +107,7 @@ def test_connection_idle_eviction(setup_logging):
     first_id = id(first_conn)
 
     # Wait for connection to exceed max idle time (eviction is lazy on _get_conn)
-    time.sleep(0.8)
+    time.sleep(1.2)
 
     # Next call to _get_conn should evict and create new connection
     second_conn = db._get_conn()

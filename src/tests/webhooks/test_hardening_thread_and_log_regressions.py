@@ -57,8 +57,7 @@ def test_avatar_rejection_log_does_not_leak_url_secrets(
     )
 
     secret_url = (
-        "https://cdn.example.com/a.png?X-Amz-Signature=deadbeef"
-        "\ninjected-log-line"
+        "https://cdn.example.com/a.png?X-Amz-Signature=deadbeef\ninjected-log-line"
     )
 
     with caplog.at_level(logging.WARNING, logger="utils.logger"):

@@ -111,9 +111,10 @@ def _clear_suite_feed_cache(user_id: Optional[int] = None) -> None:
 def _suite_feed_from_cache(key: Tuple[int, str, int, Optional[str]]):
     """Return a memoized feed response, or ``None`` on miss/expiry."""
     cached = _suite_feed_cache.get(key)
-    if cached is not None and (
-        time.monotonic() - cached[0]
-    ) < _SUITE_FEED_CACHE_TTL_SECONDS:
+    if (
+        cached is not None
+        and (time.monotonic() - cached[0]) < _SUITE_FEED_CACHE_TTL_SECONDS
+    ):
         return copy.deepcopy(cached[1])
     return None
 

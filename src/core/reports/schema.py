@@ -150,6 +150,9 @@ CREATE INDEX IF NOT EXISTS idx_message_reports_assigned_at
 -- Assigned queue filtered by priority.
 CREATE INDEX IF NOT EXISTS idx_message_reports_assigned_priority
     ON message_reports(assigned_to, priority);
+-- Assigned queue filtered by status.
+CREATE INDEX IF NOT EXISTS idx_message_reports_assigned_status
+    ON message_reports(assigned_to, status);
 -- Moderation queues order by reported_at.
 CREATE INDEX IF NOT EXISTS idx_message_reports_reported_at ON message_reports(reported_at);
 

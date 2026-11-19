@@ -76,7 +76,9 @@ def test_every_relative_date_unit_clamps_the_span(unit):
     parser = QueryParser()
     parsed = parser.parse(f"before:99999999999999999999{unit}")
 
-    date_filters = [f for f in parsed.filters if f.filter_type == FilterType.BEFORE_DATE]
+    date_filters = [
+        f for f in parsed.filters if f.filter_type == FilterType.BEFORE_DATE
+    ]
     assert len(date_filters) == 1
     assert len(date_filters[0].value) == len("YYYY-MM-DD")
 

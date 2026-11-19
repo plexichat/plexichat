@@ -153,7 +153,9 @@ def test_every_expensive_opcode_is_rate_limited():
     """The core invariant: the shipped throttle table covers the whole manifest."""
     limits = _rate_limits(HANDLERS_SRC.read_text(encoding="utf-8"))
     missing = EXPENSIVE_OPCODES - limits.keys()
-    assert not missing, f"expensive opcodes missing from INBOUND_RATE_LIMITS: {sorted(missing)}"
+    assert not missing, (
+        f"expensive opcodes missing from INBOUND_RATE_LIMITS: {sorted(missing)}"
+    )
 
 
 def test_rate_limit_table_has_no_stale_opcodes_and_sane_budgets():
@@ -165,8 +167,14 @@ def test_rate_limit_table_has_no_stale_opcodes_and_sane_budgets():
     for name, budget in limits.items():
         assert isinstance(budget, tuple) and len(budget) == 2, (name, budget)
         max_events, window = budget
-        assert isinstance(max_events, int) and not isinstance(max_events, bool), (name, budget)
-        assert isinstance(window, (int, float)) and not isinstance(window, bool), (name, budget)
+        assert isinstance(max_events, int) and not isinstance(max_events, bool), (
+            name,
+            budget,
+        )
+        assert isinstance(window, (int, float)) and not isinstance(window, bool), (
+            name,
+            budget,
+        )
         assert max_events > 0 and window > 0, (name, budget)
 
 

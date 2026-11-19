@@ -130,4 +130,6 @@ def _render_json(content: Any) -> bytes:
     """Render a payload exactly as FastAPI's ``JSONResponse`` would."""
     from starlette.responses import JSONResponse
 
-    return JSONResponse(content=content).body
+    # JSONResponse.body is typed as ``bytes | memoryview``; the renderer is
+    # stored and served as immutable bytes.
+    return bytes(JSONResponse(content=content).body)

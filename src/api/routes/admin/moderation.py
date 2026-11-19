@@ -463,8 +463,7 @@ async def get_enhanced_report_counts(request: Request):
         # Bound the number of status buckets so a corrupt/crafted status value
         # cannot turn this aggregate into an unbounded response.
         rows = db.fetch_all(
-            "SELECT status, COUNT(*) as count FROM reports "
-            "GROUP BY status LIMIT 200"
+            "SELECT status, COUNT(*) as count FROM reports GROUP BY status LIMIT 200"
         )
         total = 0
         for row in rows:

@@ -20,6 +20,10 @@
   // at the pre-commit hook level, which is now redundant with this list).
   "exclude": [
     "src/tests",
+    // Test doubles that live next to the code they exercise: same category as
+    // src/tests (MagicMock attributes, duck-typed stubs), not production code.
+    "src/core/migrations/test_hardening_regressions.py",
+    "src/core/settings/tests",
     "src/core/migrations/cloner.py",
     "src/api/routes/docs",
     "ci-tooling"

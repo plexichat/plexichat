@@ -308,9 +308,13 @@ def test_consuming_an_approval_invalidates_the_list_cache(monkeypatch):
 
     monkeypatch.setattr(read_cache, "invalidate_approval_caches", _spy)
     monkeypatch.setattr(
-        admin_utils.config, "get", lambda key, default=None: {
-            "approval_workflows": {"single_admin_bypass": False}
-        } if key == "admin_ui" else default
+        admin_utils.config,
+        "get",
+        lambda key, default=None: (
+            {"approval_workflows": {"single_admin_bypass": False}}
+            if key == "admin_ui"
+            else default
+        ),
     )
     with patch("src.api.get_db", return_value=_GateDB()):
         assert admin_utils.require_approved_request("migrations.apply") == 4242
@@ -357,7 +361,9 @@ def test_bounded_query_uses_bound_parameters():
     db = _Capture([_approval_row()])
     client, patches = _client_factory(approvals_route, db)
     try:
-        assert client.get("/api/v1/admin/approvals?limit=25&offset=5").status_code == 200
+        assert (
+            client.get("/api/v1/admin/approvals?limit=25&offset=5").status_code == 200
+        )
     finally:
         for p in reversed(patches):
             p.stop()

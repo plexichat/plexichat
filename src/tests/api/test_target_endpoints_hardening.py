@@ -29,6 +29,7 @@ config_routes = importlib.import_module("src.api.routes.config")
 @pytest.fixture(autouse=True)
 def _isolate_caches():
     """Every test starts and ends with cold caches."""
+
     def clear():
         version_routes._cached_server_version = None
         admin_caps.clear_admin_capabilities_payload_cache()
@@ -170,9 +171,7 @@ def test_admin_capabilities_are_bounded(monkeypatch):
             message="ok",
             details={},
         )
-    monkeypatch.setattr(
-        admin_caps, "get_artifact_capabilities", lambda: oversized
-    )
+    monkeypatch.setattr(admin_caps, "get_artifact_capabilities", lambda: oversized)
     monkeypatch.setattr(admin_caps, "check_host_restriction", lambda r: None)
     monkeypatch.setattr(admin_caps, "get_admin_from_token", lambda r: 1)
 
@@ -241,9 +240,7 @@ def test_client_capabilities_error_is_generic(monkeypatch):
     monkeypatch.setattr(cap_routes, "_get_capabilities_payload", boom)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
-            cap_routes.get_capabilities(
-                current_user=SimpleNamespace(user_id=1)
-            )
+            cap_routes.get_capabilities(current_user=SimpleNamespace(user_id=1))
         )
     assert exc.value.status_code == 500
     assert secret not in str(exc.value.detail)

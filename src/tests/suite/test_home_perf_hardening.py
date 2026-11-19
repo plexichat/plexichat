@@ -174,10 +174,14 @@ def test_feed_keys_are_per_viewer(monkeypatch):
     monkeypatch.setattr(artifact_backend, "list_with_filters", list_with_filters)
 
     alice = asyncio.run(
-        registry.list_recent_suite_items(limit=5, current_user=SimpleNamespace(user_id=1))
+        registry.list_recent_suite_items(
+            limit=5, current_user=SimpleNamespace(user_id=1)
+        )
     )
     bob = asyncio.run(
-        registry.list_recent_suite_items(limit=5, current_user=SimpleNamespace(user_id=2))
+        registry.list_recent_suite_items(
+            limit=5, current_user=SimpleNamespace(user_id=2)
+        )
     )
     assert [i["title"] for i in alice["items"]] == ["owner-1"]
     assert [i["title"] for i in bob["items"]] == ["owner-2"]
@@ -218,10 +222,14 @@ def test_search_query_term_is_bounded_in_cache_key(monkeypatch):
 def test_invalidation_drops_only_one_viewer(monkeypatch):
     _wire_feeds(monkeypatch, [])
     asyncio.run(
-        registry.list_recent_suite_items(limit=5, current_user=SimpleNamespace(user_id=1))
+        registry.list_recent_suite_items(
+            limit=5, current_user=SimpleNamespace(user_id=1)
+        )
     )
     asyncio.run(
-        registry.list_recent_suite_items(limit=5, current_user=SimpleNamespace(user_id=2))
+        registry.list_recent_suite_items(
+            limit=5, current_user=SimpleNamespace(user_id=2)
+        )
     )
     registry._clear_suite_feed_cache(user_id=1)
     assert all(key[0] != 1 for key in registry._suite_feed_cache)

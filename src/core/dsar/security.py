@@ -113,8 +113,7 @@ def bound_export_data(
             warnings = []
             metadata["warnings"] = warnings
         warnings.append(
-            f"export category exceeded the hard {max_rows}-row cap; "
-            "artifact withheld"
+            f"export category exceeded the hard {max_rows}-row cap; artifact withheld"
         )
 
     return truncated

@@ -543,6 +543,4 @@ async def get_system_alert_stats(
             logger.warning(f"System alert stats error: {e}")
             raise HTTPException(status_code=500, detail="Failed to query alert stats")
 
-    return get_or_compute(
-        "system_alert_stats", (hours,), _load, _SUMMARY_TTL_SECONDS
-    )
+    return get_or_compute("system_alert_stats", (hours,), _load, _SUMMARY_TTL_SECONDS)

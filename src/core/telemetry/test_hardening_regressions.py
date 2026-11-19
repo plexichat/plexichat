@@ -86,9 +86,7 @@ class TestMethodCardinality:
 class TestAuditMetadataRedaction:
     def test_secret_in_metadata_never_reaches_the_file(self, tmp_path):
         path = tmp_path / "audit.jsonl"
-        chain = AuditChain(
-            str(path), head_path=str(path) + ".head", durable=False
-        )
+        chain = AuditChain(str(path), head_path=str(path) + ".head", durable=False)
         secret = "s3cr3t-do-not-leak"
 
         chain.append(
@@ -107,9 +105,7 @@ class TestAuditMetadataRedaction:
 
     def test_plain_metadata_is_unchanged(self, tmp_path):
         path = tmp_path / "audit.jsonl"
-        chain = AuditChain(
-            str(path), head_path=str(path) + ".head", durable=False
-        )
+        chain = AuditChain(str(path), head_path=str(path) + ".head", durable=False)
 
         chain.append("login", 42, details="ok")
 

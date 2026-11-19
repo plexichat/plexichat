@@ -182,20 +182,35 @@ def validate_sfu_identifier(value: object, field: str = "sfu_id") -> str:
     return validate_text_identifier(value, field, MAX_SFU_ID_LENGTH)
 
 
+def _coerce_int(value: object) -> Optional[int]:
+    """Return ``value`` as an int when it is an int-ish scalar, else ``None``.
+
+    ``int(value)`` on an arbitrary object both truncates floats and accepts
+    ``bool`` as 0/1, so the clamps below must not use it directly; narrowing on
+    the type first is also what lets a type checker see the conversion.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, str)):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
 def clamp_user_limit(value: object, field: str = "user_limit") -> int:
     """Clamp a stored or supplied channel user limit into a sane range."""
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
+    number = _coerce_int(value)
+    if number is None:
         return 0
     return max(0, min(number, MAX_PARTICIPANTS_PER_CHANNEL))
 
 
 def clamp_participant_count(value: object) -> int:
     """Clamp a participant count reported to clients."""
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
+    number = _coerce_int(value)
+    if number is None:
         return 0
     return max(0, min(number, MAX_PARTICIPANTS_PER_CHANNEL))
 
@@ -233,10 +248,9 @@ def validate_bitrate_input(value: object, field: str = "bitrate") -> int:
     """
     if isinstance(value, bool) or isinstance(value, float):
         raise ValueError(f"{field} must be an integer")
-    try:
-        number = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field} must be an integer") from exc
+    number = _coerce_int(value)
+    if number is None:
+        raise ValueError(f"{field} must be an integer")
     if number < 0 or number > MAX_BITRATE_INPUT:
         raise ValueError(f"{field} is outside the allowed range")
     return number
@@ -244,9 +258,8 @@ def validate_bitrate_input(value: object, field: str = "bitrate") -> int:
 
 def clamp_bitrate(value: object, field: str = "bitrate") -> int:
     """Return a bitrate clamped to the supported audio range."""
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
+    number = _coerce_int(value)
+    if number is None:
         return MIN_BITRATE
     return max(MIN_BITRATE, min(number, MAX_BITRATE))
 
@@ -285,6 +298,15 @@ def validate_quality_metrics(metrics: dict, field: str = "metrics") -> dict:
             if number != number or number in (float("inf"), float("-inf")):
                 continue
             result[key] = max(0.0, min(number, 100_000.0))
+        elif key == "score":
+            # mediasoup rates a producer/consumer 0-10; the score is part of the
+            # bridge contract (the quality store records it alongside the
+            # transport metrics), so dropping it degraded every sample to a
+            # hint with no verdict attached.
+            number = _coerce_int(value)
+            if number is None:
+                continue
+            result[key] = max(0, min(number, 10))
         elif key == "quality_level":
             text = str(value).lower()
             if text in {"excellent", "good", "fair", "poor", "critical"}:

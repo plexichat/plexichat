@@ -20,7 +20,19 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Any, Callable, Dict, Hashable, Iterable, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    Hashable,
+    Iterable,
+    Optional,
+    Tuple,
+    TypeVar,
+)
+
+_T = TypeVar("_T")
 
 
 def file_version(*paths: Optional[str]) -> Tuple[Optional[Tuple[int, int]], ...]:
@@ -71,7 +83,7 @@ def config_source_version(*extra: Hashable) -> Tuple[Any, ...]:
     return (id(loader), file_version(path), *extra)
 
 
-class VersionedConfigSnapshot:
+class VersionedConfigSnapshot(Generic[_T]):
     """A thread-safe cached value rebuilt only when its version changes.
 
     A version check can itself be expensive: the common ``file_version`` token
@@ -99,7 +111,7 @@ class VersionedConfigSnapshot:
 
     def __init__(
         self,
-        loader: Callable[[], Dict[str, Any]],
+        loader: Callable[[], _T],
         *,
         paths: Iterable[Optional[str]] = (),
         version_fn: Optional[Callable[[], Hashable]] = None,
@@ -114,7 +126,7 @@ class VersionedConfigSnapshot:
             float(max_age) if max_age is not None and max_age > 0 else None
         )
         self._lock = threading.RLock()
-        self._value: Optional[Dict[str, Any]] = None
+        self._value: Optional[_T] = None
         self._version: Optional[Hashable] = None
         self._version_checked_at: Optional[float] = None
         self._hits = 0
@@ -128,10 +140,12 @@ class VersionedConfigSnapshot:
         return file_version(*self._paths)
 
     def get(self, key: Any, default: Any = None) -> Any:
-        """Return one key from the snapshot, rebuilding it if stale."""
-        return self.snapshot().get(key, default)
+        """Return one key from a mapping snapshot, rebuilding it if stale."""
+        value = self.snapshot()
+        getter = getattr(value, "get", None)
+        return getter(key, default) if callable(getter) else default
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> _T:
         """Return the current value, rebuilding it only when the version moved.
 
         A rebuild runs the (potentially expensive) loader and is counted as a

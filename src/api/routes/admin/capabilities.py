@@ -95,8 +95,12 @@ def _build_payload() -> Dict[str, Any]:
         state = capabilities[feature].state
         return state.value if isinstance(state, CapabilityState) else state
 
-    available = [f for f in capabilities_dict if _state_of(f) == CapabilityState.AVAILABLE.value]
-    unavailable = [f for f in capabilities_dict if _state_of(f) != CapabilityState.AVAILABLE.value]
+    available = [
+        f for f in capabilities_dict if _state_of(f) == CapabilityState.AVAILABLE.value
+    ]
+    unavailable = [
+        f for f in capabilities_dict if _state_of(f) != CapabilityState.AVAILABLE.value
+    ]
 
     summary = {
         "total": len(capabilities_dict),

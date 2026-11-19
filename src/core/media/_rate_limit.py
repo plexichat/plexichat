@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Any
 
 from src.core import ratelimit
+from src.core.ratelimit.manager.validation import MAX_AMOUNT as MAX_COUNTER_INCREMENT
 from .exceptions import MediaError
 
 logger = logging.getLogger(__name__)
@@ -87,9 +88,17 @@ class _RateLimitMixin:
 
         manager.increment_custom_usage(minute_key, "count", 1, ttl=120)
         manager.increment_custom_usage(hour_key, "count", 1, ttl=7200)
-        manager.increment_custom_usage(
-            day_size_key, "total_size", file_size, ttl=172800
-        )
+        # A counter increment is bounded (``MAX_AMOUNT``), and a media upload is
+        # routinely larger than that bound, so a single call with the file size
+        # raised "counter amount is too large" and failed the upload. Account
+        # for it in bounded chunks instead.
+        remaining = file_size
+        while remaining > 0:
+            chunk = min(remaining, MAX_COUNTER_INCREMENT)
+            manager.increment_custom_usage(
+                day_size_key, "total_size", chunk, ttl=172800
+            )
+            remaining -= chunk
 
     # -- read helpers ------------------------------------------------------------
 

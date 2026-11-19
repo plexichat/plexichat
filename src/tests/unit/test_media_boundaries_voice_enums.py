@@ -35,7 +35,7 @@ class TestBitrateInput:
 
     def test_bitrate_clamped_in_server_info(self):
         info = VoiceServerInfo(
-            endpoint="https://voice.example.com/ws",
+            endpoint="wss://voice.example.com/ws",
             token="t",
             ice_servers=[],
             session_id="s1",

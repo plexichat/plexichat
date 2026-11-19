@@ -29,9 +29,17 @@ SLEEP_CALL = re.compile(r"^\s*[^#\n]*\.sleep\(", re.MULTILINE)
 
 # relative path under src/tests -> (number of .sleep() calls, why they exist)
 INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
+    "api/test_admin_migrations_list_cache.py": (
+        1,
+        "slow-build double widens the window where two readers race the cache fill",
+    ),
     "api/test_dual_tombstone_contract.py": (
         1,
         "yield to the loop so fire-and-forget create_task() broadcasts run",
+    ),
+    "api/test_me_hotpath_hardening.py": (
+        1,
+        "slow cache double widens the window where the hot-path read races the fill",
     ),
     "api/test_pin_broadcast_parity.py": (
         1,
@@ -211,6 +219,54 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
     "websocket/test_security.py": (
         1,
         "space a heartbeat so the timestamp changes",
+    ),
+    "api/test_messages_route_security_hardening.py": (
+        1,
+        "yield to the loop so the fire-and-forget broadcast task runs",
+    ),
+    "database/test_pool_fairness.py": (
+        2,
+        "hold a pool worker briefly so contention between checkouts is measurable",
+    ),
+    "media/test_result_cache.py": (
+        1,
+        "let the bounded result-cache TTL advance",
+    ),
+    "security/test_deep_abuse_regressions.py": (
+        2,
+        "yield inside the abuse stub between rate-limited attempts",
+    ),
+    "unit/test_config_cache_perf_regression.py": (
+        1,
+        "simulate a slow config loader so the cache window is measurable",
+    ),
+    "plexijoin/test_admin_connections_hardening.py": (
+        1,
+        "slow decrypt double widens the window where the connection list races the fill",
+    ),
+    "suite/test_home_perf_hardening.py": (
+        1,
+        "slow feed lister widens the window where the home feed races the cache fill",
+    ),
+    "unit/test_channel_event_audience_hardening.py": (
+        1,
+        "drain helper yields to the loop so queued audience tasks run",
+    ),
+    "unit/test_gateway_outbound_batching.py": (
+        1,
+        "pace the batch window so the flush boundary is crossed",
+    ),
+    "unit/test_gateway_throughput_regression.py": (
+        1,
+        "advance the fixed throughput measurement window",
+    ),
+    "unit/test_message_render_cache.py": (
+        1,
+        "let the bounded render-cache TTL advance",
+    ),
+    "unit/test_push_async_fanout.py": (
+        3,
+        "yield to the loop so queued fan-out tasks run, and pace the async batch",
     ),
 }
 

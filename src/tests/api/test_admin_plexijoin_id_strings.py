@@ -203,6 +203,9 @@ async def test_federation_join_request_inbound_keeps_rowid_numeric(monkeypatch):
 
     class _InboundRequest:
         headers = {
+            # The inbound route rejects a non-JSON content type before it reads
+            # the body, so a bare headers dict has to declare one.
+            "content-type": "application/json",
             "x-plexijoin-signature": "sig",
             "x-plexijoin-timestamp": "1",
             "x-plexijoin-nonce": "n",

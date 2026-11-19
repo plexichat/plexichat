@@ -136,9 +136,7 @@ def test_quota_status_single_query_and_identical_output(db, monkeypatch):
     used = expected["used_bytes"] + expected["pending_bytes"]
     limit = expected["limit_bytes"]
     expected["remaining_bytes"] = max(0, int(limit) - used)
-    expected["percent_used"] = min(
-        100.0, max(0.0, round((used * 100.0 / limit), 2))
-    )
+    expected["percent_used"] = min(100.0, max(0.0, round((used * 100.0 / limit), 2)))
 
     counting = _CountingDB(db)
     optimized = _make(counting)
@@ -366,8 +364,9 @@ def test_artifact_ops_focused_read_and_idor(db, monkeypatch):
     from src.api.routes.artifacts.routes import exports as route
 
     monkeypatch.setattr(helpers, "_get_manager", lambda: ArtifactManager(db, {}))
-    with patch.object(api, "get_servers", return_value=None), patch.object(
-        api, "get_messaging", return_value=None
+    with (
+        patch.object(api, "get_servers", return_value=None),
+        patch.object(api, "get_messaging", return_value=None),
     ):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(

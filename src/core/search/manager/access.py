@@ -125,10 +125,11 @@ class AccessControlMixin(SearchManagerBase):
             perms_map = None
             if callable(batch_api):
                 try:
-                    perms_map = batch_api(user_id, server_id, cids)
-                except Exception:
+                    batch_result = batch_api(user_id, server_id, cids)
                     # Unknown/corrupt permission data must not turn into a
                     # broader grant; fall back to the canonical single check.
+                    perms_map = batch_result if isinstance(batch_result, dict) else None
+                except Exception:
                     perms_map = None
             for cid in cids:
                 if perms_map is not None:

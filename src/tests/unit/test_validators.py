@@ -143,10 +143,18 @@ class TestServerNameValidation:
         try:
             validated_name = sm._validate_server_name(name)
         except Exception:
-            # The implementation only rejects empty/whitespace-only names or
-            # names outside [min, max] after stripping — verify the rejection
-            # was actually justified instead of swallowing any exception.
-            assert not stripped or not (2 <= len(stripped) <= 100), (
+            # The implementation rejects empty/whitespace-only names, names
+            # outside [min, max] after stripping, and names containing control
+            # characters (``string.printable`` includes \r, \t, \x0b, \x0c).
+            # Verify the rejection was justified instead of swallowing any
+            # exception.
+            # Checked on the raw input: ``strip()`` already removed the
+            # trailing \n/\r that the validator rejects.
+            has_control = any(
+                ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ch in "\u2028\u2029"
+                for ch in name
+            )
+            assert not stripped or not (2 <= len(stripped) <= 100) or has_control, (
                 f"Validator rejected a valid-length printable name: {name!r}"
             )
         else:

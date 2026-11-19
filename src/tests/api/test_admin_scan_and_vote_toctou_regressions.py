@@ -63,9 +63,7 @@ class TestAuditScansAreBounded:
         """``date_from=0`` must not turn into a whole-table scan."""
         client, ctx, db = _audit_client(monkeypatch)
         try:
-            assert (
-                client.get("/api/v1/admin/audit/logs?date_from=0").status_code == 200
-            )
+            assert client.get("/api/v1/admin/audit/logs?date_from=0").status_code == 200
             count_sql, count_params = db.calls[0]
             # The caller's explicit epoch bound is still passed through.
             assert count_params == (0,)
@@ -115,9 +113,7 @@ class TestAuditScansAreBounded:
                 c.stop()
 
     def test_filtered_scans_stay_bounded_in_strict_mode(self, monkeypatch):
-        client, ctx, db = _audit_client(
-            monkeypatch, {"require_indexed_filter": True}
-        )
+        client, ctx, db = _audit_client(monkeypatch, {"require_indexed_filter": True})
         try:
             assert (
                 client.get("/api/v1/admin/audit/logs?action_family=user").status_code
@@ -168,9 +164,11 @@ class _VoteDB:
         self.calls.append(("read", query, tuple(params or ())))
         # The first read is the stale (unexpired) snapshot. If the guarded
         # UPDATE loses, the retry re-reads the real, expired row.
-        expires_at = 1 if self.expire_vote and self.reads > 1 else int(
-            time.time() * 1000
-        ) + 3_600_000
+        expires_at = (
+            1
+            if self.expire_vote and self.reads > 1
+            else int(time.time() * 1000) + 3_600_000
+        )
         return {
             "id": 1,
             "requested_by": 2,
@@ -196,7 +194,9 @@ def _run_vote(db):
         patch("src.utils.system_alerts.record_system_alert"),
         patch("src.core.admin.permissions.log_admin_action") as audit,
     ):
-        result = asyncio.run(routes.approve_request(_approval_request(), SnowflakeIDParam(1)))
+        result = asyncio.run(
+            routes.approve_request(_approval_request(), SnowflakeIDParam(1))
+        )
     return result, audit
 
 
@@ -224,9 +224,7 @@ class TestApprovalVoteExpiryGuard:
         ):
             with pytest.raises(HTTPException) as exc:
                 asyncio.run(
-                    routes.approve_request(
-                        _approval_request(), SnowflakeIDParam(1)
-                    )
+                    routes.approve_request(_approval_request(), SnowflakeIDParam(1))
                 )
         assert exc.value.status_code == 400
         assert "expired" in str(exc.value.detail).lower()

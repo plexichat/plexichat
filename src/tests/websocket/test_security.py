@@ -174,6 +174,11 @@ class TestOpcodeManipulation:
             {"session_id": "test", "seq": 0},
         ]
         for payload in payloads:
+            # RESUME is now per-connection throttled (5/10s). Each malformed
+            # payload is an independent validation case, so reset this
+            # connection's inbound bucket before dispatching it.
+            if hasattr(connection, "_inbound_rate_buckets"):
+                connection._inbound_rate_buckets.clear()
             response_op, response_data, close_code = await opcode_handler.handle(
                 connection,
                 GatewayOpcode.RESUME,

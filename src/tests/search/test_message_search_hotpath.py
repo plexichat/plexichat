@@ -149,9 +149,9 @@ def test_visibility_batching_matches_per_result_parity(seeded_search):
         _result(4, channel_id=999999999),  # nonexistent channel
         _result(5),  # neither id -> must be dropped
     ]
-    assert [r.id for r in s["search"]._verify_results_visible(s["user_id"], results)] == [
-        r.id for r in _reference_visible(s["search"], s["user_id"], results)
-    ]
+    assert [
+        r.id for r in s["search"]._verify_results_visible(s["user_id"], results)
+    ] == [r.id for r in _reference_visible(s["search"], s["user_id"], results)]
 
 
 @pytest.mark.search

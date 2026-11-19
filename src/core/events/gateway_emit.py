@@ -164,8 +164,12 @@ def _thread_privacy(thread_id: Optional[int], claimed_type: Any) -> bool:
     route normally when no authoritative value is available.
     """
     authoritative = None
-    lookup_failed = thread_id is None
-    if not lookup_failed:
+    # Tested as ``thread_id is not None`` rather than through a saved bool:
+    # that is the form a type checker can narrow, and it keeps the fail-closed
+    # default for a missing thread id.
+    lookup_failed = True
+    if thread_id is not None:
+        lookup_failed = False
         try:
             from src.core import threads as _threads
 

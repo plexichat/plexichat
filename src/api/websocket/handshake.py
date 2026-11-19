@@ -206,6 +206,8 @@ def _handshake_limit() -> int:
         value = ws_conf.get("handshake_rate_limit_per_minute")
         if value is None:
             value = ws_conf.get("rate_limit_per_minute")
+        if value is None:
+            return _DEFAULT_HANDSHAKE_LIMIT
         limit = int(value)
         return limit if limit > 0 else _DEFAULT_HANDSHAKE_LIMIT
     except Exception:

@@ -98,7 +98,9 @@ def test_dashboard_warm_hit_is_identical_and_skips_every_producer(monkeypatch):
     with (
         patch("src.core.admin.get_ticket_counts", side_effect=_tickets),
         patch("src.core.telemetry.is_setup", side_effect=_telemetry_setup),
-        patch.object(dashboard.applications, "get_admin_dashboard_counts", side_effect=_counts),
+        patch.object(
+            dashboard.applications, "get_admin_dashboard_counts", side_effect=_counts
+        ),
         patch.object(
             dashboard.applications,
             "get_admin_dashboard_feature_stats",
@@ -189,8 +191,32 @@ def test_reports_warm_hit_is_identical_and_uses_one_query(monkeypatch):
 
 def test_cache_is_scoped_to_the_backing_database(monkeypatch):
     """A cached summary from one DB is never served for a different DB."""
-    db1 = _CountingDB(rows=[{"id": 1, "source": "one", "event_type": "e", "severity": "info", "details": None, "target_path": None, "created_at": 1}])
-    db2 = _CountingDB(rows=[{"id": 2, "source": "two", "event_type": "e", "severity": "info", "details": None, "target_path": None, "created_at": 2}])
+    db1 = _CountingDB(
+        rows=[
+            {
+                "id": 1,
+                "source": "one",
+                "event_type": "e",
+                "severity": "info",
+                "details": None,
+                "target_path": None,
+                "created_at": 1,
+            }
+        ]
+    )
+    db2 = _CountingDB(
+        rows=[
+            {
+                "id": 2,
+                "source": "two",
+                "event_type": "e",
+                "severity": "info",
+                "details": None,
+                "target_path": None,
+                "created_at": 2,
+            }
+        ]
+    )
     monkeypatch.setattr(dashboard, "check_host_restriction", lambda r: None)
     monkeypatch.setattr(dashboard, "require_admin_permission", lambda r, p: 1)
 
@@ -272,9 +298,7 @@ def test_scope_gate_is_enforced_even_on_a_cache_hit(monkeypatch):
 
 
 def test_system_alert_stats_aggregate_is_bounded(monkeypatch):
-    db = _CountingDB(
-        rows=[{"source": "a\nb", "severity": "c\td", "cnt": 5}]
-    )
+    db = _CountingDB(rows=[{"source": "a\nb", "severity": "c\td", "cnt": 5}])
     monkeypatch.setattr(dashboard, "check_host_restriction", lambda r: None)
     monkeypatch.setattr(dashboard, "require_admin_permission", lambda r, p: 1)
     with patch.object(api, "get_db", return_value=db):

@@ -486,7 +486,10 @@ class FeatureSetupMixin(SetupServiceBase):
         plexijoin_payload = {
             "remote_instance_id": f"test-instance-{uniq}",
             "remote_url": "https://test.example.com",
-            "shared_key": "test_shared_key_32_chars_long_here!",
+            # A shared key is validated as a urlsafe token, so the previous
+            # human-readable placeholder (it contained ``!``) was rejected as
+            # invalid and the self-test never created the connection.
+            "shared_key": secrets.token_hex(16),
         }
         try:
             plexijoin_resp = self.ctx.session.post(

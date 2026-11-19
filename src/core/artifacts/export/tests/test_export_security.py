@@ -22,7 +22,7 @@ TRAVERSAL_TITLES = [
     "C:\\Windows\\System32\\drivers\\etc\\hosts",
     "....//....//etc/passwd",
     "\u202eexe.doc",
-    "evil\"\r\nX-Injected: 1",
+    'evil"\r\nX-Injected: 1',
     "\x00../secret",
 ]
 
@@ -122,6 +122,4 @@ def test_host_allowlist_blocks_unexpected_destination(monkeypatch):
         "https://cdn.example.com/a", allowed_hosts=(".example.com",)
     )
     with pytest.raises(UnsafeExportURL):
-        validate_export_url(
-            "https://evil.test/a", allowed_hosts=(".example.com",)
-        )
+        validate_export_url("https://evil.test/a", allowed_hosts=(".example.com",))
