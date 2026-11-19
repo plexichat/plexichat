@@ -131,10 +131,16 @@ class VoiceMessageService:
         Raises:
             PermissionError: If user is not a participant in the conversation
         """
-        # Verify user is a participant in the target conversation
-        if participant_svc and not participant_svc.is_participant(
-            conversation_id, user_id
-        ):
+        # Authorization MUST fail closed. This check used to be guarded by
+        # ``if participant_svc and ...``: when no checker was supplied (the
+        # messaging module was unavailable, or a manager implementation lacked
+        # ``_participant_svc``), it was silently skipped and any authenticated
+        # user could publish a voice message into a conversation they do not
+        # belong to. Every other messaging write path denies when the checker
+        # is missing; mirror that policy here.
+        if not participant_svc:
+            raise PermissionError("Cannot verify conversation participation")
+        if not participant_svc.is_participant(conversation_id, user_id):
             raise PermissionError("Not a participant in the target conversation")
 
         validated = self.validate_voice_attachment(
