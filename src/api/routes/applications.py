@@ -5,6 +5,7 @@ Handles user application CRUD, bot token management, and interaction responses.
 """
 
 import hashlib
+import json
 import logging
 from typing import Annotated, Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, Query, status
@@ -183,6 +184,72 @@ class InteractionCallbackRequest(BaseModel):
 
 _INTERACTION_CALLBACK_LIMIT = 30
 _INTERACTION_CALLBACK_WINDOW_SECONDS = 60
+
+# Interaction callback payloads are attacker-influenced (the caller holds a
+# short-lived interaction token) and are persisted as encrypted JSON that every
+# client of the message later renders. Without ceilings a single token holder
+# could stuff megabytes into ``content`` / ``embeds`` / ``attachments``,
+# amplifying storage and the rendered payload. These caps complement the
+# component bounds the core validator already applies.
+MAX_CALLBACK_CONTENT_LENGTH = 2000
+MAX_CALLBACK_TITLE_LENGTH = 256
+MAX_CALLBACK_COMPLEX_JSON_LENGTH = 8192
+MAX_CALLBACK_EMBEDS = 10
+MAX_CALLBACK_ATTACHMENTS = 10
+MAX_CALLBACK_CHOICES = 25
+MAX_CALLBACK_DATA_LENGTH = 64 * 1024
+
+
+def _validate_interaction_callback_data(
+    data: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Bound the free-form fields forwarded into an ``InteractionResponse``.
+
+    ``components`` are validated separately by the core component validator;
+    every other field in ``data`` is constrained here before it is serialized,
+    encrypted and stored. ``ValueError`` is mapped to the handler's 400 by the
+    existing ``except (TypeError, ValueError)`` branch.
+    """
+    if not data:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Invalid interaction callback data")
+
+    content = data.get("content")
+    if isinstance(content, str) and len(content) > MAX_CALLBACK_CONTENT_LENGTH:
+        raise ValueError("content exceeds the allowed length")
+    title = data.get("title")
+    if isinstance(title, str) and len(title) > MAX_CALLBACK_TITLE_LENGTH:
+        raise ValueError("title exceeds the allowed length")
+
+    for key, limit in (
+        ("embeds", MAX_CALLBACK_EMBEDS),
+        ("attachments", MAX_CALLBACK_ATTACHMENTS),
+        ("choices", MAX_CALLBACK_CHOICES),
+    ):
+        value = data.get(key)
+        if value is not None:
+            if not isinstance(value, list) or len(value) > limit:
+                raise ValueError(f"{key} exceeds the allowed number of entries")
+
+    for key in ("embeds", "attachments", "allowed_mentions"):
+        value = data.get(key)
+        if value is not None:
+            try:
+                encoded = json.dumps(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{key} is not serializable") from exc
+            if len(encoded) > MAX_CALLBACK_COMPLEX_JSON_LENGTH:
+                raise ValueError(f"{key} exceeds the allowed size")
+
+    try:
+        serialized = json.dumps(data)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("callback data is not serializable") from exc
+    if len(serialized) > MAX_CALLBACK_DATA_LENGTH:
+        raise ValueError("callback data exceeds the allowed size")
+
+    return data
 
 
 def _interaction_rate_limit_key(interaction_token: str) -> str:
@@ -567,9 +634,10 @@ async def respond_to_interaction(
                 headers={"Retry-After": str(_INTERACTION_CALLBACK_WINDOW_SECONDS)},
             )
 
+        data = _validate_interaction_callback_data(body.data)
         response_kwargs = {
             key: value
-            for key, value in (body.data or {}).items()
+            for key, value in data.items()
             if key
             in {
                 "content",

@@ -714,7 +714,18 @@ async def get_bot_profile(
     anyone else it is indistinguishable from a missing profile.
     """
     try:
-        viewer_id = current_user.user_id if current_user else None
+        # A bot token carries its human owner's ``user_id`` (the bot account
+        # itself lives in ``account_id``). Treating that as the viewer would
+        # let a leaked bot credential read the private bot profiles of every
+        # application owned by that human — a bot-token-as-owner confusion.
+        # Only a real user token may act as the owner for the private-profile
+        # check; bot credentials stay anonymous and see public profiles only.
+        viewer_id = (
+            current_user.user_id
+            if current_user is not None
+            and getattr(current_user, "token_type", "user") == "user"
+            else None
+        )
         profile = applications.get_bot_profile(application_id, viewer_id=viewer_id)
         if not profile:
             raise HTTPException(
