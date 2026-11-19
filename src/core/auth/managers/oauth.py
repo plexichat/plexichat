@@ -7,6 +7,7 @@ import utils.logger as logger
 from ..exceptions import (
     PermissionDeniedError,
     AuthError,
+    EmailNotVerifiedError,
 )
 from ..models import (
     TokenInfo,
@@ -160,7 +161,7 @@ class OAuthMixin(AuthManagerProtocol):
             return AuthResult(status=AuthStatus.FAILED, message="User creation failed")
 
         row = self._db.fetch_one(
-            "SELECT totp_enabled, deletion_status FROM auth_users WHERE id = ?",
+            "SELECT totp_enabled, deletion_status, email_verified FROM auth_users WHERE id = ?",
             (user_id,),
         )
         if row and row.get("deletion_status") == "frozen":
@@ -171,6 +172,17 @@ class OAuthMixin(AuthManagerProtocol):
 
         if user_obj.account_locked:
             return AuthResult(status=AuthStatus.FAILED, message="Account locked")
+
+        # Mirror password login / passkey auth / complete_2fa: an OAuth login
+        # must not mint a session for an account whose email is still
+        # unverified when verification is required. Every other authentication
+        # path enforces this gate; leaving it out here let an OAuth assertion
+        # bypass the email-verification control entirely.
+        accounts_config = self._config.get("accounts", {})
+        if accounts_config.get("require_email_verification", False) and not bool(
+            row.get("email_verified", 0)
+        ):
+            raise EmailNotVerifiedError("Email not verified")
 
         # OAuth login must respect 2FA exactly like password login; otherwise a
         # compromised linked account bypasses the second factor entirely.
