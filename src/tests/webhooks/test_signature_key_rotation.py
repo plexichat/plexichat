@@ -13,6 +13,37 @@ import pytest
 from src.core.webhooks.exceptions import PermissionDeniedError, WebhookNotFoundError
 
 
+class _RecordingDB:
+    """Delegating database wrapper that records the SQL it is asked to run.
+
+    Recording at the handle the manager actually holds keeps the assertion
+    independent of which concrete database class (or proxy) the fixture
+    supplied: patching the class of ``manager._db`` only observes calls when
+    the manager happens to use that exact class.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.executed = []
+
+    def execute(self, query, *args, **kwargs):
+        self.executed.append(query)
+        return self._inner.execute(query, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _manager_for(webhooks):
+    """Return the manager instance that runs the database work.
+
+    ``setup["webhooks"]`` is either the manager itself or the module facade,
+    which lazily exposes the configured manager through ``_get_manager()``.
+    """
+    getter = getattr(webhooks, "_get_manager", None)
+    return getter() if callable(getter) else webhooks
+
+
 def _verify(manager, webhook_id, payload, headers):
     return manager.verify_payload(
         webhook_id,
@@ -55,18 +86,15 @@ def test_rotation_updates_both_key_columns_in_one_statement(
     webhook_with_token, monkeypatch
 ):
     setup = webhook_with_token
-    executed = []
-    original = type(setup["webhooks"]._db).execute
+    manager = _manager_for(setup["webhooks"])
+    recorder = _RecordingDB(manager._db)
+    monkeypatch.setattr(manager, "_db", recorder)
 
-    def recording_execute(self, query, *args, **kwargs):
-        executed.append(query)
-        return original(self, query, *args, **kwargs)
+    manager.rotate_signing_key(setup["webhook"].id, setup["owner"].id)
 
-    monkeypatch.setattr(type(setup["webhooks"]._db), "execute", recording_execute)
-
-    setup["webhooks"].rotate_signing_key(setup["webhook"].id, setup["owner"].id)
-
-    updates = [sql for sql in executed if "update webhook_webhooks" in sql.lower()]
+    updates = [
+        sql for sql in recorder.executed if "update webhook_webhooks" in sql.lower()
+    ]
     assert len(updates) == 1, "key rotation must be a single atomic UPDATE"
     assert "signing_key_public" in updates[0]
     assert "signing_key_private_encrypted" in updates[0]
