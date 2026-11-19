@@ -7,13 +7,54 @@ event (``MessageRepository.invalidate_conversation_cache``), so it bumps the
 conversation's generation here; the API layer folds the generation into its
 cache key. Keeping the counter in this neutral module avoids an import cycle
 between core messaging and the API routes.
+
+Boundedness
+-----------
+The registry is keyed by conversation id and was previously a bare ``dict``
+that grew on every message write (and on every read via ``get``), for ever.
+Under sustained traffic it is an unbounded memory leak: one entry per
+conversation ever touched, never reclaimed even after a conversation is
+deleted. It is now a hard-bounded, TTL'd LRU with BOTH an entry cap and an
+approximate byte cap.
+
+Correctness across eviction
+---------------------------
+Naively dropping a generation entry is dangerous: a conversation whose entry
+is evicted could have its generation revert to an earlier value, reviving a
+pre-write page still alive in the short-lived render cache. Two rules make
+eviction safe:
+
+* ``bump`` draws its value from a process-wide monotonic counter. A generation
+  value is never reused (until the test-only ``clear``), so a freshly bumped
+  conversation can never collide with a page cached before the eviction.
+* ``get`` on a missing/expired key binds that conversation to the CURRENT
+  high-water mark of the counter (0 in a fresh process). That value is >= every
+  generation previously handed out, so it cannot match a stale page, and it is
+  stable for later reads so the render LRU still gets normal hit rates.
 """
 
-from threading import Lock
+import sys
+import threading
+import time
+from collections import OrderedDict
 from typing import Any, Dict
 
-_lock = Lock()
-_generations: Dict[Any, int] = {}
+# Hard bounds. 50k small integer entries are only a few MB, but an unbounded
+# registry would grow for the entire process lifetime. The byte cap is a
+# backstop for unusually large (e.g. string) keys.
+_MAX_ENTRIES = 50_000
+_MAX_BYTES = 16 * 1024 * 1024
+_TTL_SECONDS = 24 * 60 * 60  # reclaim untouched conversations eventually
+
+# Rough per-entry container overhead (OrderedDict node + tuples) added to the
+# measured key/value sizes when tracking approximate retained bytes.
+_NODE_OVERHEAD = 96
+
+_lock = threading.Lock()
+# key -> (generation, stored_at_monotonic, approx_bytes)
+_generations: "OrderedDict[Any, tuple]" = OrderedDict()
+_next_generation = 0
+_total_bytes = 0
 
 
 def _normalize(conversation_id: Any) -> Any:
@@ -23,23 +64,119 @@ def _normalize(conversation_id: Any) -> Any:
         return conversation_id
 
 
+def _entry_bytes(key: Any, generation: int, stored_at: float) -> int:
+    """Approximate retained bytes for one registry entry."""
+    try:
+        return (
+            sys.getsizeof(key)
+            + sys.getsizeof(generation)
+            + sys.getsizeof(stored_at)
+            + _NODE_OVERHEAD
+        )
+    except Exception:  # pragma: no cover - sys.getsizeof is reliable for these
+        return _NODE_OVERHEAD + 128
+
+
+def _drop_locked(key: Any) -> None:
+    """Remove ``key`` from the registry, maintaining the byte counter."""
+    global _total_bytes
+    old = _generations.pop(key, None)
+    if old is not None:
+        _total_bytes -= old[2]
+        if _total_bytes < 0:  # defensive: external mutation / miscount
+            _total_bytes = 0
+
+
+def _prune_and_evict_locked(now: float) -> None:
+    """Expire stale entries, then enforce the entry and byte caps (LRU)."""
+    global _total_bytes
+    if _TTL_SECONDS > 0:
+        expired = [
+            key
+            for key, (_, stored_at, _) in _generations.items()
+            if now - stored_at > _TTL_SECONDS
+        ]
+        for key in expired:
+            _drop_locked(key)
+
+    while _generations and (
+        len(_generations) > _MAX_ENTRIES or _total_bytes > _MAX_BYTES
+    ):
+        key, (_, _, size) = _generations.popitem(last=False)
+        _total_bytes -= size
+    if _total_bytes < 0:  # defensive
+        _total_bytes = 0
+
+
 def bump(conversation_id: Any) -> int:
-    """Advance and return the generation for ``conversation_id``."""
+    """Advance and return the generation for ``conversation_id``.
+
+    The returned value is drawn from a monotonically increasing process-wide
+    counter, so it is never equal to a generation previously observed by any
+    caller. That is what makes render-cache invalidation survive an eviction.
+    """
+    global _next_generation, _total_bytes
     key = _normalize(conversation_id)
+    now = time.monotonic()
     with _lock:
-        value = _generations.get(key, 0) + 1
-        _generations[key] = value
-        return value
+        _next_generation += 1
+        generation = _next_generation
+        _drop_locked(key)
+        size = _entry_bytes(key, generation, now)
+        _generations[key] = (generation, now, size)
+        _generations.move_to_end(key)
+        _total_bytes += size
+        _prune_and_evict_locked(now)
+        return generation
 
 
 def get(conversation_id: Any) -> int:
-    """Return the current generation (0 when the conversation was never touched)."""
+    """Return the generation for ``conversation_id``.
+
+    A conversation that has never been seen is bound to the current high-water
+    mark (0 in a fresh process). Missing/expired entries are re-bound to that
+    same high-water mark so a stale page from before an eviction can never be
+    matched again, while repeated reads keep a stable value and retain normal
+    cache-hit behaviour.
+    """
+    global _total_bytes
     key = _normalize(conversation_id)
+    now = time.monotonic()
     with _lock:
-        return _generations.get(key, 0)
+        entry = _generations.get(key)
+        if entry is not None:
+            generation, stored_at, _ = entry
+            if _TTL_SECONDS > 0 and now - stored_at > _TTL_SECONDS:
+                _drop_locked(key)
+            else:
+                _generations.move_to_end(key)
+                return generation
+
+        generation = _next_generation
+        size = _entry_bytes(key, generation, now)
+        _generations[key] = (generation, now, size)
+        _generations.move_to_end(key)
+        _total_bytes += size
+        _prune_and_evict_locked(now)
+        return generation
 
 
 def clear() -> None:
     """Reset all counters. Test helper only."""
+    global _next_generation, _total_bytes
     with _lock:
         _generations.clear()
+        _total_bytes = 0
+        _next_generation = 0
+
+
+def stats() -> Dict[str, int]:
+    """Observability into the bounded registry (caps, size, bytes, high-water)."""
+    with _lock:
+        return {
+            "entries": len(_generations),
+            "max_entries": _MAX_ENTRIES,
+            "bytes": _total_bytes,
+            "max_bytes": _MAX_BYTES,
+            "high_water": _next_generation,
+        }
