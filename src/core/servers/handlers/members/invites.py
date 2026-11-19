@@ -37,6 +37,32 @@ _COUNT_LIVE_INVITES_BY_SERVER = (
     "AND (expires_at IS NULL OR expires_at > ?)"
 )
 
+# One statement re-checks BOTH live-invite caps at the instant of the insert.
+# A separate SELECT-then-INSERT (as this code used to do) is a TOCTOU: two
+# concurrent creators can both read a count below the cap and both insert,
+# pushing the server/user over the limit. The guard subqueries see the table
+# state *before* the new row exists, so exactly the callers that still fit get
+# a row. The ``? <= 0`` branches keep a disabled (non-positive) cap a no-op.
+#
+# SQLite serialises this single statement with its write lock, so the guard is
+# authoritative there. PostgreSQL's READ COMMITTED snapshot would let two
+# concurrent statements both pass, so create_invite() additionally takes
+# advisory xact locks around this insert (see there) to serialise the counts.
+_ATOMIC_INVITE_INSERT_SQL = """
+INSERT INTO srv_invites
+    (id, code, server_id, channel_id, inviter_id, max_age, max_uses,
+     temporary, created_at, expires_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE ( ? <= 0 OR
+        (SELECT COUNT(*) FROM srv_invites
+         WHERE inviter_id = ? AND revoked = 0
+           AND (expires_at IS NULL OR expires_at > ?)) < ? )
+  AND ( ? <= 0 OR
+        (SELECT COUNT(*) FROM srv_invites
+         WHERE server_id = ? AND revoked = 0
+           AND (expires_at IS NULL OR expires_at > ?)) < ? )
+"""
+
 _invite_creation_lock = threading.Lock()
 _invite_creation_windows: dict = {}
 
@@ -140,7 +166,7 @@ class MemberInviteMixin:
     def _enforce_invite_quota(
         self, user_id: SnowflakeID, server_id: SnowflakeID
     ) -> None:
-        """Rate-limit and cap invite creation per user / per server.
+        """Rate-limit and *advisory*-cap invite creation per user / per server.
 
         Configured under the ``invites`` config section:
         - ``creation_max_per_window`` (default 20) invites per
@@ -148,13 +174,19 @@ class MemberInviteMixin:
         - ``max_active_per_user`` (default 25) and
           ``max_active_per_server`` (default 100) concurrently-live
           (unrevoked, unexpired) invites.
+
+        The per-user sliding window and these SELECT-based cap checks are a
+        fast-fail / good-error-message layer only: a second creator can push a
+        count past the cap between this SELECT and the later INSERT. The
+        authoritative, race-free cap check lives in the atomic guarded INSERT
+        in :meth:`create_invite`.
         """
         cfg = _invite_config()
 
         # --- Per-user creation rate limit (sliding window) ---
         _check_invite_creation_rate(user_id, cfg)
 
-        # --- Active-invite quotas ---
+        # --- Active-invite quotas (advisory; see docstring) ---
         now_ms = self.manager._get_timestamp()
 
         max_per_user = int(cfg.get("max_active_per_user", 25))
@@ -175,6 +207,34 @@ class MemberInviteMixin:
                     limit=max_per_server,
                 )
 
+    def _raise_active_invite_limit(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        now_ms: int,
+        max_per_user: int,
+        max_per_server: int,
+    ) -> None:
+        """Re-read the two caps after a losing guarded INSERT and raise the
+        precise ``InviteLimitReachedError`` (always raises)."""
+        if max_per_user > 0:
+            row = self.db.fetch_one(_COUNT_LIVE_INVITES_BY_INVITER, (user_id, now_ms))
+            if row and row["c"] >= max_per_user:
+                raise InviteLimitReachedError(
+                    "Active invite limit reached for this user",
+                    limit=max_per_user,
+                )
+        if max_per_server > 0:
+            row = self.db.fetch_one(_COUNT_LIVE_INVITES_BY_SERVER, (server_id, now_ms))
+            if row and row["c"] >= max_per_server:
+                raise InviteLimitReachedError(
+                    "Active invite limit reached for this server",
+                    limit=max_per_server,
+                )
+        # Defensive: a zero-row insert with no visible cap breach (e.g. a
+        # concurrent revoke) must never fall through and return a phantom invite.
+        raise InviteLimitReachedError("Active invite limit reached")
+
     def create_invite(
         self,
         user_id: SnowflakeID,
@@ -183,7 +243,15 @@ class MemberInviteMixin:
         max_uses: int = 0,
         temporary: bool = False,
     ) -> Invite:
-        """Create an invite to a channel."""
+        """Create an invite to a channel.
+
+        The active-invite caps are enforced by a single conditional INSERT
+        (:data:`_ATOMIC_INVITE_INSERT_SQL`) rather than a check-then-write, so
+        concurrent creators can never both slip past a cap that only had room
+        for one. On PostgreSQL the statement runs under advisory xact locks on
+        both cap scopes to defeat the READ COMMITTED snapshot race; SQLite's
+        single-writer transaction already serialises it.
+        """
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
@@ -191,29 +259,78 @@ class MemberInviteMixin:
             user_id, channel.server_id, "invites.create", channel_id
         )
 
+        # Best-effort early feedback; the atomic INSERT below is authoritative.
         self._enforce_invite_quota(user_id, channel.server_id)
+
+        cfg = _invite_config()
+        max_per_user = int(cfg.get("max_active_per_user", 25))
+        max_per_server = int(cfg.get("max_active_per_server", 100))
 
         now = self.manager._get_timestamp()
         expires_at = now + (max_age * 1000) if max_age > 0 else None
         invite_id = self.manager._generate_id()
         code = self.generate_invite_code()
 
-        self.db.execute(
-            """INSERT INTO srv_invites (id, code, server_id, channel_id, inviter_id, max_age, max_uses, temporary, created_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                invite_id,
-                code,
-                channel.server_id,
-                channel_id,
-                user_id,
-                max_age,
-                max_uses,
-                1 if temporary else 0,
-                now,
-                expires_at,
-            ),
-        )
+        is_postgres = getattr(self.db, "type", "") == "postgres"
+        if is_postgres:
+            # PostgreSQL needs explicit serialisation: two workers evaluating
+            # the guard subqueries under READ COMMITTED would otherwise both
+            # see a stale count. Lock both scopes in a FIXED order (server,
+            # then inviter) so callers for different scope pairs cannot deadlock.
+            # Snowflakes are reduced to int4 for pg_advisory_xact_lock(int,int);
+            # collisions only over-serialise, never weaken the guard.
+            self.db.begin_transaction()
+        try:
+            if is_postgres:
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (2, int(channel.server_id) & 0x7FFFFFFF),
+                )
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (1, int(user_id) & 0x7FFFFFFF),
+                )
+            cursor = self.db.execute(
+                _ATOMIC_INVITE_INSERT_SQL,
+                (
+                    invite_id,
+                    code,
+                    channel.server_id,
+                    channel_id,
+                    user_id,
+                    max_age,
+                    max_uses,
+                    1 if temporary else 0,
+                    now,
+                    expires_at,
+                    max_per_user,
+                    user_id,
+                    now,
+                    max_per_user,
+                    max_per_server,
+                    channel.server_id,
+                    now,
+                    max_per_server,
+                ),
+            )
+            inserted = getattr(cursor, "rowcount", 0) == 1
+            if is_postgres:
+                self.db.commit()
+        except Exception:
+            if is_postgres:
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+            raise
+
+        if not inserted:
+            # A concurrent creator filled a cap between the early check and
+            # the insert. Report the exact limit that was hit.
+            self._raise_active_invite_limit(
+                user_id, channel.server_id, now, max_per_user, max_per_server
+            )
+
         self.manager._log_audit(
             channel.server_id,
             user_id,
