@@ -10,11 +10,72 @@ from src.api.schemas.common import ErrorResponse, _reject_ui_text_chars
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.messaging.services.bookmarks import BookmarkService
 from src.core.security.hardening import reject_control_characters, require_http_url
-from src.api.routes.users.helpers import require_user_token
+from src.core.database import cached, invalidate_pattern
+from src.api.routes.users.helpers import (
+    authenticated_cache_key,
+    require_user_token,
+)
 from .common import parse_id, raise_internal
 import utils.logger as logger
 
 router = APIRouter()
+
+# --- Bounded hot-read cache for the bookmark list --------------------------
+#
+# ``BookmarkService.get_bookmarks`` issues one row query plus a separate
+# message-enrichment query for every returned row (up to 200), then the route
+# re-serializes the whole page on each poll of the bookmarks modal. Memoize the
+# expensive read for a few seconds. The TTL is deliberately short so a message
+# that becomes unviewable (deleted / membership revoked) is dropped within a
+# bounded window, and entries are partitioned per credential so a bot token can
+# never replay its owner's (or another user's) private bookmark page.
+_BOOKMARK_LIST_CACHE_PREFIX = "bookmarks_api"
+_BOOKMARK_LIST_TTL_SECONDS = 10
+_BOOKMARK_LIST_L1_TTL_SECONDS = 3
+
+
+@cached(
+    ttl=_BOOKMARK_LIST_TTL_SECONDS,
+    prefix=_BOOKMARK_LIST_CACHE_PREFIX,
+    key_builder=authenticated_cache_key(_BOOKMARK_LIST_CACHE_PREFIX),
+    l1_ttl=_BOOKMARK_LIST_L1_TTL_SECONDS,
+    # Defense in depth: the route rejects bots before this is ever entered,
+    # but a direct caller must not populate a bot entry either.
+    skip_cache_if=lambda current_user, **kwargs: (
+        getattr(current_user, "token_type", "user") != "user"
+    ),
+)
+def _load_bookmarks_page(user_id, conversation_id, limit, current_user):
+    """Read and serialize one bookmark page (the expensive part of the route).
+
+    Authorization (the user-token gate and the conversation-participation
+    check) is performed by the caller *before* this cached function is
+    entered. A denial therefore never reaches the cache, and an exception
+    raised here propagates without being stored by ``@cached``.
+    """
+    db = api.get_db()
+    messaging = api.get_messaging()
+    service = BookmarkService(db, messaging)
+    results = service.get_bookmarks(user_id, conversation_id, limit)
+    return stringify_snowflake_ids(results or [])
+
+
+def _invalidate_bookmark_list_cache(current_user) -> None:
+    """Evict every cached bookmark page for the credential being mutated.
+
+    Cached pages vary by ``conversation_id`` and ``limit``, so the glob clears
+    all of them at once from both Valkey and the process-local L1 tier. The
+    first pattern covers the normal user-token namespace; the second covers
+    the defensive bot namespace (normally empty because bots are rejected on
+    this route). Ids are snowflakes, so ``:uid:`` cannot over-match a longer
+    id such as ``uid0``.
+    """
+    uid = int(current_user.user_id)
+    invalidate_pattern(
+        f"{_BOOKMARK_LIST_CACHE_PREFIX}:*:current_user:TokenInfo:{uid}:*"
+    )
+    invalidate_pattern(f"{_BOOKMARK_LIST_CACHE_PREFIX}:bot:*:{uid}:*")
+
 
 #: A bookmark label is UI text shown in the bookmarks modal, not a free-form
 #: note. A short, bounded string keeps the event payload and the rendered card
@@ -163,6 +224,9 @@ async def add_bookmark(
             "Bookmark create failed for user %s", current_user.user_id, exc_info=True
         )
         raise_internal("Internal server error")
+    # Mutation succeeded: drop every cached page for this credential so the
+    # next list read reflects the inserted/updated bookmark.
+    _invalidate_bookmark_list_cache(current_user)
     # Fire-and-forget: notify our own websocket so bookmarks modal stays live.
     # Attach the already-validated deep link without mutating the service's
     # return value (it may be a shared/model object).
@@ -193,6 +257,9 @@ async def remove_bookmark(
     # (always success) so it discloses nothing about message existence or
     # other users' bookmarks; no view check applies here.
     bookmark_svc.remove_bookmark(current_user.user_id, mid)
+    # Mutation succeeded: drop every cached page for this credential so the
+    # next list read no longer shows the removed bookmark.
+    _invalidate_bookmark_list_cache(current_user)
     # Fire-and-forget: notify our own websocket so bookmarks modal can remove it
     asyncio.create_task(
         _dispatch_bookmark_event(
@@ -226,21 +293,29 @@ async def list_bookmarks(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     require_user_token(current_user)
-    messaging = api.get_messaging()
-    db = api.get_db()
-
-    bookmark_svc = BookmarkService(db, messaging)
     conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None
+
     try:
-        results = bookmark_svc.get_bookmarks(current_user.user_id, conv_id, limit)
+        # Authz gate BEFORE any cache lookup. A conversation filter the caller
+        # cannot view must never be served from (or stored in) the cache — the
+        # M8 oracle contract maps it to the same 404 as bookmark creation, so
+        # conversation ids cannot be probed. ``_ensure_list_access`` is also
+        # re-checked inside the service, so this pre-check only moves the gate
+        # ahead of the cache; it does not weaken it.
+        if conv_id is not None:
+            BookmarkService(api.get_db(), api.get_messaging())._ensure_list_access(
+                current_user.user_id, conv_id
+            )
+        results = _load_bookmarks_page(
+            user_id=current_user.user_id,
+            conversation_id=conv_id,
+            limit=limit,
+            current_user=current_user,
+        )
     except (PermissionError, ValueError):
-        # M8: same oracle contract as bookmark creation — a conversation
-        # filter the caller cannot view yields the identical 404 rather
-        # than 403/400, so conversation IDs cannot be probed via this
-        # endpoint. Never echo exception text to the client.
         logger.debug("Bookmark list denied for user %s", current_user.user_id)
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Conversation not found"}},
         )
-    return {"bookmarks": stringify_snowflake_ids(results or [])}
+    return {"bookmarks": results}
