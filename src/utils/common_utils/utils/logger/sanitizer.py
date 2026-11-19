@@ -169,10 +169,33 @@ def sanitize_data(data: Union[Dict, List, str, Any]) -> Any:
     return data
 
 
+# Log/audit text is untrusted free-form input. A caller-controlled value (e.g.
+# a percent-decoded URL path in an access-log line, or an exception message that
+# embeds user input) can carry a raw newline/carriage return or an ANSI CSI/OSC
+# sequence and forge, clear or repaint entries in a file, terminal or log
+# viewer (CWE-117). The admin log viewer and telemetry already apply the shared
+# ``scrub_control_characters`` presentation guard, but the on-disk log written
+# by ``SanitizingFilter`` must be neutralised at the sink as well. Kept
+# self-contained (no ``src.core`` import) because this module sits below the
+# application package in the import graph and is used during logging setup;
+# the semantics intentionally mirror the telemetry guard.
+_ESCAPE_SEQUENCE_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))"
+)
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _scrub_log_control_characters(value: Any) -> str:
+    """Strip ANSI escapes and render C0/C1/DEL controls as visible ``\\xNN``."""
+    text = "" if value is None else str(value)
+    text = _ESCAPE_SEQUENCE_RE.sub("", text)
+    return _CONTROL_CHARACTER_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+
+
 def sanitize_log_message(message: str) -> str:
     """Sanitizes sensitive information from a log message string."""
     if not isinstance(message, str):
-        return str(message)
+        return _scrub_log_control_characters(message)
 
     # Mask emails — skipped entirely when no '@' can match (keeps long
     # non-matching lines linear-time).
@@ -202,4 +225,7 @@ def sanitize_log_message(message: str) -> str:
         for pattern, repl in patterns:
             message = re.sub(pattern, repl, message)
 
-    return message
+    # Final step: no matter what the redaction passes produced, never let raw
+    # control characters or escape sequences reach a log sink where they could
+    # forge a new entry or repaint the viewer (CWE-117).
+    return _scrub_log_control_characters(message)
