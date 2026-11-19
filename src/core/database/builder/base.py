@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 import utils.logger as logger
 from utils.logger import sanitize_data
@@ -145,6 +145,45 @@ class Query(ABC, QueryBuilderProtocol):
             )
         self._validation_model = model
         return self
+
+    def _validated_data(self, model: Type[T], data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate ``data`` against ``model`` and return the validated values.
+
+        ``model(**data)`` alone is not a safe gate for values that are about to
+        become SQL:
+
+        * Pydantic ignores unknown keys by default, so a key the model never
+          declared would pass validation yet still be written to the statement
+          by ``build()`` (which uses the original dict). Unknown keys are
+          refused here rather than silently trusted.
+        * The validated model must be the source of truth. Before-validators and
+          field coercion (e.g. ``EmailStr`` normalization, numeric bounds) were
+          previously thrown away because the original, unvalidated dict was
+          executed. Only fields the caller actually supplied are returned, so
+          model defaults cannot silently turn into SQL assignments.
+        """
+        try:
+            validated = model(**data)
+        except ValidationError as exc:
+            raise ValidationModelError(f"Validation failed: {exc}") from exc
+
+        # Accept field names and any declared (validation) aliases so a model
+        # using aliases is not falsely rejected. Anything else is an
+        # unvalidated key and must never reach the generated SQL.
+        declared = set()
+        for name, field in model.model_fields.items():
+            declared.add(name)
+            if field.alias:
+                declared.add(field.alias)
+            if field.validation_alias and isinstance(field.validation_alias, str):
+                declared.add(field.validation_alias)
+        extra = [str(key) for key in data if key not in declared]
+        if extra:
+            raise ValidationModelError(
+                "Validation failed: unexpected field(s): " + ", ".join(sorted(extra))
+            )
+
+        return validated.model_dump(exclude_unset=True)
 
     def execute(self) -> Any:
         """Execute the query and return results."""

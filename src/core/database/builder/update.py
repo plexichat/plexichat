@@ -2,11 +2,11 @@
 
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 import utils.logger as logger
 
-from .base import TableQuery, Parameter, ValidationModelError
+from .base import TableQuery, Parameter
 from .sql_safety import sql_assignments, sql_identifier
 from .where import build_where_clause
 
@@ -29,15 +29,14 @@ class UpdateQuery(TableQuery):
         self._where_conditions: List[tuple[str, str, Any]] = []
 
     def validate(self, model: Type[T]) -> "UpdateQuery":
-        """Set validation model and validate data."""
+        """Validate data against ``model`` and use the validated values.
+
+        Unknown keys are rejected and Pydantic's coerced/normalized values
+        replace the raw input, so no unvalidated field can reach the UPDATE.
+        """
         super().validate(model)
-
-        try:
-            model(**self.data)
-            logger.debug(f"Data validated successfully against {model.__name__}")
-        except ValidationError as e:
-            raise ValidationModelError(f"Validation failed: {str(e)}")
-
+        self.data = self._validated_data(model, self.data)
+        logger.debug(f"Data validated successfully against {model.__name__}")
         return self
 
     def where(self, column: str, operator: str, value: Any) -> "UpdateQuery":

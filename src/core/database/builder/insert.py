@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional, Type, TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 import utils.logger as logger
 from utils.logger import sanitize_data
@@ -10,7 +10,6 @@ from utils.logger import sanitize_data
 from .base import (
     TableQuery,
     Parameter,
-    ValidationModelError,
 )
 from .sql_safety import sql_identifier, sql_identifier_list, sql_placeholders
 
@@ -50,15 +49,14 @@ class InsertQuery(TableQuery):
         return sql, params
 
     def validate(self, model: Type[T]) -> "InsertQuery":
-        """Set validation model and validate data."""
+        """Validate data against ``model`` and use the validated values.
+
+        Unknown keys are rejected and Pydantic's coerced/normalized values
+        replace the raw input, so no unvalidated field can reach the INSERT.
+        """
         super().validate(model)
-
-        try:
-            model(**self.data)
-            logger.debug(f"Data validated successfully against {model.__name__}")
-        except ValidationError as e:
-            raise ValidationModelError(f"Validation failed: {str(e)}")
-
+        self.data = self._validated_data(model, self.data)
+        logger.debug(f"Data validated successfully against {model.__name__}")
         return self
 
     def _mark_pool_in_flight(self, conn: Any, in_flight: bool) -> None:
