@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import random
 import secrets
 import time
 from typing import Any, Optional, cast
@@ -19,6 +20,35 @@ _RELEASE_SCRIPT = """
             return 0
         end
         """
+
+
+# Contended-lock polling uses full-jitter exponential backoff. With a fixed
+# poll interval every worker that began contending at the same instant stays
+# phase-locked: once the holder releases, all N workers re-issue SET NX on the
+# same tick, N-1 of them burn a round trip, and the whole herd resynchronises
+# for the next tick. Jitter decorrelates the workers so aggregate load spreads
+# across the interval instead of arriving in bursts; the exponential ramp
+# (clamped to a ceiling) keeps an uncontended acquisition fast without hammering
+# Valkey at a constant rate during a long stall. The ceiling equals the old
+# fixed poll interval, so the worst-case per-worker rate never increases.
+_INITIAL_BACKOFF_S = 0.005
+_MAX_BACKOFF_S = 0.05
+
+
+def _retry_delay(attempt: int, rng: Any = None) -> float:
+    """Full-jitter exponential backoff for a failed lock acquisition.
+
+    ``attempt`` is the zero-based index of the acquisition attempt that just
+    failed. The delay is drawn uniformly from ``[0, ceiling]`` where
+    ``ceiling = min(_MAX_BACKOFF_S, _INITIAL_BACKOFF_S * 2**attempt)``. ``rng``
+    is injectable so tests can assert the exact schedule; production uses the
+    module-level ``random``.
+    """
+    generator = rng if rng is not None else random
+    # Cap the exponent so an absurd attempt count cannot overflow the float
+    # conversion (the ceiling is clamped long before this matters).
+    ceiling = min(_MAX_BACKOFF_S, _INITIAL_BACKOFF_S * (2 ** min(attempt, 32)))
+    return float(generator.uniform(0.0, ceiling))
 
 
 class LockMixin(ValkeyClientBase):
@@ -45,8 +75,13 @@ class LockMixin(ValkeyClientBase):
 
         lock_token = secrets.token_hex(16)
 
-        start_time = time.time()
-        while time.time() - start_time < timeout:
+        # A monotonic clock is used for the deadline: a wall-clock adjustment
+        # (NTP step, manual change) mid-contention must not make a worker give
+        # up early or spin far past its allotted window. The async twin uses
+        # ``loop.time()`` for the same reason.
+        start_time = time.monotonic()
+        attempt = 0
+        while time.monotonic() - start_time < timeout:
             result = client.set(
                 full_key,
                 lock_token,
@@ -55,7 +90,8 @@ class LockMixin(ValkeyClientBase):
             )
             if result is not None:
                 return lock_token
-            time.sleep(0.05)
+            time.sleep(_retry_delay(attempt))
+            attempt += 1
         return None
 
     async def aacquire_lock(
@@ -73,6 +109,7 @@ class LockMixin(ValkeyClientBase):
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
+        attempt = 0
         while loop.time() < deadline:
             result = await aclient.set(
                 full_key,
@@ -82,7 +119,8 @@ class LockMixin(ValkeyClientBase):
             )
             if result is not None:
                 return lock_token
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(_retry_delay(attempt))
+            attempt += 1
         return None
 
     def release_lock(self, key: str, token: str) -> bool:
