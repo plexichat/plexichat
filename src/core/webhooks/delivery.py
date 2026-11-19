@@ -26,6 +26,7 @@ so concurrent workers can never double-deliver the same record).
 import json
 import threading
 import time
+from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import utils.logger as logger
@@ -64,6 +65,86 @@ MAX_HEADER_NAME_LENGTH = 128
 MAX_HEADER_VALUE_LENGTH = 4096
 MAX_BATCH_LIMIT = 1000
 MAX_INTERVAL_SECONDS = 86400
+
+# When one event fans out to N webhook endpoints, all N retry rows carry the
+# same canonical payload JSON string. Delivery used to re-derive the byte size
+# of that payload with ``json.dumps`` once per row (N re-encodes of a single
+# derived value). Memoize the derived size by that full stored string: it is
+# the canonical ``json.dumps(payload, sort_keys=True)`` produced at enqueue,
+# so it encodes *every* input to the serialization. A changed payload yields a
+# different key and can never observe a stale size. The cache is bounded so a
+# flood of distinct payloads cannot retain unbounded JSON strings.
+MAX_PAYLOAD_SIZE_CACHE_ENTRIES = 64
+# Keys larger than this cannot represent a deliverable payload anyway (the
+# delivery bound below is smaller); skipping them keeps a forged oversized
+# record from filling the cache with a huge string.
+_MAX_PAYLOAD_SIZE_CACHE_KEY_BYTES = MAX_DELIVERY_PAYLOAD_BYTES * 4
+
+
+class _PayloadSizeCache:
+    """Bounded LRU of ``canonical payload JSON -> compact byte size``."""
+
+    def __init__(self, max_entries: int = MAX_PAYLOAD_SIZE_CACHE_ENTRIES) -> None:
+        self._max_entries = max(1, int(max_entries))
+        self._entries: "OrderedDict[str, int]" = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, key: str) -> Optional[int]:
+        """Return the cached size, or ``None`` on a miss (also counted)."""
+        size = self._entries.get(key)
+        if size is None:
+            self._misses += 1
+            return None
+        self._hits += 1
+        self._entries.move_to_end(key)
+        return size
+
+    def put(self, key: str, size: int) -> None:
+        self._entries[key] = size
+        if len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
+
+    def stats(self) -> Dict[str, int]:
+        """Hit/miss counters and size, for observability and regression tests."""
+        return {
+            "size": len(self._entries),
+            "max_entries": self._max_entries,
+            "hits": self._hits,
+            "misses": self._misses,
+        }
+
+
+_PAYLOAD_SIZE_CACHE = _PayloadSizeCache()
+
+
+def _payload_serialized_size(payload: Dict[str, Any], raw_json: Any = None) -> int:
+    """Return the byte count of the canonical serialization used for the bound.
+
+    The computation on a miss is byte-for-byte the original
+    ``json.dumps(payload, sort_keys=True, separators=(",", ":"))`` call, so the
+    security bound is unchanged. ``raw_json`` is only a cache key — never a
+    substitute for the computation — and is used only when it is a bounded
+    string. Callers without a canonical string (direct ``deliver`` calls)
+    simply bypass the cache and always compute, as before.
+    """
+    key: Optional[str] = None
+    if (
+        isinstance(raw_json, str)
+        and raw_json
+        and len(raw_json) <= _MAX_PAYLOAD_SIZE_CACHE_KEY_BYTES
+    ):
+        key = raw_json
+        cached = _PAYLOAD_SIZE_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+    size = len(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    if key is not None:
+        _PAYLOAD_SIZE_CACHE.put(key, size)
+    return size
 
 
 # RFC 7230 hop-by-hop headers: these govern the connection itself, never the
@@ -371,11 +452,12 @@ class WebhookDeliverer:
 
         # Bound the payload at delivery time as well: a tampered/stale queue
         # row must not be able to push an arbitrarily large body downstream.
+        # The canonical stored string (when present) keys a bounded cache so a
+        # fan-out of one event to N endpoints encodes the shared payload once,
+        # not N times; the size itself is still derived from ``payload``.
         try:
-            payload_size = len(
-                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-                    "utf-8"
-                )
+            payload_size = _payload_serialized_size(
+                payload, record.get("payload_raw_json")
             )
         except (TypeError, ValueError) as exc:
             raise WebhookDeliveryError("payload is not JSON serializable") from exc

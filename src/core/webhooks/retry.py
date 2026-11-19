@@ -332,8 +332,14 @@ class WebhookRetryQueue:
                 continue
 
             if data.get("payload") and isinstance(data["payload"], str):
+                # Keep the stored canonical JSON alongside the parsed dict.
+                # Every row fanning out one event carries the same string, so
+                # the delivery engine uses it as a cache key and derives the
+                # payload byte size once instead of re-encoding per row.
+                raw_payload_json = data["payload"]
                 try:
-                    data["payload"] = json.loads(data["payload"])
+                    data["payload"] = json.loads(raw_payload_json)
+                    data["payload_raw_json"] = raw_payload_json
                 except (json.JSONDecodeError, TypeError):
                     data["payload"] = {}
             if data.get("metadata") and isinstance(data["metadata"], str):
