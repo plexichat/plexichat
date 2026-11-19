@@ -108,7 +108,9 @@ def test_api_config_wiring_reuses_snapshot_value(monkeypatch):
 
     assert all(result is sentinel for result in results)
     assert len(loads) == 1, "API config must be materialised once per version"
-    assert len(versions) == 200, "version check is the cheap per-access work"
+    # The short staleness ceiling throttles the (stat-backed) version check on
+    # this per-request path; repeated reads inside the window hit memory only.
+    assert len(versions) == 1, "version checks are throttled by the staleness ceiling"
 
 
 # --------------------------------------------------------------------------- #

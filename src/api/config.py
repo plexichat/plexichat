@@ -206,8 +206,20 @@ def _build_api_config() -> APIConfig:
 # TTL paid the full read/validate cost on every expiry and hid on-disk edits
 # for up to five minutes; the snapshot reuses the value until the source
 # actually changes and observes edits on the next access.
+#
+# ``get_api_config`` sits on the per-request middleware path, so even the
+# version check (which stats the config file via ``_config_state``) is too
+# expensive to repeat on every request.  A short staleness ceiling throttles
+# that stat to at most once per window; repeated reads inside the window are
+# served straight from memory.  Version identity still governs rebuilds, and
+# ``config.setup()`` (a new loader id) or an on-disk edit (new mtime/size)
+# moves the version so the next check rebuilds -- no validation is relaxed.
+_API_CONFIG_MAX_AGE_SECONDS = 5.0
+
 _api_config_snapshot = VersionedConfigSnapshot(
-    cast(Callable[[], Dict[str, Any]], _build_api_config), version_fn=_config_state
+    cast(Callable[[], Dict[str, Any]], _build_api_config),
+    version_fn=_config_state,
+    max_age=_API_CONFIG_MAX_AGE_SECONDS,
 )
 
 
