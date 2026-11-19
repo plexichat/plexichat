@@ -71,6 +71,7 @@ __all__ = [
     "resolve_message_channel",
     "get_reaction",
     "get_reactions",
+    "can_access_message",
     "get_reaction_users",
     "get_user_reactions",
     # Custom emoji operations
@@ -166,6 +167,16 @@ def get_reaction(reaction_id: int) -> Optional[Reaction]:
 def get_reactions(user_id: int, message_id: int) -> MessageReactions:
     """Get all reactions on a message with counts."""
     return _get_manager().get_reactions(user_id, message_id)
+
+
+def can_access_message(user_id: int, message_id: int) -> bool:
+    """Live authorization gate: may this viewer read this message's reactions?
+
+    Cheap enough to call on every request, including response-cache hits. A
+    missing message or a viewer without channel access returns ``False``
+    (existence is concealed). See :meth:`ReactionManager.can_access_message`.
+    """
+    return _get_manager().can_access_message(user_id, message_id)
 
 
 def get_reactions_batch(user_id: int, message_ids: List[int]) -> Dict[int, List[Dict]]:

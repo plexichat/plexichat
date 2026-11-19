@@ -37,6 +37,22 @@ class ReactionPermissionsMixin(ReactionProtocol):
             "is_server_channel": channel is not None,
         }
 
+    def can_access_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
+        """Cheap, live authorization gate for reaction reads.
+
+        Fetches only the message row and re-checks the viewer's participation
+        through the same ``_is_participant`` check the cold read path uses.
+        Unlike :meth:`get_reactions` it does not aggregate or serialize any
+        reactions, so callers can run it on *every* request -- ahead of any
+        response-cache lookup -- without paying for the expensive part of a
+        reaction read. A missing message or a viewer without access returns
+        ``False`` (existence is concealed).
+        """
+        msg = self._get_message(message_id)
+        if not msg:
+            return False
+        return self._is_participant(msg["conversation_id"], user_id)
+
     def get_participant_ids(self, conversation_id: SnowflakeID) -> List[SnowflakeID]:
         participant_rows = self._db.fetch_all(
             "SELECT user_id FROM msg_participants WHERE conversation_id = ?",

@@ -12,13 +12,64 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key
 from src.api.schemas.reactions import ReactionResponse, ReactionUserResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core import ratelimit
-from src.core.reactions.exceptions import InvalidEmojiError
+from src.core.database import cached, invalidate_pattern
+from src.core.reactions.exceptions import InvalidEmojiError, MessageNotFoundError
 import utils.logger as logger
 
 router = APIRouter(tags=["Reactions"])
+
+
+# GET /channels/{id}/messages/{id}/reactions is the hottest read in this
+# module: every message view hydrates the reaction rows, aggregates counts and
+# the per-viewer ``me`` flag, then serializes the list. Memoize the serialized
+# body for a short window. The key is partitioned per credential by
+# ``authenticated_cache_key`` (bot tokens get their own namespace, so a bot and
+# its owner never share an entry), and the caller re-checks message access on
+# every request *before* the cache lookup, so a revoked membership can never be
+# served a still-warm body. Every reaction mutation drops the whole namespace
+# because counts are visible to all viewers of the message. The L1 copy is
+# deliberately short-lived to bound cross-worker staleness after invalidation.
+_REACTION_READ_CACHE_TTL = 10
+_REACTION_READ_L1_TTL = 2
+_REACTION_READ_PREFIX = "reaction_read_api"
+
+
+def _invalidate_reaction_read_cache() -> None:
+    """Drop all cached reaction-list bodies after a mutation."""
+    invalidate_pattern(f"{_REACTION_READ_PREFIX}:*")
+
+
+@cached(
+    ttl=_REACTION_READ_CACHE_TTL,
+    prefix=_REACTION_READ_PREFIX,
+    key_builder=authenticated_cache_key(_REACTION_READ_PREFIX),
+    l1_ttl=_REACTION_READ_L1_TTL,
+)
+async def _load_reactions(*, message_id: int, current_user: TokenInfo) -> list[dict]:
+    """Cold path for GET .../reactions: hydrate and serialize the pills.
+
+    Returns JSON-safe dicts so a cache hit (which reconstructs dicts) and a
+    miss are byte-for-byte identical after the caller re-validates the models.
+    The credential is part of the key because both the ``me`` flag and the
+    blocked-user filter depend on the authenticated viewer.
+    """
+    reactions = api.get_reactions()
+    result = reactions.get_reactions(current_user.user_id, message_id)
+    return [
+        ReactionResponse(
+            emoji=r.emoji,
+            count=r.count,
+            me=r.me,
+            url=getattr(r, "url", None),
+            is_custom=getattr(r, "is_custom", False),
+            custom_emoji_id=getattr(r, "custom_emoji_id", None),
+        ).model_dump(mode="json")
+        for r in result.reactions
+    ]
 
 
 def _validated_emoji(emoji: str) -> str:
@@ -235,6 +286,7 @@ async def add_reaction(
             decoded_emoji = _validated_emoji(emoji)
 
             reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
+            _invalidate_reaction_read_cache()
 
             # Fire-and-forget WebSocket event dispatch (real channel id)
             asyncio.create_task(
@@ -418,6 +470,8 @@ async def clear_reactions_for_emoji(
             },
         )
 
+    _invalidate_reaction_read_cache()
+
     # Fire-and-forget WebSocket event dispatch so clients drop stale pills.
     asyncio.create_task(
         _dispatch_reaction_event(
@@ -516,6 +570,7 @@ async def remove_reaction(
             decoded_emoji = _validated_emoji(emoji)
 
             reactions.remove_reaction(current_user.user_id, mid, decoded_emoji)
+            _invalidate_reaction_read_cache()
 
             # Fire-and-forget WebSocket event dispatch (real channel id)
             asyncio.create_task(
@@ -680,6 +735,8 @@ async def clear_reactions(
             detail={"error": {"code": 500, "message": "Failed to clear reactions"}},
         )
 
+    _invalidate_reaction_read_cache()
+
     from src.core.events.gateway_emit import emit_message_reaction_remove_all
 
     emit_message_reaction_remove_all(
@@ -840,19 +897,13 @@ async def get_reactions(
             )
 
         try:
-            result = reactions.get_reactions(current_user.user_id, mid)
+            # Live authz gate on EVERY request, before the cache lookup: a
+            # viewer who lost channel access must not receive a warm body.
+            if not reactions.can_access_message(current_user.user_id, mid):
+                raise MessageNotFoundError("Message not found")
 
-            return [
-                ReactionResponse(
-                    emoji=r.emoji,
-                    count=r.count,
-                    me=r.me,
-                    url=getattr(r, "url", None),
-                    is_custom=getattr(r, "is_custom", False),
-                    custom_emoji_id=getattr(r, "custom_emoji_id", None),
-                )
-                for r in result.reactions
-            ]
+            data = await _load_reactions(message_id=mid, current_user=current_user)
+            return [ReactionResponse.model_validate(item) for item in data]
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
