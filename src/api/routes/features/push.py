@@ -8,7 +8,7 @@ from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.security.hardening import HardeningViolation, reject_control_characters
 from src.api.routes.users.helpers import require_user_token
-from .common import raise_bad_request
+from .common import parse_id, raise_bad_request
 from src.core.push.exceptions import PermissionDeniedError
 
 router = APIRouter()
@@ -151,10 +151,12 @@ async def unregister_push_token_by_id(
     require_user_token(current_user)
     # Preferred removal flow: list responses expose only the row id plus a
     # token_hint (raw tokens are sanitized out), so clients unregister by id.
-    try:
-        parsed_token_id = int(token_id)
-    except (TypeError, ValueError):
-        raise_bad_request("Invalid token id")
+    # Bare ``int()`` accepted negatives, zero, values past 2**63-1 (which make
+    # the SQLite DELETE raise ``OverflowError`` and degrade to a 500) and
+    # Python-only forms such as ``1_2``/``+1``. The shared snowflake guard
+    # enforces strict ASCII digits and the 1 .. 2**63-1 range and keeps the
+    # route's 400 contract. The DELETE itself stays scoped to ``user_id``.
+    parsed_token_id = parse_id(token_id, "token id")
 
     db = api.get_db()
     from src.core.push.manager import PushManager

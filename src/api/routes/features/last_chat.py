@@ -9,16 +9,28 @@ from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.messaging.services.last_chat import LastChatService
 from src.api.routes.users.helpers import require_user_token
-from .common import raise_bad_request, raise_forbidden, raise_internal
+from .common import parse_id, raise_forbidden, raise_internal
 
 router = APIRouter()
+
+# Scroll position is a pixel offset used only to restore the client viewport.
+# It is persisted in ``user_last_chat.scroll_position`` and mirrored into the
+# per-user cache. The request schema used to accept any integer (including
+# negatives and values past SQLite's 64-bit INTEGER range), so a client could
+# either persist a multi-kilobyte number or drive the upsert into an
+# ``OverflowError`` that surfaced as a 500. Keep it a small, non-negative
+# offset at the boundary.
+MAX_SCROLL_POSITION = 100_000_000
 
 
 class LastChatRequest(BaseModel):
     conversation_id: str = Field(..., description="Last active conversation ID")
     last_message_id: Optional[str] = Field(None, description="Last visible message ID")
     scroll_position: Optional[int] = Field(
-        None, description="Scroll position for restoration"
+        None,
+        ge=0,
+        le=MAX_SCROLL_POSITION,
+        description="Scroll position for restoration",
     )
 
 
@@ -31,11 +43,15 @@ async def save_last_chat(
     body: LastChatRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
     require_user_token(current_user)
-    try:
-        conversation_id = int(body.conversation_id)
-        last_message_id = int(body.last_message_id) if body.last_message_id else None
-    except ValueError:
-        raise_bad_request("Invalid ID format")
+    # Route-level id grammar: bare ``int()`` accepted negatives, zero,
+    # out-of-range values, Unicode digit homoglyphs and Python forms such as
+    # ``1_2``. Use the shared snowflake guard (strict ASCII digits + 64-bit
+    # range) so a malformed id is rejected with the route's 400 contract
+    # before it can reach the participant check or the upsert.
+    conversation_id = parse_id(body.conversation_id, "conversation ID")
+    last_message_id = (
+        parse_id(body.last_message_id, "message ID") if body.last_message_id else None
+    )
 
     db = api.get_db()
     messaging = api.get_messaging()
