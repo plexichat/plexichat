@@ -24,8 +24,6 @@ def _clear_directory_cache():
 class TestBotDirectoryCache:
     def test_repeated_directory_read_skips_sql(self, app_manager):
         """A warm directory slice avoids both the COUNT and the page query."""
-        from src.core.applications.manager import bot_management as bm
-
         real_fetch_all = app_manager._db.fetch_all
         real_fetch_one = app_manager._db.fetch_one
         calls = []
@@ -48,7 +46,8 @@ class TestBotDirectoryCache:
 
         assert len(calls) == 0  # warm slice: no COUNT and no page query
         assert second == first
-        assert bm._directory_cache  # slice was actually cached
+        # The slice is cached on the manager, not at module scope.
+        assert app_manager._get_directory_cache().stats()["puts"] >= 1
 
     def test_write_invalidation_makes_new_bot_visible(
         self, app_manager, auth_manager, test_user

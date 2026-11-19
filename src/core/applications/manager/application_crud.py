@@ -35,7 +35,6 @@ from src.core.security.hardening import (
 )
 from .row_mappers import row_to_application
 from .protocol import ApplicationManagerProtocol
-from .bot_management import invalidate_bot_directory_cache
 from .lookup_cache import (
     CACHE_MISS,
     BoundedTTLCache,
@@ -356,7 +355,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
             logger.debug(f"Application updated: {application_id}")
             # Name/icon are surfaced in bot directory entries.
-            invalidate_bot_directory_cache()
+            self._invalidate_bot_directory_cache()
             # The cached row carries the updated columns; drop it so the read
             # below (and every later caller) observes the committed write.
             self._invalidate_app_meta_cache(application_id)
@@ -386,7 +385,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         self._db.execute("DELETE FROM app_applications WHERE id = ?", (application_id,))
         logger.info(f"Application deleted: {application_id}")
-        invalidate_bot_directory_cache()
+        self._invalidate_bot_directory_cache()
         self._invalidate_app_meta_cache(application_id)
         return True
 
@@ -467,7 +466,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         logger.info(f"Bot created for application {application_id}: {bot.id}")
         # Setting bot_id is what makes an application appear in the directory.
-        invalidate_bot_directory_cache()
+        self._invalidate_bot_directory_cache()
         # bot_id is part of the cached metadata snapshot.
         self._invalidate_app_meta_cache(application_id)
 
