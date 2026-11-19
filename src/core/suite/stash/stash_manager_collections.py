@@ -509,7 +509,7 @@ class StashManagerCollections(StashManagerProtocol):
             return None
         value = str(media_object_id)
         file_id: Optional[int] = None
-        if value.isdigit():
+        if value.isascii() and value.isdigit():
             file_id = int(value)
         else:
             media_file = self._media.get_file_by_filename(value)

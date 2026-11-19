@@ -95,7 +95,7 @@ class StashManagerBase(StashManagerProtocol):
         if self._media is None:
             raise StashStorageError("Media storage is unavailable")
         media_file = None
-        if value.isdigit():
+        if value.isascii() and value.isdigit():
             media_file = self._media.get_file(int(value))
         if media_file is None:
             media_file = self._media.get_file_by_filename(value)
@@ -103,7 +103,7 @@ class StashManagerBase(StashManagerProtocol):
             raise StashValidationError(
                 "media_object_id does not identify an active file"
             )
-        if value.isdigit():
+        if value.isascii() and value.isdigit():
             media_query = "SELECT deleted FROM media_files WHERE id = ?"
             if getattr(self._db, "type", "sqlite") == "postgres":
                 media_query += " FOR UPDATE"
