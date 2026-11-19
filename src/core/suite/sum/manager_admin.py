@@ -8,6 +8,7 @@ from .manager_protocol import SumManagerProtocol
 from ._shared import (
     MAX_PURGE_BACKUP_BYTES,
     SumNotFoundError,
+    SumPermissionError,
     SumStorageError,
     SumValidationError,
     _WORKBOOK_FILE_CACHE,
@@ -15,6 +16,33 @@ from ._shared import (
 
 
 class SumManagerAdmin(SumManagerProtocol):
+    def _require_share_authority(
+        self, workbook: Dict[str, Any], user_id: int
+    ) -> None:
+        """Require owner-level authority before changing a workbook's ACL.
+
+        ``_workbook(..., mutation=True)`` deliberately lets any ``edit``
+        grantee mutate cells. Sharing is a distinct, more powerful act: an
+        editor able to grant ``edit`` to strangers (or revoke grants the owner
+        created) can escalate privileges and lock legitimate collaborators out.
+        Only the workbook owner -- or a server manager for a server-scoped
+        workbook -- may manage grants, mirroring the explicit ``share``
+        permission PlexiStash requires for the same operation.
+        """
+        uid = int(user_id)
+        if int(workbook["owner_id"]) == uid:
+            return
+        server_id = workbook.get("server_id")
+        if workbook.get("scope") == "server" and server_id is not None:
+            try:
+                if self._servers and self._servers.has_permission(
+                    uid, int(server_id), "server.manage"
+                ):
+                    return
+            except Exception:
+                pass
+        raise SumPermissionError("Not authorized to manage workbook sharing")
+
     def grant_workbook(
         self,
         user_id: int,
@@ -23,7 +51,8 @@ class SumManagerAdmin(SumManagerProtocol):
         permissions: List[str],
         expires_at: Optional[int] = None,
     ) -> Dict[str, Any]:
-        self._workbook(user_id, workbook_id, mutation=True)
+        workbook = self._workbook(user_id, workbook_id, mutation=True)
+        self._require_share_authority(workbook, user_id)
         if not isinstance(permissions, list) or not permissions:
             raise SumValidationError("permissions must be a non-empty list")
         allowed = {"view", "edit"}
@@ -73,7 +102,8 @@ class SumManagerAdmin(SumManagerProtocol):
         )
         if not row:
             raise SumNotFoundError("Grant not found")
-        self._workbook(user_id, int(row["workbook_id"]), mutation=True)
+        workbook = self._workbook(user_id, int(row["workbook_id"]), mutation=True)
+        self._require_share_authority(workbook, user_id)
         now = int(time.time() * 1000)
         self._db.execute(
             "UPDATE sum_grants SET revoked_at = ? WHERE id = ?", (now, int(grant_id))

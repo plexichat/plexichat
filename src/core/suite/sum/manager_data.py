@@ -24,6 +24,13 @@ from ._shared import (
     _classify_csv_value,
 )
 
+# A spreadsheet treats a cell whose text begins with one of these as a formula.
+# It also strips leading whitespace before deciding, so the same value padded
+# with spaces/tabs is just as executable. Keep this in sync with the messaging
+# transcript exporter's ``_CSV_FORMULA_LEADS``.
+_CSV_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+_CSV_WHITESPACE = " \t\r\n"
+
 
 class SumManagerData(SumManagerProtocol):
     def sort_range(
@@ -227,20 +234,20 @@ class SumManagerData(SumManagerProtocol):
                 text = str(value)
                 # SECURITY (CSV formula injection): spreadsheet applications read
                 # a leading =, +, - or @ (and tab/CR) as the start of a formula.
-                # A text cell -- or a string computed by a formula -- can carry
-                # such a prefix, so writing it verbatim would turn this export
-                # into an executable payload when opened in Excel/Sheets. Quote
-                # only genuine string values: numbers, including negatives, keep
-                # their numeric meaning in the CSV.
-                if isinstance(value, str) and text[:1] in (
-                    "=",
-                    "+",
-                    "-",
-                    "@",
-                    "\t",
-                    "\r",
-                ):
-                    return "'" + text
+                # They strip leading whitespace before deciding, so a value like
+                # ``"  =HYPERLINK(...)"`` is just as executable as a bare ``=...``;
+                # checking only the first character misses that bypass. A text
+                # cell -- or a string computed by a formula -- can carry such a
+                # prefix, so writing it verbatim would turn this export into an
+                # executable payload when opened in Excel/Sheets. Quote only
+                # genuine string values: numbers, including negatives, keep their
+                # numeric meaning in the CSV.
+                if isinstance(value, str) and text:
+                    probe = text.lstrip(_CSV_WHITESPACE)
+                    if text[0] in _CSV_FORMULA_LEADS or (
+                        probe and probe[0] in _CSV_FORMULA_LEADS
+                    ):
+                        return "'" + text
                 return text
 
             # Formula cells export their computed value (like a spreadsheet),
