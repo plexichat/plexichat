@@ -104,6 +104,59 @@ def test_rejects_blocked_and_internal_hosts(host, monkeypatch):
         URLValidator().validate_url_for_request(f"http://{host}/path")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        # urlparse reads the host to the RIGHT of the '@' (public.example),
+        # but WHATWG clients read '\' as '/' and connect to the LEFT host
+        # (the link-local/cloud-metadata address).
+        "https://169.254.169.254\\@public.example/x",
+        "http://169.254.169.254\\@public.example/x",
+        "https://127.0.0.1\\public.example/x",
+        "https://[::1]\\public.example/x",
+        "https://public.example\\@127.0.0.1/x",
+    ],
+)
+def test_rejects_backslash_in_authority(monkeypatch, url):
+    """The SSRF gate must close the urlparse/WHATWG host parser differential.
+
+    A backslash in the authority makes the validator see a different host than
+    the HTTP client (or a third-party fetcher such as Azure batch
+    transcription). Even when DNS would answer with a public address for the
+    host urlparse derives, the URL must be refused before any resolution.
+    """
+    calls = []
+
+    def fake_getaddrinfo(*args, **kwargs):
+        calls.append(args[0])
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    # A malformed bracketed authority is rejected even earlier by urlparse
+    # itself; both outcomes mean no DNS lookup and no outbound fetch.
+    with pytest.raises(ValueError, match=r"backslash|Invalid IPv6 URL"):
+        URLValidator().validate_url_for_request(url)
+    assert calls == [], "backslash URL must be rejected before DNS resolution"
+
+
+def test_backslash_in_path_is_still_allowed(monkeypatch):
+    """Only a backslash in the *authority* is dangerous; paths are unaffected."""
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ],
+    )
+    host, ip = URLValidator().validate_url_for_request(
+        "https://example.com/a\\b?next=/x\\y"
+    )
+    assert host == "example.com"
+    assert ip == "93.184.216.34"
+
+
 def test_rejects_custom_blocked_host(monkeypatch):
     monkeypatch.setattr(
         socket,

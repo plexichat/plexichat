@@ -177,6 +177,23 @@ class URLValidator:
         if scheme not in {"http", "https"}:
             raise ValueError(f"Scheme {scheme} not allowed. Only http/https supported.")
 
+        # A literal backslash in the authority is a parser differential that
+        # bypasses every check below. ``urlparse`` keeps the backslash in
+        # ``netloc`` and derives ``hostname`` from the text to the RIGHT of an
+        # ``@``, while http(s) clients (requests/urllib3, curl and browsers
+        # following WHATWG) read ``\`` as ``/`` and connect to the address on
+        # the LEFT. Without this check,
+        # ``https://169.254.169.254\@public.example/x`` is validated against
+        # the public host but fetched at the cloud metadata address by any
+        # sink that uses the original URL (e.g. Azure batch transcription via
+        # ``_validate_azure_content_url``). A literal backslash has no
+        # legitimate place in an authority: data meant as data must be
+        # percent-encoded, which keeps it out of the authority. Mirrors
+        # ``outbound._authority_has_backslash`` and
+        # ``web_push._require_public_endpoint``.
+        if "\\" in (parsed.netloc or ""):
+            raise ValueError("URL authority contains a backslash")
+
         hostname = parsed.hostname
         if not hostname:
             raise ValueError("Invalid URL: missing hostname")
