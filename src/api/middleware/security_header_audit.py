@@ -22,6 +22,26 @@ Header = Tuple[bytes, bytes]
 
 MAX_RESPONSE_HEADERS = 200
 
+# Headers the response-policy layer forces to canonical, tamper-resistant
+# values. They are normally appended at the END of the header list, so a naive
+# "keep the first N" bound would silently drop every one of them as soon as an
+# upstream handler emits at least ``limit`` other headers. A response without
+# its CSP/HSTS/nosniff/frame headers is exactly the weakened response this
+# de-duplication layer exists to prevent, so these names are retained first
+# when the list has to be truncated.
+_PROTECTED_HEADERS = frozenset(
+    {
+        b"x-content-type-options",
+        b"referrer-policy",
+        b"x-frame-options",
+        b"x-permitted-cross-domain-policies",
+        b"x-xss-protection",
+        b"content-security-policy",
+        b"strict-transport-security",
+        b"permissions-policy",
+    }
+)
+
 
 def is_unsafe_header(name: bytes, value: bytes) -> bool:
     """True for a header that actively weakens a security decision."""
@@ -61,14 +81,37 @@ def dedupe_headers(headers: Iterable[Header]) -> List[Header]:
 def bound_header_count(
     headers: Iterable[Header], limit: int = MAX_RESPONSE_HEADERS
 ) -> List[Header]:
-    """Keep at most ``limit`` headers (first occurrences win)."""
+    """Keep at most ``limit`` headers, never dropping security-critical ones.
+
+    Unprotected headers are kept in first-occurrence order (the historical
+    behaviour). Canonical security headers are reserved a slot ahead of them so
+    a handler that emits ``limit`` or more ordinary headers cannot push CSP,
+    HSTS, nosniff, frame or referrer policy out of the final response. Original
+    relative order of the retained headers is preserved.
+    """
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ValueError("limit must be a positive integer")
+    entries = list(headers)
+    if len(entries) <= limit:
+        return entries
+
+    protected_count = sum(
+        1 for name, _ in entries if name.lower() in _PROTECTED_HEADERS
+    )
+    keep_protected = min(protected_count, limit)
+    other_budget = max(0, limit - keep_protected)
+
     result: List[Header] = []
-    for header in headers:
-        if len(result) >= limit:
-            break
-        result.append(header)
+    kept_protected = 0
+    kept_other = 0
+    for name, value in entries:
+        if name.lower() in _PROTECTED_HEADERS:
+            if kept_protected < keep_protected:
+                result.append((name, value))
+                kept_protected += 1
+        elif kept_other < other_budget:
+            result.append((name, value))
+            kept_other += 1
     return result
 
 

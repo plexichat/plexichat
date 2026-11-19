@@ -50,6 +50,50 @@ class TestBoundCount:
             else:
                 raise AssertionError(f"expected ValueError for {bad}")
 
+    def test_security_headers_survive_when_over_limit(self):
+        # Regression: security headers are appended at the END of the response
+        # header list. The old "keep first N" bound silently dropped every one
+        # of them once a handler emitted >= limit ordinary headers, producing a
+        # response with no CSP/HSTS/nosniff/frame policy at all.
+        ordinary = [(f"x-upstream-{i}".encode(), b"v") for i in range(260)]
+        security = [
+            (b"X-Content-Type-Options", b"nosniff"),
+            (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
+            (b"X-Frame-Options", b"SAMEORIGIN"),
+            (b"X-XSS-Protection", b"1; mode=block"),
+            (b"X-Permitted-Cross-Domain-Policies", b"none"),
+            (b"Content-Security-Policy", b"default-src 'none'"),
+            (b"Strict-Transport-Security", b"max-age=31536000"),
+            (b"Permissions-Policy", b"camera=()"),
+        ]
+        out = bound_header_count(ordinary + security, limit=200)
+        names = {name.lower() for name, _ in out}
+        assert len(out) == 200
+        for name, _ in security:
+            assert name.lower() in names
+
+    def test_enforce_response_policy_keeps_headers_under_flood(self):
+        # End-to-end: a handler flooding distinct headers must not strip the
+        # canonical security policy that enforce_response_policy stamps.
+        from src.api.middleware.response_policy import enforce_response_policy
+
+        flooded = [(f"x-upstream-{i}".encode(), b"v") for i in range(260)]
+        out = enforce_response_policy(
+            flooded, path="/api/v1/users", api_prefix="/api/v1"
+        )
+        names = {name.lower() for name, _ in out}
+        for required in (
+            b"x-content-type-options",
+            b"referrer-policy",
+            b"x-frame-options",
+            b"x-xss-protection",
+            b"x-permitted-cross-domain-policies",
+            b"content-security-policy",
+            b"strict-transport-security",
+            b"permissions-policy",
+        ):
+            assert required in names
+
 
 class TestAudit:
     def test_missing_all(self):
