@@ -7,6 +7,7 @@ Security features:
 - Subprocess isolation
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -16,6 +17,7 @@ from typing import Optional
 import utils.config as config
 import utils.logger as logger
 
+from ._metadata_cache import MetadataResultCache
 from ..models import VideoMetadata
 from ..exceptions import VideoProcessingError
 
@@ -23,6 +25,11 @@ from ..exceptions import VideoProcessingError
 # Default limits
 DEFAULT_FFPROBE_TIMEOUT = 30  # seconds
 DEFAULT_MAX_VIDEO_SIZE_FOR_METADATA = 500 * 1024 * 1024  # 500MB
+# Metadata is a pure function of the input bytes plus the probe's security
+# configuration. These bound the memo so repeated/coalesced probes stay cheap
+# without ever serving a result across a different scope or input.
+DEFAULT_METADATA_CACHE_SIZE = 128
+DEFAULT_METADATA_CACHE_TTL_SECONDS = 30.0
 
 
 def _get_video_config() -> dict:
@@ -93,6 +100,27 @@ class VideoProcessor:
             "max_size_for_metadata", DEFAULT_MAX_VIDEO_SIZE_FOR_METADATA
         )
 
+        # The scope is part of every memo key. Changing the probe binary, its
+        # timeout or its size ceiling changes the security context that
+        # produced a result, so those results are never shared across scopes.
+        self._metadata_scope = "|".join(
+            (
+                str(self._ffprobe_path),
+                str(self._timeout),
+                str(self._max_size),
+            )
+        )
+        self._metadata_cache = MetadataResultCache(
+            maxsize=int(
+                video_config.get("metadata_cache_size", DEFAULT_METADATA_CACHE_SIZE)
+            ),
+            ttl_seconds=float(
+                video_config.get(
+                    "metadata_cache_ttl_seconds", DEFAULT_METADATA_CACHE_TTL_SECONDS
+                )
+            ),
+        )
+
         if not self._ffprobe_path:
             logger.debug(
                 "Optional dependency ffprobe is unavailable; video metadata extraction is disabled"
@@ -101,6 +129,10 @@ class VideoProcessor:
     def is_available(self) -> bool:
         """Check if ffprobe is available."""
         return self._ffprobe_path is not None
+
+    def clear_metadata_cache(self, scope: Optional[str] = None) -> None:
+        """Drop memoized metadata (all scopes, or one) after a config mutation."""
+        self._metadata_cache.clear(scope)
 
     def get_metadata(self, file_path: str) -> VideoMetadata:
         """
@@ -197,6 +229,19 @@ class VideoProcessor:
                 "metadata",
             )
 
+        # Memoize by the FULL input identity (SHA-256 of every byte) partitioned
+        # by the probe's security scope. Identical concurrent requests coalesce
+        # into one subprocess; different files/credentials can never share an
+        # entry. Size/availability checks stay outside the memo so they keep
+        # failing fast and are never cached.
+        content_hash = hashlib.sha256(video_data).hexdigest()
+        cache_key = MetadataResultCache.make_key(self._metadata_scope, content_hash)
+        return self._metadata_cache.get_or_compute(
+            cache_key, lambda: self._probe_bytes(video_data)
+        )
+
+    def _probe_bytes(self, video_data: bytes) -> VideoMetadata:
+        """Run the real ffprobe subprocess for a cache miss (or shared flight)."""
         try:
             cmd = [
                 self._ffprobe_path,
