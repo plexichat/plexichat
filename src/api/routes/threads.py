@@ -302,9 +302,28 @@ async def create_channel_thread(
 
     try:
         if body.parent_message_id is not None:
+            # ``SnowflakeID`` bounds the numeric value but its str validator
+            # still uses ``int()``, which accepts underscores and Unicode
+            # digits. A handler called directly (or a schema change) must not
+            # let those spellings resolve to a different message id than the
+            # caller wrote, so re-parse through the ASCII-only guard.
+            try:
+                parent_message_id = parse_id(
+                    str(body.parent_message_id), "parent_message_id"
+                )
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Invalid parent message ID",
+                        }
+                    },
+                )
             thread = threads_mod.create_thread_from_message(
                 current_user.user_id,
-                int(body.parent_message_id),
+                parent_message_id,
                 body.name,
                 thread_type,
                 duration,
@@ -355,7 +374,7 @@ async def get_thread(
 ) -> ThreadResponse:
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -402,7 +421,7 @@ async def update_thread(
 ) -> ThreadResponse:
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -452,7 +471,7 @@ async def delete_thread(
 ) -> SuccessResponse:
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -501,7 +520,7 @@ async def join_thread(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -543,7 +562,7 @@ async def leave_thread(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -576,7 +595,7 @@ async def list_thread_members(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -615,8 +634,8 @@ async def add_thread_member(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
-        uid = int(user_id)
+        tid = parse_id(thread_id, "thread_id")
+        uid = parse_id(user_id, "user_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}}
@@ -658,8 +677,8 @@ async def remove_thread_member(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
-        uid = int(user_id)
+        tid = parse_id(thread_id, "thread_id")
+        uid = parse_id(user_id, "user_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": "Invalid ID"}}
@@ -691,7 +710,7 @@ async def archive_thread_ep(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -723,7 +742,7 @@ async def unarchive_thread_ep(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -755,7 +774,7 @@ async def lock_thread_ep(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -787,7 +806,7 @@ async def unlock_thread_ep(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -917,7 +936,7 @@ async def send_thread_message(
 ):
     threads_mod = _get_threads()
     try:
-        tid = int(thread_id)
+        tid = parse_id(thread_id, "thread_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
