@@ -34,10 +34,21 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         libbrotli1 \
         curl \
     && apt-get upgrade -y \
+    && apt-mark manual libpq5 libopus0 libsrtp2-1 libvpx9 \
     && rm -rf /var/lib/apt/lists/*
 
+# Mark the runtime shared libraries as manually installed BEFORE the build-dep
+# purge below. `apt-get purge --auto-remove` would otherwise treat libpq5,
+# libopus0, libsrtp2-1 and libvpx9 as orphaned dependencies of the *-dev
+# packages and remove them, breaking every compiled extension (psycopg, av,
+# aiortc) at runtime. The compiler toolchain, VCS client and C headers are NOT
+# needed once the wheels are built and are dropped at the end of this layer.
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt \
+    && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get purge -y --auto-remove \
+        build-essential git libpq-dev libopus-dev libsrtp2-dev libvpx-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Run the internet-facing FastAPI process as a dedicated non-root user.
 #

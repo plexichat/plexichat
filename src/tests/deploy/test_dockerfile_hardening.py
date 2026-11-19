@@ -164,6 +164,58 @@ def test_base_images_version_pinned_and_security_updates_applied() -> None:
     )
 
 
+def test_backend_strips_build_toolchain_but_keeps_runtime_libs() -> None:
+    """The compiler/C-header layer must not survive into the shipped image.
+
+    ``pip install`` needs gcc, git and the ``*-dev`` headers to build the
+    wheels, but those tools are pure build-time weight (and extra attack
+    surface) in a server image. They are purged with ``--auto-remove`` in the
+    same layer as the install. Because apt does not know that the compiled
+    extensions still link against the runtime .so packages, those must be
+    marked manual first or autoremove would delete libpq5/libopus0/... and
+    break psycopg/av/aiortc at startup.
+    """
+    text = _read(DOCKERFILE)
+    # Join Dockerfile line continuations so each RUN is one logical line.
+    logical = re.sub(r"\\\n\s*", " ", text)
+    runtime_libs = ("libpq5", "libopus0", "libsrtp2-1", "libvpx9")
+    build_deps = (
+        "build-essential",
+        "git",
+        "libpq-dev",
+        "libopus-dev",
+        "libsrtp2-dev",
+        "libvpx-dev",
+    )
+
+    manual = re.search(r"&&\s*apt-mark\s+manual\s+([^\n]+)", logical)
+    assert manual, "runtime shared libs must be marked manual before the purge"
+    for lib in runtime_libs:
+        assert re.search(rf"\b{lib}\b", manual.group(1)), (
+            f"apt-mark manual is missing {lib}"
+        )
+
+    purge = re.search(r"&&\s*apt-get\s+purge\b[^\n]*", logical)
+    assert purge, "build toolchain must be purged after pip install"
+    purge_line = purge.group(0)
+    assert "--auto-remove" in purge_line, (
+        "the purge must use --auto-remove to drop orphaned build-only deps"
+    )
+    for dep in build_deps:
+        assert re.search(rf"\b{re.escape(dep)}\b", purge_line), f"purge is missing {dep}"
+    # Runtime binaries pulled in by name must survive the purge.
+    for kept in ("ffmpeg", "curl", "libbrotli1"):
+        assert not re.search(rf"\b{kept}\b", purge_line), (
+            f"{kept} is a runtime dependency and must not be purged"
+        )
+
+    # Ordering: mark manual (install layer) -> pip install -> purge.
+    install_at = logical.index("pip install")
+    assert manual.start() < install_at < purge.start(), (
+        "runtime libs must be protected before the install, then build deps purged"
+    )
+
+
 def test_backup_and_janus_third_party_pins() -> None:
     """Backup and Janus third-party images must stay on explicit released pins."""
     backup = _read(BACKUP_DOCKERFILE)

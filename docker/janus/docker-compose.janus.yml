@@ -5,12 +5,12 @@
 # Bring it up with ``./run-janus-gateway.sh``, which also waits for the
 # VideoRoom plugin and prints the environment to run the tests with.
 #
-# Supply chain: pin a released tag rather than ``latest``, exactly as
-# ``docker-compose.yml`` does. Verify the digest out of band before trusting
-# the image:
+# Supply chain: pin the released tag to its manifest digest, exactly as
+# ``docker-compose.yml`` pins every third-party image. A tag alone is mutable
+# in the registry, so ``0.10.7`` could be silently replaced between pulls.
+# Re-verify the digest out of band before bumping it:
 #
-#   docker pull canyan/janus-gateway:0.10.7
-#   docker inspect --format '{{index .RepoDigests 0}}' canyan/janus-gateway:0.10.7
+#   docker buildx imagetools inspect canyan/janus-gateway:0.10.7
 #
 # This is a DEVELOPMENT gateway, not a deployment. The Janus API is
 # unauthenticated (no ``api_secret``), so its HTTP/WS ports are published on
@@ -28,7 +28,11 @@ name: plexichat-janus
 
 services:
   janus:
-    image: canyan/janus-gateway:0.10.7
+    image: canyan/janus-gateway:0.10.7@sha256:75328c0f7ea83346aec7a1ba22bfbb980f2b6196a692c390020a5da0adb30e3e
+    # Same kernel-level backstop as every service in the main stack: a
+    # compromised janus process cannot gain privileges via setuid/capabilities.
+    security_opt:
+      - no-new-privileges:true
     command: ["/usr/local/bin/janus", "-F", "/usr/local/etc/janus"]
     ports:
       # Loopback-only: the API is unauthenticated, so a 0.0.0.0 bind would let

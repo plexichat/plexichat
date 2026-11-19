@@ -264,6 +264,29 @@ def test_janus_dev_api_is_bound_to_loopback() -> None:
             )
 
 
+def test_janus_dev_gateway_is_digest_pinned_and_unprivileged() -> None:
+    """The dev gateway follows the main stack's pin/no-new-privs policy.
+
+    A tag alone is mutable in the registry, so ``0.10.7`` could be replaced
+    between pulls; pin the manifest digest. It is also an unauthenticated
+    network listener, so it must carry the same setuid/capability backstop as
+    every service in the main compose file.
+    """
+    data = yaml.safe_load(JANUS_COMPOSE.read_text(encoding="utf-8"))
+    janus = data["services"]["janus"]
+    image = str(janus["image"])
+    assert re.search(r"@sha256:[0-9a-f]{64}$", image), (
+        f"Janus dev image must be digest-pinned, got {image!r}"
+    )
+    assert image.startswith("canyan/janus-gateway:0.10.7@"), (
+        "unexpected Janus image ref; re-verify the digest before changing it"
+    )
+    opts = janus.get("security_opt", [])
+    assert any(str(opt).replace(" ", "") == "no-new-privileges:true" for opt in opts), (
+        "the unauthenticated Janus listener must deny new privileges"
+    )
+
+
 def test_third_party_images_are_pinned_to_verified_digests(
     services: dict[str, dict[str, Any]]
 ) -> None:
