@@ -18,6 +18,7 @@ from src.core.database import (
 )
 
 import utils.logger as logger
+from src.core.security.hardening import parse_id
 from .helpers import _server_to_response
 
 router = APIRouter()
@@ -146,7 +147,7 @@ async def get_server(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server_id")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -208,7 +209,7 @@ async def update_server(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server_id")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -285,8 +286,8 @@ async def transfer_ownership(
 
     try:
         try:
-            sid = int(server_id)
-            new_owner = int(body.new_owner_id)
+            sid = parse_id(server_id, "server_id")
+            new_owner = parse_id(body.new_owner_id, "new_owner_id")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -353,7 +354,7 @@ async def delete_server(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server_id")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
