@@ -18,6 +18,11 @@ from src.core.reactions.manager.bounds import blocked_users_not_in
 
 pytestmark = [pytest.mark.unit, pytest.mark.security, pytest.mark.reactions]
 
+# More than the classic SQLite per-statement bind limit (999). The old
+# one-placeholder-per-id builder crossed it here; the in-database filter must
+# not care how large the block list is.
+LARGE_BLOCK_LIST = 1200
+
 
 class _RecordingDB:
     """Delegate to the real DB while recording emitted SQL and params."""
@@ -127,5 +132,84 @@ def test_reaction_reads_emit_bounded_sql(
         assert "NOT IN (SELECT" in sql
         assert "NOT IN (?" not in sql
         # Only the query's own fixed binds plus the two viewer-id binds.
+        assert sql.count("?") <= 8
+        assert len(params) == sql.count("?")
+
+
+def _seed_large_block_list(db, viewer_id: int, count: int) -> None:
+    """Insert ``count`` extra users the viewer blocks, straight into the DB.
+
+    Bypasses the relationship manager (and its password hashing) so the test
+    can exceed the classic 999-bind limit cheaply. FK enforcement is on, so
+    the dummy auth_users rows must exist before the rel_blocked rows.
+    """
+    unique = uuid.uuid4().hex[:10]
+    now = 1
+    base_id = 9_000_000_000_000_000_000
+    user_rows = []
+    block_rows = []
+    for offset in range(count):
+        uid = base_id + offset
+        user_rows.append(
+            (uid, f"scaleblk_{unique}_{offset}", "x", "[]", now, now)
+        )
+        block_rows.append((uid, viewer_id, now))
+    for row in user_rows:
+        db.execute(
+            "INSERT INTO auth_users (id, username, password_hash, permissions, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            row,
+        )
+    for blocker, blocked, created in block_rows:
+        db.execute(
+            "INSERT INTO rel_blocked (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)",
+            (blocker, blocked, created),
+        )
+
+
+def test_reaction_reads_stay_bounded_and_filtered_with_large_block_list(
+    auth_manager, messaging_manager, rel_manager, reaction_manager
+):
+    """A 1200-entry block list must not grow bind counts or leak reactors.
+
+    The previous builder emitted one ``?`` per blocked id, so this block list
+    pushed every reaction read past SQLite's bind-variable limit (999 on most
+    builds) and the reads failed outright. With the in-database filter the
+    statements stay bounded, the blocked reactor stays hidden, and the visible
+    reactor still appears.
+    """
+    viewer, reactor, msg = _make_message(auth_manager, messaging_manager)
+    reaction_manager.add_reaction(reactor.id, msg.id, ":chunk:")
+    rel_manager.block_user(viewer.id, reactor.id)
+    _seed_large_block_list(reaction_manager._db, viewer.id, LARGE_BLOCK_LIST)
+
+    real_db = reaction_manager._db
+    spy = _RecordingDB(real_db)
+    reaction_manager._db = spy
+    try:
+        counts = reaction_manager.get_reactions(viewer.id, msg.id)
+        users = reaction_manager.get_reaction_users(viewer.id, msg.id, ":chunk:")
+        batch = reaction_manager.get_reactions_batch(viewer.id, [msg.id])
+        total = reaction_manager.get_reaction_count(msg.id, viewer_id=viewer.id)
+        by_emoji = reaction_manager.get_reaction_count_by_emoji(
+            msg.id, ":chunk:", viewer_id=viewer.id
+        )
+    finally:
+        reaction_manager._db = real_db
+
+    # Correctness + filter intact: blocked reactor hidden, no false positives.
+    assert counts.reactions == []
+    assert counts.total_count == 0
+    assert users == []
+    assert batch[msg.id] == []
+    assert total == 0
+    assert by_emoji == 0
+
+    # Bound intact: no emitted statement expands with the 1201-id block list.
+    blocked_reads = [call for call in spy.calls if "NOT IN" in call[0]]
+    assert blocked_reads, "blocked-user filter was not applied"
+    for sql, params in blocked_reads:
+        assert "NOT IN (SELECT" in sql
+        assert "NOT IN (?" not in sql
         assert sql.count("?") <= 8
         assert len(params) == sql.count("?")
