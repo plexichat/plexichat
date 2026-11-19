@@ -295,7 +295,7 @@ async def get_server_emojis(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to fetch emojis: {str(e)}",
+                        "message": "Internal server error",
                     }
                 },
             )
@@ -369,7 +369,7 @@ async def get_emoji_counts(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to fetch emoji counts: {str(e)}",
+                        "message": "Internal server error",
                     }
                 },
             )
@@ -469,7 +469,7 @@ async def get_emoji(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to fetch emoji: {str(e)}",
+                        "message": "Internal server error",
                     }
                 },
             )
@@ -553,7 +553,10 @@ async def create_emoji(
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": {"code": 400, "message": f"Failed to read image: {str(e)}"}
+                    "error": {
+                        "code": 400,
+                        "message": "Failed to read image upload",
+                    }
                 },
             )
 
@@ -626,7 +629,7 @@ async def create_emoji(
                 detail={
                     "error": {
                         "code": 500,
-                        "message": f"Failed to create emoji: {str(e)}",
+                        "message": "Internal server error",
                     }
                 },
             )
@@ -730,7 +733,7 @@ async def update_emoji(
             logger.error(f"Failed to update emoji {emoji_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": f"Update failed: {str(e)}"}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
     except HTTPException:
         raise
@@ -822,7 +825,7 @@ async def delete_emoji(
             raise HTTPException(
                 status_code=500,
                 detail={
-                    "error": {"code": 500, "message": f"Deletion failed: {str(e)}"}
+                    "error": {"code": 500, "message": "Internal server error"}
                 },
             )
     except HTTPException:

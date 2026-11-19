@@ -17,6 +17,26 @@ from ..exceptions import (
 from .protocol import ReactionProtocol
 
 
+# One statement re-checks the per-server emoji cap at the instant of the
+# insert. The old flow called ``_check_emoji_limits`` (a SELECT COUNT) and only
+# then began a transaction and INSERTed; two concurrent creators could both
+# read a count below the cap and both insert, pushing the server over the
+# configured limit (a TOCTOU quota bypass). The guard subquery sees the table
+# state *before* the new row exists, so exactly the callers that still fit get
+# a row and ``rowcount == 0`` is an authoritative "limit reached" signal.
+# SQLite serialises this single statement with its write lock; PostgreSQL's
+# READ COMMITTED snapshot would let two statements both pass, so
+# create_custom_emoji() additionally takes an advisory xact lock (see there).
+_ATOMIC_EMOJI_INSERT_SQL = """
+INSERT INTO react_custom_emoji
+    (id, server_id, name, animated, url, size, width, height,
+     created_by, available, created_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?
+WHERE (SELECT COUNT(*) FROM react_custom_emoji
+       WHERE server_id = ? AND animated = ?) < ?
+"""
+
+
 class EmojiOpsMixin(ReactionProtocol):
     def _migrate_emoji_table(self):
         # Only migrate an EXISTING table that predates the new columns. A
@@ -85,19 +105,21 @@ class EmojiOpsMixin(ReactionProtocol):
                 "Missing permission to manage server", "server.manage"
             )
 
+    def _emoji_limit_for(self, animated: bool) -> int:
+        """The configured per-server cap for one emoji kind (single source of truth)."""
+        key = "max_animated_emojis_per_server" if animated else "max_emojis_per_server"
+        return self._config.get(key, 50)
+
     def _check_emoji_limits(self, server_id: SnowflakeID, animated: bool) -> None:
-        if animated:
-            max_count = self._config.get("max_animated_emojis_per_server", 50)
-            row = self._db.fetch_one(
-                "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 1",
-                (server_id,),
-            )
-        else:
-            max_count = self._config.get("max_emojis_per_server", 50)
-            row = self._db.fetch_one(
-                "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 0",
-                (server_id,),
-            )
+        # Best-effort early feedback only. The authoritative check is the
+        # atomic INSERT in create_custom_emoji(); this pre-flight just avoids an
+        # unnecessary media upload for an obviously-full server.
+        max_count = self._emoji_limit_for(animated)
+        animated_int = 1 if animated else 0
+        row = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = ?",
+            (server_id, animated_int),
+        )
 
         current = row["count"] if row else 0
         if current >= max_count:
@@ -153,11 +175,33 @@ class EmojiOpsMixin(ReactionProtocol):
         animated = content_type.lower() == "image/gif"
         if content_type.lower() == "image/webp":
             animated = b"ANIM" in image_data[:100]
+        animated_int = 1 if animated else 0
+        max_count = self._emoji_limit_for(animated)
 
+        # Early, advisory quota feedback (avoids a wasted upload). It is NOT the
+        # authoritative check: two concurrent creators can both pass it, so the
+        # atomic INSERT below is what actually enforces the cap.
         self._check_emoji_limits(server_id, animated)
 
-        try:
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            # PostgreSQL READ COMMITTED would let two concurrent INSERT..SELECT
+            # statements both see a stale count. Serialise per (server, kind)
+            # with an advisory xact lock inside the transaction. The namespace
+            # (100/101) stays clear of the invite-quota lock namespaces (1/2);
+            # masking to 30 bits keeps the second key in signed int4 range.
             self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (100 + animated_int, int(server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self._db.begin_transaction()
 
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
@@ -203,27 +247,42 @@ class EmojiOpsMixin(ReactionProtocol):
             now = self._get_timestamp()
             emoji_id = self._generate_id()
 
-            self._db.execute(
-                """INSERT INTO react_custom_emoji 
-                   (id, server_id, name, animated, url, size, width, height, created_by, available, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+            cursor = self._db.execute(
+                _ATOMIC_EMOJI_INSERT_SQL,
                 (
                     emoji_id,
                     server_id,
                     name,
-                    1 if animated else 0,
+                    animated_int,
                     url,
                     len(image_data),
                     width,
                     height,
                     user_id,
                     now,
+                    server_id,
+                    animated_int,
+                    max_count,
                 ),
             )
+            # rowcount 0 means the count guard found the server already at
+            # (or over) its cap at insert time — a concurrent creator lost the
+            # race. Roll back and surface the same quota error the early check
+            # would have raised.
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise EmojiLimitError(
+                    f"Server has reached maximum of {max_count} "
+                    f"{'animated emojis' if animated else 'static emojis'}",
+                    max_count,
+                    max_count,
+                )
 
             self._db.commit()
 
         except EmojiNameExistsError:
+            self._db.rollback()
+            raise
+        except EmojiLimitError:
             self._db.rollback()
             raise
         except InvalidEmojiFileError:

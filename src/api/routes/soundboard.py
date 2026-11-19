@@ -9,7 +9,7 @@ bytes are validated and stored through the shared media pipeline.
 from src.api.request_guards import MAX_SOUND_UPLOAD, read_upload_capped
 
 from src.core.avatars.manager.upload_guard import sanitize_upload_filename
-from src.core.security.hardening import HardeningViolation, bounded_int
+from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
 
 from typing import Annotated, List, Optional
 
@@ -117,35 +117,41 @@ def _get_soundboard():
 
 
 def _parse_server_id(server_id: str) -> int:
+    """Parse a server id through the shared ASCII-only snowflake gate.
+
+    Bare ``int(str(server_id).strip())`` accepted Unicode decimal homoglyphs
+    (``"１２"`` -> 12), PEP 515 underscores (``"1_2"`` -> 12) and arbitrarily
+    large values. Those spellings reached permission checks, cache keys and
+    storage as a *different* identifier than the caller wrote, and disagreed
+    with every other route boundary that parses ids with ``parse_id``. Route
+    them all through the canonical gate so validation and consumption share a
+    single interpretation of the token; non-canonical ids fail with 400 before
+    any service call.
+    """
     try:
-        parsed = int(str(server_id).strip())
-    except (ValueError, TypeError, AttributeError):
+        return parse_id(server_id, "server ID")
+    except HardeningViolation as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid server ID"}},
-        )
-    if parsed <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid server ID"}},
-        )
-    return parsed
+        ) from exc
 
 
 def _parse_int(value: str, label: str) -> int:
+    """Parse a positive snowflake-style id with the same canonical gate.
+
+    Sound, role and channel ids carry the same range/grammar constraints as a
+    server id. ``int()`` also truncated nothing here but accepted homoglyphs,
+    underscores and oversized/negative values that the rest of the route
+    layer rejects outright.
+    """
     try:
-        parsed = int(str(value).strip())
-    except (ValueError, TypeError, AttributeError):
+        return parse_id(value, label)
+    except HardeningViolation as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": f"Invalid {label}"}},
-        )
-    if parsed <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": f"Invalid {label}"}},
-        )
-    return parsed
+        ) from exc
 
 
 def _require_sound_in_server(sound, server_id: int):

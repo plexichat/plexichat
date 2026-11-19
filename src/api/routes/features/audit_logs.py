@@ -6,7 +6,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.api.routes.users.helpers import require_user_token
-from .common import raise_bad_request, raise_forbidden, raise_internal
+from .common import parse_id, raise_forbidden, raise_internal
 
 router = APIRouter()
 
@@ -30,6 +30,15 @@ async def get_user_audit_logs(
     db = api.get_db()
     if not db:
         raise_internal("Database not available")
+
+    # SECURITY: validate the optional server filter at the boundary with the
+    # shared snowflake gate, before any server scan. A bare ``int()`` accepted
+    # Unicode digit homoglyphs (``"١٢٣"``), PEP 515 separators (``"1_2"``),
+    # explicit signs/whitespace and negatives -- an id one hop reads as invalid
+    # text must not become a live server filter here (parser differential).
+    # Parsing up front also keeps the 400 contract consistent whether or not
+    # the caller happens to have any visible audit-log servers.
+    target_sid = parse_id(server_id, "server ID") if server_id else None
 
     try:
         servers = servers_mod.get_servers(current_user.user_id)
@@ -55,12 +64,7 @@ async def get_user_audit_logs(
     if not visible_server_ids:
         return {"entries": []}
 
-    target_sid = None
-    if server_id:
-        try:
-            target_sid = int(server_id)
-        except ValueError:
-            raise_bad_request("Invalid server ID")
+    if target_sid is not None:
         if target_sid not in visible_server_ids:
             raise_forbidden("No audit log access for this server")
         visible_server_ids = [target_sid]

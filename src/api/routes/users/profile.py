@@ -15,6 +15,7 @@ from src.api.schemas.users import (
 )
 from src.api.schemas.common import SnowflakeID, SuccessResponse
 from src.core.database import cached, invalidate_pattern
+from src.core.security.hardening import parse_id
 from src.core.auth.exceptions import (
     InvalidCredentialsError,
     InvalidEmailError,
@@ -373,13 +374,17 @@ class ProfileMixin:
             )
 
         try:
+            # SECURITY: parse the public lookup id through the shared snowflake
+            # gate, as every other route boundary does. A bare ``int()`` also
+            # accepted Unicode decimal homoglyphs (``"١٢٣"`` -> 123), PEP 515
+            # separators (``"1_2"`` -> 12), explicit signs/whitespace and
+            # negative values down to -2**63. That is a parser differential:
+            # a hop that validates the path as ASCII-only text can reject a
+            # value this route silently resolves to a real user, and the
+            # negative/oversized spellings reached the lookup unchanged.
+            # ``parse_id`` enforces ASCII digits and the 1..2**63-1 range.
             try:
-                uid = int(user_id)
-                if uid > 2**63 - 1 or uid < -(2**63):
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "User not found"}},
-                    )
+                uid = parse_id(user_id, "user ID")
             except (ValueError, TypeError):
                 logger.warning(f"Invalid user ID format: {user_id}")
                 raise HTTPException(

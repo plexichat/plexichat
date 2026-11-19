@@ -10,12 +10,35 @@ from src.api.schemas.servers import (
     AutomodViolationResponse,
 )
 from src.api.schemas.common import SnowflakeID, SuccessResponse
+from src.core.security.hardening import HardeningViolation, parse_id
 
 import utils.logger as logger
 from .helpers import _automod_rule_to_response
 from ..exception_mapping import raise_mapped
 
 router = APIRouter()
+
+
+def _parse_id(value: object, label: str) -> int:
+    """Parse an untrusted route/query id with the shared ASCII snowflake gate.
+
+    Every id in this module used to go through bare ``int()``. Python's ``int``
+    accepts Unicode decimal homoglyphs (``"１２"`` -> 12), PEP 515 separators
+    (``"1_2"`` -> 12), a leading sign/zero and arbitrarily large integers. Those
+    spellings reached ``require_permission``, rule/violation lookups and storage
+    as a *different* identifier than the caller wrote, and disagreed with every
+    other route boundary, which parses ids with ``parse_id``. Route them all
+    through the canonical gate so validation and consumption share a single
+    interpretation of the token; non-canonical ids fail with 400 before any
+    permission check or service call.
+    """
+    try:
+        return parse_id(value, label)
+    except HardeningViolation as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Invalid {label}"}},
+        ) from exc
 
 
 @router.get(
@@ -35,7 +58,7 @@ async def get_server_automod_rules(
     from src.core import automod
 
     try:
-        sid = int(server_id)
+        sid = _parse_id(server_id, "server ID")
         servers_mod.require_permission(current_user.user_id, sid, "server.automod")
 
         rules = automod.get_server_rules(sid)
@@ -72,7 +95,7 @@ async def create_server_automod_rule(
     from src.core.automod.models import RuleType
 
     try:
-        sid = int(server_id)
+        sid = _parse_id(server_id, "server ID")
         servers_mod.require_permission(current_user.user_id, sid, "server.automod")
 
         try:
@@ -81,17 +104,17 @@ async def create_server_automod_rule(
             raise HTTPException(status_code=400, detail="Invalid rule type")
 
         applied_roles = (
-            [int(r) for r in body.applied_roles]
+            [_parse_id(r, "applied role ID") for r in body.applied_roles]
             if body.applied_roles is not None
             else None
         )
         exempt_roles = (
-            [int(r) for r in body.exempt_roles]
+            [_parse_id(r, "exempt role ID") for r in body.exempt_roles]
             if body.exempt_roles is not None
             else None
         )
         exempt_channels = (
-            [int(c) for c in body.exempt_channels]
+            [_parse_id(c, "exempt channel ID") for c in body.exempt_channels]
             if body.exempt_channels is not None
             else None
         )
@@ -147,8 +170,8 @@ async def update_server_automod_rule(
     from src.core import automod
 
     try:
-        sid = int(server_id)
-        rid = int(rule_id)
+        sid = _parse_id(server_id, "server ID")
+        rid = _parse_id(rule_id, "rule ID")
         servers_mod.require_permission(current_user.user_id, sid, "server.automod")
 
         rule = automod.get_rule(rid)
@@ -163,11 +186,11 @@ async def update_server_automod_rule(
         if body.actions is not None:
             update_kwargs["actions"] = [a.model_dump() for a in body.actions]
         if body.exempt_roles is not None:
-            update_kwargs["exempt_roles"] = [int(r) for r in body.exempt_roles]
+            update_kwargs["exempt_roles"] = [_parse_id(r, "exempt role ID") for r in body.exempt_roles]
         if body.applied_roles is not None:
-            update_kwargs["applied_roles"] = [int(r) for r in body.applied_roles]
+            update_kwargs["applied_roles"] = [_parse_id(r, "applied role ID") for r in body.applied_roles]
         if body.exempt_channels is not None:
-            update_kwargs["exempt_channels"] = [int(c) for c in body.exempt_channels]
+            update_kwargs["exempt_channels"] = [_parse_id(c, "exempt channel ID") for c in body.exempt_channels]
         if body.priority is not None:
             update_kwargs["priority"] = body.priority
         if body.check_all is not None:
@@ -212,8 +235,8 @@ async def delete_server_automod_rule(
     from src.core import automod
 
     try:
-        sid = int(server_id)
-        rid = int(rule_id)
+        sid = _parse_id(server_id, "server ID")
+        rid = _parse_id(rule_id, "rule ID")
         servers_mod.require_permission(current_user.user_id, sid, "server.automod")
 
         rule = automod.get_rule(rid)
@@ -257,11 +280,11 @@ async def get_server_automod_violations(
     from src.core import automod
 
     try:
-        sid = int(server_id)
+        sid = _parse_id(server_id, "server ID")
         servers_mod.require_permission(current_user.user_id, sid, "server.automod")
 
-        target_user_id = int(user_id) if user_id else None
-        before_id = int(before) if before else None
+        target_user_id = _parse_id(user_id, "user ID") if user_id else None
+        before_id = _parse_id(before, "before ID") if before else None
 
         violations = automod.get_violations(
             sid, user_id=target_user_id, limit=limit, before_id=before_id
@@ -319,8 +342,8 @@ async def get_server_automod_violation(
     from src.core import automod
 
     try:
-        sid = int(server_id)
-        vid = int(violation_id)
+        sid = _parse_id(server_id, "server ID")
+        vid = _parse_id(violation_id, "violation ID")
         servers_mod.require_permission(current_user.user_id, sid, "server.automod")
 
         violation = automod.get_violation(vid, server_id=sid)
