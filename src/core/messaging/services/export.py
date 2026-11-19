@@ -29,6 +29,28 @@ from src.core.base import SnowflakeID
 # drive path construction (traversal) or probe bookkeeping.
 _EXPORT_ID_RE = re.compile(r"^export_[A-Za-z0-9_-]{16,}$")
 
+# Message content is untrusted free text: any user can author a message whose
+# text begins with a spreadsheet formula trigger. A CSV transcript opened in
+# Excel/Sheets evaluates a cell starting with one of these characters
+# (``=HYPERLINK(...)``, ``=cmd|...``, ``@SUM(...)``), so every data cell must be
+# rendered as a literal string before it reaches the CSV writer. Leading
+# whitespace/control characters are unsafe too because spreadsheets strip
+# them before evaluating the remainder.
+_CSV_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value: Any) -> str:
+    """Render a value as a literal CSV cell, never as a spreadsheet formula."""
+    if value is None:
+        return ""
+    text = str(value)
+    if not text:
+        return text
+    probe = text.lstrip(" \t\r\n")
+    if text[0] in _CSV_FORMULA_LEADS or (probe and probe[0] in _CSV_FORMULA_LEADS):
+        return "'" + text
+    return text
+
 
 def _resolve_date_zone(tz_name: Optional[str]):
     """Resolve an IANA timezone name for export date bounds.
@@ -581,12 +603,19 @@ class TranscriptExportService(BaseService):
         for msg in messages:
             writer.writerow(
                 [
-                    str(msg.get("id", "")),
-                    str(msg.get("author_id", "")),
-                    msg.get("content", ""),
-                    msg.get("created_at", 0),
-                    msg.get("edited_at", ""),
-                    str(msg.get("reply_to_id", "")) if msg.get("reply_to_id") else "",
+                    # SECURITY (CSV formula injection): message content and
+                    # ids are attacker-influenced. Render every cell through
+                    # _csv_cell so a leading =/+/-/@ (or tab/CR) cannot turn
+                    # the downloaded transcript into an executable payload
+                    # when opened in a spreadsheet.
+                    _csv_cell(msg.get("id", "")),
+                    _csv_cell(msg.get("author_id", "")),
+                    _csv_cell(msg.get("content", "")),
+                    _csv_cell(msg.get("created_at", 0)),
+                    _csv_cell(msg.get("edited_at", "")),
+                    _csv_cell(msg.get("reply_to_id", ""))
+                    if msg.get("reply_to_id")
+                    else "",
                 ]
             )
 
