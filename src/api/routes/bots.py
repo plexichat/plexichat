@@ -21,6 +21,7 @@ from src.api.middleware.authentication import (
     get_optional_user,
     TokenInfo,
 )
+
 # A bot token's ``user_id`` is its human owner (the bot account id lives in
 # ``account_id``). Every handler here that keys off ``current_user.user_id``
 # must reject bot credentials: otherwise a leaked bot token can enumerate and

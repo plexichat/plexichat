@@ -307,9 +307,7 @@ def test_guard_uses_live_override_limit_not_stale_python_snapshot(
     assert manager.pending_bytes(user_id) == 0
 
 
-def test_guard_honors_live_unlimited_override_not_stale_snapshot(
-    quota_db, monkeypatch
-):
+def test_guard_honors_live_unlimited_override_not_stale_snapshot(quota_db, monkeypatch):
     """A live unlimited grant racing reserve() is honored by the guard."""
     user_id = 123456789
     manager = _manager(quota_db, user_id, limit_bytes=100)

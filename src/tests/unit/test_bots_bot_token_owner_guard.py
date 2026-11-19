@@ -95,9 +95,7 @@ def test_guard_allows_a_real_user_token():
 # Completeness: a new owner-scoped handler must not silently omit the guard.
 # ---------------------------------------------------------------------------
 
-_BOTS_ROUTE = (
-    Path(__file__).resolve().parents[2] / "api" / "routes" / "bots.py"
-)
+_BOTS_ROUTE = Path(__file__).resolve().parents[2] / "api" / "routes" / "bots.py"
 
 
 def _uses_caller_identity(node: ast.AST) -> bool:

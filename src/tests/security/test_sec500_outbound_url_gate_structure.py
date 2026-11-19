@@ -43,7 +43,10 @@ EXPECTED_SCHEMES = frozenset({"http", "https"})
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -139,7 +142,9 @@ def _gate_checks_missing(fn) -> list[str]:
 
 
 def _resolver_missing(fn) -> list[str]:
-    return [] if "parse_outbound_url" in _call_names(fn) else ["parse_outbound_url call"]
+    return (
+        [] if "parse_outbound_url" in _call_names(fn) else ["parse_outbound_url call"]
+    )
 
 
 def _ip_literal_missing(fn) -> list[str]:
@@ -163,7 +168,8 @@ for _rel, _helper in GATE_ADOPTERS:
     _imports = {
         alias.asname or alias.name
         for node in ast.walk(_tree)
-        if isinstance(node, ast.ImportFrom) and node.module == "src.core.security.outbound"
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "src.core.security.outbound"
         for alias in node.names
     }
     _raw_validator = any(
@@ -215,7 +221,11 @@ def test_gate_detector_flags_each_removed_structural_check():
         )
     )
     missing = _gate_checks_missing(_find_function(regress, "parse_outbound_url"))
-    for label in ("control-char rejection", "backslash-authority rejection", "credentials rejection"):
+    for label in (
+        "control-char rejection",
+        "backslash-authority rejection",
+        "credentials rejection",
+    ):
         assert label in missing, f"regression '{label}' was not flagged"
 
     good_backslash = ast.parse(
@@ -224,8 +234,15 @@ def test_gate_detector_flags_each_removed_structural_check():
     bad_backslash = ast.parse(
         'def _authority_has_backslash(url):\n    return "\\n" in url\n'
     )
-    assert _backslash_check_missing(_find_function(good_backslash, "_authority_has_backslash")) == []
-    assert _backslash_check_missing(_find_function(bad_backslash, "_authority_has_backslash"))
+    assert (
+        _backslash_check_missing(
+            _find_function(good_backslash, "_authority_has_backslash")
+        )
+        == []
+    )
+    assert _backslash_check_missing(
+        _find_function(bad_backslash, "_authority_has_backslash")
+    )
 
 
 def test_adoption_detector_distinguishes_gate_from_raw_validator():

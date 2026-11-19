@@ -61,9 +61,7 @@ def test_forged_test_license_cannot_allow_non_loopback_host():
 def test_mixed_test_license_host_list_keeps_only_loopback():
     """Loopback entries are still honoured; only non-loopback ones are dropped."""
     mgr = LicenseManager()
-    mgr.load_from_dict(
-        _test_license(allowed_hosts=["127.0.0.1", _PUBLIC_IP, "::1"])
-    )
+    mgr.load_from_dict(_test_license(allowed_hosts=["127.0.0.1", _PUBLIC_IP, "::1"]))
 
     assert mgr.get_allowed_hosts() == ["127.0.0.1", "::1"]
     assert mgr.is_valid_for_host(_PUBLIC_IP) is False
@@ -97,9 +95,7 @@ def test_non_finite_limit_is_not_enforced_and_does_not_crash(value):
 
 @pytest.mark.parametrize("value", [-1, None, 0, 50, "100"])
 def test_enforceable_limit_sentinel_semantics_unchanged(value):
-    assert licensing.is_limit_enforced(value) == (
-        value is not None and int(value) >= 0
-    )
+    assert licensing.is_limit_enforced(value) == (value is not None and int(value) >= 0)
 
 
 def test_get_license_limit_non_finite_returns_default(monkeypatch):

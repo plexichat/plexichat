@@ -58,7 +58,9 @@ def test_export_csv_neutralises_formula_leads_even_behind_whitespace(
     sheet_id = workbook["sheets"][0]["id"]
     _write_cell(manager, owner, workbook, sheet_id, value)
 
-    csv_text = manager.export_csv(owner.id, int(workbook["id"]), int(sheet_id))["content"]
+    csv_text = manager.export_csv(owner.id, int(workbook["id"]), int(sheet_id))[
+        "content"
+    ]
     rows = list(csv.reader(io.StringIO(csv_text)))
 
     # The apostrophe prefix forces the spreadsheet to treat the cell as text.
@@ -66,7 +68,9 @@ def test_export_csv_neutralises_formula_leads_even_behind_whitespace(
     assert rows[0][0] == "'" + value, (value, rows)
 
 
-def test_export_csv_leaves_plain_text_and_numbers_untouched(db, two_users, server_manager):
+def test_export_csv_leaves_plain_text_and_numbers_untouched(
+    db, two_users, server_manager
+):
     owner, _ = two_users
     manager = _make_manager(db, server_manager)
     workbook = manager.create_workbook(owner.id, "CSV plain")
@@ -84,7 +88,9 @@ def test_export_csv_leaves_plain_text_and_numbers_untouched(db, two_users, serve
         ],
     )
 
-    csv_text = manager.export_csv(owner.id, int(workbook["id"]), int(sheet_id))["content"]
+    csv_text = manager.export_csv(owner.id, int(workbook["id"]), int(sheet_id))[
+        "content"
+    ]
     rows = list(csv.reader(io.StringIO(csv_text)))
     assert rows[0] == ["hello world", "-5"]
 

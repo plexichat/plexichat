@@ -21,7 +21,12 @@ import pytest
 from fastapi import HTTPException
 
 from src.api.routes.suite import stash as pkg
-from src.api.routes.suite.stash import collections, item_detail, share_links, version_diff
+from src.api.routes.suite.stash import (
+    collections,
+    item_detail,
+    share_links,
+    version_diff,
+)
 
 USER = types.SimpleNamespace(user_id=42)
 
@@ -67,14 +72,18 @@ def manager(monkeypatch) -> RecordingManager:
 
 
 @pytest.mark.parametrize("raw", NON_CANONICAL_IDS)
-def test_get_item_rejects_non_canonical_ids(manager: RecordingManager, raw: str) -> None:
+def test_get_item_rejects_non_canonical_ids(
+    manager: RecordingManager, raw: str
+) -> None:
     with pytest.raises(HTTPException) as exc:
         asyncio.run(item_detail.get_item(raw, current_user=USER))
     assert exc.value.status_code == 400
     assert manager.calls == [], "manager must not be reached with a non-canonical id"
 
 
-def test_get_item_accepts_ascii_snowflake(monkeypatch, manager: RecordingManager) -> None:
+def test_get_item_accepts_ascii_snowflake(
+    monkeypatch, manager: RecordingManager
+) -> None:
     # Bypass only response serialization; the id boundary under test is intact.
     monkeypatch.setattr(item_detail, "_item_response", lambda item: item)
     result = asyncio.run(item_detail.get_item("123", current_user=USER))
@@ -97,9 +106,7 @@ def test_version_diff_rejects_non_canonical_ids(
     manager: RecordingManager, raw: str
 ) -> None:
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(
-            version_diff.diff_versions("10", a=raw, b=None, current_user=USER)
-        )
+        asyncio.run(version_diff.diff_versions("10", a=raw, b=None, current_user=USER))
     assert exc.value.status_code == 400
     assert manager.calls == []
 

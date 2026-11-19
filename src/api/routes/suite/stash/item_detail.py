@@ -31,7 +31,11 @@ async def get_item(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashItemResponse:
     try:
-        return _item_response(_manager().get_item(current_user.user_id, parse_stash_id(item_id, "item id")))
+        return _item_response(
+            _manager().get_item(
+                current_user.user_id, parse_stash_id(item_id, "item id")
+            )
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid Stash item id") from exc
     except Exception as exc:
@@ -58,7 +62,9 @@ async def update_item(
         if "collection_id" in fields and fields["collection_id"] is not None:
             fields["collection_id"] = int(fields["collection_id"])
         return _item_response(
-            _manager().update_item(current_user.user_id, parse_stash_id(item_id, "item id"), **fields)
+            _manager().update_item(
+                current_user.user_id, parse_stash_id(item_id, "item id"), **fields
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid Stash item id") from exc
@@ -83,7 +89,9 @@ async def pin_item(
 ) -> StashItemResponse:
     try:
         return _item_response(
-            _manager().set_pinned(current_user.user_id, parse_stash_id(item_id, "item id"), body.pinned)
+            _manager().set_pinned(
+                current_user.user_id, parse_stash_id(item_id, "item id"), body.pinned
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid Stash item id") from exc
@@ -130,7 +138,9 @@ async def restore_item(
     """Restore a soft-deleted item after rechecking ownership/management access."""
     try:
         return _item_response(
-            _manager().restore_item(current_user.user_id, parse_stash_id(item_id, "item id"))
+            _manager().restore_item(
+                current_user.user_id, parse_stash_id(item_id, "item id")
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid Stash item id") from exc

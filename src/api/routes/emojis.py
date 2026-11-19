@@ -824,9 +824,7 @@ async def delete_emoji(
             logger.error(f"Failed to delete emoji {eid}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "error": {"code": 500, "message": "Internal server error"}
-                },
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
     except HTTPException:
         raise

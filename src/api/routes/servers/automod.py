@@ -186,11 +186,17 @@ async def update_server_automod_rule(
         if body.actions is not None:
             update_kwargs["actions"] = [a.model_dump() for a in body.actions]
         if body.exempt_roles is not None:
-            update_kwargs["exempt_roles"] = [_parse_id(r, "exempt role ID") for r in body.exempt_roles]
+            update_kwargs["exempt_roles"] = [
+                _parse_id(r, "exempt role ID") for r in body.exempt_roles
+            ]
         if body.applied_roles is not None:
-            update_kwargs["applied_roles"] = [_parse_id(r, "applied role ID") for r in body.applied_roles]
+            update_kwargs["applied_roles"] = [
+                _parse_id(r, "applied role ID") for r in body.applied_roles
+            ]
         if body.exempt_channels is not None:
-            update_kwargs["exempt_channels"] = [_parse_id(c, "exempt channel ID") for c in body.exempt_channels]
+            update_kwargs["exempt_channels"] = [
+                _parse_id(c, "exempt channel ID") for c in body.exempt_channels
+            ]
         if body.priority is not None:
             update_kwargs["priority"] = body.priority
         if body.check_all is not None:

@@ -144,7 +144,10 @@ def _has_backreference_redos_risk(pattern_str: str) -> bool:
     def _quantified_at(pos: int) -> bool:
         return pos < n and (
             pattern_str[pos] in "*+?"
-            or (pattern_str[pos] == "{" and _match_quantifier(pattern_str, pos) is not None)
+            or (
+                pattern_str[pos] == "{"
+                and _match_quantifier(pattern_str, pos) is not None
+            )
         )
 
     while i < n:
@@ -162,7 +165,9 @@ def _has_backreference_redos_risk(pattern_str: str) -> bool:
                     and int(pattern_str[i + 1 : j + 1]) <= capture_count
                 ):
                     j += 1
-                if _quantified_at(j) and variable_groups.get(int(pattern_str[i + 1 : j])):
+                if _quantified_at(j) and variable_groups.get(
+                    int(pattern_str[i + 1 : j])
+                ):
                     return True
                 i = j
                 continue
@@ -227,7 +232,9 @@ def _has_backreference_redos_risk(pattern_str: str) -> bool:
             i += 1
             continue
 
-        if ch in "*+?|" or (ch == "{" and _match_quantifier(pattern_str, i) is not None):
+        if ch in "*+?|" or (
+            ch == "{" and _match_quantifier(pattern_str, i) is not None
+        ):
             for group in open_groups:
                 if group is not None:
                     variable_groups[group] = True

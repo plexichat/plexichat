@@ -35,10 +35,10 @@ _SOURCE = Path(__file__).resolve().parents[2] / "api/routes/servers/server_crud.
 # tolerates a leading ``+`` and surrounding whitespace (both still yield a
 # plain in-range integer), so those are not in this list.
 _BAD_IDS = (
-    "-1",       # negative
-    "0",        # zero / sentinel
-    "1_2",      # underscore-separated -> 12 (PEP 515)
-    "١٢",       # Unicode (Arabic-Indic) digits -> 12
+    "-1",  # negative
+    "0",  # zero / sentinel
+    "1_2",  # underscore-separated -> 12 (PEP 515)
+    "١٢",  # Unicode (Arabic-Indic) digits -> 12
     "99000000000000000000",  # beyond 2**63-1
 )
 
@@ -104,7 +104,9 @@ def test_server_crud_uses_parse_id_and_no_bare_int_on_boundary_params():
                 if sub.func.id == "parse_id":
                     parse_calls += 1
     assert not offenders, f"bare int() on boundary id: {offenders}"
-    assert parse_calls >= 5, f"expected parse_id on every boundary id, got {parse_calls}"
+    assert parse_calls >= 5, (
+        f"expected parse_id on every boundary id, got {parse_calls}"
+    )
     assert "int(body.new_owner_id)" not in source
 
 

@@ -48,9 +48,7 @@ def _filter_blocked_dm_recipients(
             return user_ids
         relationships = rel_module
     try:
-        blocked_ids = {
-            int(x) for x in relationships.get_all_blocked_ids(actor_id)
-        }
+        blocked_ids = {int(x) for x in relationships.get_all_blocked_ids(actor_id)}
     except Exception as e:
         logger.debug(f"typing DM block lookup failed: {e}")
         return []

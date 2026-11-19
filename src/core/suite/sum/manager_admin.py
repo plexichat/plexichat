@@ -16,9 +16,7 @@ from ._shared import (
 
 
 class SumManagerAdmin(SumManagerProtocol):
-    def _require_share_authority(
-        self, workbook: Dict[str, Any], user_id: int
-    ) -> None:
+    def _require_share_authority(self, workbook: Dict[str, Any], user_id: int) -> None:
         """Require owner-level authority before changing a workbook's ACL.
 
         ``_workbook(..., mutation=True)`` deliberately lets any ``edit``

@@ -51,7 +51,10 @@ ROUTE_BANNED_METHODS = frozenset({"isdecimal"})
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -73,9 +76,7 @@ def _call_names(function):
 
 
 def _loaded_names(function):
-    return {
-        node.id for node in ast.walk(function) if isinstance(node, ast.Name)
-    }
+    return {node.id for node in ast.walk(function) if isinstance(node, ast.Name)}
 
 
 def _has_unicode_digit_check(function) -> bool:
