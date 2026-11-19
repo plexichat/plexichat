@@ -108,6 +108,46 @@ def _replay_cache_key(webhook_id: SnowflakeID, signature: bytes) -> str:
     return f"webhook:signature-seen:{webhook_id}:{digest}"
 
 
+def _claim_shared_replay_key(key: str) -> Optional[bool]:
+    """Atomically claim ``key`` in the shared cache tier.
+
+    Returns ``True`` when this caller won the claim, ``False`` when another
+    process already consumed the pair, and ``None`` when no atomic shared
+    backend is available (the caller then falls back to the in-process lock
+    plus ``cache_get``/``cache_set`` below).
+
+    A ``cache_get`` miss followed by a later ``cache_set`` is NOT atomic
+    across processes: the in-process lock serializes only one worker's
+    threads. Two API workers behind a load balancer can both observe the
+    miss, both verify the same captured signature, and both accept it within
+    the replay window. A conditional ``SET NX`` makes the consume step a
+    single-winner operation regardless of how many processes are running,
+    which is what replay protection actually requires.
+    """
+    try:
+        from src.core.database.valkey_client import (
+            ValkeyOperationError,
+            get_client,
+            is_available,
+        )
+    except Exception:  # pragma: no cover - defensive
+        return None
+    try:
+        client = get_client()
+        if not client or not is_available():
+            return None
+        set_nx = getattr(client, "set_nx", None)
+        if not callable(set_nx):  # back-compat with clients lacking SET NX
+            return None
+        return bool(set_nx(key, _REPLAY_MARKER, ttl=_REPLAY_CACHE_TTL_SECONDS))
+    except ValkeyOperationError as e:
+        logger.warning(f"Webhook replay cache: shared claim failed: {e}")
+        return None
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Webhook replay cache: unexpected shared claim error: {e}")
+        return None
+
+
 class SignatureMixin(WebhookManagerTrait):
     """Webhook payload signing with Ed25519.
 
@@ -395,8 +435,20 @@ class SignatureMixin(WebhookManagerTrait):
                 )
                 return False
 
-            # Mark this (webhook_id, signature) pair as consumed BEFORE
-            # reporting success so a racing duplicate cannot slip through.
+            # Consume the pair atomically before reporting success. With a
+            # shared cache tier, SET NX is the single-winner decision: a
+            # racing worker in ANOTHER process loses the claim and is rejected
+            # even though its Ed25519 verification succeeded. Without a shared
+            # backend, fall back to the in-process guarded cache below.
+            claimed = _claim_shared_replay_key(replay_key)
+            if claimed is True:
+                return True
+            if claimed is False:
+                logger.warning(
+                    f"Webhook signature rejected as REPLAY for {webhook_id} "
+                    "(signature already consumed by another worker)"
+                )
+                return False
             try:
                 cache_set(replay_key, _REPLAY_MARKER, ttl=_REPLAY_CACHE_TTL_SECONDS)
             except Exception as e:

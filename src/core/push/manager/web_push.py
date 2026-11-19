@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import utils.logger as logger
 from src.core.security.hardening import HardeningViolation, require_https_url
+from src.utils.security import URLValidator
 
 from .base import PushManagerBase
 
@@ -85,8 +86,9 @@ def _require_public_endpoint(endpoint: str) -> str:
     otherwise point its endpoint at ``127.0.0.1``, ``::1``, ``10.0.0.0/8`` or
     the cloud metadata address ``169.254.169.254``; pywebpush would then POST
     an (encrypted) payload straight into the internal network (SSRF). Reject
-    literal IPs in every reserved range plus internal/loopback hostnames.
-    Ordinary public DNS names are returned unchanged.
+    literal IPs in every reserved range plus internal/loopback hostnames, and
+    resolve ordinary DNS names to reject answers that point into those same
+    ranges. Only names that resolve to public addresses are returned.
     """
     parsed = urlparse(endpoint)
     # A literal backslash in the authority is a parser differential that lets
@@ -107,21 +109,35 @@ def _require_public_endpoint(endpoint: str) -> str:
         raise ValueError("endpoint has no host")
     if host in _BLOCKED_ENDPOINT_HOSTS or host.endswith(_BLOCKED_ENDPOINT_SUFFIXES):
         raise ValueError("endpoint targets an internal host")
+    # Use the canonical gate so the literal checks here cover the same ranges
+    # as every other outbound-URL boundary (CGNAT, NAT64 and IPv4-mapped IPv6
+    # in particular -- ``ipaddress.is_private`` alone misses some of them).
+    validator = URLValidator()
     address = _endpoint_address(host)
     if address is None:
-        # An ordinary DNS name; scheme/no-credentials were already checked by
-        # require_https_url. DNS-based rebinding cannot be fully prevented by
-        # pywebpush (it resolves the name itself), but literal/internal targets
-        # -- including their obfuscated inet_aton spellings -- are blocked here.
+        # An ordinary DNS name. scheme/no-credentials were already checked by
+        # require_https_url, but a *literal* check alone is not enough: an
+        # authenticated caller can register a perfectly public-looking name
+        # (e.g. ``attacker.example``) whose A/AAAA records point at
+        # 127.0.0.1, 10.0.0.0/8 or the cloud metadata address. pywebpush then
+        # resolves the name a second time and POSTs the encrypted payload
+        # straight into the internal network. Resolve it here and reject every
+        # answer that lands in a non-public range.
+        #
+        # A resolver failure is not a bypass: the transport would fail to
+        # connect to the same name for the same reason, so the endpoint is
+        # returned unchanged in that case. A name that answers with a private
+        # address, however, can never be registered/used as a push endpoint.
+        try:
+            answers = socket.getaddrinfo(host, None)
+        except (socket.gaierror, OSError):
+            return endpoint
+        for answer in answers:
+            ip_text = str(answer[4][0])
+            if validator.is_private_ip(ip_text):
+                raise ValueError("endpoint resolves to a non-public IP address")
         return endpoint
-    if (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_multicast
-        or address.is_unspecified
-    ):
+    if validator.is_private_ip(str(address)):
         raise ValueError("endpoint targets a non-public IP address")
     return endpoint
 
