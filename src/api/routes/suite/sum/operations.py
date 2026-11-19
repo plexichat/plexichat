@@ -16,6 +16,14 @@ from src.api.schemas.sum import (
 from .helpers import _error, resolve_manager as _manager
 from .router import router
 
+#: ``filters`` is a caller-supplied, JSON-encoded list of criteria carried in
+#: the query string (not the request body, which the API's body cap covers).
+#: Without a ceiling a caller can make us allocate a multi-megabyte string and
+#: ``json.loads`` it into a huge Python object before the manager's
+#: ``filters[:50]`` slice ever bounds the work.
+#: 50 small criteria are all the manager consumes, so a few KiB is generous.
+MAX_VIEWPORT_FILTERS_JSON_LENGTH = 8 * 1024
+
 
 @router.get(
     "/workbooks/{workbook_id}/sheets/{sheet_id}/viewport",
@@ -34,9 +42,18 @@ async def read_viewport(
     row_end: int = Query(50, ge=1),
     column_start: int = Query(0, ge=0),
     column_end: int = Query(20, ge=1),
-    filters: str = Query("", description="JSON-encoded list of filter criteria"),
+    filters: str = Query(
+        "",
+        max_length=MAX_VIEWPORT_FILTERS_JSON_LENGTH,
+        description="JSON-encoded list of filter criteria",
+    ),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumViewportResponse:
+    # Defence in depth: FastAPI enforces ``max_length`` on the request path,
+    # but direct callers (and any future framework change that skips that
+    # validation) must not be able to hand an unbounded blob to ``json.loads``.
+    if filters and len(filters) > MAX_VIEWPORT_FILTERS_JSON_LENGTH:
+        raise HTTPException(status_code=400, detail="filters JSON is too large")
     try:
         import json as json_module
 
