@@ -23,6 +23,7 @@ from .common import (
     raise_bad_request,
     raise_forbidden,
     raise_internal,
+    resolve_participant_service,
 )
 
 router = APIRouter()
@@ -259,9 +260,7 @@ async def send_voice_message(
 
     db = api.get_db()
     messaging = api.get_messaging()
-    participant_svc = (
-        getattr(messaging, "_participant_svc", None) if messaging else None
-    )
+    participant_svc = resolve_participant_service(messaging)
 
     from src.core.messaging.services.voice import VoiceMessageService
 
@@ -412,9 +411,7 @@ async def upload_voice_message(
 
     db = api.get_db()
     messaging = api.get_messaging()
-    participant_svc = (
-        getattr(messaging, "_participant_svc", None) if messaging else None
-    )
+    participant_svc = resolve_participant_service(messaging)
 
     from src.core.messaging.services.voice import VoiceMessageService
 

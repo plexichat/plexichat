@@ -9,7 +9,7 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.messaging.services.scheduled import ScheduledMessageService
 from src.core.security.hardening import reject_control_characters
 from src.api.routes.users.helpers import require_user_token
-from .common import parse_id, call_or_raise
+from .common import parse_id, call_or_raise, resolve_participant_service
 
 router = APIRouter()
 
@@ -63,9 +63,7 @@ async def create_scheduled_message(
 
     db = api.get_db()
     messaging = api.get_messaging()
-    participant_svc = (
-        getattr(messaging, "_participant_svc", None) if messaging else None
-    )
+    participant_svc = resolve_participant_service(messaging)
 
     svc = ScheduledMessageService(db, participant_svc)
 

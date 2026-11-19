@@ -374,6 +374,17 @@ class MinimalBodyMixin(DataGeneratorBase):
                 if self.ctx.test_conversation_id:
                     body["conversation_id"] = str(self.ctx.test_conversation_id)
 
+            if "users/@me/last-chat" in path and method == "PUT":
+                # Saving last-chat state now enforces participation in the
+                # target conversation (fails closed when the checker is
+                # missing). A schema-invented snowflake would be rejected as
+                # "not a participant", so point at the seeded conversation the
+                # test user actually belongs to.
+                if self.ctx.test_conversation_id:
+                    body["conversation_id"] = str(self.ctx.test_conversation_id)
+                if self.ctx.test_message_id:
+                    body["last_message_id"] = str(self.ctx.test_message_id)
+
             if "auth/devices/trust" in path or "auth/devices/untrust" in path:
                 # Trust operations only succeed for fingerprints this
                 # account authenticated from; use the seeded test device.

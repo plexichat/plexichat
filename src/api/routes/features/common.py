@@ -39,6 +39,35 @@ def raise_internal(message: str = "Internal server error") -> NoReturn:
     )
 
 
+def resolve_participant_service(messaging):
+    """Return the messaging module's live ParticipantService, or None.
+
+    The module object exposes its ``MessagingManager`` as ``_manager`` (and some
+    builds as ``_message_svc``); the real ``ParticipantService`` is the manager's
+    ``_participant_svc`` attribute -- *not* an attribute of the module itself.
+    Feature routes historically used ``getattr(messaging, "_participant_svc",
+    None)``, which is always ``None`` in a healthy app. That silently disabled
+    the participation checks in the messaging services (fail-open). Those
+    services now fail CLOSED when the checker is missing, so routes must resolve
+    the real service here or every legitimate request is denied with 403.
+
+    Returns None only when messaging is genuinely unavailable; callers fail
+    closed in that case (which is the intended behavior).
+    """
+    if messaging is None:
+        return None
+    manager = getattr(messaging, "_manager", None)
+    if manager is None:
+        manager = getattr(messaging, "_message_svc", messaging)
+    svc = getattr(manager, "_participant_svc", None)
+    if svc is None:
+        # Fall back to the module-level is_participant wrapper if this build
+        # does not expose the manager's service directly.
+        if callable(getattr(messaging, "is_participant", None)):
+            return messaging
+    return svc
+
+
 def parse_id(value: str, field: str = "ID") -> int:
     """Parse a positive, 64-bit-bounded decimal identifier.
 
