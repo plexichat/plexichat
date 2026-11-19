@@ -111,7 +111,15 @@ Default TTLs are resolved from `valkey.ttl.<kind>` in the application config, fa
 The in-memory tier caps at 1000 entries (with LRU-style eviction when full)
 and at roughly 8 MiB of cached values; a single value larger than the byte
 ceiling is never staged. Warm L1 reads are lock-free; only expiry cleanup and
-writes/evictions take the tier lock.
+writes/evictions take the tier lock. Sizing a value is itself bounded: wide
+containers are sampled (head and tail, conservatively extrapolated) rather
+than walked in full, so one oversized response cannot make every cache write
+pay O(container) work before the byte cap rejects it.
+
+Pattern invalidation clears both tiers. On the Valkey side the matching keys
+are deleted in bounded batches instead of one unbounded `DEL`, so a broad
+privilege/tenant invalidation cannot block the shared backend with a single
+giant command. The set of deleted keys and the returned count are unchanged.
 
 For `@cached(l1_ttl=...)`, the process-local entry's lifetime is additionally
 capped at 30 seconds regardless of the configured `ttl`/`l1_ttl`, bounding how

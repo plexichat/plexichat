@@ -22,6 +22,14 @@ from .base import (
 from .serialization import ensure_serializable, reconstruct_object
 from .decorators import get_cache_stats
 
+# A single privilege/tenant invalidation can match a very large keyspace
+# (e.g. ``has_perm:*`` across every member of a large server). Passing all of
+# those keys to one ``DEL`` builds a giant command and blocks the shared
+# backend for the whole batch. Delete in bounded chunks instead: the net set
+# of removed keys and the returned count are identical, but no single command
+# can monopolise the Valkey event loop.
+_INVALIDATE_DELETE_BATCH = 500
+
 
 def cache_get(key: str) -> Optional[Any]:
     """Get a value from cache, falling back to in-memory cache."""
@@ -143,7 +151,11 @@ def invalidate_pattern(pattern: str) -> int:
     try:
         keys = client.keys(pattern)
         if keys:
-            count = client.delete(*keys)
+            count = 0
+            for start in range(0, len(keys), _INVALIDATE_DELETE_BATCH):
+                count += int(
+                    client.delete(*keys[start : start + _INVALIDATE_DELETE_BATCH])
+                )
             logger.debug(
                 f"Cache INVALIDATE pattern '{pattern}': {count} keys from Valkey, {mem_count} from Memory"
             )

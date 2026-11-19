@@ -5,10 +5,11 @@ Provides CacheError exception and in-memory cache dictionary
 used as fallback when Valkey is unavailable.
 """
 
+import itertools
 import sys
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import utils.config as config
 
@@ -62,29 +63,82 @@ class CacheError(Exception):
     pass
 
 
-def _approx_cache_size(value: Any) -> int:
-    """Cheap, shallow estimate of a cached value's footprint in bytes.
+# A wide container is sampled, never walked in full, on the cache write path.
+# The old loop iterated every element of a dict/list before the byte cap could
+# reject the value: a single 1M-element payload cost ~400 ms to size on every
+# write (and again on every ``_reconcile_sizes_locked`` rebuild), so one
+# oversized response could pin a worker and serialize writers behind the tier
+# lock. Sampling the head *and* tail keeps the cost O(1) in the container size
+# while still observing a single oversized element parked at either end.
+_SIZE_SAMPLE_ITEMS = 256
 
-    This is a bound, not an exact measurement: one container level is walked
+
+def _sample_items(items: Iterable[Any], count: int) -> Iterable[Any]:
+    """Yield at most ``_SIZE_SAMPLE_ITEMS`` distinct items from ``items``.
+
+    ``count`` is the container length, so the head/tail windows never overlap
+    for small containers (their estimate stays exactly the old, full sum) and
+    cover at most one sample-budget of elements for large ones. The tail is
+    walked via ``reversed`` where available, which is O(1) to start for dicts
+    and sequences; unordered/non-reversible containers (sets) contribute only
+    their head.
+    """
+    head = min(count, _SIZE_SAMPLE_ITEMS // 2)
+    tail = min(count - head, _SIZE_SAMPLE_ITEMS - head)
+    yield from itertools.islice(iter(items), head)
+    if tail:
+        try:
+            reverse_iter = reversed(items)  # type: ignore[call-overload]
+        except TypeError:
+            return
+        yield from itertools.islice(reverse_iter, tail)
+
+
+def _approx_cache_size(value: Any) -> int:
+    """Cheap, shallow, *bounded-work* estimate of a value's footprint in bytes.
+
+    This is a bound, not an exact measurement: one container level is sampled
     so a large list/dict of strings is sized meaningfully, while deeply nested
-    or unknown objects fall back to their own ``getsizeof``. The estimate is
-    deliberately bounded so the hot write path cannot itself be DoS'd by a
-    deeply nested payload.
+    or unknown objects fall back to their own ``getsizeof``. Both the nesting
+    depth and the number of visited elements are bounded, so the hot write
+    path cannot itself be DoS'd by a hostile payload. Unseen elements are
+    extrapolated using the largest sampled element, so the estimate stays on
+    the safe (over-estimating) side of the byte cap.
     """
     try:
         if isinstance(value, (str, bytes, bytearray)):
             return len(value) + 64
         if isinstance(value, dict):
             total = sys.getsizeof(value) + 64
-            for key, item in value.items():
-                total += (len(key) if isinstance(key, str) else 32) + 64
-                total += sys.getsizeof(item) + 32
-            return total
+            count = len(value)
+            sampled = 0
+            sampled_bytes = 0
+            max_pair = 0
+            for key, item in _sample_items(value.items(), count):
+                pair = (
+                    (len(key) if isinstance(key, str) else 32)
+                    + 96
+                    + sys.getsizeof(item)
+                )
+                sampled += 1
+                sampled_bytes += pair
+                max_pair = max(max_pair, pair)
+            # Unsampled elements are charged at the largest sampled rate, so a
+            # short sample can never make a wide container look smaller than
+            # its measured elements suggest.
+            return total + sampled_bytes + max_pair * (count - sampled)
         if isinstance(value, (list, tuple, set, frozenset)):
             total = sys.getsizeof(value) + 64
-            for item in value:
-                total += sys.getsizeof(item) + 32
-            return total
+            count = len(value)
+            sampled = 0
+            sampled_bytes = 0
+            max_item = 0
+            for item in _sample_items(value, count):
+                item_size = sys.getsizeof(item) + 32
+                sampled += 1
+                sampled_bytes += item_size
+                max_item = max(max_item, item_size)
+            return total + sampled_bytes + max_item * (count - sampled)
         return sys.getsizeof(value) + 64
     except Exception:
         # Fail closed with a conservative estimate rather than letting a
