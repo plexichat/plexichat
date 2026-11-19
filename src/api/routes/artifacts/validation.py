@@ -8,6 +8,8 @@ from urllib.parse import quote
 
 from fastapi import HTTPException, status
 
+from src.core.security.hardening import SNOWFLAKE_MAX
+
 from .constants import (
     MAX_FILENAME_LEN,
     MAX_ID_LEN,
@@ -15,12 +17,19 @@ from .constants import (
     VALID_EXPORT_FORMATS,
 )
 
+# ``str.isdecimal()`` is true for Unicode decimal digits such as Arabic-Indic
+# ``"٤٢"`` or fullwidth ``"４２"``, and ``int()`` turns them into the same value
+# as their ASCII spelling. That is a parser differential: an upstream
+# ASCII-only gate (or another language's ``\d``) reads those bytes as invalid,
+# so a homoglyph id must never clear this boundary. Require ASCII digits only.
+_ASCII_DIGITS = re.compile(r"[0-9]+")
+
 
 def parse_snowflake_id(value: Optional[str], field: str) -> Optional[int]:
     if value is None:
         return None
     text = str(value).strip()
-    if not text or len(text) > MAX_ID_LEN or not text.isdecimal():
+    if not text or len(text) > MAX_ID_LEN or not _ASCII_DIGITS.fullmatch(text):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": f"Invalid {field}"}},
@@ -32,7 +41,7 @@ def parse_snowflake_id(value: Optional[str], field: str) -> Optional[int]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": f"Invalid {field}"}},
         ) from None
-    if parsed <= 0 or parsed > (2**63 - 1):
+    if parsed <= 0 or parsed > SNOWFLAKE_MAX:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": f"Invalid {field}"}},
