@@ -81,6 +81,8 @@ CREATE INDEX IF NOT EXISTS idx_thread_msg_thread_created
     ON thread_messages(thread_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_thread_msg_message ON thread_messages(message_id);
 CREATE INDEX IF NOT EXISTS idx_thread_msg_user ON thread_messages(user_id);
+-- Cross-thread recency.
+CREATE INDEX IF NOT EXISTS idx_thread_msg_created ON thread_messages(created_at);
 """
 
 
