@@ -41,6 +41,22 @@ CREATE TABLE IF NOT EXISTS dm_spam_events (
 CREATE INDEX IF NOT EXISTS idx_dm_spam_evt_sender ON dm_spam_events(sender_id);
 CREATE INDEX IF NOT EXISTS idx_dm_spam_evt_created ON dm_spam_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_dm_spam_evt_recipient_created ON dm_spam_events(recipient_id, created_at);
+
+-- Shared rate/duplicate counters. Valkey is the primary counter store, but
+-- when it is unreachable every worker must still observe the SAME counter:
+-- a per-process dict would enforce the DM rate/duplicate limits N times over
+-- under --scale backend=N. A row is one (key, fixed-window) bucket; rows are
+-- swept by window age and hard-capped, so the table stays bounded.
+CREATE TABLE IF NOT EXISTS dm_spam_counters (
+    id INTEGER PRIMARY KEY,
+    cache_key TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (cache_key, window_start)
+);
+
+-- Window-age sweep and oldest-first cap queries both order/filter here.
+CREATE INDEX IF NOT EXISTS idx_dm_spam_counter_window ON dm_spam_counters(window_start);
 """
 
 

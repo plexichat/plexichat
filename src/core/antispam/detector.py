@@ -4,10 +4,15 @@ DM Spam Detector - Anti-spam heuristics for direct messages.
 Provides rate limiting, duplicate message detection, and pattern-based
 spam filtering for DM conversations to protect users from harassment and spam.
 
-Counter state lives in an atomic record-and-count window primitive:
-a Valkey INCR+EXPIRE Lua script when Valkey is reachable (limits hold
-across every worker), or a process-local locked dict as fallback
-(per-worker enforcement only - degradation is logged once).
+Counter state lives in an atomic record-and-count window primitive with
+three tiers, all of which stay correct under ``--scale backend=N``:
+
+1. Valkey INCR+EXPIRE Lua script (preferred): one shared counter per key.
+2. A shared, windowed SQL table when Valkey is unreachable: every worker
+   touches the same row, so the limit is still enforced GLOBALLY (a local
+   dict here would let N workers each spend the full budget, i.e. Nx spam).
+3. A bounded process-local dict only when the shared database is also
+   unreachable. Degradation is logged once (see ``_warn_valkey_down``).
 """
 
 import fnmatch
@@ -43,6 +48,17 @@ _LOCAL_WINDOWS: Dict[str, List[float]] = {}
 _LOCAL_WINDOWS_LOCK = threading.Lock()
 _LOCAL_WINDOW_MAX_KEYS = 50_000
 _VALKEY_DOWN_WARNED = False
+
+# Tier 2: shared SQL counters. ``dm_spam_counters`` is created by the dmspam
+# schema; the lazy-create guard below also covers installs whose initial
+# migration predates the table. Rows carry a fixed-window start (TTL-like
+# expiry via the sweep) and the table is hard-capped so a key flood cannot
+# grow it without bound.
+_SHARED_COUNTER_TABLE_READY = False
+_SHARED_COUNTER_SWEEP_AT = 0.0
+_SHARED_COUNTER_MAX_ROWS = 50_000
+_SHARED_COUNTER_SWEEP_INTERVAL_S = 60.0
+_SHARED_COUNTER_LOCK = threading.Lock()
 
 # Recipient-configured burst parameters come from a JSON/store row and were
 # previously coerced with bare int(): a threshold of 10**9 with a 10**9-second
@@ -180,32 +196,42 @@ def _row_dict(row: Any) -> Dict[str, Any]:
 
 
 def reset_local_windows() -> None:
-    """Clear process-local counters (used on detector re-init / tests)."""
+    """Reset counter state (used on detector re-init / tests)."""
+    global _SHARED_COUNTER_TABLE_READY, _SHARED_COUNTER_SWEEP_AT
     with _LOCAL_WINDOWS_LOCK:
         _LOCAL_WINDOWS.clear()
+    with _SHARED_COUNTER_LOCK:
+        _SHARED_COUNTER_TABLE_READY = False
+        _SHARED_COUNTER_SWEEP_AT = 0.0
 
 
-def _warn_valkey_down(detail: Any) -> None:
-    """Log the multi-worker degradation exactly once until process restart."""
+def _warn_valkey_down(detail: Any, tier: str) -> None:
+    """Log the counter-store degradation exactly once until process restart."""
     global _VALKEY_DOWN_WARNED
     if _VALKEY_DOWN_WARNED:
         return
     _VALKEY_DOWN_WARNED = True
     logger.warning(
         f"DM spam counters: Valkey unavailable ({detail}); falling back to "
-        "per-process tracking - rate/duplicate limits are enforced per worker "
-        "until Valkey recovers"
+        f"{tier} - rate/duplicate limits stay enforced until Valkey recovers"
     )
 
 
 class AtomicWindowCounter:
     """Atomic record-and-count fixed-window limiter.
 
-    Valkey path: ``INCR`` with first-hit ``EXPIRE`` runs atomically server-side,
-    so concurrent requests and multiple worker processes all observe the same
-    counter. Fallback path: a process-local lock-protected dict, which keeps
-    limits correct within a single worker only.
+    Tiers (see module docstring): a shared Valkey counter, then a shared
+    windowed SQL counter, then a bounded process-local dict as a last resort.
+    Only the last tier is per-worker; every other tier holds across
+    ``--scale backend=N``.
     """
+
+    def __init__(self) -> None:
+        self._db: Optional[Any] = None
+
+    def configure(self, db: Optional[Any]) -> None:
+        """Bind the shared database used when Valkey is unreachable."""
+        self._db = db
 
     def record_and_count(
         self, key: str, now_s: float, window_s: int, limit: int
@@ -215,6 +241,7 @@ class AtomicWindowCounter:
         The occurrence is ALWAYS recorded - including when it trips the limit -
         so blocked attempts keep applying pressure inside the window.
         """
+        degraded_detail: Optional[BaseException] = None
         client = get_client()
         if client is not None and is_available():
             try:
@@ -223,8 +250,134 @@ class AtomicWindowCounter:
                 )
                 return current <= limit
             except ValkeyOperationError as e:
-                _warn_valkey_down(e)
+                degraded_detail = e
+
+        # Valkey is down: never silently drop to a per-worker counter while a
+        # shared store is still reachable. The SQL tier is bounded and swept,
+        # so it cannot become an unbounded registry keyed by user/conversation.
+        tier = "bounded process-local counters"
+        if self._db is not None:
+            try:
+                result = self._record_shared(key, now_s, window_s, limit, self._db)
+                tier = "shared SQL counters"
+                if degraded_detail is not None:
+                    _warn_valkey_down(degraded_detail, tier)
+                return result
+            except Exception as e:
+                if degraded_detail is not None:
+                    _warn_valkey_down(
+                        f"{degraded_detail}; shared SQL counters failed: {e}", tier
+                    )
+                # A DB failure must not crash the DM send path; the local tier
+                # keeps the pre-existing behaviour (no new fail-open).
+        if degraded_detail is not None:
+            _warn_valkey_down(degraded_detail, tier)
         return self._record_local(key, now_s, window_s, limit)
+
+    @staticmethod
+    def _ensure_shared_table(db: Any) -> None:
+        """Create the counter table once, including on pre-table installs."""
+        global _SHARED_COUNTER_TABLE_READY
+        if _SHARED_COUNTER_TABLE_READY:
+            return
+        with _SHARED_COUNTER_LOCK:
+            if _SHARED_COUNTER_TABLE_READY:
+                return
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS dm_spam_counters ("
+                "id INTEGER PRIMARY KEY, "
+                "cache_key TEXT NOT NULL, "
+                "window_start INTEGER NOT NULL, "
+                "count INTEGER NOT NULL DEFAULT 0, "
+                "UNIQUE (cache_key, window_start))"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dm_spam_counter_window "
+                "ON dm_spam_counters(window_start)"
+            )
+            _SHARED_COUNTER_TABLE_READY = True
+
+    @staticmethod
+    def _sweep_shared(db: Any, now_s: float) -> None:
+        """Expire old windows and hard-cap the shared table (TTL + bound)."""
+        global _SHARED_COUNTER_SWEEP_AT
+        with _SHARED_COUNTER_LOCK:
+            if now_s - _SHARED_COUNTER_SWEEP_AT < _SHARED_COUNTER_SWEEP_INTERVAL_S:
+                return
+            _SHARED_COUNTER_SWEEP_AT = now_s
+
+        # A window never lives longer than the largest allowed config window.
+        cutoff = int(now_s) - MAX_FILTER_WINDOW_SECONDS - 1
+        db.execute("DELETE FROM dm_spam_counters WHERE window_start < ?", (cutoff,))
+        # Oldest-first trim so a flood of distinct (user, conversation, hash)
+        # keys cannot grow the table without limit. Delete only the EXCESS
+        # rows; selecting from offset 0 would wipe every live counter.
+        total = db.fetch_one("SELECT COUNT(*) AS n FROM dm_spam_counters")
+        excess = (int(total["n"]) if total else 0) - _SHARED_COUNTER_MAX_ROWS
+        if excess > 0:
+            overflow = db.fetch_all(
+                "SELECT id FROM dm_spam_counters "
+                "ORDER BY window_start ASC, id ASC LIMIT ?",
+                (excess,),
+            )
+            if overflow:
+                ids = [row["id"] for row in overflow]
+                placeholders = ",".join("?" for _ in ids)
+                db.execute(
+                    f"DELETE FROM dm_spam_counters WHERE id IN ({placeholders})",
+                    tuple(ids),
+                )
+
+    @staticmethod
+    def _record_shared(
+        key: str, now_s: float, window_s: int, limit: int, db: Any
+    ) -> bool:
+        """Atomic UPDATE-first upsert against the shared SQL counter."""
+        window_s = int(window_s)
+        now = int(now_s)
+        window_start = now - (now % window_s)
+
+        AtomicWindowCounter._ensure_shared_table(db)
+
+        update = (
+            "UPDATE dm_spam_counters SET count = count + 1 "
+            "WHERE cache_key = ? AND window_start = ?"
+        )
+        params = (key, window_start)
+        cur = db.execute(update, params)
+        if getattr(cur, "rowcount", 0) > 0:
+            row = db.fetch_one(
+                "SELECT count FROM dm_spam_counters "
+                "WHERE cache_key = ? AND window_start = ?",
+                params,
+            )
+            count = int(row["count"] if row else 1)
+        else:
+            try:
+                db.execute(
+                    "INSERT INTO dm_spam_counters "
+                    "(id, cache_key, window_start, count) "
+                    "VALUES (?, ?, ?, 1)",
+                    (generate_id(), key, window_start),
+                )
+                count = 1
+            except Exception as e:
+                if not _is_unique_violation(e):
+                    raise
+                # Another worker inserted the row between our UPDATE and
+                # INSERT; re-apply as an UPDATE so its increment is not lost.
+                db.execute(update, params)
+                row = db.fetch_one(
+                    "SELECT count FROM dm_spam_counters "
+                    "WHERE cache_key = ? AND window_start = ?",
+                    params,
+                )
+                count = int(row["count"] if row else 1)
+
+        # Sweep AFTER recording so the table is left within its cap (TTL-like
+        # window expiry + hard bound) on every call, not one call late.
+        AtomicWindowCounter._sweep_shared(db, now_s)
+        return count <= int(limit)
 
     @staticmethod
     def _record_local(key: str, now_s: float, window_s: int, limit: int) -> bool:
@@ -266,6 +419,9 @@ class DMSpamDetector:
     def __init__(self, db, auth_module=None):
         self._db = db
         self._auth = auth_module
+        # The counter is process-wide (one detector graph per worker); bind the
+        # shared DB so a Valkey outage still yields one global limit.
+        _COUNTER.configure(db)
 
     def _get_timestamp(self) -> int:
         return timestamp_ms()
