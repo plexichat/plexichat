@@ -11,11 +11,14 @@ import zlib
 
 from fastapi import WebSocket
 
+import utils.logger as logger
+
 from .batching import (
     OutboundFrameBatcher,
     DEFAULT_FLUSH_INTERVAL_S,
     DEFAULT_MAX_BATCH,
     DEFAULT_QUEUE_SIZE,
+    DEFAULT_SEND_TIMEOUT_S,
 )
 from .rendering import PayloadRenderCache
 from src.core.events.snowflakes import stringify_snowflake_ids
@@ -72,6 +75,12 @@ class Connection:
     _render_cache: PayloadRenderCache = field(
         default_factory=PayloadRenderCache, repr=False
     )
+    # Ceiling for one ASGI send. A slow/stopped reader must not be able to pin
+    # this connection's writer (or the batch flush task that uses it) forever.
+    _send_timeout: float = DEFAULT_SEND_TIMEOUT_S
+    # Observable back-pressure counter: writes abandoned because the peer did
+    # not accept a frame within ``_send_timeout``.
+    _send_timeouts: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         if self.compress and self._zlib_context is None:
@@ -164,19 +173,46 @@ class Connection:
         """
         if self.state in (ConnectionState.DISCONNECTING, ConnectionState.DISCONNECTED):
             return False
+        timed_out = False
         try:
             async with self._send_lock:
-                for data in frames:
-                    if self.compress and self._zlib_context:
-                        import json
+                for index, data in enumerate(frames):
+                    try:
+                        if self.compress and self._zlib_context:
+                            import json
 
-                        json_bytes = json.dumps(data).encode("utf-8")
-                        compressed = self._zlib_context.compress(json_bytes)
-                        compressed += self._zlib_context.flush(zlib.Z_SYNC_FLUSH)
-                        await self.websocket.send_bytes(compressed)
-                    else:
-                        await self.websocket.send_json(data)
-            return True
+                            json_bytes = json.dumps(data).encode("utf-8")
+                            compressed = self._zlib_context.compress(json_bytes)
+                            compressed += self._zlib_context.flush(zlib.Z_SYNC_FLUSH)
+                            await asyncio.wait_for(
+                                self.websocket.send_bytes(compressed),
+                                timeout=self._send_timeout,
+                            )
+                        else:
+                            await asyncio.wait_for(
+                                self.websocket.send_json(data),
+                                timeout=self._send_timeout,
+                            )
+                    except asyncio.TimeoutError:
+                        # Slow-consumer defense: the ASGI send is suspended
+                        # waiting for the peer's read buffer. Never let one
+                        # stalled socket pin the writer (and the batch flush
+                        # task that shares it) indefinitely. Abandon the rest
+                        # of this batch: the peer is not accepting frames, so
+                        # retrying the remaining ones only burns time.
+                        timed_out = True
+                        self._send_timeouts += 1
+                        logger.warning(
+                            "Outbound send timed out for connection %s after "
+                            "%.3fs (slow consumer); dropping %d frame(s)",
+                            self.connection_id,
+                            self._send_timeout,
+                            len(frames) - index - 1,
+                        )
+                        if self.compress:
+                            self._zlib_context = zlib.compressobj()
+                        break
+            return not timed_out
         except Exception:
             # C6: a partially-failed compressed send leaves the shared zlib
             # context mid-stream; reusing it would emit a corrupt deflate
@@ -212,13 +248,17 @@ class Connection:
         return self._outbound_batcher
 
     async def flush_outbound(self) -> None:
-        """Flush every accepted-but-unwritten frame (e.g. before close)."""
+        """Best-effort flush of accepted frames before close.
+
+        Bounded by the batcher's drain deadline; on a stalled consumer the
+        remaining queued frames are shed rather than hanging teardown.
+        """
         batcher = self._outbound_batcher
         if batcher is not None:
             await batcher.drain()
 
     async def stop_batching(self) -> None:
-        """Cancel the flush task after a final best-effort drain."""
+        """Cancel the flush task after a final, bounded best-effort drain."""
         batcher = self._outbound_batcher
         task = self._batcher_task
         self._batcher_task = None

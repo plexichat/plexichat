@@ -22,7 +22,7 @@ WebSocket message, written in enqueue order.
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Dict, List
+from typing import Awaitable, Callable, Dict, List, Optional
 
 import utils.logger as logger
 
@@ -36,6 +36,17 @@ DEFAULT_FLUSH_INTERVAL_S = 0.01
 #: Most frames written by a single writer call (flush). Bounds the time spent
 #: in one flush so a large backlog cannot starve other loop work.
 DEFAULT_MAX_BATCH = 128
+
+#: Upper bound on a single ASGI ``send`` for one connection. A consumer that
+#: stops reading must never pin the per-connection writer (and therefore the
+#: batch flush task) forever; the timed-out frame is dropped, not retried.
+DEFAULT_SEND_TIMEOUT_S = 5.0
+
+#: Upper bound on a single :meth:`OutboundFrameBatcher.drain` call, used by
+#: connection teardown and shutdown. Without a deadline a peer that has
+#: stopped reading could pin ``flush_outbound``/``stop_batching`` forever,
+#: leaking the serving coroutine and every object it retains.
+DEFAULT_DRAIN_TIMEOUT_S = 5.0
 
 
 Frame = Dict[str, object]
@@ -140,11 +151,57 @@ class OutboundFrameBatcher:
                 self._queue.task_done()
         return len(batch)
 
-    async def drain(self) -> int:
-        """Flush until the queue is empty; return the number of frames written."""
-        total = 0
+    def _shed_queued(self) -> int:
+        """Drop every still-queued frame and count it as back-pressure.
+
+        Called when a drain hits its deadline (a stalled consumer). Frames that
+        were already handed to the writer in the current batch are gone from
+        the queue; this only accounts for the ones we have not started.
+        """
+        dropped = 0
         while True:
-            written = await self.flush_once()
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self._queue.task_done()
+            dropped += 1
+        if dropped:
+            self._dropped_frames += dropped
+            self._wakeup.clear()
+            logger.warning(
+                "Outbound drain deadline reached; shedding %d queued frame(s) "
+                "for a slow consumer",
+                dropped,
+            )
+        return dropped
+
+    async def drain(self, timeout: Optional[float] = DEFAULT_DRAIN_TIMEOUT_S) -> int:
+        """Flush the queue, then stop at ``timeout`` and shed the remainder.
+
+        A ``None`` timeout restores the old unbounded behaviour for callers that
+        deliberately want it; every production caller uses the finite default.
+        Each flush is itself bounded by the remaining budget, so a writer that
+        stalls (or ignores its own per-send timeout) cannot defeat the deadline;
+        frames still queued when the budget is exhausted are shed and counted.
+        """
+        total = 0
+        loop = asyncio.get_running_loop()
+        deadline = None
+        if timeout is not None:
+            deadline = loop.time() + max(0.0, float(timeout))
+        while True:
+            remaining = None if deadline is None else deadline - loop.time()
+            if remaining is not None and remaining <= 0:
+                self._shed_queued()
+                return total
+            try:
+                # Bound each flush too, so a writer that ignores its own
+                # timeout cannot defeat the drain deadline.
+                written = await asyncio.wait_for(self.flush_once(), timeout=remaining)
+            except asyncio.TimeoutError:
+                self._shed_queued()
+                return total
             if written == 0:
                 return total
             total += written
@@ -164,6 +221,8 @@ class OutboundFrameBatcher:
         except asyncio.CancelledError:
             # Best-effort final drain so a clean shutdown does not strand
             # already-accepted frames (e.g. the final SERVER_STATUS frame).
+            # Bounded by the default drain deadline so cancellation cannot
+            # itself hang on a stalled consumer.
             try:
                 await self.drain()
             except Exception:  # pragma: no cover - defensive on shutdown
