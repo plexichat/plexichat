@@ -108,10 +108,15 @@ class ScheduledMessageService:
                 f"Maximum {self.MAX_SCHEDULED_PER_USER} scheduled messages per user"
             )
 
-        # Check participant access
-        if self._participant_svc and not self._participant_svc.is_participant(
-            conversation_id, user_id
-        ):
+        # Authorization must fail closed. This check used to be guarded by
+        # ``if self._participant_svc``: when the messaging module was not
+        # initialised (or a manager implementation lacked the participant
+        # service), it was skipped entirely and any authenticated user could
+        # schedule a message into a conversation they do not belong to. Every
+        # other messaging write path denies when the checker is unavailable.
+        if not self._participant_svc:
+            raise PermissionError("Cannot verify conversation participation")
+        if not self._participant_svc.is_participant(conversation_id, user_id):
             raise PermissionError("Not a participant in this conversation")
 
         msg_id = self._generate_id()
