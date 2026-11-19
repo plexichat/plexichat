@@ -13,6 +13,12 @@ the lookup/SQL layer unchanged.
 Both routes now use the shared ``parse_id`` gate (ASCII digits, 1..2**63-1),
 keeping the routes' 400 contract. These tests pin that contract without a live
 database.
+
+The canonical ``parse_id``/``SnowflakeID`` grammar intentionally tolerates a
+leading ``+`` and surrounding whitespace (normalised by ``bounded_int``), so
+those spellings are not asserted as rejected for the public-user lookup. The
+feature-route gate used by the audit-log filter is stricter and rejects a
+leading ``+``.
 """
 
 from types import SimpleNamespace
