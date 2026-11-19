@@ -118,7 +118,11 @@ class FederationMixin(EndpointTesterBase):
             jr_payload = _json.dumps(
                 {
                     "instance_id": remote_id,
-                    "remote_url": "https://remote.example.invalid",
+                    # The intake gate resolves ``remote_url`` and rejects
+                    # names that do not resolve (``example.invalid`` never
+                    # does, and CI runners may have no DNS at all). A public
+                    # IP literal reaches the same SSRF rules without a lookup.
+                    "remote_url": "https://93.184.216.34",
                     "requested_by": "selftest",
                     "note": "self-test federation",
                 }

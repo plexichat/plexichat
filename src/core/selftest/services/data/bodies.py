@@ -461,7 +461,11 @@ class MinimalBodyMixin(DataGeneratorBase):
                 body = {
                     "remote_instance_id": f"test-instance-{uniq}",
                     "remote_url": "https://test.example.com",
-                    "shared_key": "test_shared_key_32_chars_long_here!",
+                    # The shared key is validated as a urlsafe token; a
+                    # human-readable placeholder with punctuation is rejected
+                    # as a ValueError, which the route reports as a generic
+                    # 400. Generate a real token like a client would.
+                    "shared_key": secrets.token_hex(16),
                 }
 
             if "bots/servers/" in path and "/approve" in path and method == "POST":
