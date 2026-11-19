@@ -111,3 +111,52 @@ def test_messaging_machine_id_env_override(monkeypatch):
     monkeypatch.setenv("PLEXICHAT_MACHINE_ID", "42")
     service = messaging_base.BaseService(db=None)
     assert service._machine_id == 42
+
+
+def test_messaging_clock_rollback_cannot_reissue_ids_across_workers(monkeypatch):
+    """N scaled workers must never reissue an ID after a backwards clock step.
+
+    Simulates ``--scale backend=N``: every worker has a distinct machine id,
+    mints an ID at millisecond T, suffers an NTP step back to T-1000, then sees
+    the clock return to T. The legacy generator accepted the rollback, reset
+    its sequence, and reissued the *exact same* ID on the way back up — a
+    duplicate primary key on every replica. The rollback must raise (mirroring
+    the main ``SnowflakeGenerator``) and leave generator state untouched so the
+    recovery millisecond produces a fresh, non-colliding sequence.
+    """
+    _clear_node_env(monkeypatch)
+    monkeypatch.setattr(messaging_base.config, "get", lambda *a, **k: {})
+
+    worker_count = 8
+    fixed_ms = 1_700_000_000_000
+    workers = []
+    for machine_id in range(worker_count):
+        monkeypatch.setenv("PLEXICHAT_MACHINE_ID", str(machine_id))
+        workers.append(messaging_base.BaseService(db=None))
+
+    # Distinct identities — the whole point of the scaled deployment.
+    assert len({w._machine_id for w in workers}) == worker_count
+
+    issued = {}
+    for worker in workers:
+        # 1. Normal mint at T.
+        monkeypatch.setattr(worker, "_get_timestamp", lambda: fixed_ms)
+        first = worker._generate_id()
+
+        # 2. NTP steps the clock backwards. This must raise, not rewind state.
+        monkeypatch.setattr(worker, "_get_timestamp", lambda: fixed_ms - 1000)
+        with pytest.raises(RuntimeError, match="Clock moved backwards"):
+            worker._generate_id()
+        assert worker._last_timestamp == fixed_ms
+
+        # 3. Clock recovers to T. The sequence must have advanced, so the ID
+        #    differs from the one minted before the rollback (no duplicate).
+        monkeypatch.setattr(worker, "_get_timestamp", lambda: fixed_ms)
+        recovered = worker._generate_id()
+        assert recovered != first
+
+        issued[worker._machine_id] = (first, recovered)
+
+    # No cross-worker collisions either, before or after recovery.
+    all_ids = [sid for pair in issued.values() for sid in pair]
+    assert len(set(all_ids)) == worker_count * 2

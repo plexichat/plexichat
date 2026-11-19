@@ -147,6 +147,16 @@ class BaseService:
         with self._id_lock:
             timestamp = self._get_timestamp()
 
+            # Mirror the main SnowflakeGenerator: a backwards clock must never
+            # be allowed to rewind ``_last_timestamp``. Without this guard a
+            # rollback (e.g. an NTP step) resets the sequence and lets a later
+            # return to the same millisecond reissue an already-used ID — a
+            # duplicate primary key across every replica of a scaled worker.
+            # The check runs before any state mutation so a rejected call
+            # leaves the counter/timestamp intact.
+            if timestamp < self._last_timestamp:
+                raise RuntimeError("Clock moved backwards")
+
             if timestamp == self._last_timestamp:
                 self._id_counter = (self._id_counter + 1) & 0xFFF  # 12 bits
                 if self._id_counter == 0:
