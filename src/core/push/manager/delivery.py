@@ -1,6 +1,7 @@
 """Delivery fan-out across a user's registered devices."""
 
 import asyncio
+import json
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
@@ -20,6 +21,19 @@ from .async_fanout import (
 MAX_TITLE_LENGTH = 256
 MAX_BODY_LENGTH = 4096
 
+# ``data`` and ``sound`` are copied into EVERY device's outbound payload just
+# like title/body. title/body were bounded but these were not: one caller
+# supplying a multi-megabyte ``data`` dict (or a giant ``sound`` string) would
+# make the fan-out serialise that blob once per device/user. Bound them at the
+# same boundary -- before any fan-out work is created. APNs/ FCM / Web Push have
+# their own per-transport limits too, but the gate here is the one that applies
+# uniformly to all three and keeps the queue/task pump bounded.
+MAX_SOUND_LENGTH = 256
+MAX_PUSH_DATA_KEYS = 64
+MAX_PUSH_DATA_KEY_LENGTH = 256
+MAX_PUSH_DATA_VALUE_BYTES = 4096
+MAX_PUSH_DATA_TOTAL_BYTES = 64 * 1024
+
 # Bounded async fan-out limits. The synchronous ``send_push``/``send_bulk_push``
 # remain for blocking callers; async callers should use the ``*_async`` variants
 # so a burst of notifications neither blocks the event loop nor spawns one task
@@ -38,6 +52,49 @@ def _bounded_text(value: Any, field: str, maximum: int) -> str:
     if len(text) > maximum:
         raise ValueError(f"{field} exceeds maximum length of {maximum}")
     return text
+
+
+def _bounded_data(value: Any) -> Dict[str, Any]:
+    """Validate and bound the ``data`` payload shared by every fan-out target.
+
+    Every transport receives this dict (FCM coerces values with ``str``, Web
+    Push ``json.dumps`` it verbatim, APNs coerces and bounds it). An unbounded
+    dict therefore multiplies its size by the number of devices/users in the
+    fan-out. Reject oversized/non-serialisable data before any work is queued,
+    and normalise non-string keys to strings so all three transports agree on
+    the shape. Raises ``ValueError`` for malformed input (callers fail closed).
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("push data must be a mapping")
+    if len(value) > MAX_PUSH_DATA_KEYS:
+        raise ValueError(f"push data exceeds {MAX_PUSH_DATA_KEYS} keys")
+
+    bounded: Dict[str, Any] = {}
+    total = 0
+    for raw_key, raw_value in value.items():
+        key = str(raw_key)
+        if not key or len(key) > MAX_PUSH_DATA_KEY_LENGTH:
+            raise ValueError("push data key is empty or too long")
+        try:
+            encoded = json.dumps(raw_value, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("push data value is not JSON serialisable") from exc
+        value_bytes = len(encoded.encode("utf-8"))
+        if value_bytes > MAX_PUSH_DATA_VALUE_BYTES:
+            raise ValueError(
+                f"push data value exceeds maximum size of "
+                f"{MAX_PUSH_DATA_VALUE_BYTES} bytes"
+            )
+        total += len(key.encode("utf-8")) + value_bytes
+        if total > MAX_PUSH_DATA_TOTAL_BYTES:
+            raise ValueError(
+                f"push data exceeds maximum total size of "
+                f"{MAX_PUSH_DATA_TOTAL_BYTES} bytes"
+            )
+        bounded[key] = raw_value
+    return bounded
 
 
 class DeliveryMixin(PushManagerBase):
@@ -70,6 +127,10 @@ class DeliveryMixin(PushManagerBase):
         """
         title = _bounded_text(title, "title", MAX_TITLE_LENGTH)
         body = _bounded_text(body, "body", MAX_BODY_LENGTH)
+        # Bound the per-device payload BEFORE the fan-out: these values are
+        # copied into every one of the user's device requests.
+        sound = _bounded_text(sound, "sound", MAX_SOUND_LENGTH)
+        data = _bounded_data(data)
 
         tokens = self.get_user_tokens(user_id)
         if not tokens:
@@ -148,6 +209,9 @@ class DeliveryMixin(PushManagerBase):
         """
         title = _bounded_text(title, "title", MAX_TITLE_LENGTH)
         body = _bounded_text(body, "body", MAX_BODY_LENGTH)
+        # Same pre-fan-out bounds as the synchronous path.
+        sound = _bounded_text(sound, "sound", MAX_SOUND_LENGTH)
+        data = _bounded_data(data)
 
         tokens = await asyncio.to_thread(self.get_user_tokens, user_id)
         if not tokens:
@@ -259,6 +323,11 @@ class DeliveryMixin(PushManagerBase):
         # Mirror send_bulk_push_async: a single bulk call may fan out to at
         # most MAX_BULK_PUSH_USERS so one caller cannot enqueue unbounded
         # work through the synchronous path (which would block the worker).
+        # Validate the shared payload once, before any per-user work, so an
+        # oversized blob cannot be re-serialised for every user in the batch.
+        title = _bounded_text(title, "title", MAX_TITLE_LENGTH)
+        body = _bounded_text(body, "body", MAX_BODY_LENGTH)
+        data = _bounded_data(data)
         users = list(user_ids)[:MAX_BULK_PUSH_USERS]
         total_sent = 0
         for user_id in users:
@@ -286,6 +355,7 @@ class DeliveryMixin(PushManagerBase):
         """
         title = _bounded_text(title, "title", MAX_TITLE_LENGTH)
         body = _bounded_text(body, "body", MAX_BODY_LENGTH)
+        data = _bounded_data(data)
         users = [int(uid) for uid in user_ids][:MAX_BULK_PUSH_USERS]
         if not users:
             return 0
