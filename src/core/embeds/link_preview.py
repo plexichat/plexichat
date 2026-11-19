@@ -11,10 +11,12 @@ Provides safe URL preview with:
 """
 
 import hashlib
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Callable, Optional, Dict, Any, List, Tuple
 from urllib.parse import quote, urlparse, urljoin
 
 import utils.logger as logger
@@ -42,7 +44,13 @@ DEFAULT_CONFIG = {
     "max_body_size": 512 * 1024,  # 512KB (streamed read cap)
     "max_redirects": 5,
     "max_image_size": 5 * 1024 * 1024,  # 5MB
-    "cache_ttl_seconds": 3600,  # 1 hour
+    "cache_ttl_seconds": 3600,  # 1 hour (persistent DB cache)
+    # Short-TTL in-process tier in front of the expensive metadata fetch.
+    # Bounded by both entry count and estimated payload bytes so a stream of
+    # distinct URLs cannot pin unbounded memory in a long-lived worker.
+    "resolution_cache_ttl_seconds": 15,
+    "resolution_cache_max_entries": 256,
+    "resolution_cache_max_bytes": 512 * 1024,
     "rate_limit_requests": 10,
     "rate_limit_window_seconds": 60,
     "proxy_images": True,
@@ -82,6 +90,159 @@ class CachedPreview:
     metadata: PreviewMetadata
     proxied_image_id: Optional[int]
     expires_at: int
+
+
+def _clone_preview_metadata(metadata: PreviewMetadata) -> PreviewMetadata:
+    """Return a detached copy so no caller can mutate a shared cache entry."""
+    return PreviewMetadata(
+        url=metadata.url,
+        title=metadata.title,
+        description=metadata.description,
+        image_url=metadata.image_url,
+        site_name=metadata.site_name,
+        embed_type=metadata.embed_type,
+        author=metadata.author,
+    )
+
+
+@dataclass
+class _ResolutionEntry:
+    """One resolved preview held in the short-TTL tier."""
+
+    metadata: PreviewMetadata
+    proxied_image_id: Optional[int]
+    expires_at: float
+    size: int
+
+
+class ResolutionCache:
+    """Thread-safe, bounded, short-TTL cache of resolved preview metadata.
+
+    ``LinkPreviewService`` still runs the full SSRF/scheme gate on *every*
+    request before consulting this cache. The cache only avoids repeating the
+    expensive remote metadata fetch, parse and image-proxy work for a URL that
+    has just been validated on this request.
+
+    Keys are the full normalized URL (scheme/host lower-cased, port preserved,
+    path/query/fragment kept verbatim), so two resources differing only in
+    path or query case cannot share an entry. Bounded by entry count *and*
+    estimated UTF-8 payload bytes; the least-recently-used entry is evicted
+    first. A single entry larger than the byte cap is simply not stored.
+    """
+
+    def __init__(
+        self,
+        ttl_seconds: float,
+        max_entries: int,
+        max_bytes: int,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl = max(0.0, float(ttl_seconds))
+        self._max_entries = max(1, int(max_entries))
+        self._max_bytes = max(1, int(max_bytes))
+        self._clock = clock
+        self._entries: "OrderedDict[str, _ResolutionEntry]" = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+        self._expirations = 0
+        self._evictions = 0
+
+    @staticmethod
+    def _entry_size(key: str, metadata: PreviewMetadata) -> int:
+        """Estimate retained bytes, including the full normalized URL key."""
+        total = 128 + len(key.encode("utf-8"))  # dataclass + key allowance
+        for value in (
+            metadata.url,
+            metadata.title,
+            metadata.description,
+            metadata.image_url,
+            metadata.site_name,
+            metadata.embed_type,
+            metadata.author,
+        ):
+            if isinstance(value, str):
+                total += len(value.encode("utf-8"))
+        return total
+
+    def get(self, key: str) -> Optional[_ResolutionEntry]:
+        """Return a detached entry on a live hit, None on miss or expiry."""
+        now = self._clock()
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                self._misses += 1
+                return None
+            if entry.expires_at <= now:
+                # Drop expired keys so stale entries cannot accumulate, and
+                # never serve them even if the clock has not advanced much.
+                del self._entries[key]
+                self._bytes -= entry.size
+                self._expirations += 1
+                self._misses += 1
+                return None
+            self._entries.move_to_end(key)
+            self._hits += 1
+            return _ResolutionEntry(
+                metadata=_clone_preview_metadata(entry.metadata),
+                proxied_image_id=entry.proxied_image_id,
+                expires_at=entry.expires_at,
+                size=entry.size,
+            )
+
+    def put(
+        self,
+        key: str,
+        metadata: PreviewMetadata,
+        proxied_image_id: Optional[int],
+    ) -> None:
+        """Store a detached copy of a successful resolution."""
+        stored = _clone_preview_metadata(metadata)
+        size = self._entry_size(key, stored)
+        expires_at = self._clock() + self._ttl
+        with self._lock:
+            old = self._entries.pop(key, None)
+            if old is not None:
+                self._bytes -= old.size
+            if size > self._max_bytes:
+                # Never retain a single payload that alone busts the byte cap.
+                return
+            while self._entries and (
+                len(self._entries) >= self._max_entries
+                or self._bytes + size > self._max_bytes
+            ):
+                _, evicted = self._entries.popitem(last=False)
+                self._bytes -= evicted.size
+                self._evictions += 1
+            self._entries[key] = _ResolutionEntry(
+                metadata=stored,
+                proxied_image_id=proxied_image_id,
+                expires_at=expires_at,
+                size=size,
+            )
+            self._bytes += size
+
+    def clear(self) -> None:
+        """Drop every cached resolution."""
+        with self._lock:
+            self._entries.clear()
+            self._bytes = 0
+
+    def stats(self) -> Dict[str, Any]:
+        """Snapshot of cache counters and current bounds."""
+        with self._lock:
+            return {
+                "hits": self._hits,
+                "misses": self._misses,
+                "expirations": self._expirations,
+                "evictions": self._evictions,
+                "size": len(self._entries),
+                "bytes": self._bytes,
+                "max_entries": self._max_entries,
+                "max_bytes": self._max_bytes,
+                "ttl_seconds": self._ttl,
+            }
 
 
 class MetaTagParser(HTMLParser):
@@ -149,6 +310,11 @@ class LinkPreviewService:
         self._url_validator = URLValidator()
         self._config = self._load_config()
         self._http_client = None
+        self._resolution_cache = ResolutionCache(
+            ttl_seconds=self._config["resolution_cache_ttl_seconds"],
+            max_entries=self._config["resolution_cache_max_entries"],
+            max_bytes=self._config["resolution_cache_max_bytes"],
+        )
 
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration with defaults."""
@@ -175,8 +341,28 @@ class LinkPreviewService:
                 raise RuntimeError("httpx is required for link previews")
         return self._http_client
 
-    def _hash_url(self, url: str) -> str:
-        """Generate the cache key hash for a URL.
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Canonicalize the full URL for use as a cache key.
+
+        Only the scheme and host are case-insensitive under RFC 3986. Path,
+        query and fragment are preserved verbatim so two resources differing
+        only in case cannot collide. IPv6 literals keep their brackets in the
+        authority so the key stays an unambiguous, full URL.
+        """
+        parsed = urlparse(url)
+        host = bracket_ip_literal((parsed.hostname or "").lower())
+        port = f":{parsed.port}" if parsed.port else ""
+        normalized = f"{parsed.scheme.lower()}://{host}{port}{parsed.path}"
+        if parsed.query:
+            normalized += f"?{parsed.query}"
+        if parsed.fragment:
+            normalized += f"#{parsed.fragment}"
+        return normalized
+
+    @classmethod
+    def _hash_url(cls, url: str) -> str:
+        """Generate the persistent cache key hash for a URL.
 
         Only the parts that RFC 3986 defines as case-insensitive -- the
         scheme and the host -- are lowercased. The previous implementation
@@ -186,15 +372,7 @@ class LinkPreviewService:
         a stored content-spoofing primitive on any host with case-sensitive
         paths. Path, query and fragment are preserved exactly.
         """
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower()
-        port = f":{parsed.port}" if parsed.port else ""
-        normalized = f"{parsed.scheme.lower()}://{host}{port}{parsed.path}"
-        if parsed.query:
-            normalized += f"?{parsed.query}"
-        if parsed.fragment:
-            normalized += f"#{parsed.fragment}"
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+        return hashlib.sha256(cls._normalize_url(url).encode("utf-8")).hexdigest()[:32]
 
     def _check_rate_limit(self, user_id: int) -> bool:
         """
@@ -707,15 +885,33 @@ class LinkPreviewService:
         if not self._consume_rate_limit(user_id):
             raise RuntimeError("Rate limit exceeded for link previews")
 
-        # Validate the URL (SSRF + scheme checks) BEFORE consulting the cache
+        # Validate the URL (SSRF + scheme checks) BEFORE consulting ANY cache
         # so a cached entry can never be served for an unvalidated/unsafe URL.
+        # This is a per-request gate: a cache hit never satisfies it, and it is
+        # never skipped just because the same URL was resolved previously.
         hostname, resolved_ip, validated_url = self._validate_url(url)
+        key = self._normalize_url(url)
 
-        # Check cache first
+        # Short-TTL, bounded in-process tier in front of the expensive remote
+        # metadata resolution. The gate above already cleared THIS url on THIS
+        # request, so serving from here cannot bypass SSRF protection.
+        if not skip_cache:
+            resolved = self._resolution_cache.get(key)
+            if resolved is not None:
+                logger.debug(f"Resolution cache hit for URL preview: {url}")
+                # get() hands back a detached copy: a later request from a
+                # different user cannot observe mutations made to this one.
+                return resolved.metadata
+
+        # Persistent cache (shared across processes) is the next tier.
         if not skip_cache:
             cached = self._get_cached_preview(url)
             if cached:
                 logger.debug(f"Cache hit for URL preview: {url}")
+                # Warm the short-TTL tier so a burst need not hit the DB again.
+                self._resolution_cache.put(
+                    key, cached.metadata, cached.proxied_image_id
+                )
                 return cached.metadata
 
         # Fetch with secure redirect handling
@@ -753,11 +949,21 @@ class LinkPreviewService:
                     # failure); do not expose the raw external URL to clients.
                     metadata.image_url = None
 
-        # Cache result
+        # Publish to both tiers. skip_cache only bypasses reads; an explicit
+        # refresh must still replace any previously cached resolution.
         self._cache_preview(url, metadata, proxied_image_id)
+        self._resolution_cache.put(key, metadata, proxied_image_id)
 
         logger.debug(f"Generated preview for: {url}")
         return metadata
+
+    def resolution_cache_stats(self) -> Dict[str, Any]:
+        """Expose resolution-cache counters for observability and tests."""
+        return self._resolution_cache.stats()
+
+    def clear_resolution_cache(self) -> None:
+        """Drop all in-process resolution cache entries."""
+        self._resolution_cache.clear()
 
     def cleanup_expired_cache(self) -> int:
         """
