@@ -143,6 +143,43 @@ class ImageCompressor:
         )
         self._format = str(self._config["format"]).strip().lower()
 
+        # Compressing the same payload with the same settings is deterministic
+        # but expensive (a full Pillow decode + re-encode). Memoize successful
+        # results under the content hash plus every parameter that changes the
+        # output bytes. The cache is bounded in entries, retained bytes and
+        # concurrent computations, so distinct uploads cannot grow it without
+        # limit and a burst of identical requests cannot fan out into N encodes.
+        self._compress_cache = ResultCache(
+            maxsize=64,
+            max_bytes=32 * 1024 * 1024,
+            sizer=lambda result: max(1, len(result.data or b"")),
+            max_inflight=4,
+        )
+
+    def _compress_key(
+        self,
+        image_data: bytes,
+        quality: Optional[CompressionQuality],
+        output_format: Optional[ImageFormat],
+    ) -> tuple:
+        """Cache key: content hash plus every option that changes the output.
+
+        Including the bounded config snapshot means a compressor rebuilt with
+        different limits/format produces a different key, so a stale result can
+        never be served after a configuration change (invalidation by key).
+        """
+        return (
+            "image-compress",
+            content_hash(image_data),
+            quality.value if quality is not None else None,
+            output_format.value if output_format is not None else None,
+            self._format,
+            self._quality,
+            self._max_dimension,
+            self._max_pixels,
+            bool(self._config["preserve_original"]),
+        )
+
     def _load_config(self) -> dict:
         """Load compression configuration."""
         media_config = config.get("media", {})
@@ -223,8 +260,44 @@ class ImageCompressor:
         quality: Optional[CompressionQuality] = None,
         output_format: Optional[ImageFormat] = None,
     ) -> CompressionResult:
+        """Compress an image, reusing a cached result for identical input.
+
+        Every bomb/polyglot and mode-flattening guard lives in
+        ``_compress_uncached`` and runs unchanged on a miss; a cache hit can
+        only be a byte-for-byte identical payload with identical settings, so
+        reuse cannot bypass validation. Failures (including rejected bombs) are
+        never cached, so a transient/invalid input cannot poison later calls.
         """
-        Compress an image.
+        if not self.is_available():
+            return self._compress_uncached(image_data, quality, output_format)
+
+        key = self._compress_key(image_data, quality, output_format)
+        cached = self._compress_cache.get(key)
+        if cached is not None:
+            return cached
+
+        result_box: list = []
+
+        def compute():
+            result = self._compress_uncached(image_data, quality, output_format)
+            result_box.append(result)
+            # Only successful results with bytes are memoized. A decompression
+            # bomb or transient failure must be re-evaluated on the next call.
+            if not result.success or result.data is None:
+                return None
+            return result
+
+        cached = self._compress_cache.get_or_compute(key, compute)
+        return cached if cached is not None else result_box[0]
+
+    def _compress_uncached(
+        self,
+        image_data: bytes,
+        quality: Optional[CompressionQuality] = None,
+        output_format: Optional[ImageFormat] = None,
+    ) -> CompressionResult:
+        """
+        Compress an image (uncached implementation).
 
         Args:
             image_data: Raw image bytes
