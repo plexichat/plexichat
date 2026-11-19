@@ -40,6 +40,16 @@ _FTS_MAX_TERM_CHARS = 64
 _FTS_MAX_RESULTS = 1000
 _FTS_MAX_OFFSET = 1_000_000
 
+# Prefix queries are the expensive shape in FTS5: ``"a"*`` forces a scan of
+# the whole term dictionary and a merge of every posting list whose term starts
+# with that prefix, regardless of the result LIMIT. The length/term caps above
+# bound the *size* of the MATCH expression but not that dictionary scan, so a
+# query of 1-2 character terms (e.g. ``a b c ... p``) still turns one request
+# into a full-index prefix merge. Terms shorter than this are matched exactly
+# (no trailing ``*``) instead; real prefix searching is preserved for terms of
+# 3+ characters, which select a tiny slice of the dictionary.
+_FTS_MIN_PREFIX_TERM_CHARS = 3
+
 
 def _bounded_page(limit, offset):
     """Clamp LIMIT/OFFSET to safe ranges before they reach SQLite.
@@ -55,11 +65,11 @@ def _bounded_page(limit, offset):
             raise HardeningViolation(f"{field} must be a finite number")
     try:
         limit = int(limit)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         limit = 25
     try:
         offset = int(offset)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         offset = 0
     return max(1, min(limit, _FTS_MAX_RESULTS)), max(0, min(offset, _FTS_MAX_OFFSET))
 
@@ -660,7 +670,12 @@ class SQLiteFTS5Indexer(BaseIndexer):
                 break
             safe_term = term.replace('"', "")[:_FTS_MAX_TERM_CHARS]
             if safe_term:
-                all_tokens.append(f'"{safe_term}"*')
+                # Only emit a prefix (*) query for terms long enough to keep
+                # the FTS5 term-dictionary scan cheap. Short terms are matched
+                # exactly so a burst of 1-2 character tokens cannot force a
+                # full-index prefix merge (see _FTS_MIN_PREFIX_TERM_CHARS).
+                prefix = "*" if len(safe_term) >= _FTS_MIN_PREFIX_TERM_CHARS else ""
+                all_tokens.append(f'"{safe_term}"{prefix}')
                 budget -= 1
 
         if not all_tokens:
