@@ -29,6 +29,7 @@ from .models import UserSetting, SettingsConfig
 __all__ = [
     "setup",
     "get_setting",
+    "get_many",
     "set_setting",
     "set_server_setting",
     "set_many",
@@ -70,6 +71,17 @@ def get_setting(user_id: int, key: str) -> Optional[str]:
     _ensure_setup()
     assert _manager is not None
     return _manager.get(user_id, key)
+
+
+def get_many(user_id: int, keys: List[str]) -> Dict[str, Optional[str]]:
+    """Read several settings for a user in bounded, user-scoped queries.
+
+    Returns one entry per requested key; the value is ``None`` for a missing
+    or unreadable key, matching :func:`get_setting`.
+    """
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.get_many(user_id, keys)
 
 
 def set_setting(user_id: int, key: str, value: str) -> UserSetting:

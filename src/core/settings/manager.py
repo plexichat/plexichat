@@ -268,6 +268,41 @@ class SettingsManager(BaseManager):
             return row.get("value")
         return None
 
+    def get_many(
+        self, user_id: SnowflakeID, keys: List[str]
+    ) -> Dict[str, Optional[str]]:
+        """Read several keys for one user in at most ``ceil(N / 500)`` queries.
+
+        A caller that needs more than one key used to loop over :meth:`get`,
+        paying one ``key = ?`` query per key (the read-side N+1). This resolves
+        every requested key with bounded ``key IN (...)`` reads. Each statement
+        keeps the ``user_id`` predicate bound alongside the key chunk, so a row
+        owned by another user is invisible and can never leak into the result
+        (fail closed, same contract as :meth:`get`).
+
+        Returns one entry per requested key. The value is the stored string, or
+        ``None`` when the row is absent or the key is not readable (legacy
+        junk) — exactly what :meth:`get` would have returned for that key.
+        """
+        result: Dict[str, Optional[str]] = {key: None for key in keys}
+        # De-duplicate before binding: repeated keys add no information and
+        # would only waste bind slots (and risk crossing the 500-key bound).
+        unique_keys = list(dict.fromkeys(keys))
+        for chunk in _key_chunks(unique_keys):
+            if not chunk:
+                continue
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                "SELECT key, value FROM user_settings "
+                f"WHERE user_id = ? AND key IN ({placeholders})",
+                (user_id, *chunk),
+            )
+            for row in rows:
+                key = row.get("key")
+                if key in result and self._is_readable_key(key):
+                    result[key] = row.get("value")
+        return result
+
     def get_one(self, user_id: SnowflakeID, key: str) -> Optional[UserSetting]:
         """
         Get a single setting as a ``UserSetting`` object using a targeted query.
@@ -679,6 +714,11 @@ class SettingsManager(BaseManager):
 
     def get_setting(self, user_id: SnowflakeID, key: str) -> Optional[str]:
         return self.get(user_id, key)
+
+    def get_settings_many(
+        self, user_id: SnowflakeID, keys: List[str]
+    ) -> Dict[str, Optional[str]]:
+        return self.get_many(user_id, keys)
 
     def delete_setting(self, user_id: SnowflakeID, key: str) -> bool:
         return self.delete(user_id, key)
