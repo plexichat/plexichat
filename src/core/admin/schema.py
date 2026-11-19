@@ -115,6 +115,12 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_admin ON admin_audit_log(admin_id);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_admin_created
     ON admin_audit_log(admin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_log(action);
+-- The cross-worker tuning audit feed filters by an exact action and pages
+-- newest-first. With only single-column indexes the planner finds the matching
+-- rows via idx_admin_audit_action and then materialises a temporary B-tree to
+-- order them; a composite leading action / trailing created_at index serves
+-- the whole query in one ordered scan.
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action_created ON admin_audit_log(action, created_at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_status ON admin_audit_log(status);
