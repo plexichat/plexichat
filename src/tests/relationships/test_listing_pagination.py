@@ -11,7 +11,7 @@ from typing import Any, cast
 from types import SimpleNamespace
 
 import src.api as api
-from src.api.routes.relationships.listing import ListingMixin
+from src.api.routes.relationships.listing import _build_relationship_list
 
 
 def _friend(user_id, friend_id, created_at=1):
@@ -81,11 +81,9 @@ def test_page_only_hydrates_visible_ids(monkeypatch):
 
     auth.get_user_profiles_bulk = recording
 
-    token = SimpleNamespace(user_id=1)
-    # Bypass the @cached wrapper to exercise the route body directly.
-    result = cast(Any, ListingMixin.get_relationships).__wrapped__(
-        ListingMixin(), current_user=token, limit=2, offset=2
-    )
+    token = SimpleNamespace(user_id=1, token_type="user")
+    # Exercise the uncached cold-path builder directly.
+    result = _build_relationship_list(current_user=token, limit=2, offset=2)
 
     assert user_calls == [{12, 13}]
     assert cast(Any, fake_bulk).calls == [(1, {12, 13})]
@@ -102,10 +100,8 @@ def test_full_page_preserves_status_message_and_blocked_offline(monkeypatch):
         blocked=[_blocked(40)],
     )
 
-    token = SimpleNamespace(user_id=1)
-    result = cast(Any, ListingMixin.get_relationships).__wrapped__(
-        ListingMixin(), current_user=token, limit=100, offset=0
-    )
+    token = SimpleNamespace(user_id=1, token_type="user")
+    result = _build_relationship_list(current_user=token, limit=100, offset=0)
 
     assert [item.user_id for item in result] == ["10", "20", "30", "40"]
     assert [item.status for item in result] == [

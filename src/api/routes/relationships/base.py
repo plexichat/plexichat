@@ -60,8 +60,17 @@ class RelationshipsBase:
             if normalized_id in seen_ids:
                 continue
             seen_ids.add(normalized_id)
-            # The cached key for a relationship listing route is
-            # ``relationships_api:<Router repr>:current_user:TokenInfo:<uid>``.
-            # The leading router-instance segment must be wildcarded so the
-            # invalidation glob actually matches the generated keys.
-            invalidate_pattern(f"{prefix}:*:current_user:TokenInfo:{normalized_id}:*")
+            # The listing key is built by ``authenticated_cache_key`` over the
+            # module-level cached loader, so the real shape is:
+            #   relationships_api:current_user:TokenInfo:<uid>:limit:...:offset:...
+            # The @cached decorator drops a bound ``self`` from the key, so
+            # there is NO router-instance segment to wildcard. A leading
+            # ``*:`` never matches real keys and leaves listings stale for the
+            # whole TTL -- every mutation looked like it invalidated but did
+            # not. Match the exact user-token shape instead.
+            invalidate_pattern(f"{prefix}:current_user:TokenInfo:{normalized_id}:*")
+            # Bot credentials live in a dedicated namespace whose trailing id
+            # is the *owner's* user_id. Drop every bot entry for this account
+            # too, so a stale bot-partitioned page cannot survive a mutation
+            # that changes the underlying relationship graph.
+            invalidate_pattern(f"{prefix}:bot:*:{normalized_id}:*")

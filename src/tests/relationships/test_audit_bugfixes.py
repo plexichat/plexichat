@@ -19,8 +19,14 @@ from src.api.routes.relationships.base import RelationshipsBase
 class TestRel1CacheInvalidationPattern:
     """REL-1: the invalidation glob must match the generated cache keys."""
 
-    def test_invalidation_pattern_wildcards_router_segment(self, monkeypatch):
-        """The pattern must include a wildcard for the router-instance segment."""
+    def test_invalidation_patterns_match_real_key_shapes(self, monkeypatch):
+        """Globs must match the keys the cached loader actually generates.
+
+        The @cached decorator drops the bound ``self`` from the key, so real
+        listing keys have no router-instance segment. A leading ``*:`` (the
+        old shape) therefore never matched and left listings stale. Bot
+        credentials live in their own namespace and must be dropped too.
+        """
         import src.api.routes.relationships.base as base_mod
 
         captured = {"patterns": []}
@@ -36,35 +42,50 @@ class TestRel1CacheInvalidationPattern:
         RelationshipsBase._invalidate_relationship_list_cache(cast(Any, None), 1, 2)
 
         # Presence reads cache the viewer-specific visible body, so a
-        # relationship mutation drops them before the listing entries.
-        assert captured["patterns"][0] == "presence_read_api:*"
-        listings = captured["patterns"][1:]
-        assert listings == [
-            "relationships_api:*:current_user:TokenInfo:1:*",
-            "relationships_api:*:current_user:TokenInfo:2:*",
+        # relationship mutation drops them before the listing entries. Each
+        # user gets a user-token glob and a bot-namespace glob.
+        assert captured["patterns"] == [
+            "presence_read_api:*",
+            "relationships_api:current_user:TokenInfo:1:*",
+            "relationships_api:bot:*:1:*",
+            "relationships_api:current_user:TokenInfo:2:*",
+            "relationships_api:bot:*:2:*",
         ]
-        assert all(":current_user:TokenInfo:" in p for p in listings)
+        assert all(p.startswith("relationships_api:") for p in captured["patterns"][1:])
 
     def test_pattern_matches_generated_listing_key(self):
-        """The pattern matches the key format produced for a listing route.
+        """The glob matches the *real* cache key produced by the loader.
 
-        The real listing key carries the router-instance segment, the
-        ``TokenInfo:`` segment, and trailing ``:limit:...:offset:...`` segments::
+        The @cached decorator drops the bound ``self``, so the key is::
 
-            relationships_api:<Router repr>:current_user:TokenInfo:<uid>:limit:int:100:offset:int:0
+            relationships_api:current_user:TokenInfo:<uid>:limit:int:100:offset:int:0
 
-        The corrected glob ``relationships_api:*:current_user:TokenInfo:<uid>:*``
-        matches this; the previous glob (missing ``TokenInfo:`` and the trailing
-        ``*``) never matched, so invalidation was a silent no-op.
+        There is no router-instance segment. The glob
+        ``relationships_api:current_user:TokenInfo:<uid>:*`` matches it; the
+        previous globs (missing ``TokenInfo:``/trailing ``*``, or assuming a
+        router segment via a leading ``*:``) never matched, so invalidation
+        was a silent no-op.
         """
-        generated_key = (
-            "relationships_api:RelationshipsRouter:<...>:"
-            "current_user:TokenInfo:42:limit:int:100:offset:int:0"
+        from src.api.routes.users.helpers import authenticated_cache_key
+        from src.api.routes.relationships.listing import (
+            _RELATIONSHIP_LIST_CACHE_PREFIX,
         )
-        new_pattern = "relationships_api:*:current_user:TokenInfo:42:*"
-        old_pattern = "relationships_api:*:current_user:*:42"
-        assert fnmatch.fnmatch(generated_key, new_pattern)
-        assert not fnmatch.fnmatch(generated_key, old_pattern)
+
+        token = type(
+            "TokenInfo", (), {"user_id": 42, "token_type": "user", "account_id": 42}
+        )()
+        generated_key = authenticated_cache_key(_RELATIONSHIP_LIST_CACHE_PREFIX)(
+            current_user=token, limit=100, offset=0
+        )
+        assert fnmatch.fnmatch(
+            generated_key, "relationships_api:current_user:TokenInfo:42:*"
+        )
+        assert not fnmatch.fnmatch(
+            generated_key, "relationships_api:*:current_user:TokenInfo:42:*"
+        )
+        assert not fnmatch.fnmatch(
+            generated_key, "relationships_api:*:current_user:*:42"
+        )
 
 
 class TestRel3FriendRequestMessageLength:
