@@ -5,8 +5,20 @@ Format: [1-bit unused][41-bit timestamp][5-bit datacenter][5-bit worker][12-bit 
 
 Supports auto-derived IDs from machine characteristics for single-machine deployments
 and environment variable configuration for distributed deployments.
+
+Scaling notes
+-------------
+* The hostname/PID -> node-identity derivation is cached: the digest inputs are
+  stable for a process, so hashing them on every generator construction (twice,
+  historically — once per 5-bit field) was pure overhead. The cache is keyed by
+  hostname so distinct replicas and the random fallback still stay distinct.
+* Sequence numbers are reserved in contiguous batches under the lock, then
+  served from a per-thread cache with no lock. The lock is taken once per batch
+  instead of once per ID, while reservations stay disjoint (multi-worker
+  uniqueness) and the strict backwards-clock guard is preserved.
 """
 
+import functools
 import hashlib
 import os
 import threading
@@ -14,6 +26,21 @@ import time
 from typing import Dict, Optional
 
 import utils.logger as logger
+
+
+@functools.lru_cache(maxsize=256)
+def _node_id_from_host(hostname: str, pid: int) -> int:
+    """Derive the stable 10-bit node identity for a (hostname, pid) pair.
+
+    Cached because both inputs are constant for the life of a process: hashing
+    the hostname on every generator construction — historically twice, once
+    for the worker id and once for the datacenter id — is wasted work. Keying
+    the cache by hostname keeps the scaled-worker guarantee intact: two
+    replicas with different hostnames derive different identities, and the
+    random fallback hostname is unique per call.
+    """
+    digest = hashlib.sha256(hostname.encode()).digest()
+    return (int.from_bytes(digest[:2], "big") & 0x3FF) ^ (pid & 0x3FF)
 
 
 class SnowflakeGenerator:
@@ -25,6 +52,11 @@ class SnowflakeGenerator:
     For distributed deployments, set PLEXICHAT_WORKER_ID and PLEXICHAT_DATACENTER_ID.
     """
 
+    # Number of sequence numbers reserved per lock acquisition. The 12-bit
+    # sequence space holds 4096 values per millisecond, so 256 keeps the lock
+    # acquisition rate low without wastefully burning through a millisecond.
+    _BATCH_SIZE = 256
+
     def __init__(
         self,
         worker_id: Optional[int] = None,
@@ -34,11 +66,16 @@ class SnowflakeGenerator:
         # Epoch: 2024-01-01 00:00:00 UTC
         self.epoch = epoch_timestamp or 1704067200000
 
-        # Auto-derive IDs if not provided
+        # Derive the shared node identity once. The old code called
+        # _auto_node_id() twice (worker + datacenter), re-reading the hostname
+        # and recomputing the digest each time for the same process identity.
+        node_id: Optional[int] = None
+        if worker_id is None or datacenter_id is None:
+            node_id = self._auto_node_id()
         if worker_id is None:
-            worker_id = self._get_auto_worker_id()
+            worker_id = self._get_auto_worker_id(node_id)
         if datacenter_id is None:
-            datacenter_id = self._get_auto_datacenter_id()
+            datacenter_id = self._get_auto_datacenter_id(node_id)
 
         # Validate bounds
         if not (0 <= worker_id <= 31):
@@ -51,6 +88,14 @@ class SnowflakeGenerator:
         self.sequence = 0
         self.last_timestamp = -1
         self._lock = threading.Lock()
+
+        # Highest sequence number reserved at ``last_timestamp``. Kept
+        # separate from ``sequence`` (the last-issued mirror) so batch
+        # reservations can never hand out the same (timestamp, sequence) pair.
+        self._reserve_cursor: Optional[int] = None
+        # Per-thread batch: ``ts``, ``next_seq`` and ``end_seq`` describe the
+        # disjoint run of sequence values this thread may serve lock-free.
+        self._local = threading.local()
 
         logger.debug(
             f"SnowflakeGenerator initialized: worker={self.worker_id}, datacenter={self.datacenter_id}"
@@ -79,14 +124,11 @@ class SnowflakeGenerator:
         except Exception:
             # A constant fallback would give every replica the same node id
             # (container PIDs are often constant too), so use a per-process
-            # random value instead — never a shared constant.
+            # random value instead — never a shared constant. The random
+            # hostname also becomes the cache key, keeping fallback callers
+            # distinct rather than collapsing onto one cached identity.
             hostname = "plexichat-" + os.urandom(16).hex()
-        digest = hashlib.sha256(hostname.encode()).digest()
-        node = int.from_bytes(digest[:2], "big") & 0x3FF  # 10 bits
-        # Mix the PID so multiple workers on the SAME host still get
-        # different identities; mask it to the same 10-bit space.
-        node ^= os.getpid() & 0x3FF
-        return node
+        return _node_id_from_host(hostname, os.getpid())
 
     @staticmethod
     def _env_node_id(name: str) -> Optional[int]:
@@ -99,19 +141,23 @@ class SnowflakeGenerator:
         except ValueError:
             return None
 
-    def _get_auto_worker_id(self) -> int:
+    def _get_auto_worker_id(self, node_id: Optional[int] = None) -> int:
         """Auto-derive worker ID from environment or machine characteristics."""
         explicit = self._env_node_id("PLEXICHAT_WORKER_ID")
         if explicit is not None:
             return explicit
-        return self._auto_node_id() & 0x1F
+        if node_id is None:
+            node_id = self._auto_node_id()
+        return node_id & 0x1F
 
-    def _get_auto_datacenter_id(self) -> int:
+    def _get_auto_datacenter_id(self, node_id: Optional[int] = None) -> int:
         """Auto-derive datacenter ID from environment or machine characteristics."""
         explicit = self._env_node_id("PLEXICHAT_DATACENTER_ID")
         if explicit is not None:
             return explicit
-        return (self._auto_node_id() >> 5) & 0x1F
+        if node_id is None:
+            node_id = self._auto_node_id()
+        return (node_id >> 5) & 0x1F
 
     def rebind_node_id(self, worker_id: int, datacenter_id: int) -> None:
         """Rebind this generator to a coordinated (datacenter, worker) pair.
@@ -131,27 +177,78 @@ class SnowflakeGenerator:
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)
 
+    def _compose(self, timestamp: int, sequence: int) -> int:
+        """Pack a reserved (timestamp, sequence) pair into a snowflake id.
+
+        Worker/datacenter are read here, at compose time, so a Valkey rebind
+        between reservations takes effect immediately without invalidating
+        already-reserved sequence runs.
+        """
+        return (
+            ((timestamp - self.epoch) << 22)
+            | (self.datacenter_id << 17)
+            | (self.worker_id << 12)
+            | sequence
+        )
+
     def generate(self) -> int:
+        """Generate a unique Snowflake ID.
+
+        A contiguous run of sequence numbers is reserved under ``_lock`` once,
+        then served from this thread's private batch without locking on every
+        call. Reservations are disjoint (the cursor advances under the lock),
+        so multi-worker uniqueness is unchanged, and the strict
+        ``now < last_timestamp`` clock-rollback guard still raises before any
+        state is mutated.
+        """
+        tl = self._local
+        now = self._get_timestamp()
+
+        # Fast path: this thread still owns a reserved run in this exact
+        # millisecond. No lock, no shared-state mutation.
+        if (
+            now >= self.last_timestamp
+            and getattr(tl, "ts", None) == now
+            and tl.next_seq < tl.end_seq
+        ):
+            sequence = tl.next_seq
+            tl.next_seq += 1
+            self.sequence = sequence  # last-issued mirror (observability)
+            return self._compose(now, sequence)
+
         with self._lock:
-            timestamp = self._get_timestamp()
-            if timestamp < self.last_timestamp:
+            # Re-read under the lock: the fast-path clock read can be stale by
+            # the time we acquire it. A genuine backwards step still raises.
+            now = self._get_timestamp()
+            if now < self.last_timestamp:
                 raise RuntimeError("Clock moved backwards")
 
-            if timestamp == self.last_timestamp:
-                self.sequence = (self.sequence + 1) & 0xFFF
-                if self.sequence == 0:
-                    while timestamp <= self.last_timestamp:
-                        timestamp = self._get_timestamp()
-            else:
-                self.sequence = 0
+            if self._reserve_cursor is None:
+                # Seed from the public field once so pre-generated state (and
+                # the 12-bit wrap regression test) is honoured on first use.
+                self._reserve_cursor = self.sequence
 
-            self.last_timestamp = timestamp
-            return (
-                ((timestamp - self.epoch) << 22)
-                | (self.datacenter_id << 17)
-                | (self.worker_id << 12)
-                | self.sequence
-            )
+            if now == self.last_timestamp:
+                sequence = self._reserve_cursor + 1
+                if sequence > 0xFFF:
+                    # Sequence space for this millisecond is exhausted: wait
+                    # for the clock to advance, then restart at zero.
+                    while now <= self.last_timestamp:
+                        now = self._get_timestamp()
+                    sequence = 0
+            else:
+                sequence = 0
+
+            end = min(sequence + self._BATCH_SIZE, 0x1000)
+            self._reserve_cursor = end - 1
+            self.last_timestamp = now
+
+            tl.ts = now
+            tl.next_seq = sequence + 1
+            tl.end_seq = end
+
+            self.sequence = sequence
+            return self._compose(now, sequence)
 
     def parse(self, snowflake_id: int | str) -> Dict[str, int]:
         if isinstance(snowflake_id, bool):

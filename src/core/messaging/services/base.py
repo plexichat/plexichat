@@ -3,6 +3,7 @@ Base service with common functionality.
 """
 
 from typing import Any, Optional
+import functools
 import hashlib
 import os
 import threading
@@ -24,6 +25,18 @@ ENCRYPT_MESSAGES_DEFAULT = True
 # BaseService created afterwards uses it, so all generators in a replica
 # share one coordinated identity and no two live replicas collide.
 _coordinated_machine_id: Optional[int] = None
+
+
+@functools.lru_cache(maxsize=256)
+def _machine_id_from_host(hostname: str, pid: int) -> int:
+    """Cache the hostname/PID -> 10-bit machine identity derivation.
+
+    The inputs are stable for a process, so re-hashing them for every service
+    (this is a hot construction path) is wasted work. Keying by hostname keeps
+    scaled replicas — and the random fallback hostname — distinct.
+    """
+    digest = hashlib.sha256(hostname.encode()).digest()
+    return (int.from_bytes(digest[:2], "big") & 0x3FF) ^ (pid & 0x3FF)
 
 
 def set_machine_id(node_id: int) -> None:
@@ -65,11 +78,10 @@ def _default_machine_id() -> int:
     except Exception:
         # A constant fallback would collide across replicas (container PIDs
         # are often identical), so use a per-process random value instead.
+        # The random hostname is also the cache key, keeping fallback callers
+        # distinct rather than collapsing onto one cached identity.
         hostname = "plexichat-" + os.urandom(16).hex()
-    digest = hashlib.sha256(hostname.encode()).digest()
-    node = int.from_bytes(digest[:2], "big") & 0x3FF
-    node ^= os.getpid() & 0x3FF
-    return node
+    return _machine_id_from_host(hostname, os.getpid())
 
 
 def _get_relationships_module():
@@ -134,18 +146,53 @@ class BaseService:
             self._machine_id = _default_machine_id()
         self._id_counter = 0
         self._last_timestamp = 0
-        # Guard the counter/timestamp state: the sync request threadpool can
-        # call _generate_id concurrently even within a single worker.
+        # Guard the reservation state: the sync request threadpool can call
+        # _generate_id concurrently even within a single worker.
         self._id_lock = threading.Lock()
+        # Highest sequence value reserved at ``_last_timestamp``. Separate
+        # from ``_id_counter`` (last-issued mirror) so concurrent batches can
+        # never overlap. Per-thread batches are served without the lock.
+        self._reserve_cursor: Optional[int] = None
+        self._local = threading.local()
 
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
         return int(time.time() * 1000)
 
+    def _compose_id(self, timestamp: int, counter: int) -> SnowflakeID:
+        """Pack a reserved (timestamp, sequence) pair into a snowflake id."""
+        # Snowflake format: timestamp (42 bits) | machine_id (10 bits) | sequence (12 bits)
+        return (
+            ((timestamp - 1420070400000) << 22)
+            | (self._machine_id << 12)
+            | counter
+        )
+
     def _generate_id(self) -> SnowflakeID:
-        """Generate a unique Snowflake ID."""
+        """Generate a unique Snowflake ID.
+
+        Sequence numbers are reserved in disjoint batches under ``_id_lock``
+        and served from a per-thread cache without locking on every call. The
+        backwards-clock guard and 12-bit wrap are enforced when a batch is
+        reserved, so batching cannot reissue an ID or weaken rollback safety.
+        """
+        tl = self._local
+        now = self._get_timestamp()
+
+        # Fast path: this thread still owns a reserved run in this millisecond.
+        if (
+            now >= self._last_timestamp
+            and getattr(tl, "ts", None) == now
+            and tl.next_seq < tl.end_seq
+        ):
+            counter = tl.next_seq
+            tl.next_seq += 1
+            self._id_counter = counter
+            return self._compose_id(now, counter)
+
         with self._id_lock:
-            timestamp = self._get_timestamp()
+            # Re-read under the lock: the fast-path clock read may be stale.
+            now = self._get_timestamp()
 
             # Mirror the main SnowflakeGenerator: a backwards clock must never
             # be allowed to rewind ``_last_timestamp``. Without this guard a
@@ -154,27 +201,32 @@ class BaseService:
             # duplicate primary key across every replica of a scaled worker.
             # The check runs before any state mutation so a rejected call
             # leaves the counter/timestamp intact.
-            if timestamp < self._last_timestamp:
+            if now < self._last_timestamp:
                 raise RuntimeError("Clock moved backwards")
 
-            if timestamp == self._last_timestamp:
-                self._id_counter = (self._id_counter + 1) & 0xFFF  # 12 bits
-                if self._id_counter == 0:
-                    # Wait for next millisecond
-                    while timestamp <= self._last_timestamp:
-                        timestamp = self._get_timestamp()
+            if self._reserve_cursor is None:
+                self._reserve_cursor = self._id_counter
+
+            if now == self._last_timestamp:
+                counter = self._reserve_cursor + 1
+                if counter > 0xFFF:
+                    # Sequence space exhausted: wait for the next millisecond.
+                    while now <= self._last_timestamp:
+                        now = self._get_timestamp()
+                    counter = 0
             else:
-                self._id_counter = 0
+                counter = 0
 
-            self._last_timestamp = timestamp
+            end = min(counter + 256, 0x1000)
+            self._reserve_cursor = end - 1
+            self._last_timestamp = now
 
-            # Snowflake format: timestamp (42 bits) | machine_id (10 bits) | sequence (12 bits)
-            snowflake = (
-                ((timestamp - 1420070400000) << 22)
-                | (self._machine_id << 12)
-                | self._id_counter
-            )
-            return snowflake
+            tl.ts = now
+            tl.next_seq = counter + 1
+            tl.end_seq = end
+
+            self._id_counter = counter
+            return self._compose_id(now, counter)
 
     def _cache_get(self, key: Any, default: Optional[Any] = None) -> Optional[Any]:
         """Get value from cache (Local memory first, then Valkey)."""
