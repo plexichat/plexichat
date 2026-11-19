@@ -227,7 +227,9 @@ def python_sbom_lockfile(lockfile: Path, out: Path, warnings: list[str]) -> None
         return
     dists = parse_pinned_lockfile(lockfile)
     if not dists:
-        warnings.append(f"no pinned distributions in {lockfile}; using environment SBOM")
+        warnings.append(
+            f"no pinned distributions in {lockfile}; using environment SBOM"
+        )
         python_sbom_environment(out, warnings)
         return
 
@@ -290,11 +292,17 @@ def python_sbom_lockfile(lockfile: Path, out: Path, warnings: list[str]) -> None
 
 
 def python_sbom(
-    out: Path, warnings: list[str], *, source: str = "lockfiles", lockfile: Path | None = None
+    out: Path,
+    warnings: list[str],
+    *,
+    source: str = "lockfiles",
+    lockfile: Path | None = None,
 ) -> None:
     """Dispatch Python SBOM generation to the declared source."""
     if source == "lockfiles":
-        python_sbom_lockfile(lockfile or (REPO_ROOT / "requirements.txt"), out, warnings)
+        python_sbom_lockfile(
+            lockfile or (REPO_ROOT / "requirements.txt"), out, warnings
+        )
     else:
         python_sbom_environment(out, warnings)
 
@@ -457,9 +465,7 @@ def main(argv: list[str] | None = None) -> int:
     warnings: list[str] = []
 
     if args.sbom_only:
-        python_sbom(
-            out, warnings, source=args.source, lockfile=Path(args.lockfile)
-        )
+        python_sbom(out, warnings, source=args.source, lockfile=Path(args.lockfile))
         for w in warnings:
             print(f"WARNING: {w}", file=sys.stderr)
         print(f"Python SBOM written to {out}")

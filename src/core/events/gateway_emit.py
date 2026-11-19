@@ -484,9 +484,7 @@ def resolve_channel_event_recipients(
                 else messaging
             )
             participants = manager.get_participant_ids(channel_id)
-            return _final(
-                _dm_participants_without_blocks(participants or [], actor_id)
-            )
+            return _final(_dm_participants_without_blocks(participants or [], actor_id))
         except Exception:
             pass
     return _final([])

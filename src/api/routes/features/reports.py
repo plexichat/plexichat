@@ -212,7 +212,7 @@ def _is_safe_url(url: str) -> bool:
         import socket
         from urllib.parse import urlparse
 
-        from src.utils.security import URLValidator
+        from src.core.security.outbound import reject_forbidden_ip_literal
 
         parsed = urlparse(url.strip())
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -248,10 +248,9 @@ def _is_safe_url(url: str) -> bool:
         # ``is_private`` check let RFC 6598 CGNAT space (100.64.0.0/10) and
         # its IPv4-mapped IPv6 form through -- ranges the shared validator
         # explicitly blocks because they route to non-public infrastructure.
-        validator = URLValidator()
-        return bool(addresses) and all(
-            not validator.is_private_ip(str(addr)) for addr in addresses
-        )
+        for addr in addresses:
+            reject_forbidden_ip_literal(str(addr), "evidence_url")
+        return bool(addresses)
     except Exception:
         return False
 

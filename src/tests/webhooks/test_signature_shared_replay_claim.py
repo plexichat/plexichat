@@ -100,7 +100,9 @@ class TestSharedReplayClaim:
             lambda *a, **k: pytest.fail("cache_set must not be used on shared path"),
         )
 
-        assert manager.verify_payload(wid, payload, headers[_SIG], headers[_TS]) is False
+        assert (
+            manager.verify_payload(wid, payload, headers[_SIG], headers[_TS]) is False
+        )
         assert shared.set_calls == 1
 
     def test_missing_shared_backend_falls_back_to_local_cache(
@@ -117,8 +119,12 @@ class TestSharedReplayClaim:
         store = {}
         monkeypatch.setattr(cache_module, "cache_get", lambda key: store.get(key))
         monkeypatch.setattr(
-            cache_module, "cache_set", lambda key, value, ttl=None: store.__setitem__(key, value)
+            cache_module,
+            "cache_set",
+            lambda key, value, ttl=None: store.__setitem__(key, value),
         )
 
         assert manager.verify_payload(wid, payload, headers[_SIG], headers[_TS]) is True
-        assert manager.verify_payload(wid, payload, headers[_SIG], headers[_TS]) is False
+        assert (
+            manager.verify_payload(wid, payload, headers[_SIG], headers[_TS]) is False
+        )

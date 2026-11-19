@@ -60,9 +60,7 @@ async def test_failing_view_check_denies_read(monkeypatch):
     def _boom(user_id, tid):
         raise RuntimeError("threads backend down")
 
-    _patch_common(
-        monkeypatch, SimpleNamespace(can_view_thread=_boom)
-    )
+    _patch_common(monkeypatch, SimpleNamespace(can_view_thread=_boom))
 
     with pytest.raises(HTTPException) as exc:
         await mod.get_thread_slowmode(THREAD_ID, current_user=USER)

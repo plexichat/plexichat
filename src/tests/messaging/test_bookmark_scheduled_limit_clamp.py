@@ -49,7 +49,7 @@ class TestScheduledNegativeLimitClamp:
         """A negative scheduled-list limit must not dump the whole list."""
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
-        svc = ScheduledMessageService(db)
+        svc = ScheduledMessageService(db, messaging_manager._participant_svc)
         svc.create_scheduled_message(user1.id, dm.id, "later", _future_ms())
         assert svc.list_scheduled_messages(user1.id, limit=-1) == []
         # A clamped negative limit behaves exactly like limit=0.
@@ -60,9 +60,7 @@ class TestScheduledNegativeLimitClamp:
 
 @pytest.mark.messaging
 class TestListingUpperLimitClamp:
-    def test_bookmarks_huge_limit_is_capped(
-        self, db, messaging_manager, two_users
-    ):
+    def test_bookmarks_huge_limit_is_capped(self, db, messaging_manager, two_users):
         """A huge positive bookmark limit must not dump the whole list."""
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
@@ -73,13 +71,11 @@ class TestListingUpperLimitClamp:
         rows = svc.get_bookmarks(user1.id, limit=10**12)
         assert len(rows) <= BookmarkService.MAX_LIST_LIMIT
 
-    def test_scheduled_huge_limit_is_capped(
-        self, db, messaging_manager, two_users
-    ):
+    def test_scheduled_huge_limit_is_capped(self, db, messaging_manager, two_users):
         """A huge positive scheduled limit must not dump the whole history."""
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
-        svc = ScheduledMessageService(db)
+        svc = ScheduledMessageService(db, messaging_manager._participant_svc)
         svc.create_scheduled_message(user1.id, dm.id, "later", _future_ms())
 
         rows = svc.list_scheduled_messages(user1.id, limit=10**12)

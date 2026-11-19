@@ -294,9 +294,7 @@ def test_partial_failure_retains_entry_for_retry(tmp_path):
     from src.core.selftest.artifact_journal import ArtifactJournal
 
     path = str(tmp_path / "journal.json")
-    _write_journal(
-        path, [{"type": "permission_grant", "user_id": 5, "recorded_at": 0}]
-    )
+    _write_journal(path, [{"type": "permission_grant", "user_id": 5, "recorded_at": 0}])
 
     class FailingDB(_SqliteDB):
         def execute(self, sql, params=None):
@@ -433,7 +431,9 @@ def test_delete_all_for_user_purges_api_token_rows():
 
     # Sensitive child rows are removed before the parent token row so SQLite
     # cleanup (foreign keys OFF) cannot orphan them.
-    idx = [i for i, (sql, _) in enumerate(db.statements) if "auth_api_access_token" in sql]
+    idx = [
+        i for i, (sql, _) in enumerate(db.statements) if "auth_api_access_token" in sql
+    ]
     assert len(idx) == 3
 
 

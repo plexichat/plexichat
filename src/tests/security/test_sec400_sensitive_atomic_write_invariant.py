@@ -45,7 +45,10 @@ def _root_name(node):
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -175,7 +178,8 @@ def test_every_hardened_surface_is_found_and_scan_is_not_vacuous():
     seen_mkstemp = sum(
         1
         for _, _, fn in _SCAN
-        if fn is not None and any(_is_mkstemp(n) for n in ast.walk(fn) if isinstance(n, ast.Call))
+        if fn is not None
+        and any(_is_mkstemp(n) for n in ast.walk(fn) if isinstance(n, ast.Call))
     )
     assert seen_mkstemp >= len(_SCAN)
 

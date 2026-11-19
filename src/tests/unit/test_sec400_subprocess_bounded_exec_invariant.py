@@ -29,7 +29,15 @@ ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src"
 
 SUBPROCESS_FUNCS = frozenset(
-    {"run", "call", "Popen", "check_output", "check_call", "getoutput", "getstatusoutput"}
+    {
+        "run",
+        "call",
+        "Popen",
+        "check_output",
+        "check_call",
+        "getoutput",
+        "getstatusoutput",
+    }
 )
 
 # (relative source file, enclosing function) -> justification for the sole
@@ -164,12 +172,12 @@ def _scan_tree():
             if os.sep + "tests" + os.sep in str(path):
                 continue
             text = path.read_text(encoding="utf-8")
-            if not any(token in text for token in ("subprocess", "os.system", "os.popen")):
+            if not any(
+                token in text for token in ("subprocess", "os.system", "os.popen")
+            ):
                 continue
             try:
-                records.extend(
-                    _scan_source(text, str(path.relative_to(ROOT)))
-                )
+                records.extend(_scan_source(text, str(path.relative_to(ROOT))))
             except SyntaxError:
                 continue
     return records
@@ -224,7 +232,9 @@ def test_scan_is_not_vacuous_and_allowlist_is_live():
         if not r["timeout"] and (r["relative"], r["function"]) in ALLOWED_NO_TIMEOUT
     ]
     assert len(justified) == 1, "allowlisted untimed call dropped out of the scan"
-    assert ALLOWED_NO_TIMEOUT[(justified[0]["relative"], justified[0]["function"])].strip()
+    assert ALLOWED_NO_TIMEOUT[
+        (justified[0]["relative"], justified[0]["function"])
+    ].strip()
 
 
 def test_every_child_process_is_shell_free_and_time_bounded():

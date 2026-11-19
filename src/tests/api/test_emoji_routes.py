@@ -65,6 +65,5 @@ class TestEmojiCacheInvalidation:
         assert len(invalidated) == 2
         assert any("emoji_list_api:sid:123:" in pattern for pattern in invalidated)
         assert any(
-            "emoji_detail_api:sid:123:eid:456:" in pattern
-            for pattern in invalidated
+            "emoji_detail_api:sid:123:eid:456:" in pattern for pattern in invalidated
         )

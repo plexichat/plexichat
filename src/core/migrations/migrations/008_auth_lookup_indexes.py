@@ -57,8 +57,6 @@ def down(db):
     """Drop only the indexes this migration created."""
     for name, _table, _columns in INDEXES:
         try:
-            db.execute(
-                f"DROP INDEX IF EXISTS {require_identifier(name, 'index name')}"
-            )
+            db.execute(f"DROP INDEX IF EXISTS {require_identifier(name, 'index name')}")
         except Exception:  # pragma: no cover - defensive, index may be gone
             pass

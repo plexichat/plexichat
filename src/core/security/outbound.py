@@ -91,6 +91,21 @@ def parse_outbound_url(value: str, field: str = "url") -> OutboundUrl:
         logger.warning(f"Rejected {field}: scheme {scheme or 'none'} not allowed")
         raise OutboundUrlRejected(f"{field} must use http or https", field=field)
 
+    # A backslash in the authority makes urlparse (this gate) and the HTTP
+    # client that later fetches the URL disagree about which host to contact.
+    # Reject it before DNS resolution so a private/metadata address cannot be
+    # smuggled into the userinfo and reached by a re-resolving sink.
+    #
+    # This runs before the credential check on purpose: ``http://a\@b/`` is
+    # *parsed* as userinfo ``a\`` and host ``b``, so the credential rule would
+    # claim a smuggled address and report a benign-looking reason. The parser
+    # differential is the dangerous property, and it is the one to report.
+    if _authority_has_backslash(candidate):
+        logger.warning(f"Rejected {field}: backslash in URL authority")
+        raise OutboundUrlRejected(
+            f"{field} contains a backslash in the URL authority", field=field
+        )
+
     # This gate is the single choke point for URLs the server persists as
     # outbound targets. Every shape validator on the request path already
     # refuses embedded credentials, so accepting them here would let a caller
@@ -100,16 +115,6 @@ def parse_outbound_url(value: str, field: str = "url") -> OutboundUrl:
     if parsed.username or parsed.password:
         logger.warning(f"Rejected {field}: credentials in URL")
         raise OutboundUrlRejected(f"{field} must not embed credentials", field=field)
-
-    # A backslash in the authority makes urlparse (this gate) and the HTTP
-    # client that later fetches the URL disagree about which host to contact.
-    # Reject it before DNS resolution so a private/metadata address cannot be
-    # smuggled into the userinfo and reached by a re-resolving sink.
-    if _authority_has_backslash(candidate):
-        logger.warning(f"Rejected {field}: backslash in URL authority")
-        raise OutboundUrlRejected(
-            f"{field} contains a backslash in the URL authority", field=field
-        )
 
     try:
         hostname, address = URLValidator().validate_url_for_request(candidate)

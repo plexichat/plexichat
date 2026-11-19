@@ -50,9 +50,7 @@ def quota_db():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     db = _QuotaDB(conn)
-    db.execute(
-        "CREATE TABLE auth_users (id INTEGER PRIMARY KEY, username TEXT)"
-    )
+    db.execute("CREATE TABLE auth_users (id INTEGER PRIMARY KEY, username TEXT)")
     # sweep_orphans queries media_files for orphan uploaders even though the
     # media purge itself is monkeypatched in these tests.
     db.execute(
@@ -70,7 +68,9 @@ def quota_db():
         "created_at INTEGER, expires_at INTEGER)"
     )
     for uid in (UID, OTHER):
-        db.execute("INSERT INTO auth_users (id, username) VALUES (?, ?)", (uid, str(uid)))
+        db.execute(
+            "INSERT INTO auth_users (id, username) VALUES (?, ?)", (uid, str(uid))
+        )
         db.execute(
             "INSERT INTO user_storage_quotas "
             "(user_id, limit_bytes, unlimited, note, updated_by, updated_at) "

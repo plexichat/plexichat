@@ -69,9 +69,7 @@ def _persist_machine_key(key_file: Path, new_key: bytes) -> None:
     # too (unlike exists()/stat()). Fail closed rather than redirecting the
     # KEK to whatever the symlink points at.
     if key_file.is_symlink():
-        raise RuntimeError(
-            f"Refusing to write machine key through symlink {key_file}"
-        )
+        raise RuntimeError(f"Refusing to write machine key through symlink {key_file}")
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{key_file.name}.", suffix=".tmp", dir=str(key_file.parent)
     )

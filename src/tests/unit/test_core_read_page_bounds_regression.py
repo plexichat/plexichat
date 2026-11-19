@@ -92,9 +92,7 @@ class _AuditSelf:
         return []
 
 
-@pytest.mark.parametrize(
-    "method_name", ["get_login_history", "get_security_events"]
-)
+@pytest.mark.parametrize("method_name", ["get_login_history", "get_security_events"])
 @pytest.mark.parametrize("bad_limit", [-1, -100, 10**9, "abc", float("nan"), True])
 def test_audit_history_rejects_unbounded_or_malformed_limit(method_name, bad_limit):
     stub = _AuditSelf()
@@ -106,9 +104,7 @@ def test_audit_history_rejects_unbounded_or_malformed_limit(method_name, bad_lim
     assert stub.calls == []
 
 
-@pytest.mark.parametrize(
-    "method_name", ["get_login_history", "get_security_events"]
-)
+@pytest.mark.parametrize("method_name", ["get_login_history", "get_security_events"])
 def test_audit_history_valid_limit_still_forwarded(method_name):
     stub = _AuditSelf()
     method = getattr(AuditMixin, method_name)

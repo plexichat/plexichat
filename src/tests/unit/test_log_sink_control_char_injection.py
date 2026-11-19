@@ -47,9 +47,9 @@ def test_sanitize_log_message_strips_ansi_and_c1_controls():
 
 def test_sink_filter_scrubs_lazy_access_log_args():
     """The exact access-log pattern: hostile path as a late-bound %-arg."""
-    hostile_path = "/api/v1/x%0D%0AFORGED - ERROR - pwned".replace(
-        "%0D", "\r"
-    ).replace("%0A", "\n")
+    hostile_path = "/api/v1/x%0D%0AFORGED - ERROR - pwned".replace("%0D", "\r").replace(
+        "%0A", "\n"
+    )
     rendered = _filtered("%s - 200 - 0.10ms - 10.0.0.1", hostile_path)
     assert "\r" not in rendered and "\n" not in rendered
     assert "\\x0d\\x0a" in rendered
@@ -57,7 +57,9 @@ def test_sink_filter_scrubs_lazy_access_log_args():
 
 
 def test_sink_filter_scrubs_exception_text():
-    record = logging.LogRecord("AppLogger", logging.ERROR, __file__, 1, "boom", (), None)
+    record = logging.LogRecord(
+        "AppLogger", logging.ERROR, __file__, 1, "boom", (), None
+    )
     try:
         raise ValueError("bad input:\nFORGED - ERROR - pwned")
     except ValueError:

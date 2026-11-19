@@ -45,9 +45,19 @@ def test_the_gateway_image_is_pinned_to_a_release(compose: dict) -> None:
     assert tag not in {"latest", "master"}, image
 
 
+def _published_host_port(spec: str) -> str:
+    """Host-side port of a compose mapping (``[ip:]host:container[/proto]``)."""
+    fields = str(spec).split("/", 1)[0].split(":")
+    return fields[-2] if len(fields) >= 2 else fields[-1]
+
+
 def test_the_gateway_publishes_the_port_the_server_defaults_to(compose: dict) -> None:
     ports = compose["services"]["janus"]["ports"]
-    assert any(str(port).startswith(DEFAULT_JANUS_PORT) for port in ports), ports
+    # The mapping is written ``127.0.0.1:8088:8088`` so the unauthenticated
+    # API stays on loopback; read the host-side port instead of assuming the
+    # bare ``8088:8088`` form.
+    assert DEFAULT_JANUS_PORT in [_published_host_port(p) for p in ports], ports
+    assert all(str(port).startswith("127.0.0.1:") for port in ports), ports
     assert f"localhost:{DEFAULT_JANUS_PORT}/janus" in INITIALIZER.read_text(
         encoding="utf-8"
     )

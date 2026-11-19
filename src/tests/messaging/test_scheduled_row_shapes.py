@@ -58,10 +58,18 @@ class _TupleScheduledDB:
         return _Cursor()
 
 
+class _Participants:
+    """Every conversation is open: these tests pin row shapes, not authz."""
+
+    @staticmethod
+    def is_participant(conversation_id, user_id):
+        return True
+
+
 def _make_service(db):
     from src.core.messaging.services.scheduled import ScheduledMessageService
 
-    service = ScheduledMessageService(db)
+    service = ScheduledMessageService(db, _Participants())
     service._generate_id = lambda: 42
     return service
 

@@ -2,7 +2,7 @@
 Event routing - Logic for determining which users receive which events.
 """
 
-from typing import Optional, List, Set
+from typing import Callable, Mapping, Optional, List, Set
 
 import utils.logger as logger
 
@@ -324,7 +324,14 @@ class EventRouter:
         # manager exposes a bounded, chunked bulk helper that returns the very
         # same sets in one call; fall back to per-id lookups only for legacy
         # stubs that do not implement it.
-        bulk_lookup = getattr(self._relationships, "get_all_blocked_ids_bulk", None)
+        # Typed explicitly: the attribute is optional, so ``getattr`` returns
+        # ``object | None`` and the call result would be ``object``, which has
+        # no ``items()`` to iterate. The signature is the one the relationship
+        # manager implements; the compatibility path below covers stubs that do
+        # not expose it at all.
+        bulk_lookup: Optional[Callable[[List[int]], Mapping[int, Set[int]]]] = getattr(
+            self._relationships, "get_all_blocked_ids_bulk", None
+        )
         if callable(bulk_lookup):
             try:
                 blocked_by_id = {
@@ -333,8 +340,7 @@ class EventRouter:
                 }
             except Exception as e:
                 logger.debug(
-                    f"Failed to resolve bulk blocked IDs for channel "
-                    f"{channel_id}: {e}"
+                    f"Failed to resolve bulk blocked IDs for channel {channel_id}: {e}"
                 )
                 # Fail closed: without the authoritative block sets we cannot
                 # prove any participant is safe to receive this event, so

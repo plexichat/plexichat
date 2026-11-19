@@ -129,9 +129,9 @@ def test_erase_scrubs_all_message_content_residue(
 
     # The conversation stays alive for the survivor and their content is intact.
     assert (
-        db.fetch_one(
-            "SELECT content FROM msg_messages WHERE id = ?", (SURVIVOR_MSG,)
-        )["content"]
+        db.fetch_one("SELECT content FROM msg_messages WHERE id = ?", (SURVIVOR_MSG,))[
+            "content"
+        ]
         == "other persons message"
     )
     assert (

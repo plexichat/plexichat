@@ -39,8 +39,8 @@ def test_csv_export_neutralises_formula_leads():
         "+cmd|'/c calc'!A0",
         "@SUM(1+1)",
         "-1+1",
-        "\t=1+1",   # leading tab is stripped by spreadsheets before eval
-        "\r=1+1",   # leading CR likewise
+        "\t=1+1",  # leading tab is stripped by spreadsheets before eval
+        "\r=1+1",  # leading CR likewise
         "  =1+1",  # leading spaces before the trigger
         "\t@SUM(1+1)",
     ]

@@ -118,9 +118,7 @@ def test_concurrent_reservations_never_exceed_cap(quota_db):
 
     def reserve_once():
         # Each worker gets its own manager, just like its own process would.
-        manager = StorageQuotaManager(
-            quota_db, config_override={"default_quota_mb": 1}
-        )
+        manager = StorageQuotaManager(quota_db, config_override={"default_quota_mb": 1})
         manager._user_tier = lambda _uid: "standard"  # pyright: ignore[reportAttributeAccessIssue]
         manager._tier_limit_bytes = lambda _tier: None  # pyright: ignore[reportAttributeAccessIssue]
         barrier.wait(timeout=15)

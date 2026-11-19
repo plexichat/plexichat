@@ -136,8 +136,8 @@ def _ssrf_guard_url(url: str, field_name: str) -> None:
     # address on the LEFT. ``https://169.254.169.254\@public.example/`` would
     # otherwise be stored as a public link and open the metadata address in a
     # viewer's browser. Percent-encoded ``%5C`` and path backslashes are data,
-    # not authority, and stay allowed. Mirrors outbound.parse_outbound_url and
-    # web_push._require_public_endpoint.
+    # not authority, and stay allowed. Mirrors the server-side fetch gate in
+    # :mod:`src.core.security.outbound` and web_push._require_public_endpoint.
     if "\\" in (parsed.netloc or ""):
         raise OutboundUrlRejected(
             f"{field_name} must not contain a backslash in the URL authority",

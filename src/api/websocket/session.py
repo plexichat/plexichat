@@ -122,12 +122,9 @@ class Session:
         self.replay_events.append(event)
         self.replay_bytes += size
         evicted = False
-        while (
-            self.replay_events
-            and (
-                len(self.replay_events) > self.max_replay_events
-                or self.replay_bytes > MAX_SESSION_REPLAY_BYTES
-            )
+        while self.replay_events and (
+            len(self.replay_events) > self.max_replay_events
+            or self.replay_bytes > MAX_SESSION_REPLAY_BYTES
         ):
             dropped = self.replay_events.pop(0)
             self.replay_bytes -= payload_size(dropped)

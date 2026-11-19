@@ -75,9 +75,8 @@ class TestStickerListingUpperBoundAtDb:
         # it must now produce an empty page instead of the default page.
         assert sticker_manager.get_sticker_suggestions(1, "happy joy", limit=0) == []
         assert sticker_manager.get_sticker_suggestions(1, "happy joy", limit=-1) == []
-        assert (
-            sticker_manager.get_sticker_suggestions(1, "happy joy", limit=10**9)
-            == sticker_manager.get_sticker_suggestions(
-                1, "happy joy", limit=MAX_DISCOVERY_LIMIT
-            )
+        assert sticker_manager.get_sticker_suggestions(
+            1, "happy joy", limit=10**9
+        ) == sticker_manager.get_sticker_suggestions(
+            1, "happy joy", limit=MAX_DISCOVERY_LIMIT
         )

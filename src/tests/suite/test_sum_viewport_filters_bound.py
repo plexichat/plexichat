@@ -31,9 +31,7 @@ def _route():
 def test_filters_query_param_declares_max_length():
     """The OpenAPI/validation boundary must carry a finite ceiling."""
     route = _route()
-    param = next(
-        (p for p in route.dependant.query_params if p.name == "filters"), None
-    )
+    param = next((p for p in route.dependant.query_params if p.name == "filters"), None)
     assert param is not None
     # FastAPI/Pydantic v2 stores the constraint in field_info.metadata as a
     # MaxLen marker (older versions expose ``max_length`` directly).

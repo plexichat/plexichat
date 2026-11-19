@@ -60,15 +60,15 @@ def up(db):
             f"ON {require_identifier(table, 'table name')} "
             f"({', '.join(require_identifier(col, 'column name') for col in columns)})"
         )
-    logger.info("Migration 009: created %d composite relationship lookup indexes", len(INDEXES))
+    logger.info(
+        "Migration 009: created %d composite relationship lookup indexes", len(INDEXES)
+    )
 
 
 def down(db):
     """Drop only the indexes this migration created."""
     for name, _table, _columns in INDEXES:
         try:
-            db.execute(
-                f"DROP INDEX IF EXISTS {require_identifier(name, 'index name')}"
-            )
+            db.execute(f"DROP INDEX IF EXISTS {require_identifier(name, 'index name')}")
         except Exception:  # pragma: no cover - defensive, index may be gone
             pass

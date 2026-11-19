@@ -19,6 +19,7 @@ from src.core.push.manager.web_push import _require_public_endpoint
 
 pytestmark = pytest.mark.unit
 
+
 def _answer(address):
     family = socket.AF_INET6 if ":" in address else socket.AF_INET
     return [(family, socket.SOCK_STREAM, 6, "", (address, 0))]

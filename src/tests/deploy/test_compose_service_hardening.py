@@ -86,7 +86,9 @@ def services() -> dict[str, dict[str, Any]]:
 
 def _condition(depends_on: Any, name: str) -> str:
     """Return the dependency condition for ``name`` ("service_started" in short form)."""
-    assert isinstance(depends_on, dict), f"expected long-form depends_on, got {depends_on!r}"
+    assert isinstance(depends_on, dict), (
+        f"expected long-form depends_on, got {depends_on!r}"
+    )
     assert name in depends_on, f"missing dependency on {name}: {depends_on!r}"
     entry = depends_on[name]
     if isinstance(entry, dict):
@@ -98,8 +100,12 @@ def _healthcheck_command(services: dict[str, dict[str, Any]], name: str) -> str:
     healthcheck = services[name].get("healthcheck")
     assert isinstance(healthcheck, dict), f"{name} has no healthcheck"
     test = healthcheck.get("test")
-    assert isinstance(test, list) and len(test) >= 2, f"{name} has a malformed healthcheck test"
-    assert test[0] in ("CMD", "CMD-SHELL"), f"{name} healthcheck must run a shell/command"
+    assert isinstance(test, list) and len(test) >= 2, (
+        f"{name} has a malformed healthcheck test"
+    )
+    assert test[0] in ("CMD", "CMD-SHELL"), (
+        f"{name} healthcheck must run a shell/command"
+    )
     command = str(test[1]).strip()
     assert command and command.lower() != "true", f"{name} healthcheck is a no-op"
     # Pin the tuning fields too: a missing timeout/retries can hang a rollout.
@@ -109,7 +115,7 @@ def _healthcheck_command(services: dict[str, dict[str, Any]], name: str) -> str:
 
 
 def test_every_stateful_service_has_a_real_healthcheck(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     for name in STATEFUL_SERVICES:
         assert name in services, f"stateful service missing from compose: {name}"
@@ -117,7 +123,7 @@ def test_every_stateful_service_has_a_real_healthcheck(
 
 
 def test_backend_waits_for_its_stateful_dependencies(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     deps = services["backend"].get("depends_on")
     for name in ("db", "valkey", "clamav"):
@@ -130,7 +136,7 @@ def test_backend_waits_for_its_stateful_dependencies(
 
 
 def test_bootstrap_jobs_wait_on_the_right_service_state(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     assert _condition(services["rustfs"]["depends_on"], "rustfs-perms") == (
         "service_completed_successfully"
@@ -147,7 +153,7 @@ def test_bootstrap_jobs_wait_on_the_right_service_state(
 
 
 def test_clamav_signature_updater_waits_for_clamd_healthy(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     """The updater mutates the shared clamav_db volume; gate on real readiness."""
     assert _condition(services["clamav-unofficial-sigs"]["depends_on"], "clamav") == (
@@ -156,7 +162,7 @@ def test_clamav_signature_updater_waits_for_clamd_healthy(
 
 
 def test_meilisearch_healthcheck_asserts_available_status(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     command = _healthcheck_command(services, "meilisearch")
     assert "/health" in command
@@ -168,7 +174,7 @@ def test_meilisearch_healthcheck_asserts_available_status(
 
 
 def test_elasticsearch_healthcheck_accepts_yellow_single_node(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     command = _healthcheck_command(services, "elasticsearch")
     assert "_cluster/health" in command
@@ -182,7 +188,7 @@ def test_elasticsearch_healthcheck_accepts_yellow_single_node(
 
 
 def test_restart_policies_match_service_lifetime(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     for name in ONE_SHOT_SERVICES:
         assert services[name].get("restart") == "no", (
@@ -195,7 +201,7 @@ def test_restart_policies_match_service_lifetime(
 
 
 def test_optional_heavy_services_declare_memory_limits(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     for name in ("shieldstral", "meilisearch", "elasticsearch"):
         limits = services[name].get("deploy", {}).get("resources", {}).get("limits", {})
@@ -205,11 +211,13 @@ def test_optional_heavy_services_declare_memory_limits(
 def test_scaling_guidance_is_preserved() -> None:
     text = COMPOSE.read_text(encoding="utf-8")
     assert "--scale backend" in text, "compose must keep the horizontal-scaling note"
-    assert "30000-30100/udp" in text, "ports caveat for scaled backend must stay accurate"
+    assert "30000-30100/udp" in text, (
+        "ports caveat for scaled backend must stay accurate"
+    )
 
 
 def test_every_service_drops_new_privileges(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     """No container may gain privileges via setuid/setgid or file capabilities.
 
@@ -228,7 +236,7 @@ def test_every_service_drops_new_privileges(
 
 
 def test_backend_drops_capabilities_and_reaps_children(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     """The internet-facing, non-root backend needs no Linux capabilities."""
     backend = services["backend"]
@@ -288,12 +296,14 @@ def test_janus_dev_gateway_is_digest_pinned_and_unprivileged() -> None:
 
 
 def test_third_party_images_are_pinned_to_verified_digests(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     for name, expected in EXPECTED_PINS.items():
         assert services[name]["image"] == expected, f"unexpected pin for {name}"
     llama = services["shieldstral"]["image"]
-    assert LLAMA_DEFAULT_PIN in llama, "AI profile default must carry a valid digest pin"
+    assert LLAMA_DEFAULT_PIN in llama, (
+        "AI profile default must carry a valid digest pin"
+    )
     assert "server-b10614" not in llama, "the stale llama.cpp build tag must stay gone"
 
 
@@ -321,7 +331,9 @@ def test_digest_lock_matches_every_pinned_image() -> None:
         f"extra={sorted(set(images) - expected_refs)}"
     )
     for ref, entry in images.items():
-        assert entry["reference"] == ref, f"lock entry has a mismatched reference: {ref}"
+        assert entry["reference"] == ref, (
+            f"lock entry has a mismatched reference: {ref}"
+        )
         assert entry["tag"], f"lock entry is missing its tag: {ref}"
         digest = "@sha256:" + ref.rsplit("@sha256:", 1)[1]
         assert entry["digest"] == digest, f"lock digest does not match pin: {ref}"
@@ -384,12 +396,14 @@ def _duration_seconds(value: Any) -> float:
 
 
 def test_scalable_services_declare_bounded_cpu_and_memory(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     for name in RESOURCE_BOUNDED_SERVICES:
         limits = _resource_limits(services, name)
         assert limits.get("cpus"), f"{name} must cap CPU to keep replicas fair"
-        assert limits.get("memory"), f"{name} must cap memory to bound a runaway replica"
+        assert limits.get("memory"), (
+            f"{name} must cap memory to bound a runaway replica"
+        )
         assert _memory_bytes(limits["memory"]) >= 256 * 2**20, (
             f"{name} memory limit is too small to start, let alone serve load"
         )
@@ -401,7 +415,7 @@ def test_scalable_services_declare_bounded_cpu_and_memory(
 
 
 def test_optional_heavy_services_declare_cpu_limits(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     for name in ("shieldstral", "meilisearch", "elasticsearch"):
         assert _resource_limits(services, name).get("cpus"), (
@@ -410,7 +424,7 @@ def test_optional_heavy_services_declare_cpu_limits(
 
 
 def test_backend_healthcheck_is_not_aggressive_under_load(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     """N warming replicas must not be marked unhealthy on one slow response."""
     healthcheck = services["backend"]["healthcheck"]
@@ -421,7 +435,7 @@ def test_backend_healthcheck_is_not_aggressive_under_load(
 
 
 def test_backend_swarm_replicas_use_a_separate_variable(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     """The pool-budget hint must not silently spawn N port-bound containers."""
     replicas = str(services["backend"]["deploy"]["replicas"])
@@ -433,12 +447,16 @@ def test_backend_swarm_replicas_use_a_separate_variable(
 
 
 def test_backend_rolling_update_is_safe_for_a_scaled_fleet(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     update = services["backend"]["deploy"].get("update_config")
-    assert isinstance(update, dict), "backend must declare a Swarm rolling-update policy"
+    assert isinstance(update, dict), (
+        "backend must declare a Swarm rolling-update policy"
+    )
     assert int(update.get("parallelism", 0)) == 1, "replace one worker at a time"
-    assert update.get("order") == "start-first", "keep the old worker until the new one is up"
+    assert update.get("order") == "start-first", (
+        "keep the old worker until the new one is up"
+    )
     assert update.get("failure_action") == "rollback", "a failed rollout must roll back"
     assert _duration_seconds(update.get("monitor", 0)) >= 60, (
         "failure monitoring must outlast the healthcheck's start period"

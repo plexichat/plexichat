@@ -70,9 +70,7 @@ class TestBroadcastAudienceHardening:
         servers = _ServersWithView(700, [1, 2, 3], viewers=[])
         messaging = _CountingMessaging([1, 2, 3])
 
-        ids, server_id = _resolve_recipients(
-            servers, messaging, 99, 99, actor_id=1
-        )
+        ids, server_id = _resolve_recipients(servers, messaging, 99, 99, actor_id=1)
 
         assert ids == []
         assert server_id == 700
@@ -82,9 +80,7 @@ class TestBroadcastAudienceHardening:
         servers = _ServersWithView(700, [1, 2, 3], viewers=[2])
         messaging = _CountingMessaging([9, 10])
 
-        ids, server_id = _resolve_recipients(
-            servers, messaging, 99, 99, actor_id=1
-        )
+        ids, server_id = _resolve_recipients(servers, messaging, 99, 99, actor_id=1)
 
         assert ids == [2]
         assert server_id == 700
@@ -94,9 +90,7 @@ class TestBroadcastAudienceHardening:
         servers = _ServersWithoutPermissionApi(700, [1, 2, 3])
         messaging = _CountingMessaging([1, 2, 3])
 
-        ids, server_id = _resolve_recipients(
-            servers, messaging, 99, 99, actor_id=1
-        )
+        ids, server_id = _resolve_recipients(servers, messaging, 99, 99, actor_id=1)
 
         assert ids == []
         assert server_id == 700

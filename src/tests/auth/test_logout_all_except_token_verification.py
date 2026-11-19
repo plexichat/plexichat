@@ -17,18 +17,14 @@ from src.core.auth.tokens import parse_token
 
 
 def _register_and_login(auth_manager, username):
-    with patch(
-        "src.utils.encryption.hash_password", return_value="fake_hash_$test"
-    ):
+    with patch("src.utils.encryption.hash_password", return_value="fake_hash_$test"):
         user = auth_manager.register(
             username=username,
             email=f"{username}@example.com",
             password="TestPass123!",
         )
     with patch("src.utils.encryption.verify_password", return_value=True):
-        sessions = [
-            auth_manager.login(username, "TestPass123!") for _ in range(3)
-        ]
+        sessions = [auth_manager.login(username, "TestPass123!") for _ in range(3)]
     return user, sessions
 
 

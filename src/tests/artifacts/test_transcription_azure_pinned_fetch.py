@@ -55,11 +55,14 @@ def test_validate_azure_content_url_accepts_public_https():
 def test_pinned_get_connects_to_approved_ip_with_host_and_sni():
     """The fetch must use the IP the gate approved, never the hostname."""
     sentinel = object()
-    with patch.object(
-        URLValidator,
-        "validate_url_for_request",
-        return_value=(PUBLIC_HOST, APPROVED_IP),
-    ), patch("httpx.get", return_value=sentinel) as mocked:
+    with (
+        patch.object(
+            URLValidator,
+            "validate_url_for_request",
+            return_value=(PUBLIC_HOST, APPROVED_IP),
+        ),
+        patch("httpx.get", return_value=sentinel) as mocked,
+    ):
         result = _pinned_azure_get(
             PUBLIC_URL, headers={"Ocp-Apim-Subscription-Key": "k"}, timeout=7
         )
@@ -77,11 +80,14 @@ def test_pinned_get_connects_to_approved_ip_with_host_and_sni():
 
 def test_pinned_get_refuses_when_dns_check_fails():
     """No HTTP request may be made if the SSRF gate rejects the target."""
-    with patch.object(
-        URLValidator,
-        "validate_url_for_request",
-        side_effect=ValueError("resolves to a forbidden address"),
-    ), patch("httpx.get") as mocked:
+    with (
+        patch.object(
+            URLValidator,
+            "validate_url_for_request",
+            side_effect=ValueError("resolves to a forbidden address"),
+        ),
+        patch("httpx.get") as mocked,
+    ):
         with pytest.raises(ValueError):
             _pinned_azure_get(PUBLIC_URL)
     mocked.assert_not_called()

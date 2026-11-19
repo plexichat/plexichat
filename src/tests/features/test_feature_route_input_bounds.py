@@ -75,7 +75,9 @@ async def test_last_chat_accepts_valid_snowflake_ids(monkeypatch):
         def __init__(self, db, participant_svc=None):
             pass
 
-        def save_last_chat(self, user_id, conversation_id, last_message_id, scroll_position=0):
+        def save_last_chat(
+            self, user_id, conversation_id, last_message_id, scroll_position=0
+        ):
             seen.update(
                 conversation_id=conversation_id,
                 last_message_id=last_message_id,

@@ -97,9 +97,7 @@ def _normalize_sql(statement: str) -> str:
 # end-anchored ``DELETE FROM t$`` denylist silently accepts them. Key the
 # check on the presence of a real WHERE clause instead; a trailing comment
 # that once held a WHERE has already been removed by ``_normalize_sql``.
-_UNSCOPED_DELETE_RE = re.compile(
-    r"\bDELETE\s+FROM\s+[\"'`]?\w+[\"'`]?", re.IGNORECASE
-)
+_UNSCOPED_DELETE_RE = re.compile(r"\bDELETE\s+FROM\s+[\"'`]?\w+[\"'`]?", re.IGNORECASE)
 _SCOPE_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
 
 _FORBIDDEN_PATTERNS = (

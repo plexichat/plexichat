@@ -45,11 +45,11 @@ def _rule(rule_type, config):
 @pytest.mark.parametrize(
     "content",
     [
-        "buy badword now",                 # control: plain hit
-        "buy bad\u200bword now",           # zero-width space
-        "buy bad\u200dword now",           # zero-width joiner
-        "buy bad\u00adword now",           # soft hyphen
-        "buy \ufeffbadword now",           # BOM
+        "buy badword now",  # control: plain hit
+        "buy bad\u200bword now",  # zero-width space
+        "buy bad\u200dword now",  # zero-width joiner
+        "buy bad\u00adword now",  # soft hyphen
+        "buy \ufeffbadword now",  # BOM
         "buy \uff42\uff41\uff44\uff57\uff4f\uff52\uff44 now",  # fullwidth
     ],
 )
@@ -73,12 +73,18 @@ def test_keyword_rule_does_not_flag_unrelated_content():
             {"keywords": ["badword"], "case_sensitive": False, "whole_word": True},
         )
     )
-    assert rule.check("a perfectly clean message", user_id=1, channel_id=1).matched is False
+    assert (
+        rule.check("a perfectly clean message", user_id=1, channel_id=1).matched
+        is False
+    )
 
 
 @pytest.mark.automod
 def test_canonicalize_strips_invisible_and_folds_width():
-    assert canonicalize_for_matching("B\u200bad\ufeff\uff57\uff4f\uff52\uff44") == "badword"
+    assert (
+        canonicalize_for_matching("B\u200bad\ufeff\uff57\uff4f\uff52\uff44")
+        == "badword"
+    )
 
 
 @pytest.mark.automod
@@ -88,7 +94,7 @@ def test_duplicate_spam_detects_zero_width_variants():
         _rule(
             RuleType.MESSAGE_SPAM,
             {
-                "max_messages": 100,       # keep the rate-spam check from firing
+                "max_messages": 100,  # keep the rate-spam check from firing
                 "window_seconds": 1,
                 "duplicate_threshold": 2,
                 "duplicate_window_seconds": 60,
@@ -102,7 +108,12 @@ def test_duplicate_spam_detects_zero_width_variants():
             {"user_id": 7, "created_at": now, "content": "buy b\u200badword now"},
         ]
     }
-    assert rule.check("buy bad\u200dword now", user_id=7, channel_id=1, context=context).matched is True
+    assert (
+        rule.check(
+            "buy bad\u200dword now", user_id=7, channel_id=1, context=context
+        ).matched
+        is True
+    )
 
 
 @pytest.mark.automod

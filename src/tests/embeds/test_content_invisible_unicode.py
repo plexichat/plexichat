@@ -46,7 +46,17 @@ def test_legitimate_text_is_not_rejected(text):
 
 @pytest.mark.parametrize(
     "ch",
-    ["\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u00ad", "\x00", "\x7f", "\x85"],
+    [
+        "\u200b",
+        "\u200c",
+        "\u200d",
+        "\u2060",
+        "\ufeff",
+        "\u00ad",
+        "\x00",
+        "\x7f",
+        "\x85",
+    ],
 )
 def test_invisible_predicate_covers_format_and_control_chars(ch):
     assert _is_invisible(ch)

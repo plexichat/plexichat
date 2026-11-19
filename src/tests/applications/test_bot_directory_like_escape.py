@@ -99,15 +99,11 @@ class TestBotDirectoryLikeEscaping:
 
     def test_underscore_query_is_literal(self, app_manager, test_user):
         _seed(app_manager, test_user, [("AlphaBot", "alpha helper", ["utility"])])
-        assert (
-            app_manager.get_bot_directory(include_public=True, q="_")["total"] == 0
-        )
+        assert app_manager.get_bot_directory(include_public=True, q="_")["total"] == 0
 
     def test_backslash_query_is_literal(self, app_manager, test_user):
         _seed(app_manager, test_user, [("AlphaBot", "alpha helper", ["utility"])])
-        assert (
-            app_manager.get_bot_directory(include_public=True, q="\\")["total"] == 0
-        )
+        assert app_manager.get_bot_directory(include_public=True, q="\\")["total"] == 0
 
     def test_ordinary_query_still_matches(self, app_manager, test_user):
         _seed(app_manager, test_user, [("AlphaBot", "alpha helper", ["utility"])])
@@ -117,9 +113,7 @@ class TestBotDirectoryLikeEscaping:
 
     def test_percent_tag_does_not_match_every_bot(self, app_manager, test_user):
         _seed(app_manager, test_user, [("AlphaBot", "alpha helper", ["utility"])])
-        assert (
-            app_manager.get_bot_directory(include_public=True, tag="%")["total"] == 0
-        )
+        assert app_manager.get_bot_directory(include_public=True, tag="%")["total"] == 0
 
     def test_ordinary_tag_still_matches(self, app_manager, test_user):
         _seed(app_manager, test_user, [("AlphaBot", "alpha helper", ["utility"])])

@@ -62,7 +62,6 @@ def test_resolve_outbound_url_also_rejects_backslash_authority(url):
         # A percent-encoded backslash is data, not a separator; urlparse and
         # WHATWG clients agree on the host, so it is likewise not rejected.
         "http://public.example/foo%5Cbar",
-        "http://169.254.169.254%5C@public.example/x",
     ],
 )
 def test_backslash_outside_the_authority_is_not_over_blocked(url):
@@ -75,3 +74,18 @@ def test_backslash_outside_the_authority_is_not_over_blocked(url):
 
     validator.return_value.validate_url_for_request.assert_called_once_with(url)
     assert result.url == url
+
+
+def test_percent_encoded_backslash_in_userinfo_is_refused_as_credentials():
+    # ``%5C`` is not a separator, so no parser moves the host to the left of
+    # it -- but the URL still carries userinfo, which this gate refuses for
+    # every outbound sink. The rejection has to name the credentials, not a
+    # backslash neither parser sees, so the reason in the log matches the rule
+    # that actually fired.
+    url = "http://169.254.169.254%5C@public.example/x"
+    with patch("src.core.security.outbound.URLValidator") as validator:
+        with pytest.raises(OutboundUrlRejected) as rejection:
+            parse_outbound_url(url)
+
+    validator.return_value.validate_url_for_request.assert_not_called()
+    assert "credentials" in str(rejection.value).lower()

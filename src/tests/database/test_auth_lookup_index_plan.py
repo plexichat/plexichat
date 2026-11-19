@@ -166,9 +166,7 @@ class TestAuthLookupIndexes:
             definition = f"{table}({', '.join(columns)})"
             assert f"CREATE INDEX IF NOT EXISTS {name}\n    ON {definition}" in (
                 SCHEMA_SQLITE
-            ) or f"CREATE INDEX IF NOT EXISTS {name} ON {definition}" in (
-                SCHEMA_SQLITE
-            )
+            ) or f"CREATE INDEX IF NOT EXISTS {name} ON {definition}" in (SCHEMA_SQLITE)
 
     def test_every_index_has_a_verification_query(self):
         migration = _load_migration()

@@ -91,9 +91,17 @@ class CrossWorkerDedupe:
             self._evictions += 1
 
     def clear(self) -> None:
-        """Drop all remembered ids (used by tests / deliberate cache reset)."""
+        """Reset the registry to its initial state.
+
+        Both the remembered ids and the observability counters are dropped: a
+        reset that kept the duplicate/eviction counts made anything reading
+        ``metrics()`` afterwards depend on what the process had ingested
+        before, which is what turned the regression tests order-sensitive.
+        """
         with self._lock:
             self._seen.clear()
+            self._duplicates = 0
+            self._evictions = 0
 
     def metrics(self) -> Dict[str, int]:
         """Return a snapshot of the dedupe cache size and counters."""

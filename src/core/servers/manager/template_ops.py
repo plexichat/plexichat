@@ -237,9 +237,7 @@ class TemplateManager:
         # authorizes access, so an omitted/unknown user (``None``) must not be
         # treated as a wildcard grant. Previously the truthiness check let
         # every caller that omitted ``user_id`` read any private template.
-        if not row["is_public"] and (
-            user_id is None or row["creator_id"] != user_id
-        ):
+        if not row["is_public"] and (user_id is None or row["creator_id"] != user_id):
             logger.debug(
                 f"Template access denied: creator {row['creator_id']} != user {user_id}"
             )
