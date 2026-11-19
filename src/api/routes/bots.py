@@ -21,6 +21,12 @@ from src.api.middleware.authentication import (
     get_optional_user,
     TokenInfo,
 )
+# A bot token's ``user_id`` is its human owner (the bot account id lives in
+# ``account_id``). Every handler here that keys off ``current_user.user_id``
+# must reject bot credentials: otherwise a leaked bot token can enumerate and
+# revoke the owner's OAuth grants, toggle the owner's bots, and update their
+# bot profiles. ``require_user_token`` enforces that boundary.
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.common import (
     ErrorResponse,
     NullableSnowflakeIDParam,
@@ -358,6 +364,7 @@ async def list_approved_bots(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get all approved bots for a server."""
+    require_user_token(current_user)
     sid = _bot_id(server_id, "server_id")
     _require_server_manage(current_user.user_id, sid, "approved bot listing")
     try:
@@ -391,6 +398,7 @@ async def request_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Request approval for a bot on a server."""
+    require_user_token(current_user)
     sid = _bot_id(server_id, "server_id")
     app_id = _bot_id(body.application_id, "application_id")
     try:
@@ -435,6 +443,7 @@ async def remove_approved_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Remove an approved bot from a server."""
+    require_user_token(current_user)
     sid = _bot_id(server_id, "server_id")
     app_id = _bot_id(application_id, "application_id")
     try:
@@ -476,6 +485,7 @@ async def disable_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Disable a bot owned by the current user."""
+    require_user_token(current_user)
     from src.core import auth
 
     bid = _bot_id(bot_id, "bot_id")
@@ -504,6 +514,7 @@ async def enable_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Enable a bot owned by the current user."""
+    require_user_token(current_user)
     from src.core import auth
 
     bid = _bot_id(bot_id, "bot_id")
@@ -537,6 +548,7 @@ async def list_bot_requests(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get bot requests for a server (server managers only)."""
+    require_user_token(current_user)
     sid = _bot_id(server_id, "server_id")
     _require_server_manage(current_user.user_id, sid, "bot request listing")
     try:
@@ -574,6 +586,7 @@ async def approve_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Approve a bot for installation on a server."""
+    require_user_token(current_user)
     sid = _bot_id(server_id, "server_id")
     app_id = _bot_id(body.application_id, "application_id")
     try:
@@ -649,6 +662,7 @@ async def review_bot_request(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Review a bot request (approve or deny)."""
+    require_user_token(current_user)
     sid = _bot_id(server_id, "server_id")
     try:
         req = applications.review_bot_request(
@@ -746,6 +760,7 @@ async def update_bot_profile(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Update a bot's public profile."""
+    require_user_token(current_user)
     app_id = _bot_id(application_id, "application_id")
     try:
         profile = applications.update_bot_profile(
@@ -868,6 +883,7 @@ async def list_authorized_apps(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get all OAuth2 applications the current user has authorized."""
+    require_user_token(current_user)
     try:
         apps = applications.get_user_authorized_apps(current_user.user_id)
         return [
@@ -905,6 +921,7 @@ async def revoke_authorized_app(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Revoke an authorized application's access."""
+    require_user_token(current_user)
     try:
         applications.revoke_authorized_app(
             token_id=token_id,
