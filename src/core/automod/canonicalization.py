@@ -1,0 +1,62 @@
+"""Content canonicalization for automod text matching.
+
+Keyword blocklists, duplicate-spam detection and similar automod rules compare
+user-controlled message text against admin-controlled patterns. Naive
+``str.lower()`` / substring comparisons can be evaded without changing what a
+human reads by:
+
+  * splicing visually invisible format/control characters into a word
+    (zero-width joiners/spaces, bidi overrides, soft hyphens, BOM, ...);
+  * using fullwidth or other compatibility Unicode forms;
+  * case variants that ``lower()`` does not fold (e.g. ``ß``).
+
+Every comparison therefore folds both sides to a single canonical form: NFKC,
+casefold (unless the rule is case-sensitive), removal of all invisible
+format/control characters, collapsed whitespace and a hard length bound. This
+mirrors the canonicalization already applied by the antispam detector so the
+two moderation layers agree on what "the same text" means.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from typing import Any
+
+# Cf = format (zero-width joiners, bidi overrides, direction marks, soft
+# hyphen, BOM, ...); Cc = control (C0/C1 including NUL). Both are visually
+# invisible yet change the bytes of a message, so removing the whole categories
+# closes the class instead of maintaining a fixed codepoint denylist.
+_INVISIBLE_CATEGORIES = frozenset({"Cf", "Cc"})
+_WS_RUN = re.compile(r"\s+")
+
+# NFKC may expand one compatibility codepoint into many (U+FDFA -> 18). Bound
+# the folded form so a short input cannot be amplified into an unbounded string
+# for the linear substring scans in the rules.
+MAX_CANONICAL_LENGTH = 10_000
+
+
+def canonicalize_for_matching(content: Any, *, case_sensitive: bool = False) -> str:
+    """Return the canonical form of ``content`` for automod matching.
+
+    Both the message text and the blocklist entries must be passed through this
+    function so they fold to identical bytes. When ``case_sensitive`` is true
+    the case fold is skipped, but width folding and invisible-character removal
+    still apply: those are normalization attacks, not case differences.
+    """
+    if content is None:
+        return ""
+    if not isinstance(content, str):
+        content = str(content)
+    text = unicodedata.normalize("NFKC", content)
+    if not case_sensitive:
+        text = text.casefold()
+    text = "".join(
+        ch for ch in text if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES
+    )
+    # Strip invisibles BEFORE collapsing whitespace: an invisible next to a
+    # space would otherwise leave a doubled whitespace run behind.
+    text = _WS_RUN.sub(" ", text).strip()
+    if len(text) > MAX_CANONICAL_LENGTH:
+        text = text[:MAX_CANONICAL_LENGTH]
+    return text

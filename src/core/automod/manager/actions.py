@@ -3,7 +3,13 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from ..limits import MAX_REASON_LENGTH, bounded_reason, clip_text
+from src.core.security.hardening import HardeningViolation, bounded_int
+from ..limits import (
+    MAX_DURATION_SECONDS,
+    MAX_REASON_LENGTH,
+    bounded_reason,
+    clip_text,
+)
 from ..models import (
     RuleAction,
     ActionType,
@@ -240,6 +246,25 @@ class ActionMixin(AutoModProtocol):
             reason = bounded_reason(reason, "action reason")
         except ValueError:
             logger.warning("AutoMod manual action REFUSED: invalid reason")
+            return False
+        # Manual actions bypass the rule-config parser (_parse_action), which
+        # clamps duration_seconds to [0, MAX_DURATION_SECONDS]. Apply the same
+        # bound here so a direct caller cannot issue an unbounded/negative
+        # timeout or smuggle in a non-integer that corrupts the stored
+        # timeout_until timestamp.
+        try:
+            duration_seconds = (
+                None
+                if duration_seconds is None
+                else bounded_int(
+                    duration_seconds,
+                    "duration_seconds",
+                    minimum=0,
+                    maximum=MAX_DURATION_SECONDS,
+                )
+            )
+        except HardeningViolation:
+            logger.warning("AutoMod manual action REFUSED: invalid duration")
             return False
 
         required = MANUAL_ACTION_PERMISSION.get(action_type, "server.automod")

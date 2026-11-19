@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 from src.core.security.hardening import HardeningViolation, bounded_int
 
 from .base import BaseRule
+from ..canonicalization import canonicalize_for_matching
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
@@ -118,7 +119,10 @@ class MessageSpamRule(BaseRule):
         now = int(time.time() * 1000)
         window_start = now - (self._duplicate_window * 1000)
 
-        content_lower = content.lower().strip()
+        # Compare canonical forms so invisible characters, fullwidth variants
+        # and case changes cannot make identical-looking spam count as unique
+        # (the same normalization bypass the antispam detector already closes).
+        canonical_content = canonicalize_for_matching(content)
         duplicate_count = 0
 
         for msg in recent_messages:
@@ -127,12 +131,12 @@ class MessageSpamRule(BaseRule):
             if msg.get("created_at", 0) < window_start:
                 continue
 
-            msg_content = msg.get("content", "").lower().strip()
+            msg_content = canonicalize_for_matching(msg.get("content", ""))
 
-            if msg_content == content_lower:
+            if msg_content == canonical_content:
                 duplicate_count += 1
             elif (
-                self._calculate_similarity(content_lower, msg_content)
+                self._calculate_similarity(canonical_content, msg_content)
                 >= self._similarity_threshold
             ):
                 duplicate_count += 1

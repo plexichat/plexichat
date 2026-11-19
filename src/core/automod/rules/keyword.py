@@ -7,6 +7,7 @@ Checks messages for blocked keywords with optional word boundary matching.
 from typing import Dict, Any, Optional, List
 
 from .base import BaseRule
+from ..canonicalization import canonicalize_for_matching
 from ..limits import (
     MAX_KEYWORD_LENGTH,
     MAX_KEYWORDS,
@@ -28,13 +29,29 @@ class KeywordRule(BaseRule):
         raw_keywords = self.config.get("keywords", [])
         if not isinstance(raw_keywords, list):
             raw_keywords = []
+        self._case_sensitive: bool = self.config.get("case_sensitive", False)
+        self._whole_word: bool = self.config.get("whole_word", True)
         self._keywords: List[str] = [
             k.strip()
             for k in raw_keywords
             if isinstance(k, str) and k.strip() and len(k) <= MAX_KEYWORD_LENGTH
         ][:MAX_KEYWORDS]
-        self._case_sensitive: bool = self.config.get("case_sensitive", False)
-        self._whole_word: bool = self.config.get("whole_word", True)
+        # Keep the display strings above for matched_content / severity-map
+        # lookups, but compare the canonicalized bytes. Without this, splicing
+        # a zero-width joiner or using fullwidth forms into a blocked word
+        # evades the filter while reading identically to a human.
+        self._canonical_keywords: List[str] = []
+        display_keywords: List[str] = []
+        for keyword in self._keywords:
+            canonical = canonicalize_for_matching(
+                keyword, case_sensitive=self._case_sensitive
+            )
+            # A keyword made solely of invisible characters folds to nothing;
+            # skip it rather than let an empty needle match every message.
+            if canonical:
+                display_keywords.append(keyword)
+                self._canonical_keywords.append(canonical)
+        self._keywords = display_keywords
         raw_map = self.config.get("severity_map", {})
         if not isinstance(raw_map, dict):
             raw_map = {}
@@ -61,17 +78,19 @@ class KeywordRule(BaseRule):
         if not self._keywords:
             return self._no_match()
 
-        check_content = content if self._case_sensitive else content.lower()
+        check_content = canonicalize_for_matching(
+            content, case_sensitive=self._case_sensitive
+        )
 
         matched_keywords = []
         highest_severity = ViolationSeverity.LOW
 
-        for keyword in self._keywords:
+        for keyword, canonical in zip(self._keywords, self._canonical_keywords):
             if self._whole_word:
-                if self._contains_whole_word(check_content, keyword):
+                if self._contains_whole_word(check_content, canonical):
                     matched_keywords.append(keyword)
             else:
-                if keyword in check_content:
+                if canonical in check_content:
                     matched_keywords.append(keyword)
 
         if not matched_keywords:
