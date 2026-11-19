@@ -16,6 +16,20 @@ from .constants import DANGEROUS_PATTERNS
 from ..exceptions import EmbedSanitizationError
 
 
+def _is_invisible(ch: str) -> bool:
+    """Whether a character can split a token without being visible to a human.
+
+    NFKC leaves most of these untouched and ``\\s`` does not match them, so an
+    explicit pass is required. Covers C0 controls, DEL, C1 controls and every
+    Unicode ``Cf`` format character (zero-width space/joiner, bidi controls,
+    soft hyphen, word joiner, ...).
+    """
+    code = ord(ch)
+    if code < 0x20 or 0x7F <= code <= 0x9F:
+        return True
+    return unicodedata.category(ch) == "Cf"
+
+
 def sanitize_content(content: str, field_name: str = "content") -> str:
     """
     Sanitize text content to prevent XSS.
@@ -41,21 +55,24 @@ def sanitize_content(content: str, field_name: str = "content") -> str:
     # NFKC normalisation collapses lookalike/homoglyph variants.
     normalized_full = unicodedata.normalize("NFKC", decoded)
 
-    # Control characters split tokens (e.g. "jav\tascript:"); the stripped
-    # form is used for matching only, the returned content is untouched so
-    # legitimate multilingual text (Arabic tatweel, emoji ZWJ, ...) is not
-    # mutilated.
-    normalized_no_ctrl = "".join(
-        ch for ch in normalized_full if not (ord(ch) < 0x20 or ord(ch) == 0x7F)
+    # Control and format characters can split a dangerous token without
+    # changing how it looks ("java\u200bscript:", "<scr\u200bipt>",
+    # "on\u200click="). NFKC leaves most format chars (category Cf: ZWSP,
+    # ZWNJ, ZWJ, bidi controls, soft hyphen, ...) intact and ``\s`` does not
+    # match them, so strip them explicitly. These forms are used for matching
+    # only; the returned content is untouched so legitimate multilingual text
+    # (Arabic tatweel, emoji ZWJ, ...) is not mutilated.
+    normalized_visible = "".join(
+        ch for ch in normalized_full if not _is_invisible(ch)
     )
-    normalized_no_ws = re.sub(r"\s+", "", normalized_full).lower()
+    normalized_visible_lower = normalized_visible.lower()
+    normalized_squashed = re.sub(r"\s+", "", normalized_visible_lower)
 
     for target in (
         content,
         decoded,
-        normalized_no_ws,
-        normalized_no_ctrl.lower(),
-        re.sub(r"\s+", "", normalized_no_ctrl).lower(),
+        normalized_squashed,
+        normalized_visible_lower,
     ):
         for pattern in DANGEROUS_PATTERNS:
             if pattern.search(target):

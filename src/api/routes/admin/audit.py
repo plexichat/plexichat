@@ -33,6 +33,14 @@ _MAX_AUDIT_PAGE = 10_000
 _MAX_AUDIT_SCAN_DAYS = 366
 _MAX_AUDIT_DATE_RANGE_MS = _MAX_AUDIT_SCAN_DAYS * 24 * 60 * 60 * 1000
 
+# ``date_from``/``date_to`` are Pydantic ``int`` values: a query string such as
+# ``?date_from=99999999999999999999`` parses to an arbitrary-precision Python
+# int, then raises ``OverflowError`` when SQLite tries to bind it as an INTEGER
+# (turning a bad request into a 500). created_at is a non-negative epoch-ms
+# value stored in a signed 64-bit column, so reject anything outside that range.
+_MIN_AUDIT_TIMESTAMP_MS = 0
+_MAX_AUDIT_TIMESTAMP_MS = 2**63 - 1
+
 # Audit rows are untrusted free text: details, actions and user agents can be
 # influenced by users whose names/values were recorded in an entry. When an
 # exported CSV is opened in Excel/Sheets a cell beginning with one of these
@@ -78,7 +86,15 @@ def _bounded_scan_days() -> int:
 
 
 def _validate_date_window(date_from, date_to) -> None:
-    """Reject inverted or unbounded-wide date ranges before they hit SQL."""
+    """Reject out-of-range, inverted or unbounded-wide date ranges before SQL."""
+    for name, value in (("date_from", date_from), ("date_to", date_to)):
+        if value is not None and not (
+            _MIN_AUDIT_TIMESTAMP_MS <= value <= _MAX_AUDIT_TIMESTAMP_MS
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{name} is outside the allowed timestamp range",
+            )
     if date_from is None or date_to is None:
         return
     if date_to < date_from:
