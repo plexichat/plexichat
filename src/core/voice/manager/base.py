@@ -39,6 +39,19 @@ from .afk import AfkMixin
 from .calls import CallLifecycleMixin
 
 
+# ``get_voice_channels`` resolves channel settings for every visible channel.
+# A server can expose far more than SQLite's bind-variable cap (999 on older
+# builds) in voice/stage channels, so bind well under both limits. Same bounded
+# chunk size the notification/settings bulk helpers use.
+_BULK_ID_CHUNK_SIZE = 500
+
+
+def _id_chunks(items: List[SnowflakeID]):
+    """Yield successive bounded slices of ``items`` for IN-clause binding."""
+    for start in range(0, len(items), _BULK_ID_CHUNK_SIZE):
+        yield items[start : start + _BULK_ID_CHUNK_SIZE]
+
+
 class VoiceManager(
     BaseManager,
     ChannelOpsMixin,
@@ -142,12 +155,13 @@ class VoiceManager(
     ) -> Dict[SnowflakeID, int]:
         """Bulk variant of ``_get_channel_user_count`` for list queries.
 
-        Single SQL with ``GROUP BY`` — emits ONE query for N channels
-        instead of N round trips. Empty input short-circuits to an
-        empty dict so a list query against an empty server doesn't
-        issue a no-op. ``channel_ids`` is deduped via ``dict.fromkeys``
-        so a malformed caller passing the same id twice doesn't skew
-        the COUNT.
+        ``GROUP BY`` queries emitted in bounded (<=500-id) chunks — a
+        constant number of round trips instead of N, without ever
+        exceeding the driver's bind-variable cap. Empty input
+        short-circuits to an empty dict so a list query against an
+        empty server doesn't issue a no-op. ``channel_ids`` is deduped
+        via ``dict.fromkeys`` so a malformed caller passing the same id
+        twice doesn't skew the COUNT.
 
         Channel ids that have zero members do NOT appear in the
         ``GROUP BY`` result set, so we pre-zero the dict for every
@@ -157,17 +171,28 @@ class VoiceManager(
         if not channel_ids:
             return {}
         unique = list(dict.fromkeys(channel_ids))
-        placeholders = ",".join("?" for _ in unique)
-        rows = self._db.fetch_all(
-            f"SELECT channel_id, COUNT(*) AS count "
-            f"FROM voice_states WHERE channel_id IN ({placeholders}) "
-            f"GROUP BY channel_id",
-            tuple(unique),
-        )
         counts: Dict[SnowflakeID, int] = {cid: 0 for cid in unique}
-        for row in rows:
-            counts[row["channel_id"]] = int(row.get("count", 0) or 0)
+        for chunk in _id_chunks(unique):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                f"SELECT channel_id, COUNT(*) AS count "
+                f"FROM voice_states WHERE channel_id IN ({placeholders}) "
+                f"GROUP BY channel_id",
+                tuple(chunk),
+            )
+            for row in rows:
+                counts[row["channel_id"]] = int(row.get("count", 0) or 0)
         return counts
+
+    @staticmethod
+    def _default_channel_settings(channel_id: SnowflakeID) -> Dict[str, Any]:
+        """Default settings for a channel with no persisted settings row."""
+        return {
+            "channel_id": channel_id,
+            "user_limit": 0,
+            "bitrate": 64000,
+            "region_id": None,
+        }
 
     def _get_channel_settings(self, channel_id: SnowflakeID) -> Dict[str, Any]:
         row = self._db.fetch_one(
@@ -175,12 +200,35 @@ class VoiceManager(
         )
         if row:
             return dict(row)
-        return {
-            "channel_id": channel_id,
-            "user_limit": 0,
-            "bitrate": 64000,
-            "region_id": None,
+        return self._default_channel_settings(channel_id)
+
+    def _get_channel_settings_bulk(
+        self, channel_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, Dict[str, Any]]:
+        """Bulk variant of ``_get_channel_settings`` for list queries.
+
+        Resolves settings for N channels in ``ceil(N / 500)`` SELECTs instead
+        of N round trips, binding at most ``_BULK_ID_CHUNK_SIZE`` ids per
+        ``IN`` clause. Every requested id is present in the result: channels
+        without a settings row get the exact same default dict the single-id
+        ``_get_channel_settings`` returns, preserving result parity.
+        """
+        if not channel_ids:
+            return {}
+        unique = list(dict.fromkeys(channel_ids))
+        settings: Dict[SnowflakeID, Dict[str, Any]] = {
+            cid: self._default_channel_settings(cid) for cid in unique
         }
+        for chunk in _id_chunks(unique):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                f"SELECT * FROM voice_channel_settings "
+                f"WHERE channel_id IN ({placeholders})",
+                tuple(chunk),
+            )
+            for row in rows:
+                settings[row["channel_id"]] = dict(row)
+        return settings
 
     def _ensure_channel_settings(self, channel_id: SnowflakeID) -> None:
         self._db.insert_or_ignore(

@@ -197,19 +197,25 @@ class ChannelOpsMixin(VoiceProtocol):
         if not visible_rows:
             return []
 
-        # One bulk SELECT COUNT for ALL visible channels — replaces
-        # the per-row COUNT that ``_row_to_voice_channel`` would
-        # otherwise fire. Net: an N-channels list query is now exactly
-        # 1 SELECT-listing + 1 SELECT-COUNT instead of N+1.
+        visible_ids = [r["id"] for r in visible_rows]
+
+        # One bulk SELECT COUNT and one bulk settings SELECT for ALL visible
+        # channels — replaces the per-row COUNT and per-row settings fetch
+        # that ``_row_to_voice_channel`` / ``_get_channel_settings`` would
+        # otherwise fire. Net: an N-channels list query is now a constant
+        # number of SELECTs (plus bounded IN chunks) instead of N+1. The
+        # settings bulk helper omits no channel: rows without settings get
+        # the same default dict the single-id path returns.
         prefetched_counts = (
             self._get_channel_user_counts_bulk(  # mixed in via ops mixin
-                [r["id"] for r in visible_rows]
+                visible_ids
             )
         )
+        settings_by_id = self._get_channel_settings_bulk(visible_ids)
 
         channels: List[VoiceChannel] = []
         for row in visible_rows:
-            settings = self._get_channel_settings(row["id"])
+            settings = settings_by_id[row["id"]]
             channels.append(
                 self._row_to_voice_channel(row, settings, prefetched_counts)
             )

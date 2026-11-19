@@ -58,6 +58,11 @@ class VoiceProtocol:
     def _get_channel_settings(self, channel_id: SnowflakeID) -> Dict[str, Any]:
         return {}
 
+    def _get_channel_settings_bulk(
+        self, channel_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, Dict[str, Any]]:
+        return {}
+
     def _ensure_channel_settings(self, channel_id: SnowflakeID) -> None:
         pass
 
