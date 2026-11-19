@@ -5,6 +5,8 @@ import utils.logger as logger
 
 class _DatabaseTransactionProtocol(Protocol):
     type: str
+    engine: Any
+    _pool: Any
 
     @property
     def transaction_depth(self) -> int: ...
@@ -68,6 +70,60 @@ class DatabaseTransactionMixin:
             or "no transaction" in err_str
         )
 
+    def _discard_transaction_connection(
+        self: _DatabaseTransactionProtocol, conn: Any
+    ) -> None:
+        """Force-close ``conn`` and drop it from pool accounting.
+
+        Used only when a COMMIT/ROLLBACK failed and the driver still reports an
+        open transaction. Handing such a connection to another worker would let
+        it inherit (and possibly commit) work from the failed transaction;
+        force-closing releases the pool slot instead of leaking it.
+        """
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return
+        pool = getattr(self, "_pool", None)
+        try:
+            engine.close_connection(conn, pool, {"close": True})
+        except Exception as discard_error:
+            logger.debug(
+                f"transaction cleanup connection discard failed: {discard_error}"
+            )
+
+    def _end_transaction(
+        self: _DatabaseTransactionProtocol, conn: Any, *, abort: bool = False
+    ) -> None:
+        """Clear transaction state and hand ``conn`` back to the pool.
+
+        Called on *every* outermost commit/rollback exit path — success, the
+        terminal ``no transaction is active`` case, and unexpected failures —
+        so a failed COMMIT/ROLLBACK can never leave the connection checked out
+        and flagged ``in_transaction`` in the pool. Two such failures per
+        worker were enough to pin a cores-sized pool under concurrent load.
+        Never raises, so the original commit/rollback error is propagated
+        unchanged instead of being masked by cleanup.
+        """
+        try:
+            if abort:
+                # A COMMIT that failed for an unexpected reason may have left
+                # the transaction open. Abort it before releasing so the next
+                # borrower cannot inherit the failed work.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            self.transaction_depth = 0
+            self.in_transaction = False
+            self._touch_pool(conn, in_transaction=False)
+            # If the driver still reports an open transaction (a failed
+            # COMMIT/ROLLBACK), do not return it to the pool.
+            if getattr(conn, "in_transaction", False):
+                self._discard_transaction_connection(conn)
+            self._release_conn()
+        except Exception as cleanup_error:
+            logger.debug(f"transaction cleanup failed: {cleanup_error}")
+
     def commit(self: _DatabaseTransactionProtocol) -> None:
         self._invalidate_query_cache()
         conn = self._get_conn()
@@ -97,24 +153,25 @@ class DatabaseTransactionMixin:
             return
 
         if self.transaction_depth == 1:
-            if self.type == "sqlite":
-                try:
-                    conn.execute("COMMIT")
-                except Exception as e:
-                    if self._is_no_transaction(e):
-                        self.transaction_depth = 0
-                        self.in_transaction = False
-                        self._touch_pool(conn, in_transaction=False)
-                        return
-                    raise
-            else:
-                conn.commit()
-            self.transaction_depth = 0
-            self.in_transaction = False
-            self._touch_pool(conn, in_transaction=False)
-            # Transaction complete: return the connection to the pool so
-            # concurrent threads are not starved by per-thread hoarding.
-            self._release_conn()
+            unexpected_failure = False
+            try:
+                if self.type == "sqlite":
+                    try:
+                        conn.execute("COMMIT")
+                    except Exception as e:
+                        if not self._is_no_transaction(e):
+                            raise
+                else:
+                    conn.commit()
+            except Exception:
+                unexpected_failure = True
+                raise
+            finally:
+                # Always unwind markers and return the connection — including
+                # the "no transaction is active" and unexpected-error paths,
+                # which previously returned/raised with the connection still
+                # pinned and marked in_transaction in the pool.
+                self._end_transaction(conn, abort=unexpected_failure)
         elif self.transaction_depth == 0:
             pass
         else:
@@ -150,23 +207,20 @@ class DatabaseTransactionMixin:
                 self.transaction_depth -= 1
                 return
 
-            if self.type == "sqlite":
-                try:
-                    conn.execute("ROLLBACK")
-                except Exception as e:
-                    if self._is_no_transaction(e):
-                        self.transaction_depth = 0
-                        self.in_transaction = False
-                        self._touch_pool(conn, in_transaction=False)
-                        return
-                    raise
-            else:
-                conn.rollback()
-            self.transaction_depth = 0
-            self.in_transaction = False
-            self._touch_pool(conn, in_transaction=False)
-            # Transaction aborted: return the connection to the pool.
-            self._release_conn()
+            try:
+                if self.type == "sqlite":
+                    try:
+                        conn.execute("ROLLBACK")
+                    except Exception as e:
+                        if not self._is_no_transaction(e):
+                            raise
+                else:
+                    conn.rollback()
+            finally:
+                # Always unwind markers and return the connection — including
+                # the "no transaction is active" and failed-ROLLBACK paths,
+                # which previously returned/raised with the connection pinned.
+                self._end_transaction(conn)
         else:
             conn.rollback()
             self.in_transaction = False
