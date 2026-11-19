@@ -171,6 +171,7 @@ async def bulk_update_settings(
     and total payload size) and committed atomically: either every standard
     setting lands or none does.
     """
+    require_user_token(current_user)
     settings_module = api.get_settings()
     presence_module = api.get_presence()
 
@@ -309,7 +310,14 @@ async def bulk_update_settings(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=60, prefix="user_setting_api")
+# Partition the cache by credential, not just user id: a bot token carries its
+# owner's ``user_id``, so the default key would let a warm owner entry be served
+# to the bot without the handler body (and its guard) ever running.
+@cached(
+    ttl=60,
+    prefix="user_setting_api",
+    key_builder=authenticated_cache_key("user_setting_api"),
+)
 def get_setting(
     key: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SettingResponse:
@@ -318,6 +326,7 @@ def get_setting(
 
     Returns the setting value and metadata.
     """
+    require_user_token(current_user)
     settings_module = api.get_settings()
     if not settings_module:
         logger.error("Settings module not available")
@@ -381,6 +390,7 @@ async def set_setting(
 
     Creates or updates the setting with the given key.
     """
+    require_user_token(current_user)
     settings_module = api.get_settings()
     if not settings_module:
         logger.error("Settings module not available")
@@ -496,6 +506,7 @@ async def delete_setting(
     (server-semantics) keys cannot be deleted through the generic
     endpoint, mirroring the write-side restriction.
     """
+    require_user_token(current_user)
     settings_module = api.get_settings()
     if not settings_module:
         logger.error("Settings module not available")
