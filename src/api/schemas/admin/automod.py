@@ -5,7 +5,13 @@ Automod schemas.
 from typing import List, Literal, Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 from ..policy_types import UIText
-from ..common import SnowflakeID
+from ..common import SnowflakeID, SnowflakeIDParam
+
+#: Exempt role/channel lists are persisted in the rule row and consulted on
+#: every message check (``channel_id in rule.exempt_channels`` and
+#: ``user_role_ids & set(rule.exempt_roles)``). Cap the list so one rule cannot
+#: turn each check into an unbounded scan/allocation.
+MAX_EXEMPT_IDS = 256
 
 #: Rule/action kinds the automod engine knows about (``RuleType`` / ``ActionType``).
 #: The route already converts through those enums; declaring the values here
@@ -69,8 +75,14 @@ class AutomodRuleCreateRequest(BaseModel):
     rule_type: RuleTypeValue
     config: Dict[str, Any]
     actions: List[AutomodRuleAction]
-    exempt_roles: Optional[List[int]] = None
-    exempt_channels: Optional[List[int]] = None
+    # Snowflake IDs, not arbitrary ints: SnowflakeIDParam rejects the bool /
+    # float / negative / >64-bit values lax ``int`` silently coerced here.
+    exempt_roles: Optional[List[SnowflakeIDParam]] = Field(
+        None, max_length=MAX_EXEMPT_IDS, description="Exempt role IDs"
+    )
+    exempt_channels: Optional[List[SnowflakeIDParam]] = Field(
+        None, max_length=MAX_EXEMPT_IDS, description="Exempt channel IDs"
+    )
     priority: Optional[int] = 0
     check_all: Optional[bool] = False
     enabled: Optional[bool] = True
@@ -82,8 +94,14 @@ class AutomodRuleUpdateRequest(BaseModel):
     name: Optional[UIText] = Field(None, min_length=1, max_length=100)
     config: Optional[Dict[str, Any]] = None
     actions: Optional[List[AutomodRuleAction]] = None
-    exempt_roles: Optional[List[int]] = None
-    exempt_channels: Optional[List[int]] = None
+    # Snowflake IDs, not arbitrary ints: SnowflakeIDParam rejects the bool /
+    # float / negative / >64-bit values lax ``int`` silently coerced here.
+    exempt_roles: Optional[List[SnowflakeIDParam]] = Field(
+        None, max_length=MAX_EXEMPT_IDS, description="Exempt role IDs"
+    )
+    exempt_channels: Optional[List[SnowflakeIDParam]] = Field(
+        None, max_length=MAX_EXEMPT_IDS, description="Exempt channel IDs"
+    )
     priority: Optional[int] = None
     check_all: Optional[bool] = None
     enabled: Optional[bool] = None
