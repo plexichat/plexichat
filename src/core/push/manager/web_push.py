@@ -3,7 +3,7 @@
 import ipaddress
 import json
 import socket
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional, Tuple, cast
 from urllib.parse import urlparse
 
 import utils.logger as logger
@@ -78,8 +78,8 @@ def _endpoint_address(host: str) -> Optional[Any]:
         return None
 
 
-def _require_public_endpoint(endpoint: str) -> str:
-    """Refuse endpoints that point at loopback/private/link-local targets.
+def _resolve_public_endpoint(endpoint: str) -> Tuple[str, Optional[str]]:
+    """Validate an endpoint and return ``(endpoint, address_to_pin)``.
 
     ``require_https_url`` guarantees the scheme and absence of embedded
     credentials, but an attacker who can register a Web Push subscription may
@@ -89,6 +89,13 @@ def _require_public_endpoint(endpoint: str) -> str:
     literal IPs in every reserved range plus internal/loopback hostnames, and
     resolve ordinary DNS names to reject answers that point into those same
     ranges. Only names that resolve to public addresses are returned.
+
+    For a DNS-name endpoint the *validated* address is returned as
+    ``address_to_pin``. Resolving to check safety and then handing pywebpush the
+    hostname would let it resolve the name a second time -- a rebinding server
+    can answer public here and loopback/private at connect time. Callers must
+    therefore pin the transport to the returned address. Literal-IP endpoints
+    need no pin (there is no second lookup), so their address is ``None``.
     """
     parsed = urlparse(endpoint)
     # A literal backslash in the authority is a parser differential that lets
@@ -131,15 +138,65 @@ def _require_public_endpoint(endpoint: str) -> str:
         try:
             answers = socket.getaddrinfo(host, None)
         except (socket.gaierror, OSError):
-            return endpoint
+            # No address to pin: the transport will fail on the same lookup.
+            return endpoint, None
         for answer in answers:
             ip_text = str(answer[4][0])
             if validator.is_private_ip(ip_text):
                 raise ValueError("endpoint resolves to a non-public IP address")
-        return endpoint
+        # Every answer was checked; pin the transport to one we approved so a
+        # second (rebound) lookup by the HTTP client cannot reach a private IP.
+        pinned = str(answers[0][4][0]) if answers else None
+        return endpoint, pinned
     if validator.is_private_ip(str(address)):
         raise ValueError("endpoint targets a non-public IP address")
-    return endpoint
+    # A literal has no second lookup to rebind; no pin needed.
+    return endpoint, None
+
+
+def _require_public_endpoint(endpoint: str) -> str:
+    """Backwards-compatible wrapper: validate and return the endpoint string."""
+    return _resolve_public_endpoint(endpoint)[0]
+
+
+def _make_pinned_session(address: str, hostname: str) -> Any:
+    """Return a requests session that connects to ``address``, never re-resolving.
+
+    ``URLValidator`` (and the caller contract in ``src.utils.security``) resolve
+    once and require the connection to use that IP. pywebpush, however, POSTs to
+    the hostname in ``subscription_info['endpoint']`` and requests would resolve
+    it again -- the DNS-rebinding window this adapter closes. The connection
+    pool is keyed on the validated IP, while TLS still uses the original host
+    for SNI and certificate verification, and requests still sends that host in
+    ``Host`` and in the VAPID ``aud`` claim. Environment proxies are disabled:
+    a proxy would re-resolve the hostname on our behalf and reopen the window.
+    """
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    class _PinnedHTTPSAdapter(HTTPAdapter):
+        def __init__(self, target: str, tls_host: str) -> None:
+            self._target = target
+            self._tls_host = tls_host
+            super().__init__()
+
+        def get_connection_with_tls_context(
+            self, request: Any, verify: Any, proxies: Any = None, cert: Any = None
+        ) -> Any:
+            host_params, pool_kwargs = self.build_connection_pool_key_attributes(
+                request, verify, cert
+            )
+            host_params["host"] = self._target
+            pool_kwargs["server_hostname"] = self._tls_host
+            pool_kwargs["assert_hostname"] = self._tls_host
+            return self.poolmanager.connection_from_host(
+                **host_params, pool_kwargs=pool_kwargs
+            )
+
+    session = requests.Session()
+    session.trust_env = False
+    session.mount("https://", _PinnedHTTPSAdapter(address, hostname))
+    return session
 
 
 class _NoRedirectSession:
@@ -152,14 +209,21 @@ class _NoRedirectSession:
     follows that redirect by default and re-POSTs the payload to the internal
     target, bypassing the literal-IP gate above. Forcing
     ``allow_redirects=False`` means only the endpoint we validated is ever
-    contacted. ``requests`` is imported lazily because pywebpush (and thus the
-    whole transport) is optional.
+    contacted. When ``pinned_ip`` is given, the session also connects to that
+    validated address instead of re-resolving the hostname (DNS rebinding).
+    ``requests`` is imported lazily because pywebpush (and thus the whole
+    transport) is optional.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, pinned_ip: Optional[str] = None, tls_hostname: Optional[str] = None
+    ) -> None:
         import requests
 
-        self._session = requests.Session()
+        if pinned_ip and tls_hostname:
+            self._session = _make_pinned_session(pinned_ip, tls_hostname)
+        else:
+            self._session = requests.Session()
 
     def post(self, url: str, **kwargs: Any) -> Any:
         kwargs["allow_redirects"] = False
@@ -225,7 +289,7 @@ class WebPushMixin(PushManagerBase):
         # than letting a malformed record turn into an off-origin request.
         try:
             endpoint = require_https_url(endpoint, "Web Push endpoint")
-            endpoint = _require_public_endpoint(endpoint)
+            endpoint, pinned_ip = _resolve_public_endpoint(endpoint)
         except (HardeningViolation, ValueError) as exc:
             logger.warning(f"Refusing Web Push delivery: {exc}")
             return None
@@ -244,9 +308,15 @@ class WebPushMixin(PushManagerBase):
         try:
             # Never follow a redirect from the subscription endpoint: a public
             # URL under the caller's control could otherwise bounce the POST
-            # (and its encrypted payload) to an internal address. See
+            # (and its encrypted payload) to an internal address. Connect to
+            # the IP the gate validated, with the original host used only for
+            # Host/SNI/TLS and the VAPID audience -- a second DNS lookup by the
+            # client could otherwise rebind to a private address. See
             # :class:`_NoRedirectSession`.
-            with _NoRedirectSession() as session:
+            tls_hostname = (urlparse(endpoint).hostname or "").lower()
+            with _NoRedirectSession(
+                pinned_ip=pinned_ip, tls_hostname=tls_hostname
+            ) as session:
                 webpush(
                     subscription_info=subscription_info,
                     data=payload,
