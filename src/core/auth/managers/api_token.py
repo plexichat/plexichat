@@ -1,5 +1,6 @@
 import secrets
 import ipaddress
+import hmac
 from typing import Optional, List, Dict, Any, Tuple
 
 import utils.logger as logger
@@ -447,6 +448,29 @@ class ApiTokenMixin(AuthManagerProtocol):
         if not row or row["revoked"]:
             return False
         row = dict(row)
+
+        # The blind index is a *search* structure, not a credential check.
+        # ``blind_index`` deliberately lowercases/strips its input so it can
+        # find encrypted e-mail addresses regardless of casing; for an API
+        # token that means ``token``, ``token.lower()`` and ``"  token  "``
+        # all resolve to the same row. Without an exact comparison here, any
+        # case/whitespace-normalized form of a leaked token authenticates as
+        # its owner (and the credential's effective search space shrinks).
+        # Re-derive the plaintext from the authenticated ciphertext (AES-GCM
+        # with the row id as AAD) and require a constant-time exact match.
+        # Fail closed on a missing/corrupt/undecryptable stored secret.
+        try:
+            stored_token = self.crypto.decrypt_data(
+                row["token_encrypted"], context=str(row["id"])
+            )
+        except Exception as exc:
+            logger.debug(f"api token verify: stored secret undecryptable: {exc}")
+            return False
+        if not isinstance(stored_token, str) or not isinstance(token, str):
+            return False
+        if not hmac.compare_digest(token, stored_token):
+            return False
+
         now = self._get_timestamp()
         if row.get("expires_at") and int(row["expires_at"]) <= now:
             self._record_api_access_token_event(

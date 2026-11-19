@@ -23,6 +23,28 @@ class TestAPIAccessTokens:
         assert created.scope_mode == "monitor"
         assert created.use_count_total == 0
 
+    def test_verify_access_token_requires_exact_secret(self, auth_manager):
+        """A blind-index hit is a lookup, not proof of possession.
+
+        ``blind_index`` lowercases/strips its input (needed for e-mail
+        search), so case or whitespace variants of a token resolve to the
+        same row. Verification must still require the *exact* credential;
+        otherwise a normalized form of a leaked token is a valid bearer
+        secret and the effective keyspace is reduced.
+        """
+        token = auth_manager.create_api_access_token("Exact", created_by=1)
+        raw = token.token
+        assert raw and raw != raw.lower() and raw != raw.upper()
+
+        assert auth_manager.verify_api_access_token(raw) is True
+        # Rechecking the exact token must still work after variants were
+        # rejected (a false rejection must not revoke or burn the credential).
+        assert auth_manager.verify_api_access_token(raw.lower()) is False
+        assert auth_manager.verify_api_access_token(raw.upper()) is False
+        assert auth_manager.verify_api_access_token(f"  {raw}  ") is False
+        assert auth_manager.verify_api_access_token(f"\t{raw}\n") is False
+        assert auth_manager.verify_api_access_token(raw) is True
+
     def test_verify_access_token_tracks_usage_details(self, auth_manager):
         token = auth_manager.create_api_access_token("Tracked", created_by=1)
 
