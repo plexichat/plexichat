@@ -15,7 +15,7 @@ from src.core.database.builder.sql_safety import (
     sql_offset,
     sql_placeholders,
 )
-from src.core.security.hardening import SNOWFLAKE_MAX
+from src.core.security.hardening import HardeningViolation, SNOWFLAKE_MAX
 
 from .base import (
     BaseIndexer,
@@ -379,6 +379,8 @@ class PostgresIndexer(BaseIndexer):
                     )
                 )
             return results
+        except HardeningViolation:
+            raise
         except Exception as e:
             logger.error(f"Postgres search failed: {e}")
             raise SearchBackendError(
@@ -514,6 +516,8 @@ class PostgresIndexer(BaseIndexer):
                 }
             )
             return results, next_cursor
+        except HardeningViolation:
+            raise
         except Exception as e:
             logger.error(f"Postgres paged message search failed: {e}")
             raise SearchBackendError(
@@ -603,6 +607,8 @@ class PostgresIndexer(BaseIndexer):
                 )
                 for r in rows
             ]
+        except HardeningViolation:
+            raise
         except Exception as e:
             logger.error(f"Postgres user search failed: {e}")
             raise SearchBackendError(
@@ -687,6 +693,8 @@ class PostgresIndexer(BaseIndexer):
                 {"kind": "usr", "rank": float(tail["rank"]), "id": int(tail["user_id"])}
             )
             return results, next_cursor
+        except HardeningViolation:
+            raise
         except Exception as e:
             logger.error(f"Postgres paged user search failed: {e}")
             raise SearchBackendError(
@@ -792,6 +800,8 @@ class PostgresIndexer(BaseIndexer):
                 )
                 for r in rows
             ]
+        except HardeningViolation:
+            raise
         except Exception as e:
             logger.error(f"Postgres server search failed: {e}")
             raise SearchBackendError(
@@ -890,6 +900,8 @@ class PostgresIndexer(BaseIndexer):
                 }
             )
             return results, next_cursor
+        except HardeningViolation:
+            raise
         except Exception as e:
             logger.error(f"Postgres paged server search failed: {e}")
             raise SearchBackendError(

@@ -22,6 +22,7 @@ from ..models import (
     ServerSearchResult,
 )
 from ..exceptions import SearchIndexError, SearchBackendError
+from src.core.security.hardening import HardeningViolation
 from src.utils.outbound import urlopen
 
 
@@ -460,7 +461,7 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Elasticsearch search failed: {e}")
@@ -535,7 +536,7 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Elasticsearch user search failed: {e}")
@@ -631,7 +632,7 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Elasticsearch server search failed: {e}")

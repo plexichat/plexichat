@@ -9,7 +9,7 @@ import math
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
-from src.core.security.hardening import HardeningViolation
+from src.core.security.hardening import HardeningViolation, reject_control_characters
 
 from ..models import (
     IndexedMessage,
@@ -36,8 +36,15 @@ def bounded_query(query: Any) -> str:
 
     Truncation keeps normal queries untouched while making sure a hostile
     caller cannot make the backend parse an arbitrarily large expression.
+
+    Control characters are rejected here as well as at the manager/HTTP
+    boundary. Indexers are directly callable (rebuilds, tests, internal
+    callers), so every backend must fail closed on its own: the SQLite FTS5
+    indexer already does this in ``_build_fts_query``, and a NUL in a bound
+    Postgres string raises a driver error that turns a search into a 500.
+    Refuse the whole class before the value reaches any backend.
     """
-    return str(query or "")[:MAX_BACKEND_QUERY_CHARS]
+    return reject_control_characters(query, "search query")[:MAX_BACKEND_QUERY_CHARS]
 
 
 def bounded_page(limit: Any, offset: Any) -> Tuple[int, int]:

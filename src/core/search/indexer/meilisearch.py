@@ -22,6 +22,7 @@ from ..models import (
     ServerSearchResult,
 )
 from ..exceptions import SearchIndexError, SearchBackendError
+from src.core.security.hardening import HardeningViolation
 from src.utils.outbound import urlopen
 
 
@@ -435,7 +436,7 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Meilisearch search failed: {e}")
@@ -502,7 +503,7 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Meilisearch user search failed: {e}")
@@ -593,7 +594,7 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
-        except SearchBackendError:
+        except (SearchBackendError, HardeningViolation):
             raise
         except Exception as e:
             logger.error(f"Meilisearch server search failed: {e}")
