@@ -21,6 +21,7 @@ Failure policy:
 """
 
 import json
+import threading
 
 from typing import Optional, List, Dict, Any
 
@@ -137,6 +138,45 @@ __all__ = [
 
 _manager = None
 _setup_complete = False
+
+# ---- Bounded phase-2 AI moderation scheduling -----------------------------
+# ``schedule_ai_check`` used to spawn one daemon thread per message send/edit.
+# Under a burst that is an unbounded, undeduped source of threads: no queue
+# bound, no coalescing of repeated edits to the same message, no deadline, and
+# no ceiling on concurrent AI backend calls (each can block for seconds). We
+# now funnel those jobs through the generic bounded dispatcher, which supplies
+# a fixed-size queue, key-based de-duplication, a per-job timeout and a
+# concurrency cap. Overload is shed instead of becoming a thread flood.
+#
+# This is only the *asynchronous* phase-2 AI pass. Phase-1 (synchronous,
+# fail-closed) moderation still gates every message before it is broadcast, so
+# shedding a phase-2 check under sustained load never removes the primary
+# moderation check.
+AI_CHECK_QUEUE_BOUND = 256
+AI_CHECK_MAX_ACTIVE_JOBS = 4
+AI_CHECK_JOB_TIMEOUT = 30.0
+
+_ai_dispatcher = None
+_ai_dispatcher_lock = threading.Lock()
+
+
+def _get_ai_dispatcher():
+    """Process-wide bounded dispatcher for phase-2 AI moderation passes."""
+    global _ai_dispatcher
+    if _ai_dispatcher is None:
+        with _ai_dispatcher_lock:
+            if _ai_dispatcher is None:
+                from src.core.notifications.background import (
+                    BoundedBackgroundDispatcher,
+                )
+
+                _ai_dispatcher = BoundedBackgroundDispatcher(
+                    "automod-ai-check",
+                    queue_bound=AI_CHECK_QUEUE_BOUND,
+                    job_timeout=AI_CHECK_JOB_TIMEOUT,
+                    max_active_jobs=AI_CHECK_MAX_ACTIVE_JOBS,
+                )
+    return _ai_dispatcher
 
 
 def setup(db, servers_module=None, messaging_module=None, notifications_module=None):
@@ -300,27 +340,40 @@ def schedule_ai_check(
 ) -> bool:
     """Schedule an asynchronous AI-moderation pass on a broadcast message.
 
-    Runs on a daemon background thread so the request handler returns
-    immediately. If an AI rule matches, the offending message is replaced
-    with an AutoMod tombstone (replacement mode) and a MESSAGE_UPDATE is
-    broadcast so clients re-render it.
-    """
-    import threading
+    The job is handed to a bounded, deduplicating dispatcher so the request
+    handler returns immediately without spawning an unbounded thread per
+    message. If an AI rule matches, the offending message is replaced with an
+    AutoMod tombstone (replacement mode) and a MESSAGE_UPDATE is broadcast so
+    clients re-render it.
 
+    Returns ``True`` when the job was accepted, ``False`` when it was shed as
+    a duplicate or because the queue/concurrency ceiling was reached. Callers
+    treat this as best-effort; synchronous phase-1 moderation remains the
+    fail-closed gate.
+    """
     ctx = dict(context or {})
     ctx["__automod_replacement__"] = True
     ctx["__system_context__"] = True
     ctx["__automod_caller__"] = True
 
-    args = (server_id, channel_id, user_id, message_id, content, ctx)
-    worker = threading.Thread(
-        target=_run_ai_check,
-        args=args,
-        daemon=True,
-        name="automod-ai-check",
+    def job() -> None:
+        _run_ai_check(server_id, channel_id, user_id, message_id, content, ctx)
+
+    # Key on message identity + exact content: a burst of unchanged re-edits
+    # collapses to a single pass, while genuinely new content always gets its
+    # own check (never suppressing moderation of a later revision).
+    key = (server_id, message_id, content)
+    accepted = _get_ai_dispatcher().submit(
+        job, key=key, timeout=AI_CHECK_JOB_TIMEOUT
     )
-    worker.start()
-    return True
+    if not accepted:
+        import utils.logger as logger
+
+        logger.debug(
+            f"automod: AI check for message {message_id} shed "
+            "(duplicate, queue full, or concurrency cap)"
+        )
+    return accepted
 
 
 def _run_ai_check(
