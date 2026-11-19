@@ -15,9 +15,14 @@ place that:
 
 The worker never raises to its caller: transcription failures are logged and the
 call is left without a transcript. Scheduling is fire-and-forget via
-:func:`schedule_transcribe_call` (``asyncio.create_task`` against the running
-loop, with a bounded in-process queue fallback for environments without a live
-loop at schedule time).
+:func:`schedule_transcribe_call`.
+
+Scheduling is deliberately bounded: every call (async *and* synchronous
+contexts) goes through one bounded in-process queue with a call-id dedupe set
+and a hard concurrency ceiling, and each job runs under a wall-clock deadline.
+A burst of call-end events can therefore never spawn an unlimited number of
+provider tasks, repeat the same call, or let one hung provider stall the
+drainer indefinitely. Overload sheds jobs instead of growing memory.
 """
 
 import asyncio
@@ -26,7 +31,7 @@ import queue
 import shutil
 import tempfile
 import threading
-from typing import Any, BinaryIO, Dict, List, Optional, Tuple, cast
+from typing import Any, BinaryIO, Dict, List, Optional, Set, Tuple, cast
 from urllib.parse import urljoin, urlparse
 
 import utils.config as config
@@ -751,20 +756,38 @@ async def transcribe_call(
         return None
 
 
-# === Fire-and-forget scheduling ===
+# === Bounded, deduplicated fire-and-forget scheduling ===
 
-# Bounded in-process queue used when no asyncio loop is running at schedule time
-# (e.g. a synchronous lifecycle hook). A background task drains it once a loop
-# starts; this keeps the API non-blocking in both sync and async contexts.
+# One stdlib ``queue.Queue`` is shared by ALL schedule paths (async request
+# handlers and synchronous lifecycle hooks alike). M26: stdlib (not
+# ``asyncio.Queue``) keeps ``put_nowait`` safe from arbitrary sync threads and
+# lets the queue be created without a running loop; the async drainer polls it
+# without ever blocking the loop.
 #
-# M26: implemented as a stdlib ``queue.Queue`` (not ``asyncio.Queue``) so the
-# queue is thread-safe for ``put_nowait`` from arbitrary sync threads and is
-# created WITHOUT a running loop (asyncio.Queue must be bound to a loop and is
-# not thread-safe for puts). The async drainer polls it.
+# Scaling hardening: previously the async path called ``loop.create_task``
+# directly, so a burst of call-end events could spawn unlimited provider tasks
+# with no dedupe and no deadline. Both paths now enqueue onto the same bounded
+# queue, dedupe by call id (queued OR running), cap concurrent jobs and give
+# each job a wall-clock timeout. Overload sheds work instead of growing memory.
 _QUEUE = None
 _QUEUE_DRAINING = False
 _QUEUE_LOCK = threading.Lock()
 _QUEUE_MAX = 512
+
+# Hard concurrency ceiling for provider calls (back-pressure). Each call holds
+# a provider connection and writes an artifact, so unbounded fan-out exhausts
+# both the pool and the provider. Env overrides keep deployments tunable.
+_MAX_ACTIVE = max(1, int(os.environ.get("PLEXICHAT_TRANSCRIPTION_MAX_ACTIVE", "4")))
+# Per-job deadline. A hung provider can no longer pin a drainer slot forever.
+_JOB_TIMEOUT = max(
+    1.0, float(os.environ.get("PLEXICHAT_TRANSCRIPTION_TIMEOUT_SECONDS", "300"))
+)
+_DRAIN_POLL_INTERVAL = 0.05
+
+# call ids currently queued or running. Guarded by ``_QUEUE_LOCK``; a duplicate
+# schedule for a call already in flight is dropped instead of consuming a second
+# queue slot or running twice in parallel.
+_INFLIGHT: Set[Any] = set()
 
 
 def _get_queue():
@@ -774,27 +797,71 @@ def _get_queue():
     return _QUEUE
 
 
+async def _run_job(job: Dict[str, Any]) -> None:
+    """Run one queued job under a deadline and release its dedupe claim."""
+    call_id = job["call_id"]
+    try:
+        await asyncio.wait_for(
+            transcribe_call(call_id, job["db"], job["config"]),
+            timeout=_JOB_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"transcription: call {call_id} exceeded {_JOB_TIMEOUT:g}s timeout"
+        )
+    except asyncio.CancelledError:  # pragma: no cover - loop shutdown
+        raise
+    except Exception as exc:  # never crash the drainer
+        logger.error(f"transcription: queued job for call {call_id} failed: {exc}")
+    finally:
+        _get_queue().task_done()
+        with _QUEUE_LOCK:
+            _INFLIGHT.discard(call_id)
+
+
 async def _drain_queue() -> None:
-    """Process any queued transcription jobs. Runs while the loop is alive."""
+    """Drain the bounded queue with capped concurrency and per-job deadlines."""
+    tasks: Set[asyncio.Future] = set()
     try:
         while True:
+            # Reap finished jobs; _run_job already logged any failure.
+            for task in [t for t in tasks if t.done()]:
+                tasks.discard(task)
+                try:
+                    task.result()
+                except asyncio.CancelledError:  # pragma: no cover - shutdown
+                    raise
+                except Exception:  # pragma: no cover - defensive
+                    pass
+
+            with _QUEUE_LOCK:
+                free = _MAX_ACTIVE - len(tasks)
+            for _ in range(max(0, free)):
+                try:
+                    job = _get_queue().get_nowait()
+                except queue.Empty:
+                    break
+                tasks.add(asyncio.ensure_future(_run_job(job)))
+
+            if not tasks and _get_queue().empty():
+                break
             # Poll the thread-safe stdlib queue; never block the loop on a
             # blocking ``queue.get()``.
-            job = _get_queue().get_nowait()
-            try:
-                await transcribe_call(job["call_id"], job["db"], job["config"])
-            except Exception as exc:  # never crash the drainer
-                logger.error(f"transcription: queued job failed: {exc}")
-            finally:
-                _get_queue().task_done()
-    except queue.Empty:
-        pass
+            await asyncio.sleep(_DRAIN_POLL_INTERVAL)
     except asyncio.CancelledError:  # pragma: no cover - shutdown
-        return
+        pass
     finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
         with _QUEUE_LOCK:
             global _QUEUE_DRAINING
             _QUEUE_DRAINING = False
+            # A job may have been enqueued during shutdown; hand it to a fresh
+            # drainer so it is never stranded in the bounded queue.
+            pending = not _get_queue().empty()
+        if pending:
+            ensure_transcription_drainer()
 
 
 def schedule_transcribe_call(
@@ -802,33 +869,30 @@ def schedule_transcribe_call(
 ) -> None:
     """Schedule :func:`transcribe_call` without blocking the caller.
 
-    Uses ``asyncio.create_task`` when a loop is running; otherwise enqueues the
-    job on the in-process bounded queue so a later ``ensure_drainer`` call
-    (wired into the app startup) can process it.
+    Always enqueues onto the single bounded queue (never ``create_task``
+    directly), so async request handlers and sync hooks share the same caps.
+    Jobs are shed when the queue is full or the call id is already in flight,
+    and each runs under :data:`_JOB_TIMEOUT`. The DB row remains, so a later
+    sweep can retry a shed job.
     """
     transcription_cfg = (
         config_arg if config_arg is not None else _transcription_config()
     )
-    try:
-        loop = asyncio.get_running_loop()
-        if loop.is_running():
-            loop.create_task(transcribe_call(call_id, db, transcription_cfg))
-            return
-    except RuntimeError:
-        logger.debug("No running loop; enqueuing transcription job")
-        pass
-
-    # No running loop: defer to the bounded queue. A full queue means the
-    # drainer is backed up; drop the job with a warning instead of growing
-    # memory without bound (the DB row remains, so a later sweep can retry).
     q = _get_queue()
-    try:
-        q.put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
-    except queue.Full:
-        logger.warning(
-            f"transcription: queue full ({_QUEUE_MAX}); dropped job for call {call_id}"
-        )
-        return
+    with _QUEUE_LOCK:
+        if call_id in _INFLIGHT:
+            logger.debug(
+                f"transcription: duplicate job for call {call_id} dropped (in flight)"
+            )
+            return
+        try:
+            q.put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
+        except queue.Full:
+            logger.warning(
+                f"transcription: queue full ({_QUEUE_MAX}); dropped job for call {call_id}"
+            )
+            return
+        _INFLIGHT.add(call_id)
     ensure_transcription_drainer()
 
 
