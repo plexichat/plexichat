@@ -421,7 +421,9 @@ class SendMixin(BaseService, MessageServiceProtocol):
         """Reject sends into a DM whose participants block each other.
 
         Keeps legacy DM channels (created before a block) from remaining
-        writable by either blocked party.
+        writable by either blocked party. Fails closed: when the optional
+        relationships module is unavailable the authoritative ``rel_blocked``
+        table is consulted directly, and a failed lookup denies the send.
         """
         conv_row = self._conversation_repo.get_by_id(conversation_id)
         if not conv_row or conv_row.get("deleted"):
@@ -437,19 +439,51 @@ class SendMixin(BaseService, MessageServiceProtocol):
             return
 
         relationships = _get_relationships_module()
-        if relationships is None:
-            return
 
         other_ids = [
             pid
             for pid in self._participant_svc.get_participant_ids(conversation_id)
             if pid != user_id
         ]
-        for other_id in other_ids:
-            if relationships.is_blocked_by_either(user_id, other_id):
-                raise ConversationAccessDeniedError(
-                    "Cannot send messages in this conversation"
+
+        if relationships is not None:
+            for other_id in other_ids:
+                if relationships.is_blocked_by_either(user_id, other_id):
+                    raise ConversationAccessDeniedError(
+                        "Cannot send messages in this conversation"
+                    )
+            return
+
+        # The optional relationships module can be unavailable (not
+        # initialised in embedded deployments, or a partial outage) while the
+        # block rows are still authoritative in the database. Returning here
+        # used to FAIL OPEN: either party could keep writing into a DM after a
+        # block, bypassing the same rule create_dm/typing now enforce even
+        # when the module is down. Probe rel_blocked directly and deny if
+        # either direction is present, or if the probe itself fails (with no
+        # relationship source we cannot prove the pair is unblocked).
+        try:
+            for other_id in other_ids:
+                blocked_row = self._db.fetch_one(
+                    "SELECT 1 AS ok FROM rel_blocked WHERE "
+                    "(blocker_id = ? AND blocked_id = ?) OR "
+                    "(blocker_id = ? AND blocked_id = ?)",
+                    (int(user_id), int(other_id), int(other_id), int(user_id)),
                 )
+                if blocked_row is not None:
+                    raise ConversationAccessDeniedError(
+                        "Cannot send messages in this conversation"
+                    )
+        except ConversationAccessDeniedError:
+            raise
+        except Exception as e:
+            logger.warning(
+                f"DM block fallback lookup failed for conversation "
+                f"{conversation_id} (failing closed): {e}"
+            )
+            raise ConversationAccessDeniedError(
+                "Cannot send messages in this conversation"
+            )
 
     # Attachment URL scheme allowlist (L4): only absolute http(s) URLs and
     # site-relative media paths are accepted. Everything else — javascript:,

@@ -377,6 +377,17 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         if not msg_row or msg_row.get("deleted"):
             raise MessageNotFoundError("Message not found")
 
+        # Re-check membership at write time instead of trusting a prior read.
+        # Authorship alone is not sufficient: a user who was removed from the
+        # conversation (kick/ban/DM leave) after posting must not keep mutating
+        # that message's metadata. Mirror edit_message's oracle so a
+        # non-participant sees the same 404 as a missing message and cannot
+        # probe message existence in a conversation they no longer belong to.
+        if not self._participant_svc.is_participant(
+            msg_row["conversation_id"], user_id
+        ):
+            raise MessageNotFoundError("Message not found")
+
         if msg_row["author_id"] != user_id:
             raise MessageAccessDeniedError("Can only update metadata on own messages")
 
