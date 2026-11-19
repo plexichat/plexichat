@@ -2,11 +2,16 @@
 Admin licensing routes for managing instance license state.
 """
 
+import asyncio
+import math
+import threading
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Tuple
+
 from fastapi import APIRouter, Request, HTTPException, status
 from pydantic import BaseModel
-from datetime import datetime, timezone
-import math
-from typing import Optional
 from .utils import (
     check_host_restriction,
     require_admin_permission,
@@ -27,6 +32,152 @@ router = APIRouter(prefix="/license", tags=["Admin", "Licensing"])
 # single scope, shared with the mutation endpoints, now gates every license
 # route so the whole module has one authorization boundary that cannot drift.
 _LICENSE_SCOPE = "admin.license.manage"
+
+
+# GET /admin/license/features rebuilds the whole license feature matrix on every
+# admin-panel poll: a fixed catalogue of features, three licensing accessors each
+# (~48 calls for the 16 entries below). Every accessor re-enters the license
+# manager's ``_ensure_validated()``, which performs full signature/expiry
+# validation on a cold process, so the first poll after a restart is slow and
+# every later poll repeats the same static work.
+#
+# The matrix is process-wide and derived only from license state, which changes
+# rarely and never mid-request, so cache the fully assembled response in a
+# single-entry, TTL-bounded slot. There is exactly one matrix per process, so a
+# single entry *is* the cache bound - it cannot grow with request volume or with
+# hostile input. The TTL bounds display staleness, and both license mutation
+# routes explicitly invalidate below after a hot-swap, so a new license is
+# visible immediately. Caching cannot weaken authorization: both admin gates
+# run in the route *before* the cache is consulted, and the licensing accessors
+# used for real feature enforcement elsewhere are untouched.
+_FEATURE_CATALOG_TTL_SECONDS = 30.0
+
+# Immutable module data so a request does not even rebuild the label list.
+_LICENSE_FEATURES: Tuple[Tuple[str, str], ...] = (
+    ("bots", "Bot Platform"),
+    ("premium", "Premium Bot Limits"),
+    ("bond", "PlexiBond"),
+    ("sso", "SSO / SAML"),
+    ("advanced_automod", "Advanced AutoMod"),
+    ("plexijoin", "PlexiJoin Federation"),
+    ("audit_export", "Audit Log Export"),
+    ("custom_roles", "Custom Roles"),
+    ("artifacts", "PlexiSuite Artifacts"),
+    ("plexiscribe", "PlexiScribe"),
+    ("plexiscript", "PlexiScript"),
+    ("artifacts_whiteboard", "PlexiBoard (Whiteboard)"),
+    ("voice_transcription", "Voice Transcription"),
+    ("plexistash", "PlexiStash"),
+    ("plexisum", "PlexiSum"),
+    ("all", "All Features (meta)"),
+)
+
+_feature_catalog_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+_feature_catalog_lock = threading.Lock()
+
+
+def _build_license_feature_payload() -> Dict[str, Any]:
+    """Assemble the feature matrix from the live license state."""
+    feature_matrix = []
+    for key, label in _LICENSE_FEATURES:
+        feature_matrix.append(
+            {
+                "key": key,
+                "label": label,
+                "enabled": licensing_module.has_feature(key),
+                "config": licensing_module.get_feature_config(key),
+                "limit": licensing_module.get_feature_limit(key),
+            }
+        )
+    return {"features": feature_matrix}
+
+
+def _clone_cached_value(value: Any) -> Any:
+    """Copy only mutable containers; immutable license scalars are shared."""
+    if isinstance(value, dict):
+        return {key: _clone_cached_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_cached_value(item) for item in value]
+    return value
+
+
+def _copy_license_feature_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Detach the cached payload so callers cannot mutate shared state.
+
+    ``config``/``limit`` values come from the license document and may be nested
+    containers, so copy those too. A targeted container clone (rather than
+    ``copy.deepcopy``) keeps warmed reads cheap even in free-tier mode, where
+    the accessors themselves are trivial.
+    """
+    return {
+        "features": [
+            {
+                "key": row["key"],
+                "label": row["label"],
+                "enabled": row["enabled"],
+                "config": _clone_cached_value(row["config"]),
+                "limit": _clone_cached_value(row["limit"]),
+            }
+            for row in payload["features"]
+        ]
+    }
+
+
+def _get_license_feature_payload() -> Dict[str, Any]:
+    """Return the current feature matrix, recomputing at most once per TTL."""
+    global _feature_catalog_cache
+    now = time.monotonic()
+    with _feature_catalog_lock:
+        cached = _feature_catalog_cache
+        if cached is not None and (now - cached[0]) < _FEATURE_CATALOG_TTL_SECONDS:
+            return _copy_license_feature_payload(cached[1])
+    # Build outside the lock: a cold build re-enters the license validator and
+    # must not serialize concurrent callers. A rare double-build on a cold race
+    # is harmless (both write the same value); the result is cached below.
+    payload = _build_license_feature_payload()
+    with _feature_catalog_lock:
+        _feature_catalog_cache = (now, payload)
+    return _copy_license_feature_payload(payload)
+
+
+def clear_license_feature_catalog_cache() -> None:
+    """Drop the memoized matrix (call after any license hot-swap)."""
+    global _feature_catalog_cache
+    with _feature_catalog_lock:
+        _feature_catalog_cache = None
+
+
+def warm_license_feature_catalog_cache() -> None:
+    """Prime the matrix off the request path (best-effort, never fatal).
+
+    The first assembly runs three accessors per feature, each re-entering the
+    license validator. Calling this from the router lifespan moves that one-off
+    cost onto a worker thread so the first authenticated, scoped admin poll is a
+    cache hit. The host-restriction and permission gates in
+    ``get_license_features`` still run on every request; only the shared,
+    caller-independent matrix is primed. A failure is logged and swallowed -
+    the route rebuilds the payload on demand exactly as before.
+    """
+    try:
+        _get_license_feature_payload()
+    except Exception as e:
+        logger.debug(f"License feature catalogue warm-up skipped: {e}")
+
+
+@asynccontextmanager
+async def _license_feature_catalog_lifespan(app: Any):
+    """Run the cold matrix build at boot, off the event loop and off requests."""
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, warm_license_feature_catalog_cache
+        )
+    except Exception as e:
+        logger.debug(f"License feature catalogue warm-up failed: {e}")
+    yield
+
+
+# FastAPI merges this into the application lifespan via include_router().
+router.lifespan_context = _license_feature_catalog_lifespan
 
 
 def _expiry_date_iso(expiry_ts: float) -> str:
@@ -160,46 +311,15 @@ async def get_license_features(request: Request):
     """
     Retrieve feature matrix showing all licensed features and their state.
     """
+    # Security gates stay first and unchanged: host restriction + the shared
+    # admin.license.manage scope. A warm cache never short-circuits either one.
     check_host_restriction(request)
     require_admin_permission(request, _LICENSE_SCOPE)
 
     try:
-        features = [
-            {"key": "bots", "label": "Bot Platform"},
-            {"key": "premium", "label": "Premium Bot Limits"},
-            {"key": "bond", "label": "PlexiBond"},
-            {"key": "sso", "label": "SSO / SAML"},
-            {"key": "advanced_automod", "label": "Advanced AutoMod"},
-            {"key": "plexijoin", "label": "PlexiJoin Federation"},
-            {"key": "audit_export", "label": "Audit Log Export"},
-            {"key": "custom_roles", "label": "Custom Roles"},
-            {"key": "artifacts", "label": "PlexiSuite Artifacts"},
-            {"key": "plexiscribe", "label": "PlexiScribe"},
-            {"key": "plexiscript", "label": "PlexiScript"},
-            {"key": "artifacts_whiteboard", "label": "PlexiBoard (Whiteboard)"},
-            {"key": "voice_transcription", "label": "Voice Transcription"},
-            {"key": "plexistash", "label": "PlexiStash"},
-            {"key": "plexisum", "label": "PlexiSum"},
-            {"key": "all", "label": "All Features (meta)"},
-        ]
-
-        feature_matrix = []
-        for feature in features:
-            enabled = licensing_module.has_feature(feature["key"])
-            config = licensing_module.get_feature_config(feature["key"])
-            limit = licensing_module.get_feature_limit(feature["key"])
-
-            feature_matrix.append(
-                {
-                    "key": feature["key"],
-                    "label": feature["label"],
-                    "enabled": enabled,
-                    "config": config,
-                    "limit": limit,
-                }
-            )
-
-        return {"features": feature_matrix}
+        # The matrix is user-independent; a detached copy is returned so the
+        # cached entry is never mutated by a caller.
+        return _get_license_feature_payload()
     except Exception as e:
         logger.error(f"License features error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -349,6 +469,8 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     from src.core.artifacts.capabilities import clear_capability_cache
 
     clear_capability_cache()
+    # Derived state: the cached feature matrix must not outlive the swap.
+    clear_license_feature_catalog_cache()
     _audit_license_action(
         request,
         _admin_id,
@@ -428,6 +550,8 @@ async def force_validate_license(request: Request):
     from src.core.artifacts.capabilities import clear_capability_cache
 
     clear_capability_cache()
+    # Derived state: the cached feature matrix must not outlive the swap.
+    clear_license_feature_catalog_cache()
     after_instance = licensing_module.get_instance_id()
     _audit_license_action(
         request,
