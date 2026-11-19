@@ -58,6 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_notif_message ON notif_notifications(message_id);
 CREATE INDEX IF NOT EXISTS idx_notif_created ON notif_notifications(created_at);
 -- The feed lists a user notifications newest-first; serve the sort.
 CREATE INDEX IF NOT EXISTS idx_notif_user_created ON notif_notifications(user_id, created_at);
+-- Conversation-scoped feeds filter user_id + conversation_id and order by created_at.
+CREATE INDEX IF NOT EXISTS idx_notif_user_conv_created
+    ON notif_notifications(user_id, conversation_id, created_at);
 
 -- User notification settings (global and per-server)
 CREATE TABLE IF NOT EXISTS notif_settings (
