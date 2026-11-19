@@ -156,6 +156,24 @@ def _warm_badge_catalog() -> None:
         logger.debug(f"Startup warm-up badge catalog skipped: {e}")
 
 
+def _warm_tier_limits() -> None:
+    """Prime the versioned tier-limit snapshots off the request path.
+
+    The rate-limiting middleware and the tier helper resolve a tier on every
+    request; the config read + validation + ``TierLimits`` rebuild used to run
+    on the first request after a restart. Warming the two single-entry,
+    version-keyed snapshots here moves that one-off build onto this worker
+    thread. No auth gate is bypassed and a failure is non-fatal -- the request
+    path still builds the table on demand.
+    """
+    try:
+        from src.core import features
+
+        features.warm_tier_limits_cache()
+    except Exception as e:
+        logger.debug(f"Startup warm-up tier limits skipped: {e}")
+
+
 def _warm_openapi(app: Any) -> None:
     """Generate and cache the OpenAPI schema off the request path."""
     if app is None:
