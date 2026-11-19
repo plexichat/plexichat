@@ -235,13 +235,22 @@ async def get_thread_slowmode(
     # M4 FIX: gate the read behind thread view access, mirroring the write
     # path's can_manage_thread gate, so cross-server threads cannot be probed.
     threads = api.get_threads()
-    if threads is not None:
-        try:
-            can_view = threads.can_view_thread(current_user.user_id, tid)
-        except Exception:
-            can_view = False
-        if not can_view:
-            raise_not_found("Thread not found")
+    # The gate must fail CLOSED. Previously the whole block was guarded by
+    # ``if threads is not None``: when the threads module was unavailable the
+    # view check was skipped entirely and every authenticated caller could
+    # read the slowmode configuration of an arbitrary thread, including a
+    # private thread they are not a member of. The sibling channel read and
+    # both write paths already refuse to proceed without their checker; do
+    # the same here so a missing dependency can never widen access.
+    if threads is None:
+        raise_internal("Threads module not available")
+    try:
+        can_view = threads.can_view_thread(current_user.user_id, tid)
+    except Exception:
+        # A checker that raises cannot prove view access — deny.
+        can_view = False
+    if not can_view:
+        raise_not_found("Thread not found")
 
     svc = ThreadSlowmode(db)
     result = svc.get_slowmode(tid)
