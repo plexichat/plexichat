@@ -19,6 +19,8 @@ This module is the single source of truth for the avatar fail-closed policy:
 
 from __future__ import annotations
 
+import re
+
 # Content types that must never be accepted for, or served as, an avatar or
 # server icon - regardless of operator configuration. SVG is raster-hostile
 # (Pillow cannot decode it, so it would be stored verbatim) and
@@ -78,6 +80,31 @@ _ACTIVE_CONTENT_MARKERS = (
     b"onbegin=",
 )
 
+# The literal ``on<handler>=`` markers above are bypassable two ways a browser
+# still treats as executable:
+#   * HTML/SVG permit arbitrary whitespace around ``=`` (``onload =...``,
+#     ``onerror\t=...``), so the literal marker never matches;
+#   * a numeric character reference for ``:`` (``javascript&#58;`` / hex)
+#     hides a dangerous scheme from the literal ``javascript:`` marker.
+# This guard is the fail-closed classifier for stored (including legacy /
+# poisoned) avatar rows, so a miss here means raw script execution under our
+# origin. Match the handler name followed by optional whitespace and ``=``,
+# and normalise entity-encoded colons before scanning. The explicit name list
+# avoids flagging arbitrary binary data the way a broad ``on\w+=`` would.
+_ACTIVE_EVENT_RE = re.compile(
+    rb"\bon(?:load|error|click|mouseover|mouseenter|mouseleave|mousedown|"
+    rb"mouseup|dblclick|focus|blur|change|input|submit|keydown|keyup|"
+    rb"keypress|contextmenu|drag|drop|wheel|scroll|toggle|play|playing|"
+    rb"pause|begin|end|animationstart|animationend|animationiteration|"
+    rb"transitionend|message|storage|hashchange|pageshow|pagehide|"
+    rb"beforeunload|reset|invalid|select|abort|canplay|loadeddata|"
+    rb"loadedmetadata|progress|ratechange|seeked|seeking|stalled|suspend|"
+    rb"timeupdate|volumechange|waiting|copy|paste|cut|pointerdown|"
+    rb"pointerup|pointerover|pointerenter|pointermove)\s*=",
+    re.IGNORECASE,
+)
+_ENTITY_COLON_RE = re.compile(rb"&#(?:x0*3a|0*58);?", re.IGNORECASE)
+
 
 def normalize_content_type(content_type: str | None) -> str:
     """Lower-case the media type, dropping parameters (``; charset=...``)."""
@@ -128,9 +155,16 @@ def payload_carries_active_content(data: bytes) -> bool:
         return False
     try:
         head = _leading_head(data, limit=65536)
+        # Decode HTML numeric character references for ``:`` so a hidden
+        # ``javascript:``/``vbscript:``/``data:text/html`` scheme is caught.
+        head = _ENTITY_COLON_RE.sub(b":", head)
     except Exception:
-        return False
-    return any(marker in head for marker in _ACTIVE_CONTENT_MARKERS)
+        # Fail closed: an inspected payload we cannot normalise must not be
+        # classified as safe.
+        return True
+    if any(marker in head for marker in _ACTIVE_CONTENT_MARKERS):
+        return True
+    return _ACTIVE_EVENT_RE.search(head) is not None
 
 
 def is_unsafe_upload_payload(content_type: str | None, data: bytes) -> bool:

@@ -6,6 +6,7 @@ import hashlib
 import os
 import time
 import io
+import ipaddress
 import importlib
 from typing import Optional, Tuple, BinaryIO, Iterator
 from urllib.parse import urlparse
@@ -193,9 +194,10 @@ class ExternalProxy:
     def _assert_safe_url_structure(self, url: str) -> None:
         """Cheap, network-free SSRF gate re-run on *every* request.
 
-        This mirrors the non-DNS portion of ``URLValidator`` (scheme, forbidden
-        host literals, ``.local``/``.internal`` suffixes) so cache hits still
-        pass an SSRF check. It performs no DNS resolution, so a cache hit does
+        This mirrors the non-DNS portion of ``URLValidator`` (scheme, backslash
+        authority, forbidden host literals, private/reserved IP literals,
+        ``.local``/``.internal`` suffixes) so cache hits still pass an SSRF
+        check. It performs no DNS resolution, so a cache hit does
         not pay the tens-of-milliseconds lookup that dominated proxy latency.
         The full validation — including DNS resolution to a pinned connect IP
         and the private/reserved-IP check — always runs on a cache miss before
@@ -205,6 +207,14 @@ class ExternalProxy:
         scheme = (parsed.scheme or "").lower()
         if scheme not in self.ALLOWED_SCHEMES:
             raise ProxyFetchError(f"Scheme {scheme} not allowed", url)
+
+        # Mirror the non-DNS portion of ``URLValidator.validate_url_for_request``
+        # exactly. A backslash in the authority is a parser differential: the
+        # validator rejects it on a miss, but this gate is the *only* check that
+        # runs on an in-process cache hit, so it must reject it too rather than
+        # letting a cache entry ever be served for such a URL.
+        if "\\" in (parsed.netloc or ""):
+            raise ProxyFetchError("URL authority contains a backslash", url)
 
         hostname = parsed.hostname
         if not hostname:
@@ -228,6 +238,19 @@ class ExternalProxy:
                 raise ProxyFetchError(
                     f"Access to internal host {hostname} is forbidden", url
                 )
+            # A literal IP needs no DNS resolution, so the full validator's
+            # private/reserved-IP check is the only thing that keeps it from
+            # reaching the cache. Apply that same check here so a cache hit can
+            # never serve a URL naming a private/link-local address.
+            try:
+                ipaddress.ip_address(hostname)
+            except ValueError:
+                pass  # Ordinary hostname: resolved IPs are checked on a miss.
+            else:
+                if self._url_validator.is_private_ip(hostname):
+                    raise ProxyFetchError(
+                        f"Access to address {hostname} is forbidden", url
+                    )
 
     @staticmethod
     def _memory_cache_policy(cache_control: str) -> Tuple[bool, Optional[int]]:
