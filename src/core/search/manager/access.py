@@ -201,13 +201,26 @@ class AccessControlMixin(SearchManagerBase):
 
         return list(set(conversations))
 
-    def _verify_results_visible(self, user_id: int, results: List) -> List:
+    def _verify_results_visible(
+        self,
+        user_id: int,
+        results: List,
+        access_cache: Optional[Dict] = None,
+    ) -> List:
         """Re-verify per-result visibility before returning search results.
 
         Defense-in-depth for global searches with explicit filters
         (``from:`` / ``in:``): every returned message must resolve to a
         conversation/channel the searcher can actually see.  Results that
         fail the check are dropped rather than leaked.
+
+        ``access_cache`` is an optional *request-scoped* memo (see
+        ``search_messages_page``). A single paged search verifies each backend
+        page, and the same channels/conversations recur across pages; the memo
+        lets those ids be resolved once for the whole request instead of once
+        per page. It is keyed to ``user_id`` and never shared across requests,
+        so it cannot leak one user's ACL decisions into another's search and
+        cannot outlive a permission change.
         """
         # Collect the candidate ids first so access can be resolved with a
         # bounded number of set-based queries instead of two queries per hit.
@@ -224,8 +237,33 @@ class AccessControlMixin(SearchManagerBase):
                     channel_ids.add(channel_id)
             elif conversation_id is not None:
                 conversation_ids.add(conversation_id)
-        channel_ok = self._can_access_channels_bulk(user_id, channel_ids)
-        conversation_ok = self._can_access_conversations_bulk(user_id, conversation_ids)
+
+        if access_cache is None:
+            channel_ok = self._can_access_channels_bulk(user_id, channel_ids)
+            conversation_ok = self._can_access_conversations_bulk(
+                user_id, conversation_ids
+            )
+        else:
+            # Never reuse a memo that belongs to a different user. Guarding on
+            # user_id keeps the cached decisions authz-scoped even if a caller
+            # accidentally passes a scratch dict from another search.
+            if access_cache.get("user_id") != user_id:
+                access_cache.clear()
+                access_cache["user_id"] = user_id
+            channel_ok = dict(access_cache.get("channels", {}))
+            conversation_ok = dict(access_cache.get("conversations", {}))
+            pending_channels = channel_ids.difference(channel_ok)
+            pending_conversations = conversation_ids.difference(conversation_ok)
+            if pending_channels:
+                channel_ok.update(
+                    self._can_access_channels_bulk(user_id, pending_channels)
+                )
+            if pending_conversations:
+                conversation_ok.update(
+                    self._can_access_conversations_bulk(user_id, pending_conversations)
+                )
+            access_cache["channels"] = channel_ok
+            access_cache["conversations"] = conversation_ok
 
         verified = []
         for r in results:

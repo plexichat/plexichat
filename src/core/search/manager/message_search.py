@@ -187,6 +187,11 @@ class MessageSearchMixin(SearchManagerBase):
         page_cursor = cursor
         next_cursor = None
         scanned = 0
+        # One memo for the whole request: the same channels/conversations recur
+        # across backend pages, so resolve their ACL once instead of per page.
+        # It is local to this call (and keyed to user_id inside the verifier),
+        # so it cannot outlive a permission change or leak across users.
+        access_cache = {}
         while len(collected) < limit:
             if scanned >= _MAX_SCANNED_ROWS:
                 # Scan budget exhausted before filling this page: stop
@@ -227,8 +232,10 @@ class MessageSearchMixin(SearchManagerBase):
                 ]
 
             filtered = self._filter_processor.apply_filters(filtered, parsed, user_id)
-            # Per-result visibility re-check (see search_messages).
-            filtered = self._verify_results_visible(user_id, filtered)
+            # Per-result visibility re-check (see search_messages), memoized
+            # across pages of this one request to avoid repeating the same
+            # bulk ACL queries for recurring channel/conversation ids.
+            filtered = self._verify_results_visible(user_id, filtered, access_cache)
             filtered = self._enrich_message_results(filtered, user_id)
             filtered = self._ranking_engine.rank_message_results(
                 filtered, parsed, self._get_timestamp()

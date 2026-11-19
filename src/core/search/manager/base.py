@@ -207,7 +207,12 @@ class SearchManagerBase(BaseManager):
 
     def _can_access_channel(self, user_id: int, channel_id: int) -> bool: ...
 
-    def _verify_results_visible(self, user_id: int, results: List) -> List: ...
+    def _verify_results_visible(
+        self,
+        user_id: int,
+        results: List,
+        access_cache: Optional[Dict] = None,
+    ) -> List: ...
 
     def _get_server_member_ids(self, server_id: int) -> set: ...
 

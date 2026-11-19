@@ -53,6 +53,10 @@ class PostgresIndexer(BaseIndexer):
         super().__init__(config)
         self._db = db
         self._initialized = False
+        # Capability detection is a DB round-trip that used to run on EVERY
+        # search (message/user/server, paged and offset alike). The answer is
+        # fixed for the lifetime of a connection, so probe once and reuse it.
+        self._websearch_supported: Optional[bool] = None
 
     def initialize(self) -> bool:
         """Initialize search tables."""
@@ -247,6 +251,9 @@ class PostgresIndexer(BaseIndexer):
 
     def close(self):
         self._initialized = False
+        # A closed indexer may be re-opened against a different connection;
+        # discard the cached capability so it is re-probed on next use.
+        self._websearch_supported = None
 
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
         indexed = 0
@@ -272,13 +279,19 @@ class PostgresIndexer(BaseIndexer):
             return False
 
     def _check_websearch_support(self) -> bool:
+        # This probe is called by all six search entry points. Caching the
+        # tri-state result removes one DB round-trip per query under load; the
+        # value is stable for a connection and is only invalidated on close().
+        if self._websearch_supported is not None:
+            return self._websearch_supported
         try:
             self._db.fetch_one(
                 "SELECT 1 WHERE websearch_to_tsquery('english', 'test') IS NOT NULL"
             )
-            return True
+            self._websearch_supported = True
         except Exception:
-            return False
+            self._websearch_supported = False
+        return self._websearch_supported
 
     def search_messages(
         self,
