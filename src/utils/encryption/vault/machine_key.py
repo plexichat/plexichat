@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 import tempfile
@@ -24,15 +25,48 @@ def get_machine_key_path(kek_env_var: str) -> Path:
     return MACHINE_KEY_DIR / MACHINE_KEY_FILENAME
 
 
-def _is_safe_existing_key_file(key_file: Path) -> bool:
+def _read_safe_existing_key_file(key_file: Path) -> bytes:
+    """Read an existing machine key without a check/use (TOCTOU) race.
+
+    The old loader called ``_is_safe_existing_key_file()`` (which ``stat``ed
+    and ``chmod``ed the path) and then read the bytes in a *second* open via
+    ``Path.read_bytes()``. A local attacker with write access to the key
+    directory could swap the file for a symlink between those two operations:
+    the safety check saw a legitimate 0600 regular file, but the read followed
+    the freshly planted symlink and fed attacker-chosen 32 bytes into
+    ``validate_kek``. That let an attacker pick the KEK protecting every
+    keyring. The same race existed for the path-based ``chmod``.
+
+    Open once with ``O_NOFOLLOW`` and validate the *opened descriptor* with
+    ``fstat``/``fchmod``. The bytes returned are exactly the bytes that were
+    checked; no path lookup is repeated, so there is nothing to race.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        if key_file.is_symlink():
-            logger.error("Refusing to read machine key symlink: %s", key_file)
-            return False
-        st = key_file.stat()
+        fd = os.open(str(key_file), flags)
+    except OSError as exc:
+        # O_NOFOLLOW reports a symlink swapped in after the caller's earlier
+        # is_symlink()/exists() checks as ELOOP (EMLINK on some platforms).
+        # Fail closed: never fall back to generating a key over that path.
+        symlink_errnos = {
+            code
+            for code in (getattr(errno, "ELOOP", None), getattr(errno, "EMLINK", None))
+            if code is not None
+        }
+        if exc.errno in symlink_errnos:
+            raise RuntimeError(
+                f"Unsafe machine key file at {key_file} (symlink swapped in)"
+            ) from exc
+        logger.error("Failed to open machine key file %s: %s", key_file, exc)
+        raise
+
+    try:
+        st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             logger.error("Refusing to read non-regular machine key file: %s", key_file)
-            return False
+            raise RuntimeError(
+                f"Unsafe machine key file at {key_file} (not a regular file)"
+            )
         if os.name != "nt":
             mode = stat.S_IMODE(st.st_mode)
             if mode & (stat.S_IRWXG | stat.S_IRWXO):
@@ -42,14 +76,18 @@ def _is_safe_existing_key_file(key_file: Path) -> bool:
                     mode,
                 )
                 try:
-                    os.chmod(key_file, 0o600)
+                    os.fchmod(fd, 0o600)
                 except OSError as exc:
                     logger.error("Failed to restrict machine key permissions: %s", exc)
-                    return False
-    except OSError as exc:
-        logger.error("Failed to inspect machine key file %s: %s", key_file, exc)
-        return False
-    return True
+                    raise RuntimeError(
+                        f"Unsafe machine key file at {key_file} (permissive mode)"
+                    ) from exc
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1  # ownership transferred to the file object
+            return handle.read()
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def _persist_machine_key(key_file: Path, new_key: bytes) -> None:
@@ -139,33 +177,34 @@ def _load_machine_key_impl(key_path: str) -> bytes:
             "Move it aside and configure a secure KEK source."
         )
     if key_file.exists():
-        if _is_safe_existing_key_file(key_file):
-            try:
-                data = key_file.read_bytes()
-                if len(data) == 32:
-                    validated = validate_kek(
-                        data, source="local", context=str(key_file), allow_bypass=True
-                    )
-                    logger.debug("Loaded machine-local encryption key from file")
-                    logger.debug(
-                        "Machine key loaded (%s bytes) from %s - "
-                        "this should appear only once per process per key file",
-                        len(validated),
-                        key_file,
-                    )
-                    return validated
-                logger.error(
-                    "Machine key %s has invalid length %s bytes; generating a replacement",
-                    key_file,
-                    len(data),
+        try:
+            # Single open + fstat/fchmod: the safety checks and the bytes read
+            # refer to the same file descriptor, so a symlink swapped in after
+            # the is_symlink()/exists() checks cannot redirect the key we load.
+            data = _read_safe_existing_key_file(key_file)
+            if len(data) == 32:
+                validated = validate_kek(
+                    data, source="local", context=str(key_file), allow_bypass=True
                 )
-            except Exception as exc:
-                logger.error("Failed to read machine key: %s", exc)
-        else:
-            raise RuntimeError(
-                f"Unsafe machine key file at {key_file} (symlink/non-regular/permissive). "
-                "Move it aside and configure a secure KEK source."
+                logger.debug("Loaded machine-local encryption key from file")
+                logger.debug(
+                    "Machine key loaded (%s bytes) from %s - "
+                    "this should appear only once per process per key file",
+                    len(validated),
+                    key_file,
+                )
+                return validated
+            logger.error(
+                "Machine key %s has invalid length %s bytes; generating a replacement",
+                key_file,
+                len(data),
             )
+        except RuntimeError:
+            # Unsafe file (symlink/non-regular/permissive we cannot fix): fail
+            # closed. Never regenerate over a path an attacker controls.
+            raise
+        except Exception as exc:
+            logger.error("Failed to read machine key: %s", exc)
 
     logger.warning(
         "CRITICAL SECURITY WARNING: Generating machine-local encryption key. "

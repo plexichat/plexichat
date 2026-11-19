@@ -7,7 +7,6 @@ rollback support, and secure cleanup of temporary files.
 
 import os
 import json
-import shutil
 import base64
 import hashlib
 import logging
@@ -192,6 +191,21 @@ class KeyringMigration(KEKMigrationProtocol):
             logger.error(f"Backup creation failed: {e}")
             return False
 
+    def _read_backup_bytes(self) -> bytes:
+        """Read the rollback backup without following a planted symlink.
+
+        ``backup_keyring`` writes the backup through ``_atomic_write_bytes``,
+        but an attacker with write access to the keyring directory could
+        replace that path with a symlink before a rollback. Reading through it
+        would feed attacker-chosen bytes into the restored keyring. Fail closed
+        instead of reading through the link.
+        """
+        if self.backup_path.is_symlink():
+            raise KEKMigrationError(
+                f"Refusing to restore from symlinked backup {self.backup_path}"
+            )
+        return self.backup_path.read_bytes()
+
     def restore_backup(self) -> bool:
         """
         Restore keyring from backup.
@@ -206,7 +220,13 @@ class KeyringMigration(KEKMigrationProtocol):
             return False
 
         try:
-            shutil.copy2(self.backup_path, self.keyring_path)
+            # ``shutil.copy2`` followed a symlink planted at the *destination*
+            # keyring path, undoing the symlink hardening applied to the
+            # migrate/backup writers: a local attacker could redirect the
+            # restored key material into an arbitrary file. Install the backup
+            # through the same O_EXCL + os.replace writer instead, which
+            # replaces the directory entry and never follows a link.
+            self._atomic_write_bytes(self.keyring_path, self._read_backup_bytes())
             logger.info(f"Backup restored successfully: {self.keyring_path.name}")
             return True
         except Exception as e:
@@ -339,8 +359,10 @@ class KeyringMigration(KEKMigrationProtocol):
             return False
 
         try:
-            # Restore from backup
-            shutil.copy2(self.backup_path, self.keyring_path)
+            # Restore from backup through the symlink-safe atomic writer (see
+            # restore_backup): a symlink planted at the keyring path must be
+            # replaced, never followed.
+            self._atomic_write_bytes(self.keyring_path, self._read_backup_bytes())
             logger.info(f"Rollback successful: {self.keyring_path.name}")
 
             # Clean up temporary files
