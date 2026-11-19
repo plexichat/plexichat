@@ -29,6 +29,7 @@ from src.core import ratelimit
 from fastapi import Request
 from src.api.schemas.common import _reject_ui_text_chars
 from src.core.database import cached, invalidate_pattern
+from src.core.security.hardening import HardeningViolation, parse_id
 
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
@@ -51,6 +52,28 @@ router = APIRouter(tags=["Stickers"])
 #: Bounds on the raw comma-separated tag field and the suggestion query.
 MAX_STICKER_TAG_PAYLOAD = 400
 MAX_STICKER_SUGGESTION_QUERY = 256
+
+
+def _parse_sticker_id(value: object, field: str, message: str) -> int:
+    """Parse a client-supplied snowflake with the shared ASCII/bounded gate.
+
+    These route ids used to go through bare ``int()``. That accepts Unicode
+    decimal homoglyphs (``int("١٢٣") == 123``) and PEP 515 separators
+    (``int("1_2") == 12``), so a token the client/other hops render as text
+    resolved to a real sticker/server here -- a parser differential of the
+    same class already fixed at the other route boundaries. ``int()`` is also
+    unbounded: a 30-digit id became a huge Python int that overflows the DB
+    driver's INTEGER binding and degraded a malformed request to a 500.
+
+    Delegate to the canonical snowflake gate (ASCII digits, 1..2**63-1) and
+    translate its rejection into the route's 400 contract. Keeping this in one
+    place means every sticker id path/query/form field is interpreted the same
+    way as the rest of the API.
+    """
+    try:
+        return parse_id(value, field)
+    except (HardeningViolation, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=message) from exc
 
 # BEFORE: hydrating a server's sticker packs called ``get_pack_stickers`` once
 # per pack. Each call re-ran ``get_pack`` (JOIN + membership probe) and issued
@@ -325,10 +348,7 @@ async def get_server_stickers(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[StickerPackResponse]:
     """Get a bounded page of the server's sticker packs (members only)."""
-    try:
-        sid = int(server_id)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid server ID")
+    sid = _parse_sticker_id(server_id, "server_id", "Invalid server ID")
 
     try:
         page = await _load_server_stickers_page(
@@ -375,10 +395,7 @@ async def create_sticker(
     # Throttle abusive sticker creation.
     await _check_sticker_create_rate_limit(current_user.user_id)
 
-    try:
-        sid = int(server_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid server ID")
+    sid = _parse_sticker_id(server_id, "server_id", "Invalid server ID")
 
     # Defence in depth: sticker name/tags/description are rendered to every
     # server member via the sticker picker, so reject HTML metacharacters
@@ -496,8 +513,11 @@ async def delete_sticker(
     if not stickers_mod:
         raise HTTPException(status_code=500, detail="Stickers module not available")
 
+    # Parse before the try below: its catch-all maps every Exception to a 500,
+    # which would otherwise turn a malformed id into an outage-shaped response.
+    sid = _parse_sticker_id(sticker_id, "sticker_id", "Invalid sticker ID")
+
     try:
-        sid = int(sticker_id)
         # We need server_id for dispatching update after deletion
         # StickerManager.get_sticker should help
         sticker = stickers_mod.get_sticker(sid)
@@ -569,9 +589,12 @@ async def send_sticker_usage(
             headers={"Retry-After": str(rl_result.retry_after)},
         )
 
+    # Parse outside the try below: its catch-all swallows every Exception and
+    # would turn a malformed id into a silent {"success": False}.
+    sid = _parse_sticker_id(sticker_id, "sticker_id", "Invalid sticker ID")
+    mid = _parse_sticker_id(message_id, "message_id", "Invalid message ID")
+
     try:
-        sid = int(sticker_id)
-        mid = int(message_id)
         if not stickers_mod.can_use_sticker(current_user.user_id, sid):
             raise PermissionDeniedError(
                 "You do not have permission to use this sticker"
@@ -605,12 +628,14 @@ async def get_sticker_suggestions(
     if not stickers_mod:
         raise HTTPException(status_code=500, detail="Stickers module not available")
 
-    # M1: parse inside the try so a non-numeric server_id answers 400
-    # instead of an unhandled ValueError -> 500.
-    try:
-        sid = int(server_id) if server_id else None
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid server ID")
+    # A non-numeric or oversized server_id answers 400 through the shared gate
+    # instead of reaching SQLite as an unbounded Python int (a 500) or being
+    # read via a Unicode/underscore spelling the client renders differently.
+    sid = (
+        _parse_sticker_id(server_id, "server_id", "Invalid server ID")
+        if server_id
+        else None
+    )
 
     try:
         suggestions = stickers_mod.get_sticker_suggestions(
