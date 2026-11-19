@@ -61,8 +61,9 @@ CREATE TABLE IF NOT EXISTS thread_members (
 );
 
 -- Thread member indexes
+-- PRIMARY KEY (thread_id, user_id) already indexes thread_id lookups; only the
+-- reverse user_id lookup needs a separate index.
 CREATE INDEX IF NOT EXISTS idx_thread_member_user ON thread_members(user_id);
-CREATE INDEX IF NOT EXISTS idx_thread_member_thread ON thread_members(thread_id);
 
 -- Thread messages table (links to messaging module conversations)
 CREATE TABLE IF NOT EXISTS thread_messages (
