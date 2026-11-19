@@ -10,6 +10,7 @@ from src.api.schemas.servers import (
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 
 import utils.logger as logger
+from src.core.security.hardening import parse_id
 from src.core.events.gateway_emit import emit_guild_ban_add, emit_guild_ban_remove
 from .members import _invalidate_member_access_caches
 
@@ -40,7 +41,11 @@ async def get_server_bans(
 
     try:
         try:
-            sid = int(server_id)
+            # Boundary IDs must pass the shared snowflake range guard: bare
+            # int() accepted negatives, zero, underscore/Unicode-digit forms
+            # and values past 2**63-1, which then reached the core ban lookup
+            # (and its cache/event side effects) as if they were real ids.
+            sid = parse_id(server_id, "server_id")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -130,8 +135,8 @@ async def ban_member(
 
     try:
         try:
-            sid = int(server_id)
-            uid = int(user_id)
+            sid = parse_id(server_id, "server_id")
+            uid = parse_id(user_id, "user_id")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -227,8 +232,8 @@ async def unban_member(
 
     try:
         try:
-            sid = int(server_id)
-            uid = int(user_id)
+            sid = parse_id(server_id, "server_id")
+            uid = parse_id(user_id, "user_id")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
