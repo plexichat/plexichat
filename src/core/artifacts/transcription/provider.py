@@ -590,20 +590,76 @@ class OpenAIWhisperProvider(TranscriptionProvider):
         )
 
 
-def _validate_azure_content_url(value: str) -> str:
-    """Validate a URL before Azure is asked to fetch it.
+# A provider-returned ``contentUrl``/``files`` URL flows into an HTTP client.
+# Bound it before DNS resolution so a hostile/misconfigured provider response
+# cannot make us resolve or buffer an arbitrarily large authority.
+MAX_AZURE_CONTENT_URL_LENGTH = 2048
 
-    Azure batch transcription dereferences ``contentUrls`` server-side.  Only
-    HTTPS URLs resolving to public addresses are accepted; local paths,
-    loopback/link-local/private targets, and non-HTTP schemes are rejected.
+
+def _validate_azure_url_parts(value: str) -> tuple[str, str]:
+    """Validate a provider URL once and return ``(hostname, resolved_ip)``.
+
+    Structural checks (scheme, embedded credentials, control characters, port
+    and a length bound) run before DNS so an oversized or credential-bearing
+    URL never reaches the resolver, the provider, or a log line.
     """
     if not isinstance(value, str):
         raise ValueError("Azure recording reference must be a URL")
+    if len(value) > MAX_AZURE_CONTENT_URL_LENGTH:
+        raise ValueError("Azure recording reference URL is too long")
+    try:
+        require_https_url(value, "azure_content_url")
+    except HardeningViolation as exc:
+        raise ValueError(f"Invalid Azure recording reference: {exc}") from exc
     parsed = urlparse(value)
-    if parsed.scheme.lower() != "https" or not parsed.hostname:
-        raise ValueError("Azure recording reference must be an HTTPS URL")
-    URLValidator().validate_url_for_request(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Azure recording reference has an invalid port") from exc
+    if port is not None and not (1 <= port <= 65535):
+        raise ValueError("Azure recording reference has an invalid port")
+    return URLValidator().validate_url_for_request(value)
+
+
+def _validate_azure_content_url(value: str) -> str:
+    """Validate a URL before Azure is asked to fetch it server-side.
+
+    Only HTTPS URLs resolving to public addresses are accepted; local paths,
+    loopback/link-local/private targets, and non-HTTP schemes are rejected.
+    """
+    _validate_azure_url_parts(value)
     return value
+
+
+def _pinned_azure_get(
+    url: str, *, headers: Optional[Dict[str, str]] = None, timeout: int = 60
+):
+    """GET a provider URL via the address the SSRF gate actually approved.
+
+    The previous implementation validated the hostname (DNS + private-IP
+    check) and then fetched the raw URL by *name* with ``requests.get``.  That
+    handed the host back to the resolver a second time, so a DNS-rebinding host
+    could answer with a public IP for the check and a loopback/link-local IP for
+    the connection -- exactly the attack validation was meant to stop.  Resolve
+    once, then connect to that approved IP while keeping the real hostname as
+    the ``Host`` header and TLS SNI, as the media proxy and link-preview fetcher
+    do.
+    """
+    from src.utils.security import pinned_request_target
+
+    hostname, resolved_ip = _validate_azure_url_parts(url)
+    request_url, pinned_headers, extensions = pinned_request_target(
+        url, hostname, resolved_ip
+    )
+    merged_headers = dict(pinned_headers)
+    if headers:
+        merged_headers.update(headers)
+
+    import httpx
+
+    return httpx.get(
+        request_url, headers=merged_headers, extensions=extensions, timeout=timeout
+    )
 
 
 class AzureSpeechProvider(TranscriptionProvider):
@@ -806,11 +862,11 @@ class AzureSpeechProvider(TranscriptionProvider):
         if not files_url:
             raise RuntimeError("Azure transcription did not finish in time.")
 
-        # Provider-supplied URL: the same gate the recording URL passes, so a
-        # compromised or misconfigured response cannot point this request at
-        # an internal address.
-        files_url = _validate_azure_content_url(files_url)
-        files_resp = requests.get(files_url, headers=headers, timeout=60)
+        # Provider-supplied URL: the same gate the recording URL passes, and
+        # the connection is pinned to the address that gate approved so a
+        # compromised/misconfigured response cannot rebind to an internal
+        # address between validation and the fetch.
+        files_resp = _pinned_azure_get(files_url, headers=headers, timeout=60)
         if files_resp.status_code != 200:
             raise RuntimeError("Azure transcription files listing failed.")
         content_url = None
@@ -821,10 +877,10 @@ class AzureSpeechProvider(TranscriptionProvider):
         if not content_url:
             raise RuntimeError("Azure transcription content URL not found.")
 
-        # Validate provider-returned URLs too; this protects the follow-up
-        # download if a compromised/misconfigured response points elsewhere.
-        safe_content_url = _validate_azure_content_url(content_url)
-        content = requests.get(safe_content_url, timeout=120)
+        # Validate provider-returned URLs too, and pin the download to the
+        # approved address; a compromised/misconfigured response must not be
+        # able to rebind to an internal address on the second lookup.
+        content = _pinned_azure_get(content_url, timeout=120)
         if content.status_code != 200:
             raise RuntimeError("Azure transcription content download failed.")
         data = content.json()
