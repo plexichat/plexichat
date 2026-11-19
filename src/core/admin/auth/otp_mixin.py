@@ -41,6 +41,22 @@ def _check_admin_otp_budget(admin_id: int) -> bool:
     )
 
 
+def _same_otp_code(last_code: Any, presented_code: Any) -> bool:
+    """Whether a presented OTP equals the code recorded as last used.
+
+    The last-used code is still a live secret for the length of TOTP's
+    ``valid_window=1`` (±30s): it can authenticate until its window closes,
+    which is exactly why the reuse guard exists. Comparing it with ``==``
+    short-circuits at the first differing character and leaks a prefix oracle
+    to a timing observer. Route string comparisons through the shared
+    constant-time helper, matching the backup-code path below. Non-string
+    values keep their original equality semantics (fail-closed for None).
+    """
+    if isinstance(last_code, str) and isinstance(presented_code, str):
+        return constant_time_compare(last_code, presented_code)
+    return last_code == presented_code
+
+
 class OTPMixin(SessionMixin, PasswordMixin):
     _db: Any
 
@@ -107,7 +123,7 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 if isinstance(last_row, dict)
                 else last_row[0]
             )
-            if last_code == code:
+            if _same_otp_code(last_code, code):
                 return AdminLoginResult(
                     success=False, error="Code already used — wait for next code"
                 )
@@ -214,7 +230,7 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 if isinstance(last_row, dict)
                 else last_row[0]
             )
-            if last_code == code:
+            if _same_otp_code(last_code, code):
                 return AdminLoginResult(
                     success=False, error="Code already used — wait for next code"
                 )
