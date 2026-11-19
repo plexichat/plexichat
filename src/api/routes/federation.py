@@ -261,9 +261,18 @@ MAX_REMOTE_ID_LENGTH = 128
 MAX_INVITE_CODE_LENGTH = 64
 MAX_TYPE_LENGTH = 128
 
-_REMOTE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-_INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_TYPE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+# Use ``fullmatch`` (never ``match`` with a ``$`` anchor): in Python ``$`` also
+# matches immediately before a trailing newline, so a value such as ``"code\n"``
+# (or a max-length value with one extra newline) used to pass the invite-code
+# and type validators, which see the raw value, and carry a control character
+# into a replayed message, a log line or a lookup. The restrictive classes below
+# exclude every control character in full, but only when the *entire* string is
+# matched. ``validate_remote_id`` strips its input first (so it was not
+# directly bypassable), but uses ``fullmatch`` too for a uniform contract. The
+# PlexiJoin token validator made the same switch for exactly this reason.
+_REMOTE_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+_INVITE_CODE_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_TYPE_RE = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 
 
 def _bad_field(field: str) -> HTTPException:
@@ -278,14 +287,18 @@ def validate_remote_id(value: Any, field: str = "instance_id") -> str:
     if not isinstance(value, str):
         raise _bad_field(field)
     text = value.strip()
-    if not text or len(text) > MAX_REMOTE_ID_LENGTH or not _REMOTE_ID_RE.match(text):
+    if (
+        not text
+        or len(text) > MAX_REMOTE_ID_LENGTH
+        or not _REMOTE_ID_RE.fullmatch(text)
+    ):
         raise _bad_field(field)
     return text
 
 
 def validate_invite_code(value: Any, field: str = "invite_code") -> str:
     """Return a well-formed invite code or reject it."""
-    if not isinstance(value, str) or not _INVITE_CODE_RE.match(value):
+    if not isinstance(value, str) or not _INVITE_CODE_RE.fullmatch(value):
         raise _bad_field(field)
     return value
 
@@ -302,7 +315,7 @@ def validate_numeric_id(value: Any, field: str, *, minimum: int = 1) -> int:
 
 def validate_type_field(value: Any, field: str) -> str:
     """Return a bounded op/message type token."""
-    if not isinstance(value, str) or not _TYPE_RE.match(value):
+    if not isinstance(value, str) or not _TYPE_RE.fullmatch(value):
         raise _bad_field(field)
     return value
 
@@ -555,15 +568,18 @@ async def artifact_op_inbound(request: Request):
     payload = _parse_json_body(body)
 
     op = payload.get("op")
-    if (
-        payload.get("artifact_id") is None
-        or not isinstance(op, dict)
-        or not op.get("op_type")
-    ):
+    if payload.get("artifact_id") is None or not isinstance(op, dict):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Malformed artifact op payload"}},
         )
+    # A valid HMAC proves the peer sent this op; it does not make the op token
+    # safe to relay. ``message_inbound`` already bounds its ``message_type``
+    # this way, but the op path only checked truthiness — a signed envelope
+    # could carry a non-string or control-character-bearing ``op_type`` and
+    # have it broadcast verbatim to local artifact subscribers. Bind it to the
+    # same restrictive token grammar before the op reaches the relay.
+    validate_type_field(op.get("op_type"), "op_type")
 
     # A valid HMAC only proves the peer sent these values; it does not make
     # them safe to use. ``int()`` accepted negatives, zero and Python-only
