@@ -289,48 +289,74 @@ class DatabaseStorage(RateLimitStorage):
         """Clear all buckets."""
         self._db.execute("DELETE FROM ratelimit_buckets")
 
+    # SECURITY: these public mutators used to do a plain get->mutate->set. Like
+    # the DB backend's ``acquire_lock`` (a constant token), that cannot
+    # serialise workers: two concurrent increments of a shared abuse counter
+    # (upload bytes, sticker/friend-request quotas, ...) read the same value
+    # and the later write clobbered the earlier one, under-counting usage and
+    # multiplying an attacker's budget by the number of workers. The memory
+    # and Valkey backends already serialise these; route them through the
+    # CAS-based, fail-closed ``update_bucket`` so all three agree. The value
+    # returned is the one committed by the winning CAS round, never a stale
+    # snapshot.
     def increment(self, key: str, field: str, amount: int = 1) -> int:
-        """Increment a field (non-atomic for extra fields)."""
-        state = self.get_bucket(key) or {}
-        val = state.get(field, 0) + amount
-        state[field] = val
-        self.set_bucket(key, state)
-        return val
+        """Atomically increment a field (CAS with bounded retries)."""
+        outcome: Dict[str, Any] = {}
+
+        def mutate(state: Dict[str, Any]) -> None:
+            new_value = state.get(field, 0) + amount
+            state[field] = new_value
+            outcome["value"] = new_value
+
+        self.update_bucket(key, mutate)
+        return outcome["value"]
 
     def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
-        """Get and set a field."""
-        state = self.get_bucket(key) or {}
-        prev = state.get(field, default)
-        state[field] = value
-        self.set_bucket(key, state)
-        return prev
+        """Atomically get a field's previous value and set a new one."""
+        outcome: Dict[str, Any] = {}
+
+        def mutate(state: Dict[str, Any]) -> None:
+            outcome["previous"] = state.get(field, default)
+            state[field] = value
+
+        self.update_bucket(key, mutate)
+        return outcome["previous"]
 
     def add_to_list(
         self, key: str, field: str, value: Any, max_size: int = 1000
     ) -> int:
-        """Add to list field."""
-        state = self.get_bucket(key) or {}
-        lst = state.get(field, [])
-        if not isinstance(lst, list):
-            lst = []
-        lst.append(value)
-        if len(lst) > max_size:
-            lst = lst[-max_size:]
-        state[field] = lst
-        self.set_bucket(key, state)
-        return len(lst)
+        """Atomically append to a list field, maintaining max size."""
+        outcome: Dict[str, Any] = {}
+
+        def mutate(state: Dict[str, Any]) -> None:
+            lst = state.get(field, [])
+            if not isinstance(lst, list):
+                lst = []
+            lst.append(value)
+            if len(lst) > max_size:
+                lst = lst[-max_size:]
+            state[field] = lst
+            outcome["size"] = len(lst)
+
+        self.update_bucket(key, mutate)
+        return int(outcome["size"])
 
     def trim_list(self, key: str, field: str, min_value: Any) -> int:
-        """Trim list field."""
-        state = self.get_bucket(key) or {}
-        lst = state.get(field, [])
-        if not isinstance(lst, list):
-            return 0
-        original_len = len(lst)
-        lst = [v for v in lst if v >= min_value]
-        state[field] = lst
-        self.set_bucket(key, state)
-        return original_len - len(lst)
+        """Atomically drop list items below ``min_value``."""
+        outcome: Dict[str, Any] = {}
+
+        def mutate(state: Dict[str, Any]) -> None:
+            lst = state.get(field, [])
+            if not isinstance(lst, list):
+                outcome["removed"] = 0
+                return
+            original_len = len(lst)
+            trimmed = [v for v in lst if v >= min_value]
+            state[field] = trimmed
+            outcome["removed"] = original_len - len(trimmed)
+
+        self.update_bucket(key, mutate)
+        return int(outcome["removed"])
 
     def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
         """Database handles concurrency via its own locking mechanisms."""
@@ -496,13 +522,24 @@ class DatabaseStorage(RateLimitStorage):
                 # balance predicate in the SAME statement. Concurrent
                 # spends serialize in the database; exactly one worker
                 # wins each token and rowcount reports who.
+                # CAS hardening: the spend must never move ``last_update``
+                # BACKWARDS. Between our refill re-read and this spend another
+                # worker may have persisted a later clock (its own ``now``).
+                # Writing our older ``now`` here would regress the refill
+                # clock, so the next request would re-accrue the same elapsed
+                # time and mint free tokens -- a budget multiplier under
+                # concurrent workers. Keep the GREATEST clock instead (portable
+                # CASE, mirroring the refill's clamped add) so a spend is
+                # order-independent with a concurrent refill/spend.
                 cursor = self._db.execute(
                     """
                     UPDATE ratelimit_buckets
-                    SET tokens = tokens - ?, last_update = ?, expires_at = ?
+                    SET tokens = tokens - ?,
+                        last_update = CASE WHEN last_update > ? THEN last_update ELSE ? END,
+                        expires_at = ?
                     WHERE key = ? AND tokens >= ?
                     """,
-                    (float(cost), now, expires_at, key, float(cost)),
+                    (float(cost), now, now, expires_at, key, float(cost)),
                 )
                 if cursor.rowcount == 0:
                     # Another worker spent the tokens first: re-read
