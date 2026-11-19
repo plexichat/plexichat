@@ -94,6 +94,25 @@ def _warm_profile_path(api_mod: Any) -> None:
     ProfileManager(db).get_profile(0)
 
 
+def _warm_security_policy() -> None:
+    """Prime the derived security-policy cache off-request.
+
+    The authentication middleware calls ``get_static_policy()`` as its first
+    step on every HTTP request. On a cold process that call builds the policy
+    (config reads, prefix derivation, docs-path resolution) on the request
+    path. Warming it here moves that one-off build onto this worker thread.
+    Only the request-invariant policy is primed: every auth gate downstream
+    still runs on each request, and a failure here is non-fatal - the
+    middleware falls back to deriving the policy on demand.
+    """
+    try:
+        from src.api.middleware.policy_cache import warm_static_policy_cache
+
+        warm_static_policy_cache()
+    except Exception as e:
+        logger.debug(f"Startup warm-up security policy failed: {e}")
+
+
 def _warm_capability_catalogs() -> None:
     """Prime the launcher and admin capability payload caches off-request.
 
@@ -155,6 +174,11 @@ def warm_once(app: Any = None) -> float:
         _warm_profile_path(api)
     except Exception as e:
         logger.debug(f"Startup warm-up profile probe failed: {e}")
+
+    try:
+        _warm_security_policy()
+    except Exception as e:
+        logger.debug(f"Startup warm-up security policy failed: {e}")
 
     try:
         _warm_capability_catalogs()

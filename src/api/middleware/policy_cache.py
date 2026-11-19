@@ -127,9 +127,38 @@ def get_static_policy() -> StaticPolicy:
     return cast(StaticPolicy, _policy_snapshot.snapshot())
 
 
+def warm_static_policy_cache() -> None:
+    """Prime the derived-policy snapshot off the request path (best-effort).
+
+    ``get_static_policy()`` is the first call the authentication middleware
+    makes on every HTTP request; on a cold process that call builds the whole
+    policy (config reads, prefix derivation, docs-path resolution). Building it
+    once here, after the server is listening, moves that one-off cost onto the
+    worker thread so the first real request is a cache hit. Only the shared,
+    request-invariant policy is primed: every authentication/authorization gate
+    in the middleware still runs on each request exactly as before. Failures
+    are logged and swallowed - the middleware derives the policy on demand if
+    this did not run.
+    """
+    try:
+        _policy_snapshot.snapshot()
+    except Exception as e:
+        try:
+            import utils.logger as logger
+
+            logger.debug(f"Startup warm-up static policy skipped: {e}")
+        except Exception:
+            pass
+
+
 def clear_static_policy_cache() -> None:
     """Drop the cached policy so the next access re-derives it."""
     _policy_snapshot.invalidate()
 
 
-__all__ = ["StaticPolicy", "clear_static_policy_cache", "get_static_policy"]
+__all__ = [
+    "StaticPolicy",
+    "clear_static_policy_cache",
+    "get_static_policy",
+    "warm_static_policy_cache",
+]

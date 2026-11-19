@@ -37,6 +37,10 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
         1,
         "stubbed catalog stands in for the cold provider probe so the warm-up overlap is measurable",
     ),
+    "api/test_policy_cache_startup_warmup.py": (
+        1,
+        "slow policy-build double stands in for the cold config/prefix build so the warm-up hit is measurable",
+    ),
     "api/test_dual_tombstone_contract.py": (
         1,
         "yield to the loop so fire-and-forget create_task() broadcasts run",
