@@ -16,6 +16,10 @@ from ..models import (
 
 from .protocol import AutoModProtocol
 
+# Chunk ``IN`` binds so SQLite's default 999-variable cap is never approached;
+# Postgres accepts far more but chunking is harmless there.
+_BULK_LOOKUP_CHUNK = 500
+
 
 class EvaluationMixin(AutoModProtocol):
     def check_message(
@@ -204,12 +208,26 @@ class EvaluationMixin(AutoModProtocol):
         messages_flagged = []
         user_violations = {}
 
-        for message_id in message_ids:
-            msg = self._db.fetch_one(
-                "SELECT * FROM msg_messages WHERE id = ? AND deleted = 0", (message_id,)
+        # Batch the message fetch: one chunked ``IN`` query replaces the old
+        # per-id SELECT (an N+1 read that issued a round trip for every id).
+        # Rows are keyed by id and consumed in the caller's original order so
+        # ordering and duplicate ids behave exactly as before. The
+        # ``deleted = 0`` predicate is preserved and missing ids simply have
+        # no entry (they are skipped), keeping the scan fail-closed.
+        messages_by_id: Dict[SnowflakeID, Dict[str, Any]] = {}
+        for start in range(0, len(message_ids), _BULK_LOOKUP_CHUNK):
+            chunk = message_ids[start : start + _BULK_LOOKUP_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                f"SELECT * FROM msg_messages WHERE deleted = 0 AND id IN ({placeholders})",
+                tuple(chunk),
             )
+            for row in rows:
+                messages_by_id[row["id"]] = row
 
-            if not msg:
+        for message_id in message_ids:
+            msg = messages_by_id.get(message_id)
+            if msg is None:
                 continue
 
             content = msg.get("content", "")
