@@ -202,8 +202,9 @@ class AccountReaper:
         # at least one account per cycle.
         batch_size = max(1, int(self._reaper_config.get("batch_size", 50)))
 
-        # Clean up expired passkey challenges and Suite download tickets.
+        # Clean up expired auth artifacts and Suite download tickets.
         self._cleanup_passkey_challenges()
+        self._cleanup_ws_tickets()
         self._cleanup_suite_tickets()
 
         # Find users ready for purge
@@ -219,6 +220,27 @@ class AccountReaper:
 
         for user in purge_list:
             self.purge_user(user["id"], user["username"])
+
+    def _cleanup_ws_tickets(self):
+        """Purge expired single-use gateway tickets.
+
+        auth_ws_tickets otherwise grows without bound: every gateway
+        (re)connect mints a ticket and the expires_at index is useless if no
+        row is ever deleted. The manager prunes lazily on mint; this sweep
+        also covers deployments that stop minting tickets (idle instances).
+        """
+        try:
+            result = self._db.execute(
+                "DELETE FROM auth_ws_tickets WHERE expires_at < ?",
+                (int(time.time() * 1000),),
+            )
+            removed = getattr(result, "rowcount", 0) or 0
+            if removed > 0:
+                logger.debug(f"Reaper: Cleaned up {removed} expired WS ticket(s)")
+        except Exception as e:
+            # The table may not exist on older databases; pruning is
+            # best-effort and expired tickets are rejected on read anyway.
+            logger.debug(f"Reaper: WS ticket cleanup skipped: {e}")
 
     def _cleanup_suite_tickets(self):
         """Remove redeemed/expired PlexiStash tickets when Suite is installed."""

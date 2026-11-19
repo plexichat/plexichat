@@ -353,6 +353,27 @@ class LifecycleMixin(AuthManagerProtocol):
 
     WS_TICKET_TTL_MS = 60 * 1000
 
+    # Mirror of TicketMixin's bounded store: prune expired tickets on the mint
+    # path so this historical copy cannot be used to grow auth_ws_tickets
+    # without bound either (see TicketMixin._prune_expired_ws_tickets).
+    _last_ws_ticket_cleanup: int = 0
+    _ws_ticket_cleanup_interval_ms: int = 300_000
+
+    def _prune_expired_ws_tickets(self, now: int) -> None:
+        """Best-effort purge of expired gateway tickets (rate-limited)."""
+        if (
+            now - LifecycleMixin._last_ws_ticket_cleanup
+            < LifecycleMixin._ws_ticket_cleanup_interval_ms
+        ):
+            return
+        LifecycleMixin._last_ws_ticket_cleanup = now
+        try:
+            self._db.execute(
+                "DELETE FROM auth_ws_tickets WHERE expires_at <= ?", (now,)
+            )
+        except Exception as exc:
+            logger.debug(f"WS ticket prune failed: {exc}")
+
     def create_ws_ticket_for_session(
         self,
         user_id: int,
@@ -365,6 +386,7 @@ class LifecycleMixin(AuthManagerProtocol):
         self._ensure_ws_tickets_table()
         tid = self._generate_id()
         now = self._get_timestamp()
+        self._prune_expired_ws_tickets(now)
         ttl_seconds = int(self.WS_TICKET_TTL_MS // 1000)
         token, token_hash = create_ws_ticket(tid)
         self._db.execute(
