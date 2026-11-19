@@ -1,5 +1,6 @@
 """Workbook CRUD, templates, pinning, and archival."""
 
+from src.core.security.hardening import parse_id
 from fastapi import Depends, HTTPException, Query, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
@@ -127,7 +128,7 @@ async def set_pinned(
 ) -> SumWorkbookResponse:
     try:
         workbook = _manager().set_pinned(
-            current_user.user_id, int(workbook_id), body.pinned
+            current_user.user_id, parse_id(workbook_id, "workbook_id"), body.pinned
         )
         return SumWorkbookResponse.model_validate(workbook)
     except (ValueError, TypeError) as exc:
@@ -153,7 +154,7 @@ async def set_template(
 ) -> SumWorkbookResponse:
     try:
         workbook = _manager().set_template(
-            current_user.user_id, int(workbook_id), body.is_template
+            current_user.user_id, parse_id(workbook_id, "workbook_id"), body.is_template
         )
         return SumWorkbookResponse.model_validate(workbook)
     except (ValueError, TypeError) as exc:
@@ -178,7 +179,9 @@ async def get_workbook(
 ) -> SumWorkbookResponse:
     try:
         return SumWorkbookResponse.model_validate(
-            _manager().get_workbook(current_user.user_id, int(workbook_id))
+            _manager().get_workbook(
+                current_user.user_id, parse_id(workbook_id, "workbook_id")
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
@@ -201,7 +204,9 @@ async def delete_workbook(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> None:
     try:
-        _manager().delete_workbook(current_user.user_id, int(workbook_id))
+        _manager().delete_workbook(
+            current_user.user_id, parse_id(workbook_id, "workbook_id")
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
     except Exception as exc:
@@ -224,7 +229,9 @@ async def restore_workbook(
 ) -> SumWorkbookResponse:
     try:
         return SumWorkbookResponse.model_validate(
-            _manager().restore_workbook(current_user.user_id, int(workbook_id))
+            _manager().restore_workbook(
+                current_user.user_id, parse_id(workbook_id, "workbook_id")
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid workbook id") from exc

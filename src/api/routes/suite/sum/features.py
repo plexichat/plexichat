@@ -1,5 +1,6 @@
 """Workbook feature flags."""
 
+from src.core.security.hardening import parse_id
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query, status
@@ -33,7 +34,7 @@ async def list_features(
 ) -> SumFeatureListResponse:
     try:
         features = _manager().list_features(
-            current_user.user_id, int(workbook_id), feature_type
+            current_user.user_id, parse_id(workbook_id, "workbook_id"), feature_type
         )
         return SumFeatureListResponse(
             items=[SumFeatureResponse.model_validate(f) for f in features]
@@ -63,7 +64,7 @@ async def create_feature(
     try:
         feature = _manager().create_feature(
             current_user.user_id,
-            int(workbook_id),
+            parse_id(workbook_id, "workbook_id"),
             body.feature_type,
             body.definition,
             body.sheet_id,
@@ -94,8 +95,8 @@ async def update_feature(
     try:
         feature = _manager().update_feature(
             current_user.user_id,
-            int(workbook_id),
-            int(feature_id),
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(feature_id, "feature_id"),
             definition=body.definition,
             sheet_id=body.sheet_id,
         )
@@ -125,7 +126,9 @@ async def delete_feature(
 ) -> None:
     try:
         _manager().delete_feature(
-            current_user.user_id, int(workbook_id), int(feature_id)
+            current_user.user_id,
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(feature_id, "feature_id"),
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(

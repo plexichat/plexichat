@@ -1,5 +1,6 @@
 """Data validations and conditional formats."""
 
+from src.core.security.hardening import parse_id
 from fastapi import Depends, HTTPException, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
@@ -33,7 +34,9 @@ async def list_validations(
 ) -> SumValidationListResponse:
     try:
         items = _manager().list_validations(
-            current_user.user_id, int(workbook_id), int(sheet_id)
+            current_user.user_id,
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(sheet_id, "sheet_id"),
         )
         return SumValidationListResponse(
             items=[SumValidationResponse.model_validate(item) for item in items]
@@ -67,8 +70,8 @@ async def set_validation(
         return SumValidationResponse.model_validate(
             _manager().set_validation(
                 current_user.user_id,
-                int(workbook_id),
-                int(sheet_id),
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
                 body.rule_type,
                 body.row_start,
                 body.row_end,
@@ -106,7 +109,7 @@ async def delete_validation(
     try:
         _manager().delete_validation(
             current_user.user_id,
-            int(workbook_id),
+            parse_id(workbook_id, "workbook_id"),
             validation_id,
         )
     except (ValueError, TypeError) as exc:
@@ -134,7 +137,9 @@ async def list_conditional_formats(
 ) -> SumConditionalFormatListResponse:
     try:
         items = _manager().list_conditional_formats(
-            current_user.user_id, int(workbook_id), int(sheet_id)
+            current_user.user_id,
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(sheet_id, "sheet_id"),
         )
         return SumConditionalFormatListResponse(
             items=[SumConditionalFormatResponse.model_validate(item) for item in items]
@@ -168,8 +173,8 @@ async def set_conditional_format(
         return SumConditionalFormatResponse.model_validate(
             _manager().set_conditional_format(
                 current_user.user_id,
-                int(workbook_id),
-                int(sheet_id),
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
                 body.rule_type,
                 body.row_start,
                 body.row_end,
@@ -205,7 +210,7 @@ async def delete_conditional_format(
 ) -> None:
     try:
         _manager().delete_conditional_format(
-            current_user.user_id, int(workbook_id), rule_id
+            current_user.user_id, parse_id(workbook_id, "workbook_id"), rule_id
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(

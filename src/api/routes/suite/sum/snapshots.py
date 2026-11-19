@@ -1,5 +1,6 @@
 """Snapshot creation, listing, and restore."""
 
+from src.core.security.hardening import parse_id
 from fastapi import Depends, HTTPException, Query, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
@@ -32,7 +33,9 @@ async def create_snapshot(
 ) -> SumSnapshotResponse:
     try:
         return SumSnapshotResponse.model_validate(
-            _manager().create_snapshot(current_user.user_id, int(workbook_id))
+            _manager().create_snapshot(
+                current_user.user_id, parse_id(workbook_id, "workbook_id")
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
@@ -56,7 +59,9 @@ async def list_snapshots(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumSnapshotListResponse:
     try:
-        items = _manager().list_snapshots(current_user.user_id, int(workbook_id), limit)
+        items = _manager().list_snapshots(
+            current_user.user_id, parse_id(workbook_id, "workbook_id"), limit
+        )
         return SumSnapshotListResponse(
             items=[SumSnapshotResponse.model_validate(item) for item in items]
         )
@@ -84,7 +89,9 @@ async def restore_snapshot(
     try:
         return SumWorkbookResponse.model_validate(
             _manager().restore_snapshot(
-                current_user.user_id, int(workbook_id), int(snapshot_id)
+                current_user.user_id,
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(snapshot_id, "snapshot_id"),
             )
         )
     except (ValueError, TypeError) as exc:

@@ -1,5 +1,6 @@
 """XLSX import and export."""
 
+from src.core.security.hardening import parse_id
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query
@@ -31,9 +32,11 @@ async def export_xlsx(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumXlsxExportResponse:
     try:
-        sheet = int(sheet_id) if sheet_id else None
+        sheet = parse_id(sheet_id, "sheet_id") if sheet_id else None
         return SumXlsxExportResponse.model_validate(
-            _manager().export_xlsx(current_user.user_id, int(workbook_id), sheet)
+            _manager().export_xlsx(
+                current_user.user_id, parse_id(workbook_id, "workbook_id"), sheet
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
@@ -61,8 +64,8 @@ async def import_xlsx(
         return SumCsvImportResponse.model_validate(
             _manager().import_xlsx(
                 current_user.user_id,
-                int(workbook_id),
-                int(sheet_id),
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
                 body.content,
                 body.base_revision,
             )

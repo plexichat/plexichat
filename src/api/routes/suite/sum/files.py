@@ -1,5 +1,6 @@
 """Workbook file download/upload and CSV import/export."""
 
+from src.core.security.hardening import parse_id
 from fastapi import Depends, HTTPException
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
@@ -32,7 +33,9 @@ async def download_file(
 ) -> SumWorkbookFileResponse:
     """Download the current ``.plexisum`` workbook file (authorization rechecked)."""
     try:
-        result = _manager().download_file(current_user.user_id, int(workbook_id))
+        result = _manager().download_file(
+            current_user.user_id, parse_id(workbook_id, "workbook_id")
+        )
         return SumWorkbookFileResponse.model_validate(result)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
@@ -82,7 +85,7 @@ async def upload_file(
             raise HTTPException(status_code=413, detail="Workbook file is too large")
         result = _manager().upload_file(
             current_user.user_id,
-            int(workbook_id),
+            parse_id(workbook_id, "workbook_id"),
             raw,
             body.base_revision,
         )
@@ -110,7 +113,11 @@ async def export_csv(
 ) -> SumCsvExportResponse:
     try:
         return SumCsvExportResponse.model_validate(
-            _manager().export_csv(current_user.user_id, int(workbook_id), int(sheet_id))
+            _manager().export_csv(
+                current_user.user_id,
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(
@@ -140,8 +147,8 @@ async def import_csv(
         return SumCsvImportResponse.model_validate(
             _manager().import_csv(
                 current_user.user_id,
-                int(workbook_id),
-                int(sheet_id),
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
                 body.content,
                 body.base_revision,
             )

@@ -1,5 +1,6 @@
 """Presence tracking and frozen panes."""
 
+from src.core.security.hardening import parse_id
 from fastapi import Depends, HTTPException
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
@@ -28,7 +29,9 @@ async def list_presence(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumPresenceResponse:
     try:
-        users = _manager().list_presence(current_user.user_id, int(workbook_id))
+        users = _manager().list_presence(
+            current_user.user_id, parse_id(workbook_id, "workbook_id")
+        )
         return SumPresenceResponse(workbook_id=SnowflakeID(workbook_id), users=users)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid workbook id") from exc
@@ -53,7 +56,9 @@ async def set_presence(
     """Heartbeat presence; returns the current viewer list."""
     try:
         users = _manager().set_presence(
-            current_user.user_id, int(workbook_id), current_user.username
+            current_user.user_id,
+            parse_id(workbook_id, "workbook_id"),
+            current_user.username,
         )
         return SumPresenceResponse(workbook_id=SnowflakeID(workbook_id), users=users)
     except (ValueError, TypeError) as exc:
@@ -79,7 +84,11 @@ async def get_freeze(
 ) -> SumFreezeResponse:
     try:
         return SumFreezeResponse.model_validate(
-            _manager().get_freeze(current_user.user_id, int(workbook_id), int(sheet_id))
+            _manager().get_freeze(
+                current_user.user_id,
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
+            )
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(
@@ -109,8 +118,8 @@ async def set_freeze(
         return SumFreezeResponse.model_validate(
             _manager().set_freeze(
                 current_user.user_id,
-                int(workbook_id),
-                int(sheet_id),
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
                 body.freeze_rows,
                 body.freeze_columns,
             )

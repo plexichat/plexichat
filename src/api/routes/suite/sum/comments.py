@@ -1,5 +1,6 @@
 """Cell comment threads."""
 
+from src.core.security.hardening import parse_id
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query, status
@@ -35,8 +36,8 @@ async def list_comments(
     try:
         items = _manager().list_comments(
             current_user.user_id,
-            int(workbook_id),
-            int(sheet_id),
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(sheet_id, "sheet_id"),
             row,
             column,
         )
@@ -72,8 +73,8 @@ async def add_comment(
         return SumCommentResponse.model_validate(
             _manager().add_comment(
                 current_user.user_id,
-                int(workbook_id),
-                int(sheet_id),
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
                 body.row,
                 body.column,
                 body.body,
@@ -105,7 +106,10 @@ async def resolve_comment(
 ) -> None:
     try:
         _manager().resolve_comment(
-            current_user.user_id, int(workbook_id), comment_id, resolved
+            current_user.user_id,
+            parse_id(workbook_id, "workbook_id"),
+            comment_id,
+            resolved,
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(
@@ -131,7 +135,9 @@ async def delete_comment(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> None:
     try:
-        _manager().delete_comment(current_user.user_id, int(workbook_id), comment_id)
+        _manager().delete_comment(
+            current_user.user_id, parse_id(workbook_id, "workbook_id"), comment_id
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=400, detail="Invalid workbook or comment id"

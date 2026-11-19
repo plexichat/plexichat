@@ -1,5 +1,6 @@
 """Workbook and range grant management."""
 
+from src.core.security.hardening import parse_id
 from fastapi import Depends, HTTPException, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
@@ -31,7 +32,9 @@ async def list_grants(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumGrantListResponse:
     try:
-        items = _manager().list_grants(current_user.user_id, int(workbook_id))
+        items = _manager().list_grants(
+            current_user.user_id, parse_id(workbook_id, "workbook_id")
+        )
         return SumGrantListResponse(
             items=[SumGrantResponse.model_validate(item) for item in items]
         )
@@ -61,7 +64,7 @@ async def grant_workbook(
         return SumGrantResponse.model_validate(
             _manager().grant_workbook(
                 current_user.user_id,
-                int(workbook_id),
+                parse_id(workbook_id, "workbook_id"),
                 int(body.subject_id),
                 body.permissions,
                 body.expires_at,
@@ -90,7 +93,7 @@ async def revoke_grant(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> None:
     try:
-        _manager().revoke_grant(current_user.user_id, int(grant_id))
+        _manager().revoke_grant(current_user.user_id, parse_id(grant_id, "grant_id"))
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid grant id") from exc
     except Exception as exc:
@@ -114,7 +117,9 @@ async def list_range_permissions(
 ) -> SumRangePermissionListResponse:
     try:
         items = _manager().list_range_permissions(
-            current_user.user_id, int(workbook_id), int(sheet_id)
+            current_user.user_id,
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(sheet_id, "sheet_id"),
         )
         return SumRangePermissionListResponse(
             items=[SumRangePermissionResponse.model_validate(item) for item in items]
@@ -148,8 +153,8 @@ async def set_range_permission(
         return SumRangePermissionResponse.model_validate(
             _manager().set_range_permission(
                 current_user.user_id,
-                int(workbook_id),
-                int(sheet_id),
+                parse_id(workbook_id, "workbook_id"),
+                parse_id(sheet_id, "sheet_id"),
                 body.row_start,
                 body.row_end,
                 body.column_start,
@@ -182,7 +187,9 @@ async def remove_range_permission(
 ) -> None:
     try:
         _manager().remove_range_permission(
-            current_user.user_id, int(workbook_id), int(range_id)
+            current_user.user_id,
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(range_id, "range_id"),
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(
