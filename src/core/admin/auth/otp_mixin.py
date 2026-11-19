@@ -18,6 +18,7 @@ from .helpers import (
 )
 from .session_mixin import SessionMixin
 from .password_mixin import PasswordMixin
+from src.core.security.secrets import constant_time_compare
 
 
 # A correct password mints a fresh, single-use OTP challenge on every login,
@@ -257,7 +258,11 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 hashed_list = []
             for i, hashed in enumerate(hashed_list):
                 hashed_str = str(hashed)
-                if candidate_sha256 == hashed_str or _verify_pwd(
+                # Backup-code digests are secret-derived values: compare them
+                # in constant time, matching the hardened core TOTP path
+                # (``src.core.auth.totp.verify_backup_code``). A plain ``==``
+                # leaks the stored digest through comparison timing.
+                if constant_time_compare(candidate_sha256, hashed_str) or _verify_pwd(
                     normalized.lower(), hashed_str
                 ):
                     hashed_list.pop(i)
@@ -289,8 +294,17 @@ class OTPMixin(SessionMixin, PasswordMixin):
                     )
         elif backup_codes_plaintext:
             codes = backup_codes_plaintext.split(",")
-            if normalized in codes:
-                codes.remove(normalized)
+            # Legacy plaintext backup codes are still secrets: scan the whole
+            # list with a constant-time comparator instead of the short-circuit
+            # ``in``/``==`` so neither the value nor its position leaks through
+            # comparison timing.
+            matched = -1
+            for i, stored in enumerate(codes):
+                hit = constant_time_compare(normalized, stored)
+                if hit and matched == -1:
+                    matched = i
+            if matched != -1:
+                codes.pop(matched)
                 hashed_remaining = [
                     hashlib.sha256(c.lower().encode()).hexdigest()
                     for c in codes
