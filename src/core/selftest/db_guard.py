@@ -25,7 +25,7 @@ from typing import Any
 _DOLLAR_QUOTE_OPEN_RE = re.compile(r"\$[A-Za-z_][A-Za-z_0-9]*\$|\$\$")
 
 
-def _normalize_sql(statement: str) -> str:
+def _normalize_sql(statement: str, *, escape_backslashes: bool = False) -> str:
     """Strip comments and blank quoted literals before denylist matching.
 
     PostgreSQL nests block comments: in ``/* a /* b */ c */`` the first ``*/``
@@ -54,6 +54,18 @@ def _normalize_sql(statement: str) -> str:
     not a scope restriction and must not disable the guard. An unterminated
     comment or literal swallows everything after it, as it does for the
     database.
+
+    ``escape_backslashes`` selects the second plausible literal grammar. With
+    it off (the default and the historical behaviour) a backslash is ordinary
+    data, which is PostgreSQL's ``standard_conforming_strings = on`` default.
+    With it on, ``\\`` consumes the following character inside a literal, as
+    PostgreSQL escape strings (``E'...'`` / ``e'...'``) always do and as
+    ordinary strings do when ``standard_conforming_strings = off``. Both
+    variants must be screened: an ``E'...'`` literal can hide the *only* real
+    ``WHERE`` behind a backslash-escaped quote (``E'x\\' WHERE y'``), while a
+    trailing-backslash ordinary literal can hide a *stacked* destructive
+    statement from the escape-aware scan. ``assert_non_destructive`` checks
+    both and rejects if either interpretation is destructive.
     """
     out: list[str] = []
     depth = 0
@@ -93,14 +105,25 @@ def _normalize_sql(statement: str) -> str:
             # SQL string literal; a doubled '' is an escaped quote inside it.
             # Blanking the contents keeps the WHERE/DELETE tokens outside the
             # literal intact while making their in-literal copies invisible.
+            # In escape-string mode a backslash also escapes the next byte:
+            # `E'x\' WHERE y'` is ONE literal to the database, not a literal
+            # followed by a WHERE clause. Consuming \' here makes that fake
+            # scope invisible to the denylist instead of accepting a wipe.
             index += 1
             while index < length:
-                if statement[index] == "'":
+                current = statement[index]
+                if current == "'":
                     if index + 1 < length and statement[index + 1] == "'":
                         index += 2
                         continue
                     index += 1
                     break
+                if escape_backslashes and current == "\\":
+                    # The escaped byte is data, even when it is a quote or a
+                    # comment opener. A trailing backslash leaves the literal
+                    # unterminated and it swallows the tail, as for the parser.
+                    index += 2
+                    continue
                 index += 1
             out.append(" ")
             continue
@@ -165,6 +188,15 @@ _FORBIDDEN_PATTERNS = (
 )
 
 
+def _is_destructive(normalized: str) -> bool:
+    """True if a normalized variant contains a whole-table destructive verb."""
+    if _UNSCOPED_DELETE_RE.search(normalized) and not _SCOPE_WHERE_RE.search(
+        normalized
+    ):
+        return True
+    return any(pattern.search(normalized) for pattern in _FORBIDDEN_PATTERNS)
+
+
 def assert_non_destructive(statement: str) -> None:
     """Raise if a statement is an unscoped whole-table wipe.
 
@@ -175,16 +207,20 @@ def assert_non_destructive(statement: str) -> None:
     normalized away so a comment can never act as a keyword separator. A
     DELETE is accepted only with a genuine WHERE clause -- trailing clauses
     such as RETURNING / USING / ORDER BY / LIMIT do not scope the delete.
+
+    Quoted literals are ambiguous without the server's
+    ``standard_conforming_strings`` setting, and ``E'...'`` escape strings
+    always treat ``\\`` as an escape. Both plausible literal grammars are
+    screened: a destructive reading under *either* is refused. This closes
+    the escape-string trick of hiding the only WHERE inside a literal whose
+    quote is backslash-escaped, without missing a stacked wipe that is only
+    visible when the backslash is ordinary data.
     """
-    normalized = _normalize_sql(statement)
-    if _UNSCOPED_DELETE_RE.search(normalized) and not _SCOPE_WHERE_RE.search(
-        normalized
-    ):
-        raise ValueError(
-            f"Self-test cleanup refuses destructive statement: {normalized[:120]}"
-        )
-    for pattern in _FORBIDDEN_PATTERNS:
-        if pattern.search(normalized):
+    variants = [_normalize_sql(statement)]
+    if "\\" in statement:
+        variants.append(_normalize_sql(statement, escape_backslashes=True))
+    for normalized in variants:
+        if _is_destructive(normalized):
             raise ValueError(
                 f"Self-test cleanup refuses destructive statement: {normalized[:120]}"
             )
