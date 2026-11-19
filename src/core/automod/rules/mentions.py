@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 from src.core.security.hardening import HardeningViolation, bounded_int
 
 from .base import BaseRule
+from ..canonicalization import fold_invisible_for_matching
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
@@ -51,6 +52,19 @@ class MentionSpamRule(BaseRule):
         context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for mention spam."""
+        # Match on a canonical view of the text. Invisible format/control
+        # characters (zero-width space/joiner, soft hyphen, bidi override, BOM,
+        # ...) spliced *inside* a token were silently skipped by the patterns
+        # below: ``<@123\u200b456>`` and ``@e\u200bveryone`` look like real
+        # mentions to a reader but produced zero matches, so mass-mention and
+        # @everyone abuse sailed through this rule. Every sibling text rule
+        # (repeated, emoji, keyword, spam, links) already folds these away;
+        # this rule was the remaining normalization gap. NFKC folding also
+        # maps compatibility forms (fullwidth digits) onto the ASCII shapes
+        # the mention patterns understand. Length is bounded because NFKC can
+        # expand a single codepoint into many.
+        content = fold_invisible_for_matching(content)
+
         user_mentions = self.USER_MENTION_PATTERN.findall(content)
         role_mentions = self.ROLE_MENTION_PATTERN.findall(content)
         everyone_mentions = self.EVERYONE_PATTERN.findall(content)

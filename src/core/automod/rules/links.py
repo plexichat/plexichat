@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional, Set, List
 
 import utils.logger as logger
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
 from .base import BaseRule
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
@@ -22,6 +24,12 @@ from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 # code detector. Cf = format, Cc = control — matching the shared canonicalizer
 # so both moderation layers agree on what "the same text" means.
 _INVISIBLE_CATEGORIES = frozenset({"Cf", "Cc"})
+
+# ``validate_config`` caps allowlists at 200 entries, but stored rule configs
+# are rebuilt into rule objects on every worker start WITHOUT revalidation.
+# Apply the same ceiling at construction so a stale or hand-edited row cannot
+# load an unbounded allowlist into every process.
+MAX_ALLOWED_CODES = 200
 
 
 def _fold_link_text(text: str) -> str:
@@ -90,13 +98,35 @@ class InviteLinkRule(BaseRule):
         super().__init__(rule)
         self._block_all: bool = self.config.get("block_all", True)
         self._warn_only: bool = self.config.get("warn_only", False)
+        # Stored configs bypass validate_config(), so bound the admin-supplied
+        # fields again at construction time. An unbounded ``allowed_codes``
+        # list is loaded into every worker; a huge/negative/non-integer
+        # ``code_length`` is interpolated into a regex quantifier and used to
+        # raise OverflowError inside rule construction (breaking message
+        # moderation for the server), or to build a pattern that never matches.
+        raw_allowed = self.config.get("allowed_codes", [])
+        if not isinstance(raw_allowed, (list, tuple)):
+            raw_allowed = []
         self._allowed_codes: Set[str] = set(
-            c.lower() for c in self.config.get("allowed_codes", [])
+            c.lower()
+            for c in raw_allowed[:MAX_ALLOWED_CODES]
+            if isinstance(c, str) and c
         )
-        self._code_length: int = self.config.get("code_length", 8)
+        from ..limits import MAX_CODE_LENGTH
+
+        try:
+            self._code_length: int = bounded_int(
+                self.config.get("code_length", 8),
+                "code_length",
+                minimum=1,
+                maximum=MAX_CODE_LENGTH,
+                default=8,
+            )
+        except HardeningViolation:
+            self._code_length = 8
 
         custom_pattern = self.config.get("pattern")
-        if custom_pattern:
+        if isinstance(custom_pattern, str) and custom_pattern:
             try:
                 # Admin-supplied input at the same trust level as regex-rule
                 # patterns: apply the same ReDoS static vetting before use.
