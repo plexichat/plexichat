@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp
 
 import utils.config as config
+from src.core.config import VersionedConfigSnapshot, config_source_version
 from src.utils.net import get_client_ip
 
 from .manager.results import create_store_unavailable_result
@@ -110,6 +111,52 @@ def _register_unknown_route(candidate: str, method: str) -> str:
 
 _DEFAULT_API_PREFIX = "/api/v1"
 
+# ``extract_route_info`` runs on every rate-limited request (frequently twice:
+# once in the auth middleware and once in the rate-limit middleware). The API
+# prefix is static until configuration changes, but resolving it used to read
+# ``utils.config`` and rebuild the normalized string on each of those calls.
+# Serve it from a versioned snapshot keyed on the config loader identity plus
+# the config file's mtime/size (``config_source_version``), with a short
+# staleness ceiling so the hot path skips even the version-check stat between
+# checks. A ``config.setup()`` or an on-disk edit moves the version; the raw
+# setting is folded in too so in-memory reloads are observed within the ceiling.
+_API_PREFIX_MAX_AGE_SECONDS = 5.0
+
+
+def _api_prefix_setting() -> str:
+    """Return the raw configured prefix (defensive, never raises)."""
+    try:
+        prefix = config.get("api", {}).get("api_prefix", _DEFAULT_API_PREFIX)
+        return prefix or _DEFAULT_API_PREFIX
+    except Exception:
+        return _DEFAULT_API_PREFIX
+
+
+def _load_api_prefix() -> str:
+    """Normalize the configured prefix once per config version (cache miss)."""
+    try:
+        prefix = config.get("api", {}).get("api_prefix", _DEFAULT_API_PREFIX)
+        return (prefix or _DEFAULT_API_PREFIX).rstrip("/") or _DEFAULT_API_PREFIX
+    except Exception:
+        return _DEFAULT_API_PREFIX
+
+
+def _api_prefix_version():
+    """Version token: loader identity, file mtime/size, and the raw setting."""
+    return config_source_version(repr(_api_prefix_setting()))
+
+
+_api_prefix_snapshot = VersionedConfigSnapshot(
+    _load_api_prefix,
+    version_fn=_api_prefix_version,
+    max_age=_API_PREFIX_MAX_AGE_SECONDS,
+)
+
+
+def invalidate_api_prefix_cache() -> None:
+    """Drop the cached prefix so the next access resolves it again."""
+    _api_prefix_snapshot.invalidate()
+
 
 def _resolve_api_prefix() -> str:
     """Resolve the configurable API prefix, falling back to the default.
@@ -117,13 +164,11 @@ def _resolve_api_prefix() -> str:
     ``extract_route_info``'s route tables are keyed on the default prefix.
     An operator that renames ``api.api_prefix`` would otherwise miss every
     strict per-route cap (login/register/2FA/password-reset) and silently
-    fall back to the generic default limit.
+    fall back to the generic default limit. The value is served from a
+    versioned snapshot: a new ``config.setup()`` or an on-disk config edit
+    moves the version and forces a rebuild on the next check.
     """
-    try:
-        prefix = config.get("api", {}).get("api_prefix", _DEFAULT_API_PREFIX)
-        return (prefix or _DEFAULT_API_PREFIX).rstrip("/") or _DEFAULT_API_PREFIX
-    except Exception:
-        return _DEFAULT_API_PREFIX
+    return _api_prefix_snapshot.snapshot()
 
 
 # Common routes for fast lookup (without regex)
