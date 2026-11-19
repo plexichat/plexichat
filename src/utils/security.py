@@ -16,6 +16,14 @@ import utils.logger as logger
 from typing import Any, Dict, Tuple, Optional, Set
 from urllib.parse import urlparse, urlunparse
 
+from src.utils.url_validation_cache import (
+    URLResolutionCache,
+    clear_url_validation_cache,
+    get_url_validation_cache,
+    reset_url_validation_cache_stats,
+    url_validation_cache_stats,
+)
+
 
 # RFC 6598 shared address space (CGNAT, 100.64.0.0/10): not flagged by
 # ipaddress.is_private on some Python releases, but it is a non-global
@@ -157,6 +165,9 @@ class URLValidator:
 
     def __init__(self, blocked_hosts: Optional[Set[str]] = None):
         self._blocked_hosts = blocked_hosts or self.BLOCKED_HOSTS
+        # Part of the resolution-cache key so validators with different policy
+        # can never consume each other's already-approved results.
+        self._cache_hosts = frozenset(self._blocked_hosts)
 
     def validate_url_for_request(self, url: str) -> Tuple[str, str]:
         """
@@ -220,7 +231,21 @@ class URLValidator:
         if hostname_lower.endswith(".local") or hostname_lower.endswith(".internal"):
             raise ValueError(f"Access to internal host {hostname} is forbidden")
 
-        # 2. Resolve DNS and check IP
+        # 2. Bounded, short-TTL memo of the *expensive* step only. Every cheap
+        # structural SSRF check above ran on this call already; the key is the
+        # full URL plus this validator's blocked-host set, and only successful
+        # resolutions whose IP passed the private-IP rejection below are ever
+        # inserted. A hit therefore returns a previously-approved PUBLIC ip that
+        # callers still pin to -- it never re-resolves the name at connect time,
+        # so the DNS-rebinding protection is unchanged. Failures are never
+        # cached: a host that later flips to an internal address is re-resolved
+        # and rejected once the (short) TTL lapses.
+        cache_key = (self._cache_hosts, url)
+        cached = get_url_validation_cache().get(cache_key)
+        if cached is not None:
+            return cached
+
+        # 3. Resolve DNS and check IP
         try:
             # Resolve DNS once and use this IP for the request
             addr_info = socket.getaddrinfo(hostname, None)
@@ -237,7 +262,9 @@ class URLValidator:
 
             # Return the first resolved IP for the request
             resolved_ip = str(addr_info[0][4][0])
-            return hostname, resolved_ip
+            result = (hostname, resolved_ip)
+            get_url_validation_cache().put(cache_key, result)
+            return result
 
         except socket.gaierror as e:
             logger.warning(f"DNS resolution failed for {hostname}: {e}")
@@ -310,3 +337,24 @@ class URLValidator:
                     return True
                 return addr.ipv4_mapped in _CGNAT_NETWORK
         return False
+
+
+# Observability / test-isolation hooks for the bounded URL-resolution memo.
+# Re-exported here so callers can reach it alongside ``URLValidator`` without
+# importing the private module directly.
+def get_url_resolution_cache() -> "URLResolutionCache":
+    """Return the process-wide bounded URL-resolution memo."""
+    return get_url_validation_cache()
+
+
+def url_resolution_cache_stats() -> dict:
+    return url_validation_cache_stats()
+
+
+def clear_url_resolution_cache() -> None:
+    """Drop every memoized resolution (config reload / test isolation)."""
+    clear_url_validation_cache()
+
+
+def reset_url_resolution_cache_stats() -> None:
+    reset_url_validation_cache_stats()
