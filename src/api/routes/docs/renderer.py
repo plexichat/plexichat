@@ -4,6 +4,7 @@ Markdown to HTML renderer using mistune.
 This module handles all markdown rendering with proper syntax highlighting.
 """
 
+import html as html_module
 import re
 from typing import List, Optional
 
@@ -33,17 +34,26 @@ except ImportError:  # pragma: no cover - exercises the fallback renderer only
 
 def _replace_dynamic_placeholders(text: str, conf: DocsConfig) -> str:
     """Replace dynamic placeholders in documentation content."""
+    # These values can originate from the client-controlled Host header and
+    # the substituted markdown is rendered with mistune's ``escape=False``
+    # (raw HTML allowed). HTML-escape them so a hostile value cannot inject
+    # markup/script into the rendered page. Normal URLs are unchanged.
+    base_url = html_module.escape(conf.base_url, quote=True)
+    websocket_url = html_module.escape(conf.websocket_url, quote=True)
+
     # Replace API base URL placeholders
-    text = text.replace("{{BASE_URL}}", conf.base_url)
-    text = text.replace("{{API_BASE_URL}}", conf.base_url)
+    text = text.replace("{{BASE_URL}}", base_url)
+    text = text.replace("{{API_BASE_URL}}", base_url)
 
     # Replace WebSocket URL placeholders
-    text = text.replace("{{WEBSOCKET_URL}}", conf.websocket_url)
-    text = text.replace("{{WS_URL}}", conf.websocket_url)
+    text = text.replace("{{WEBSOCKET_URL}}", websocket_url)
+    text = text.replace("{{WS_URL}}", websocket_url)
 
     if "{{VERSION}}" in text:
         app_config = get_app_config()
-        text = text.replace("{{VERSION}}", app_config["version"])
+        text = text.replace(
+            "{{VERSION}}", html_module.escape(str(app_config["version"]), quote=True)
+        )
 
     rate_limit_tokens = (
         "{{RATE_LIMIT_DEFAULT_ROWS}}",

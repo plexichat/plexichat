@@ -4,6 +4,7 @@ Documentation configuration dataclasses.
 This module contains all configuration dataclasses for the documentation system.
 """
 
+import re
 import time
 from dataclasses import dataclass, field, replace
 from typing import List, Optional
@@ -272,6 +273,30 @@ def is_docs_enabled() -> bool:
     return get_docs_config().enabled
 
 
+# The Host header is client-controlled and is reflected into docs HTML as the
+# runtime REST/gateway URLs (footer pills and {{BASE_URL}}/{{WS_URL}} markdown
+# placeholders; the markdown renderer deliberately allows raw HTML). Restrict
+# it to the characters a real hostname / host:port can contain. Quotes, angle
+# brackets, whitespace, path separators, CRLF and other injection payloads are
+# replaced by a neutral fallback before the value ever reaches a template.
+_SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9._\-:\[\]]+$")
+_MAX_HOST_CHARS = 255
+_FALLBACK_HOST = "localhost"
+
+
+def _safe_request_host(request: Request) -> str:
+    """Return a Host header value that is safe to embed into generated HTML."""
+    host = request.headers.get("host", "")
+    if (
+        not isinstance(host, str)
+        or not host
+        or len(host) > _MAX_HOST_CHARS
+        or not _SAFE_HOST_RE.fullmatch(host)
+    ):
+        return _FALLBACK_HOST
+    return host
+
+
 def _runtime_docs_config(request: Request, conf: DocsConfig) -> DocsConfig:
     """Resolve runtime URLs from the current request host."""
     try:
@@ -281,8 +306,10 @@ def _runtime_docs_config(request: Request, conf: DocsConfig) -> DocsConfig:
     except Exception:
         api_prefix = "/api/v1"
 
-    host = request.headers.get("host", "localhost")
+    host = _safe_request_host(request)
     scheme = request.url.scheme or "http"
+    if scheme not in ("http", "https"):
+        scheme = "http"
     ws_scheme = "wss" if scheme == "https" else "ws"
 
     return replace(

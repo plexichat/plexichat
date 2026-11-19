@@ -4,6 +4,8 @@ Navigation HTML builders for documentation.
 This module handles sidebar and header navigation HTML generation.
 """
 
+import html as html_module
+
 from .config import DocsConfig, NavItem
 from .dynamic import get_app_config
 
@@ -181,10 +183,15 @@ def build_surface_nav_html(
 def build_runtime_pills_html(conf: DocsConfig) -> str:
     """Build runtime endpoint summary pills."""
     app_config = get_app_config()
+    # These values can originate from the client-controlled Host header, so
+    # escape them even though _runtime_docs_config already validates the host:
+    # a bad config value or a future caller must not become an HTML injection.
+    base_url = html_module.escape(conf.base_url, quote=True)
+    websocket_url = html_module.escape(conf.websocket_url, quote=True)
     pills = [
-        f'<span class="runtime-pill">REST {conf.base_url}</span>',
-        f'<span class="runtime-pill">Gateway {conf.websocket_url}</span>',
-        f'<span class="runtime-pill accent">Version {app_config["version"]}</span>',
+        f'<span class="runtime-pill">REST {base_url}</span>',
+        f'<span class="runtime-pill">Gateway {websocket_url}</span>',
+        f'<span class="runtime-pill accent">Version {html_module.escape(str(app_config["version"]), quote=True)}</span>',
     ]
     return f'<div class="runtime-pills">{"".join(pills)}</div>'
 
