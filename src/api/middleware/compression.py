@@ -68,6 +68,46 @@ def is_compressible_type(content_type: str) -> bool:
     return media_type in COMPRESSIBLE_TYPES
 
 
+def _client_accepts_gzip_without_range(scope: Scope) -> bool:
+    """Decide gzip eligibility for a request in a single pass over raw headers.
+
+    ``CompressionMiddleware.__call__`` runs on every HTTP request, including the
+    vast majority of clients that never advertise gzip. The old decision built
+    ``Headers(scope=scope)`` just to read two values, and Starlette's ``Headers``
+    eagerly does ``scope["headers"] = list(scope["headers"])`` -- copying the
+    *whole* header list -- then ``.get("accept-encoding")`` and ``"range" in ...``
+    each walked that list again. That is fixed cost paid by every request.
+
+    Reading the raw ASGI header list once, keeping only what the old decision
+    actually used, is byte-for-byte equivalent:
+
+    * ``Headers.get("accept-encoding", "")`` returns the FIRST such value
+      decoded as Latin-1 (later duplicates are ignored); we keep the first raw
+      value and look for the ASCII substring ``gzip``. Latin-1 maps ASCII bytes
+      to themselves, so the byte and decoded-string substring tests agree.
+    * ``"range" in Headers`` is true when any header key equals ``b"range"``;
+      we return early on the first such key (same truth value).
+
+    ASGI allows ``scope["headers"]`` to be any iterable, and ``Headers`` also
+    normalizes it to a list as a side effect. Preserve that for non-list scopes;
+    the common list case is simply no longer copied.
+    """
+    headers = scope["headers"]
+    if not isinstance(headers, list):
+        headers = scope["headers"] = list(headers)
+
+    accept_encoding = b""
+    seen_accept_encoding = False
+    for name, value in headers:
+        if name == b"accept-encoding":
+            if not seen_accept_encoding:
+                accept_encoding = value
+                seen_accept_encoding = True
+        elif name == b"range":
+            return False
+    return b"gzip" in accept_encoding
+
+
 class CompressionMiddleware:
     """Gzip responses a client asked for and that are worth compressing.
 
@@ -95,9 +135,7 @@ class CompressionMiddleware:
             await self.app(scope, receive, send)
             return
 
-        request_headers = Headers(scope=scope)
-        accept_encoding = request_headers.get("accept-encoding", "")
-        if "gzip" not in accept_encoding or "range" in request_headers:
+        if not _client_accepts_gzip_without_range(scope):
             await self.app(scope, receive, send)
             return
 
