@@ -3,6 +3,7 @@ Local filesystem storage backend.
 """
 
 import os
+import stat
 from typing import BinaryIO, Tuple
 
 import utils.logger as logger
@@ -56,16 +57,61 @@ class LocalStorage(StorageBackendBase):
         if dir_path:
             os.makedirs(dir_path, exist_ok=True)
 
+    def _reject_symlink_components(self, path: str) -> None:
+        """Refuse to write through any symlink already present in ``path``.
+
+        ``_full_path`` validates containment by *resolving* symlinks, but the
+        write itself targets the original (unresolved) path. Without this
+        check an in-base symlink silently redirects the write to a different
+        object, and a symlink planted between the containment check and the
+        ``open`` (TOCTOU) can escape the base entirely. Every existing path
+        component is therefore inspected with ``lstat`` (which never follows
+        the link); the final write additionally uses ``O_NOFOLLOW``.
+        """
+        clean = path.lstrip("/").lstrip("\\")
+        current = self._base_path
+        for part in clean.split("/"):
+            if not part or part == ".":
+                continue
+            current = os.path.join(current, part)
+            try:
+                mode = os.lstat(current).st_mode
+            except (FileNotFoundError, NotADirectoryError):
+                # Not created yet - nothing to hijack at this component.
+                break
+            if stat.S_ISLNK(mode):
+                raise StorageError(
+                    "Invalid path: symlink component detected", "local"
+                )
+
+    @staticmethod
+    def _open_for_write(full_path: str) -> int:
+        """Open ``full_path`` for writing without following a final symlink.
+
+        ``O_NOFOLLOW`` fails with ``ELOOP`` if the destination itself is a
+        symlink, closing the check-then-open race on the last component while
+        preserving overwrite (``O_TRUNC``) semantics for regular files.
+        """
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        return os.open(full_path, flags, 0o600)
+
     def store(self, file_data: bytes, path: str, content_type: str) -> str:
         """Store file data at the specified path."""
         full_path = self._full_path(path)
 
         try:
+            self._reject_symlink_components(path)
             self._ensure_dir(full_path)
-            with open(full_path, "wb") as f:
+            # Re-check after mkdir: a directory component planted as a symlink
+            # during directory creation must not survive into the write.
+            self._reject_symlink_components(path)
+            fd = self._open_for_write(full_path)
+            with os.fdopen(fd, "wb") as f:
                 f.write(file_data)
             logger.debug(f"Stored file at {full_path} ({len(file_data)} bytes)")
             return path
+        except StorageError:
+            raise
         except OSError as e:
             logger.error(f"Failed to store file at {full_path}: {e}")
             raise StorageWriteError(f"Failed to write file: {e}", "local")
@@ -77,9 +123,12 @@ class LocalStorage(StorageBackendBase):
         full_path = self._full_path(path)
 
         try:
+            self._reject_symlink_components(path)
             self._ensure_dir(full_path)
+            self._reject_symlink_components(path)
+            fd = self._open_for_write(full_path)
             bytes_written = 0
-            with open(full_path, "wb") as f:
+            with os.fdopen(fd, "wb") as f:
                 chunk_size = 8192
                 while True:
                     chunk = stream.read(chunk_size)
@@ -89,6 +138,8 @@ class LocalStorage(StorageBackendBase):
                     bytes_written += len(chunk)
             logger.debug(f"Stored stream at {full_path} ({bytes_written} bytes)")
             return path
+        except StorageError:
+            raise
         except OSError as e:
             logger.error(f"Failed to store stream at {full_path}: {e}")
             raise StorageWriteError(f"Failed to write file: {e}", "local")
