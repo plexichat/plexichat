@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional, List
 
+from src.core.security.hardening import bounded_int
+
 from ..models import Thread, ThreadType, ThreadState
 from ..exceptions import (
     ChannelNotFoundError,
@@ -12,6 +14,16 @@ from .helpers import (
     _check_auto_archive,
 )
 from .protocol import ThreadProtocol
+
+# Page bound enforced at the manager boundary. The HTTP route clamps its own
+# query parameter, but ``get_archived_threads`` is also a public core read API
+# (see ``src.core.threads.get_archived_threads``) called directly by internal
+# callers and tests that bypass the route. The value is bound straight into
+# ``LIMIT ?``; SQLite reads a negative LIMIT as *unlimited*, so an unclamped
+# ``-1`` turned one archived-thread page into a full-table read. Bound every
+# caller here, at the shared choke point, so the page contract cannot be
+# sidestepped (non-integer / non-finite values are rejected outright).
+_MAX_ARCHIVED_THREAD_PAGE = 200
 
 
 class ThreadListingMixin(ThreadProtocol):
@@ -121,6 +133,11 @@ class ThreadListingMixin(ThreadProtocol):
         limit: int = 50,
         before_timestamp: Optional[int] = None,
     ) -> List[Thread]:
+        # Bound the page size before it reaches ``LIMIT ?``. A negative limit
+        # is *unlimited* in SQLite; validate at this boundary because direct
+        # callers bypass the HTTP route's ``ge=1`` constraint.
+        limit = bounded_int(limit, "limit", minimum=0, maximum=_MAX_ARCHIVED_THREAD_PAGE)
+
         channel = _get_channel(self._db, channel_id)
         if not channel:
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
