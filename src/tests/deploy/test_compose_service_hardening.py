@@ -348,6 +348,7 @@ RESOURCE_BOUNDED_SERVICES = (
     "valkey",
     "rustfs",
     "clamav",
+    "clamav-unofficial-sigs",
     "backend",
     "client",
     "backup",
@@ -406,6 +407,57 @@ def test_optional_heavy_services_declare_cpu_limits(
     for name in ("shieldstral", "meilisearch", "elasticsearch"):
         assert _resource_limits(services, name).get("cpus"), (
             f"{name} must declare a CPU limit alongside its memory limit"
+        )
+
+
+def test_every_long_running_daemon_declares_resource_limits(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    """Every daemon must be capped; deriving the set keeps this fail-closed.
+
+    The earlier resource pass capped the headline services but missed the
+    ClamAV signature updater, which is a ``restart: unless-stopped`` daemon
+    that decompresses third-party signature archives into a shared volume.
+    An unbounded one can OOM the host or starve clamd itself. One-shot jobs
+    (rustfs-perms/rustfs-init/cert-init) are intentionally exempt.
+    """
+    for name in DAEMON_SERVICES:
+        limits = _resource_limits(services, name)
+        assert limits.get("cpus"), f"daemon {name} must cap CPU"
+        assert limits.get("memory"), f"daemon {name} must cap memory"
+
+
+def test_shared_env_is_scoped_to_services_that_need_it(
+    services: dict[str, dict[str, Any]]
+) -> None:
+    """Optional third-party services must not inherit every shared secret.
+
+    ``.env`` holds Postgres/Valkey/S3/restic credentials. Services that only
+    need a public setting or one interpolated value must not receive the whole
+    file in their process environment; that is the same F8 rule the perimeter
+    ``client`` already follows. Compose still interpolates ``${VAR}`` entries
+    in ``environment:`` from .env, so dropping ``env_file`` loses no config.
+    """
+    no_shared_env = (
+        "client",  # perimeter service (F8)
+        "clamav",
+        "clamav-unofficial-sigs",
+        "shieldstral",
+        "meilisearch",  # optional third-party, master key passed explicitly
+        "elasticsearch",  # optional third-party, no shared secret needed
+        "rustfs-perms",  # one-shot chown job
+        "cert-init",  # one-shot self-signed cert job
+    )
+    for name in no_shared_env:
+        assert not services[name].get("env_file"), (
+            f"{name} must not receive the shared .env (all secrets) in its "
+            "process environment; pass only the variables it needs"
+        )
+    # Services that genuinely consume many .env values must keep it, so a
+    # future "simplification" cannot silently break DB/S3/backup auth.
+    for name in ("db", "valkey", "rustfs", "rustfs-init", "backend", "backup"):
+        assert services[name].get("env_file"), (
+            f"{name} relies on .env for runtime secrets; its env_file was removed"
         )
 
 

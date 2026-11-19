@@ -276,6 +276,18 @@ services:
         # volume. Let clamd finish its initial load (service_healthy) before
         # mutating that volume, otherwise it can read a half-written DB.
         condition: service_healthy
+    # Long-running updater, not a one-shot: without its own ceiling it can
+    # consume unbounded CPU (signature decompression) and memory while the
+    # rest of the stack is deliberately capped. Signature downloads plus the
+    # unpacked DBs are modest, but a stuck unpack loop must not be able to
+    # OOM the host or starve clamd, which shares the clamav_db volume.
+    deploy:
+      resources:
+        limits:
+          cpus: '${CLAMAV_SIGS_CPU_LIMIT:-1}'
+          memory: ${CLAMAV_SIGS_MEM_LIMIT:-1G}
+        reservations:
+          memory: 128M
 
   backend:
     restart: unless-stopped
@@ -531,8 +543,10 @@ services:
     security_opt:
       - no-new-privileges:true
     image: getmeili/meilisearch:v1.15@sha256:fe500cf9cca05cb9f027981583f28eccf17d35d94499c1f8b7b844e7418152fc
-    env_file:
-      - .env
+    # No env_file: this optional third-party service only needs the master
+    # key below, which Compose interpolates from .env at deploy time. Injecting
+    # the whole file would hand Postgres/Valkey/S3/restic secrets to a service
+    # that has no need for them (same F8 rule as the perimeter `client`).
     environment:
       MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY:-}
       MEILI_DB_PATH: /meili_data/data.ms
@@ -568,8 +582,8 @@ services:
     security_opt:
       - no-new-privileges:true
     image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0@sha256:e1e66bfabae0fd03a0a36651a9bb198e7f061e0c99f457a6203b116e053e9cdb
-    env_file:
-      - .env
+    # No env_file for the same reason as meilisearch: none of the shared
+    # .env secrets are needed here, and `ES_JAVA_OPTS` is interpolated below.
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
