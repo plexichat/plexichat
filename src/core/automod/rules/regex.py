@@ -116,6 +116,129 @@ def _is_unbounded_quantifier(pattern_str: str, i: int) -> bool:
 MAX_SAFE_NESTED_REPEAT = 8
 
 
+def _has_backreference_redos_risk(pattern_str: str) -> bool:
+    """Detect catastrophic backtracking introduced by a backreference.
+
+    RE2 rejects backreferences, so a pattern containing one always runs on the
+    stdlib backtracking engine. The nested-quantifier analysis below only looks
+    at quantified *groups*; it cannot see the repetition when it lives in the
+    backreference itself. ``(a+)\\1+b`` is the canonical example: the capture
+    can consume a variable number of characters, ``\\1+`` repeats that variable
+    chunk, and the engine can split a run of ``a`` characters exponentially
+    many ways before failing on the trailing ``b``. On the fallback engine that
+    pattern stalls a worker for >12s on a ~2,000 character user message.
+
+    Only the dangerous combination is flagged: a *quantified* backreference to
+    a group whose own match length can vary (the group body contains a
+    quantifier or an alternation). Fixed-length captures such as ``(ab)\\1+``
+    and non-repeated backreferences such as ``\\b(\\w+)\\s+\\1\\b`` are linear
+    and stay accepted.
+    """
+    n = len(pattern_str)
+    variable_groups: Dict[int, bool] = {}
+    named_groups: Dict[str, int] = {}
+    open_groups: List[Optional[int]] = []
+    capture_count = 0
+    i = 0
+
+    def _quantified_at(pos: int) -> bool:
+        return pos < n and (
+            pattern_str[pos] in "*+?"
+            or (pattern_str[pos] == "{" and _match_quantifier(pattern_str, pos) is not None)
+        )
+
+    while i < n:
+        ch = pattern_str[i]
+
+        if ch == "\\":
+            if i + 1 >= n:
+                break
+            nxt = pattern_str[i + 1]
+            if nxt.isdigit():
+                j = i + 2
+                if (
+                    j < n
+                    and pattern_str[j].isdigit()
+                    and int(pattern_str[i + 1 : j + 1]) <= capture_count
+                ):
+                    j += 1
+                if _quantified_at(j) and variable_groups.get(int(pattern_str[i + 1 : j])):
+                    return True
+                i = j
+                continue
+            i += 2
+            continue
+
+        if ch == "[":
+            j = i + 1
+            if j < n and pattern_str[j] == "^":
+                j += 1
+            if j < n and pattern_str[j] == "]":
+                j += 1
+            while j < n and pattern_str[j] != "]":
+                if pattern_str[j] == "\\":
+                    j += 1
+                j += 1
+            i = j + 1
+            continue
+
+        if ch == "(":
+            if pattern_str.startswith("(?P<", i):
+                close = pattern_str.find(">", i + 4)
+                if close != -1:
+                    capture_count += 1
+                    named_groups[pattern_str[i + 4 : close]] = capture_count
+                    variable_groups[capture_count] = False
+                    open_groups.append(capture_count)
+                    i = close + 1
+                    continue
+            if pattern_str.startswith("(?P=", i):
+                close = pattern_str.find(")", i + 4)
+                if close != -1:
+                    num = named_groups.get(pattern_str[i + 4 : close])
+                    if num and _quantified_at(close + 1) and variable_groups.get(num):
+                        return True
+                    i = close + 1
+                    continue
+            if pattern_str.startswith("(?(", i):
+                close = pattern_str.find(")", i + 3)
+                if close != -1:
+                    open_groups.append(None)
+                    i = close + 1
+                    continue
+            if pattern_str.startswith("(?#", i):
+                close = pattern_str.find(")", i + 3)
+                if close != -1:
+                    i = close + 1
+                    continue
+            if i + 1 < n and pattern_str[i + 1] == "?":
+                open_groups.append(None)
+                i += 2
+                continue
+            capture_count += 1
+            variable_groups[capture_count] = False
+            open_groups.append(capture_count)
+            i += 1
+            continue
+
+        if ch == ")":
+            if open_groups:
+                open_groups.pop()
+            i += 1
+            continue
+
+        if ch in "*+?|" or (ch == "{" and _match_quantifier(pattern_str, i) is not None):
+            for group in open_groups:
+                if group is not None:
+                    variable_groups[group] = True
+            i += 1
+            continue
+
+        i += 1
+
+    return False
+
+
 def _has_redos_risk(pattern_str: str) -> bool:
     """Static analysis for ReDoS-prone constructs in fallback patterns.
 
@@ -134,7 +257,14 @@ def _has_redos_risk(pattern_str: str) -> bool:
     BOUNDED repetition of a FIXED atom is safe and accepted: ``(a|b){2}``
     and the IPv4 shape ``(\\d{1,3}\\.){3}\\d{1,3}`` do not blow up because the
     number of ambiguous splits stays constant-bounded.
+
+    Quantified backreferences to variable-length captures (``(a+)\1+``) are
+    also catastrophic but live outside the group analysis below, so they are
+    caught by :func:`_has_backreference_redos_risk` first.
     """
+    if _has_backreference_redos_risk(pattern_str):
+        return True
+
     # Stack frames: [quantified, unbounded, variable_count, saw_alternation]
     stack: List[List[bool]] = [[False, False, False, False]]
     i = 0
@@ -234,9 +364,11 @@ def _has_redos_risk(pattern_str: str) -> bool:
 
 _REJECTION_MESSAGE = (
     "rejected: not supported by RE2 (requires the backtracking fallback "
-    "engine) and static analysis flagged nested/unbounded repetition "
-    "(ReDoS risk). Simplify the pattern - e.g. avoid quantifying a group "
-    "that already contains a quantifier or an alternation."
+    "engine) and static analysis flagged nested/unbounded repetition or a "
+    "quantified backreference to a variable-length group (ReDoS risk). "
+    "Simplify the pattern - e.g. avoid quantifying a group that already "
+    "contains a quantifier or an alternation, and do not repeat a "
+    "backreference whose capture can vary in length."
 )
 
 
