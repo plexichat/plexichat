@@ -4,9 +4,56 @@ import ipaddress
 import utils.config as config
 
 
+def _normalize_ip(value: Any):
+    """Return an ipaddress object with IPv4-mapped IPv6 collapsed to IPv4.
+
+    ``::ffff:a.b.c.d`` names the very same host as ``a.b.c.d``, but
+    ``ipaddress`` keeps them in different families: an IPv4-mapped address is
+    never ``in`` an IPv4 network and never ``==`` an IPv4 address. Trust
+    decisions must not depend on which textual form a proxy used, so collapse
+    the mapped form first (the same rule ``ip_validation.ip_in_rules`` uses for
+    allow/deny lists). Returns ``None`` for unparsable input.
+    """
+    try:
+        address = ipaddress.ip_address(value)
+    except (ValueError, TypeError):
+        return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped if mapped is not None else address
+
+
+def _normalize_network(value: str):
+    """Like ``_normalize_ip`` for a CIDR entry, including mapped CIDRs.
+
+    ``::ffff:10.0.0.0/104`` describes the same hosts as ``10.0.0.0/8``; without
+    collapsing it, a trusted-proxy range written in mapped form would silently
+    stop matching the (normalized) IPv4 candidates below.
+    """
+    try:
+        network = ipaddress.ip_network(value, strict=False)
+    except (ValueError, TypeError):
+        return None
+    if network.version == 6 and network.prefixlen >= 96:
+        mapped = getattr(network.network_address, "ipv4_mapped", None)
+        if mapped is not None:
+            try:
+                return ipaddress.ip_network(
+                    f"{mapped}/{network.prefixlen - 96}", strict=False
+                )
+            except ValueError:
+                return network
+    return network
+
+
 def _ip_matches_trusted(ip_str: str, trusted_proxies: List[str]) -> bool:
     """
     Check if an IP matches a trusted proxy entry (supports CIDR and exact match).
+
+    ``::ffff:a.b.c.d`` and ``a.b.c.d`` are treated as the same host so that a
+    dual-stack reverse proxy reported in mapped form is still recognized. A
+    missed match here would make ``get_client_ip`` ignore X-Forwarded-For and
+    attribute every client to the proxy's own (often loopback) address, which
+    collapses IP rate-limit buckets, defeats IP bans and mislabels audit logs.
 
     Args:
         ip_str: IP address to check (e.g. "192.168.1.1")
@@ -15,25 +62,23 @@ def _ip_matches_trusted(ip_str: str, trusted_proxies: List[str]) -> bool:
     Returns:
         True if the IP matches any trusted proxy entry
     """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-        for entry in trusted_proxies:
-            entry = entry.strip()
-            if "/" in entry:
-                try:
-                    network = ipaddress.ip_network(entry, strict=False)
-                    if ip in network:
-                        return True
-                except ValueError:
-                    continue
-            else:
-                try:
-                    if ip == ipaddress.ip_address(entry):
-                        return True
-                except ValueError:
-                    continue
-    except ValueError:
-        pass
+    ip = _normalize_ip(ip_str)
+    if ip is None:
+        return False
+    for entry in trusted_proxies:
+        if not isinstance(entry, str):
+            continue
+        candidate = entry.strip()
+        if "/" in candidate:
+            network = _normalize_network(candidate)
+            if (
+                network is not None
+                and ip.version == network.version
+                and ip in network
+            ):
+                return True
+        elif ip == _normalize_ip(candidate):
+            return True
     return False
 
 
