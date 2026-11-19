@@ -215,6 +215,17 @@ class StageOpsMixin(VoiceProtocol):
             moderator_id, server_id, "voice.mute_members", channel_id
         )
 
+        # SECURITY (member-target hierarchy): inviting someone to speak changes
+        # that member's stage role, so the same role-hierarchy gate that guards
+        # voice.mute_members/deafen_members/move_members in ModerationMixin must
+        # apply here. Without it a moderator holding voice.mute_members could
+        # promote the server owner or a peer ranked at or above them into a
+        # speaker. Check before the state/suppress lookups so the denial is
+        # deterministic regardless of the target's current audience state.
+        self._require_can_moderate_member(
+            moderator_id, target_user_id, server_id, "voice.mute_members"
+        )
+
         state = self.get_voice_state(target_user_id)
         if not state or state.channel_id != channel_id:
             raise UserNotInChannelError(
@@ -262,6 +273,17 @@ class StageOpsMixin(VoiceProtocol):
         if not is_self:
             self._require_permission(
                 moderator_id, server_id, "voice.mute_members", channel_id
+            )
+            # SECURITY (member-target hierarchy): moving a speaker to the
+            # audience strips their ability to broadcast, i.e. it is a
+            # moderation action against another member. voice.mute_members
+            # alone must not let a moderator strip the server owner or a peer
+            # ranked at or above them. This mirrors the kick/ban and
+            # mute/deafen/move/disconnect hierarchy gates. Self-demotion stays
+            # a no-permission self-service action, so the check is skipped for
+            # ``is_self``.
+            self._require_can_moderate_member(
+                moderator_id, target_user_id, server_id, "voice.mute_members"
             )
 
         state = self.get_voice_state(target_user_id)
