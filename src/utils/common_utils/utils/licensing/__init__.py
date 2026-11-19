@@ -720,6 +720,9 @@ def get_validation_result() -> Optional[LicenseValidationResult]:
     _ensure_setup()
     if _free_tier_mode or _license_manager is None:
         return None
+    # Refresh the cached verdict if the license may have crossed its expiry
+    # since it was last validated (see LicenseManager._needs_revalidation).
+    _license_manager._ensure_validated()
     return _license_manager._validation_result
 
 

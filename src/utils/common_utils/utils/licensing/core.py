@@ -463,14 +463,36 @@ class LicenseManager:
         except Exception as e:
             raise SignatureVerificationError(f"Signature verification error: {e}")
 
+    def _needs_revalidation(self) -> bool:
+        """Return True when a cached "valid" verdict may be stale due to time.
+
+        Validation is lazy and its result is cached, but expiry is inherently
+        time-dependent: a license that was valid at startup can expire while a
+        long-running server stays up. If the cached verdict is never revisited,
+        every entitlement getter keeps serving the stale "valid" answer forever
+        and the expiry date in the license is effectively ignored. Re-validate
+        once a finite expiry has actually passed while the cache still claims
+        the license is valid. Perpetual licenses (``expires_at is None``) never
+        need this, so there is no recurring cost for the common case, and an
+        already-invalid verdict stays invalid without repeated signature work.
+        """
+        if self._validation_result is None or not self._validation_result.is_valid:
+            return False
+        expires_at = self._license.expires_at if self._license else None
+        if expires_at is None:
+            return False
+        return int(time.time()) > expires_at
+
     def _ensure_validated(self) -> None:
-        """Run validation lazily if it has not been run yet.
+        """Run validation lazily, and re-check time-sensitive expiry.
 
         Feature/limit getters must not hand out license data from a license
         that has never been validated (e.g. expired or with a bad signature),
-        so the first access triggers a full validation.
+        so the first access triggers a full validation. Subsequent accesses
+        re-run validation when the license may have crossed its expiry since
+        the last check (see :meth:`_needs_revalidation`).
         """
-        if self._validation_result is None:
+        if self._validation_result is None or self._needs_revalidation():
             self.validate()
 
     def has_feature(self, feature_name: str, default: bool = False) -> bool:
@@ -572,8 +594,7 @@ class LicenseManager:
         Returns:
             Instance ID if license is valid, None otherwise
         """
-        if self._validation_result is None:
-            self.validate()
+        self._ensure_validated()
         if self._validation_result and self._validation_result.is_valid:
             return self._license.instance_id if self._license else None
         return None
@@ -635,8 +656,7 @@ class LicenseManager:
         Returns:
             True if license is valid and not expired
         """
-        if self._validation_result is None:
-            self.validate()
+        self._ensure_validated()
         return self._validation_result.is_valid if self._validation_result else False
 
     def get_expiry_timestamp(self) -> Optional[int]:
