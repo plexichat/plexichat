@@ -2,7 +2,6 @@
 Presence handlers - Handle presence-related opcodes (presence_update, typing).
 """
 
-import time
 from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 
 import utils.logger as logger
@@ -11,21 +10,40 @@ from starlette.concurrency import run_in_threadpool
 from src.api.websocket.boundaries import parse_snowflake, validate_presence_payload
 from src.api.websocket.connection import Connection
 from src.api.websocket.opcodes import GatewayCloseCode
+from src.core.presence.typing_audience import TypingAudienceCache
 
 if TYPE_CHECKING:
     from src.core.presence.manager import PresenceManager
 
-# F12: the typing-event audience for a server channel is a per-channel
-# property, not a per-sender one, so a typing burst in a large server used
-# to re-run a per-member permission sweep for every frame. The resolved
-# audience is cached per (server_id, channel_id) for a short TTL — the
-# finding's "cached member list" — turning each subsequent event into a
-# dict lookup. Typing indicators are ephemeral, and the cache is only ever
-# consulted for the next few seconds, so a just-revoked member may receive
-# at most one stale burst before the entry expires.
+# F12 (hardened): a channel's typing audience is a per-channel property, not a
+# per-sender one, so a typing burst in a large server used to re-run a
+# per-member permission sweep for every frame. The resolved *viewer set* is
+# cached per (server_id, channel_id) for a short TTL, turning subsequent events
+# into a dict lookup. The cached value is sender-agnostic — it holds every user
+# who may view the channel, and the current sender is removed at read time — so
+# one resolution is safely shared by every sender without cross-user leakage.
+# The cache is a bounded, epoch-expiring LRU (see TypingAudienceCache), so a
+# flood of distinct channels cannot grow it without limit and a membership or
+# permission change propagates within one TTL window.
 _TYPING_AUDIENCE_TTL_S = 10.0
 _MAX_TYPING_AUDIENCE_ENTRIES = 4096
-_typing_audience_cache: Dict[Tuple[int, int], Tuple[float, Tuple[int, ...]]] = {}
+_typing_audience_cache = TypingAudienceCache(
+    max_entries=_MAX_TYPING_AUDIENCE_ENTRIES,
+    ttl_seconds=_TYPING_AUDIENCE_TTL_S,
+)
+
+
+def invalidate_typing_audience_cache(
+    server_id: Optional[int] = None, channel_id: Optional[int] = None
+) -> int:
+    """Drop warm typing audiences after a presence/membership change.
+
+    Called on presence transitions (e.g. disconnect) so a stale viewer set
+    cannot survive a write. Narrows to matching scopes when ids are supplied;
+    with no arguments clears the whole process-local cache. Returns the number
+    of entries removed.
+    """
+    return _typing_audience_cache.invalidate(server_id, channel_id)
 
 
 def _get_channel_recipients(
@@ -58,36 +76,40 @@ def _get_channel_recipients(
                 sid = getattr(channel, "server_id", None)
                 if sid:
                     server_id = sid
-                    cache_key = (int(sid), int(channel_id))
-                    now = time.monotonic()
-                    cached = _typing_audience_cache.get(cache_key)
-                    if cached is not None and now - cached[0] < _TYPING_AUDIENCE_TTL_S:
-                        return list(cached[1]), server_id
+                    viewers = _typing_audience_cache.get(int(sid), int(channel_id))
+                    if viewers is not None:
+                        # Warm hit: strip the current sender at read time. The
+                        # cached set is shared across senders, so baking one
+                        # sender's exclusion into it would leak their audience
+                        # into another user's typing event.
+                        return [
+                            uid for uid in viewers if int(uid) != int(user_id)
+                        ], server_id
 
-                    member_user_ids = servers_mod.get_member_user_ids(
-                        sid, exclude_user_id=user_id
-                    )
+                    # Cold path: resolve the FULL set of users who may view the
+                    # channel. Deliberately do NOT exclude ``user_id`` here —
+                    # keeping the value sender-agnostic is what makes one cache
+                    # entry safe to reuse for every sender in a burst.
+                    member_user_ids = servers_mod.get_member_user_ids(sid)
                     has_perm = getattr(servers_mod, "has_permission", None)
+                    allowed: List[int] = []
                     for member_user_id in member_user_ids:
                         try:
                             if callable(has_perm):
                                 if has_perm(
                                     member_user_id, sid, "channels.view", channel_id
                                 ):
-                                    user_ids.append(member_user_id)
+                                    allowed.append(member_user_id)
                             elif servers_mod.get_channel(channel_id, member_user_id):
-                                user_ids.append(member_user_id)
+                                allowed.append(member_user_id)
                         except Exception as member_error:
                             logger.debug(
                                 f"typing audience member check failed: {member_error}"
                             )
                             continue
 
-                    # Cache the resolved audience; bound the map so a flood of
-                    # distinct channels cannot grow it without limit.
-                    if len(_typing_audience_cache) >= _MAX_TYPING_AUDIENCE_ENTRIES:
-                        _typing_audience_cache.clear()
-                    _typing_audience_cache[cache_key] = (now, tuple(user_ids))
+                    _typing_audience_cache.put(int(sid), int(channel_id), allowed)
+                    user_ids = [uid for uid in allowed if int(uid) != int(user_id)]
         except Exception as audience_error:
             logger.debug(f"typing audience resolution failed: {audience_error}")
 

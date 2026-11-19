@@ -204,7 +204,13 @@ async def _dispatch_offline_presence(
                     from src.core.events.types import EventType
                     from src.api.websocket.handlers.presence import (
                         _get_channel_recipients,
+                        invalidate_typing_audience_cache,
                     )
+
+                    # A disconnect is a presence transition: drop warm typing
+                    # audiences so the TYPING_STOP fan-out below resolves the
+                    # current viewer set instead of replaying a stale one.
+                    invalidate_typing_audience_cache()
 
                     # Dispatch TYPING_STOP for each channel in parallel
                     tasks = []
