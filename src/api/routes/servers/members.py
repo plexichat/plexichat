@@ -11,12 +11,33 @@ from src.api.schemas.servers import (
     KickMemberRequest,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+from src.api.routes.users.helpers import authenticated_cache_key
 from src.core.database import cached, invalidate_pattern
 
 import utils.logger as logger
 from .roles import _invalidate_roles_listing_cache
 
 router = APIRouter()
+
+#: Short, bounded TTL for the per-viewer member roster cache. The roster embeds
+#: nickname, role ids, timeout state and presence, so it is invalidated on every
+#: mutation that can change those fields (see ``_invalidate_member_list_cache``
+#: and the core member/role handlers).
+_MEMBERS_LIST_CACHE_PREFIX = "server_members_api"
+_MEMBERS_LIST_CACHE_TTL = 30
+
+
+def _invalidate_member_list_cache() -> None:
+    """Drop every viewer's cached member roster after a roster-changing write.
+
+    The roster response is memoized per credential, so a single-key delete is
+    not enough: a nickname/role/timeout change is server-wide and must evict
+    the page for *all* viewers. Every roster-changing route calls this helper;
+    ``_invalidate_member_access_caches`` reuses it for revocation paths, and
+    the core member/lifecycle handlers clear the same prefix for non-HTTP
+    callers (automod, admin, bots).
+    """
+    invalidate_pattern(f"{_MEMBERS_LIST_CACHE_PREFIX}:*")
 
 
 def _invalidate_member_access_caches() -> None:
@@ -31,7 +52,7 @@ def _invalidate_member_access_caches() -> None:
     response until the 30s TTL expires. Membership revocation must be visible
     at the HTTP boundary immediately, not just in the core.
     """
-    invalidate_pattern("server_members_api:*")
+    _invalidate_member_list_cache()
     invalidate_pattern("user_servers_api:*")
     invalidate_pattern("server_channels_api:*")
     # Sticker/soundboard libraries are memoized per viewer; a removed member
@@ -99,7 +120,11 @@ def _unique_member_user_ids(members) -> list:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=30, prefix="server_members_api")
+@cached(
+    ttl=_MEMBERS_LIST_CACHE_TTL,
+    prefix=_MEMBERS_LIST_CACHE_PREFIX,
+    key_builder=authenticated_cache_key(_MEMBERS_LIST_CACHE_PREFIX),
+)
 def get_server_members(
     server_id: str,
     limit: int = Query(100, ge=1, le=200),
@@ -300,6 +325,10 @@ async def update_server_member(
             timeout_until=payload.timeout_until,
             timeout_reason=payload.timeout_reason,
         )
+        # The roster page embeds nickname/timeout state, so every viewer's
+        # cached copy is now stale (defence in depth; the core handler also
+        # clears this prefix for non-HTTP mutation callers).
+        _invalidate_member_list_cache()
 
         user = None
         auth = api.get_auth()
@@ -471,6 +500,8 @@ async def assign_role_to_member(
         # cached role listing must not keep returning a stale authorization
         # decision (or stale role data) for the rest of its 300s TTL.
         _invalidate_roles_listing_cache()
+        # The roster embeds each member's role ids; evict every viewer's page.
+        _invalidate_member_list_cache()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
@@ -559,6 +590,8 @@ async def remove_role_from_member(
         # Revoking a role can remove ``roles.manage``; drop the cached role
         # listing so the former holder cannot keep reading it from cache.
         _invalidate_roles_listing_cache()
+        # The roster embeds each member's role ids; evict every viewer's page.
+        _invalidate_member_list_cache()
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise

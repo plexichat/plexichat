@@ -385,6 +385,10 @@ class MemberCrudMixin:
                 )
 
         invalidate_pattern(f"member_data:*{member_user_id}*")
+        # The per-viewer HTTP roster embeds nickname/roles/timeout/presence, so
+        # a member update must evict every cached member-list page; otherwise
+        # viewers keep the pre-update roster until its 30s TTL expires.
+        invalidate_pattern("server_members_api:*")
         # Timeout (and other member state) feeds permission computation, so the
         # user's cached permission snapshots must be dropped across all tiers.
         self.manager._invalidate_permission_caches(server_id, member_user_id)

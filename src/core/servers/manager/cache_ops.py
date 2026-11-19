@@ -114,6 +114,10 @@ class CacheOpsMixin(ServerProtocol):
         cache_delete(f"is_member:{server_id}:{user_id}")
         cache_delete(f"srv_member:is_member:{server_id}:{user_id}")
         invalidate_pattern(f"member_data:*{user_id}*")
+        # The per-viewer HTTP roster cache (``server_members_api``) is NOT
+        # covered by ``member_data:*``: a join/kick/ban/leave changes the roster
+        # for every viewer, so evict every cached member-list page here too.
+        invalidate_pattern("server_members_api:*")
         cache_delete(f"user_servers:{user_id}")
         self._invalidate_permission_caches(server_id, user_id)
 
