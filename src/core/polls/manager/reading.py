@@ -38,11 +38,21 @@ class ReadingMixin(PollManagerBase):
             return None
 
         # Verify access to the message (fail closed: without the messaging
-        # module there is no way to enforce channel membership).
+        # module there is no way to enforce channel membership). This gate
+        # runs on EVERY call, before the cache lookup, so a viewer who lost
+        # channel access cannot be served a still-warm body.
         messaging = self._require_messaging()
         msg = messaging.get_message(user_id, row["message_id"])
         if not msg:
             return None
+
+        cache = getattr(self, "_poll_read_cache", None)
+        key = None
+        if cache is not None:
+            key = self._poll_read_key("detail", poll_id, user_id)
+            cached = cache.get(key)
+            if cached is not None:
+                return cached
 
         poll = self._row_to_poll(row)
 
@@ -62,6 +72,8 @@ class ReadingMixin(PollManagerBase):
         else:
             poll.total_votes = None
 
+        if cache is not None:
+            cache.set(key, poll)
         return poll
 
     def _row_to_poll(self, row) -> Poll:

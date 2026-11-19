@@ -199,6 +199,14 @@ polls:
 
 Set `encryption.encrypt_polls: true` to store questions and options encrypted at rest. The plaintext columns are cleared when encryption is enabled.
 
+## Read caching
+
+Hydrated poll reads (option hydration, voter stats, per-option vote tallies) are memoized in a bounded, short-TTL process-local cache keyed per viewer. This is a best-effort accelerator: a cache miss is always recomputed from the database.
+
+- The channel-access gate runs on **every** read before the cache is consulted, so a viewer who lost message access is never served a warm body, and denials are never cached.
+- Every mutation (create, vote, change/remove vote, close, expiry, delete) clears the cache because results are visible to other viewers.
+- The cache is hard-bounded by entry count, byte size and TTL, so request-derived keys cannot grow it without limit.
+
 ## Poll states
 
 | State | Description |

@@ -14,6 +14,7 @@ from ...base import BaseManager, SnowflakeID
 from ..exceptions import PollConfigurationError
 from ..limits import resolve_field_limits
 from ..models import Poll, PollResults
+from ..read_cache import PollReadCache
 
 
 def _is_unique_violation(exc: BaseException) -> bool:
@@ -65,8 +66,42 @@ class PollManagerBase(BaseManager):
         self._messaging = messaging_module
         self._config = self._load_config()
         self._encrypt_polls = config.get("encryption.encrypt_polls", False)
+        # Bounded, short-TTL accelerator for the hot hydrated reads (detail
+        # and results). The authz gate always runs before this is consulted,
+        # and every mutation clears it; see reading.py / voting.py.
+        self._poll_read_cache = PollReadCache()
 
         logger.info("Poll module initialized")
+
+    def _poll_read_key(self, kind: str, poll_id, user_id):
+        """Build a per-credential key for a cached poll read.
+
+        ``kind`` separates the detail and results namespaces so a results
+        entry can never be mistaken for a plain poll body. Numeric coercion
+        keeps int/str representations of the same snowflake from creating
+        duplicate entries (the API layer passes ids as strings).
+        """
+        try:
+            pid = int(poll_id)
+        except (TypeError, ValueError):
+            pid = poll_id
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError):
+            uid = user_id
+        return (kind, pid, uid)
+
+    def _invalidate_poll_read_cache(self) -> None:
+        """Drop all cached poll detail/results bodies after a mutation.
+
+        Vote totals and the voter roster are visible to other viewers, so a
+        write to any poll invalidates every viewer's cached body. ``getattr``
+        keeps this a no-op for lightweight callers/managers that never wired a
+        cache (e.g. unit-test stubs borrowing mixin methods).
+        """
+        cache = getattr(self, "_poll_read_cache", None)
+        if cache is not None:
+            cache.clear()
 
     def _require_messaging(self):
         """Fail closed when the messaging module is not wired.

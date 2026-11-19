@@ -111,6 +111,10 @@ class VotingMixin(PollManagerBase):
                 raise AlreadyVotedError("User has already voted on this poll") from exc
             raise
 
+        # Counts changed: drop every viewer's cached detail/results body so
+        # the get_results() below (and every concurrent reader) recomputes.
+        self._invalidate_poll_read_cache()
+
         logger.debug(f"User {user_id} voted on poll {poll_id}")
 
         self._emit_poll_update(poll, user_id, "vote")
@@ -204,6 +208,9 @@ class VotingMixin(PollManagerBase):
                 ) from exc
             raise
 
+        # Per-option tallies changed even though the voter count did not.
+        self._invalidate_poll_read_cache()
+
         logger.debug(f"User {user_id} changed vote on poll {poll_id}")
 
         self._emit_poll_update(poll, user_id, "change")
@@ -224,6 +231,18 @@ class VotingMixin(PollManagerBase):
         Raises:
             PollNotFoundError: Poll not found
         """
+        cache = getattr(self, "_poll_read_cache", None)
+        key = None
+        if cache is not None:
+            # Live authz gate FIRST: the channel-access check is cheap and
+            # must not be skipped on a cache hit. Denials are never cached.
+            if not self.can_access_poll(poll_id, user_id):
+                raise PollNotFoundError("Poll not found")
+            key = self._poll_read_key("results", poll_id, user_id)
+            cached = cache.get(key)
+            if cached is not None:
+                return cached
+
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
@@ -271,13 +290,16 @@ class VotingMixin(PollManagerBase):
         # than issuing a duplicate COUNT query.
         total_voters = poll.total_votes if can_see_results else None
 
-        return PollResults(
+        results = PollResults(
             poll=poll,
             options=options_with_counts,
             total_votes=total_voters,
             user_voted=user_voted,
             user_votes=user_vote_ids,
         )
+        if cache is not None:
+            cache.set(key, results)
+        return results
 
     def has_voted(self, user_id: SnowflakeID, poll_id: SnowflakeID) -> bool:
         """Return True if `user_id` has cast at least one vote on `poll_id`.
@@ -366,6 +388,9 @@ class VotingMixin(PollManagerBase):
         except Exception:
             self._db.rollback()
             raise
+
+        # Both the headcount and the per-option tallies changed.
+        self._invalidate_poll_read_cache()
 
         logger.debug(
             "User %s vote(s) on poll %s cleared (%s/%s row(s))",

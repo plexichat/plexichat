@@ -167,6 +167,9 @@ class CreationMixin(PollManagerBase):
         result = self.get_poll(poll_id, user_id)
         if result is None:
             raise PollError("Failed to create poll: poll not found after insert")
+        # Creation is a mutation boundary: leave no memoized read behind so the
+        # next read observes the inserted row directly (never a stale body).
+        self._invalidate_poll_read_cache()
         return result
 
     def _validate_question(self, question: str) -> str:
