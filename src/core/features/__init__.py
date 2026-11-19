@@ -168,20 +168,18 @@ def get_available_tiers() -> List[str]:
     )
 
 
-def get_tier_limits(tier: str) -> TierLimits:
-    """
-    Get limits for a specific tier.
+def _compute_tier_limits(tier: str) -> TierLimits:
+    """Resolve one tier's limits from config (uncached, authoritative).
 
-    Args:
-        tier: Tier name (e.g., 'standard', 'alpha', 'premium')
-
-    Returns:
-        TierLimits object with all limits for that tier
+    This is the single source of truth for a tier's limits. It is used both by
+    the cached ``get_tier_limits`` hot path and by the snapshot builder, so
+    caching never changes *how* a verdict is computed -- only how often.
     """
     tiers_config = _get_config("rate_limit_tiers", {})
 
     if tier not in tiers_config:
-        # Fall back to defaults
+        # Fail closed: an unknown tier is rejected, a known one falls back to
+        # its built-in limits. No cached verdict can bypass this branch.
         if tier in DEFAULT_TIER_LIMITS:
             return DEFAULT_TIER_LIMITS[tier]
         raise InvalidTierError(f"Unknown tier: {tier}")
@@ -203,6 +201,34 @@ def get_tier_limits(tier: str) -> TierLimits:
         max_pins_per_channel=tier_config.get("max_pins_per_channel", 50),
         custom_emoji_slots=tier_config.get("custom_emoji_slots", 50),
     )
+
+
+def get_tier_limits(tier: str) -> TierLimits:
+    """
+    Get limits for a specific tier.
+
+    Args:
+        tier: Tier name (e.g., 'standard', 'alpha', 'premium')
+
+    Returns:
+        TierLimits object with all limits for that tier
+
+    Note:
+        Rate limiting and the tier-limit helper call this for every request.
+        The resolved table is memoized in a version-keyed, short-TTL snapshot
+        (see ``_tier_limits_snapshot``), so the config read + validation +
+        reconstruction happens once per config version instead of once per
+        request. Unknown tiers and invalid config still raise and are never
+        cached, so the gate remains fail-closed.
+    """
+    table = _tier_limits_snapshot.snapshot()
+    limits = table.get(tier)
+    if limits is not None:
+        return limits
+    # A tier absent from the configured table is either a known built-in
+    # (default limits) or unknown (rejected). Both must be resolved by the
+    # authoritative helper, never inferred from the cache.
+    return _compute_tier_limits(tier)
 
 
 def get_default_tier() -> str:
@@ -261,7 +287,15 @@ def _tier_config_version() -> tuple:
 
 
 def _build_tier_configuration() -> TierConfiguration:
-    """Build the tier table via the authoritative helpers (cache miss only)."""
+    """Build the tier table via the authoritative helpers (cache miss only).
+
+    The admin table and the per-request limits snapshot have independent
+    version checks. When this table rebuilds we drop the nested snapshot first
+    so a config change is reflected here immediately rather than lingering for
+    the per-request cache's short TTL. Normal rate-limit traffic never calls
+    this builder, so its hot path stays cached.
+    """
+    _tier_limits_snapshot.invalidate()
     tiers = get_available_tiers()
     return TierConfiguration(
         tiers=tiers,
@@ -280,9 +314,62 @@ def get_tier_configuration() -> TierConfiguration:
     return _tier_configuration_snapshot.snapshot()
 
 
+# === Per-request tier-limits resolution cache ===
+#
+# ``get_rate_limit_multiplier`` and ``get_user_tier_limits`` resolve a tier on
+# every rate-limited request. Previously that re-read ``user_features`` config
+# and re-ran ``validate_tier_limits`` + a full ``TierLimits`` reconstruction on
+# each call (~265us of repeated work per request). The resolved table is now a
+# version-keyed snapshot with a short staleness ceiling:
+#
+# * *version-keyed* -- ``_tier_config_version`` folds in the config loader
+#   identity, the config file's mtime/size, and the two sections this table
+#   depends on. A new ``config.setup()``, an on-disk edit, or an in-memory
+#   ``rate_limit_tiers``/``default_tier`` change yields a new version, so a
+#   stale table can never be served, and the ceiling bounds how long a change
+#   can go unnoticed when no explicit invalidate hook is called.
+# * *short TTL* -- ``max_age`` throttles even the version check (which stats
+#   the config file) on the hot path to at most once per ceiling window.
+# * *bounded* -- the cached value is a table of tiers derived from trusted
+#   operator config (not from request data), so its size is bounded by the
+#   configured tier set; there is no per-request key that can grow without
+#   limit.
+#
+# Fail-closed: the table is only ever produced by ``_compute_tier_limits``, so
+# validation is never skipped. Unknown tiers/invalid config raise and are
+# never cached; a tier absent from the table falls through to the same
+# authoritative helper. Explicit invalidation is wired into
+# ``invalidate_tier_configuration_cache`` for admin config-reload/hot-swap
+# paths so no verdict survives a change beyond the TTL.
+_TIER_LIMITS_CACHE_TTL_SECONDS = 5.0
+
+
+def _build_tier_limits_table() -> dict[str, TierLimits]:
+    """Build the resolved tier-limit table (cache miss only)."""
+    return {tier: _compute_tier_limits(tier) for tier in get_available_tiers()}
+
+
+_tier_limits_snapshot = VersionedConfigSnapshot(
+    _build_tier_limits_table,
+    version_fn=_tier_config_version,
+    max_age=_TIER_LIMITS_CACHE_TTL_SECONDS,
+)
+
+
+def invalidate_tier_limits_cache() -> None:
+    """Drop the per-request tier-limits snapshot immediately."""
+    _tier_limits_snapshot.invalidate()
+
+
 def invalidate_tier_configuration_cache() -> None:
-    """Drop the cached tier table so the next access rebuilds it."""
+    """Drop cached tier data so the next access rebuilds it.
+
+    This is the single invalidation hook for admin config-reload / license
+    hot-swap paths: it clears both the admin tier table and the per-request
+    tier-limits snapshot, so no grant or limit can survive a change.
+    """
     _tier_configuration_snapshot.invalidate()
+    _tier_limits_snapshot.invalidate()
 
 
 def is_alpha_registration_enabled() -> bool:
@@ -749,6 +836,7 @@ __all__ = [
     "get_default_tier",
     "get_tier_configuration",
     "invalidate_tier_configuration_cache",
+    "invalidate_tier_limits_cache",
     "TierConfiguration",
     "get_user_features",
     "get_user_tier",
