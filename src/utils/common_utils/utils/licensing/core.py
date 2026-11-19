@@ -48,6 +48,11 @@ LICENSE_TYPES = frozenset({"standard", "commercial", "enterprise", "test"})
 # Default hosts a provisional/test license is permitted to serve from.
 DEFAULT_TEST_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1")
 
+# The complete set of loopback spellings recognised for host restrictions.
+# A provisional license is unsigned, so any host list it carries is
+# untrusted; only these spellings may ever be used to widen its reach.
+LOOPBACK_HOSTS = frozenset(DEFAULT_TEST_ALLOWED_HOSTS)
+
 
 class LicenseError(Exception):
     """Base exception for licensing errors."""
@@ -614,11 +619,23 @@ class LicenseManager:
 
         Provisional/test licenses default to localhost only; standard
         licenses have no host restriction (empty list = unrestricted).
+
+        A provisional license carries no Ed25519 signature, so its
+        ``allowed_hosts`` is plain, attacker-editable data. Trusting a
+        non-loopback entry there would let anyone forge a test license -- which
+        enables every feature and passes admin host checks -- and serve it from
+        a public address, defeating the only guard that keeps provisional
+        licenses out of production. Loopback entries are still honoured so a
+        deployment can narrow the default set; non-loopback entries are
+        dropped, and an all-non-loopback list falls back to the loopback
+        defaults (fail closed).
         """
         if self._license is None:
             return []
-        if self._license.type == "test" and not self._license.allowed_hosts:
-            return list(DEFAULT_TEST_ALLOWED_HOSTS)
+        if self._license.type == "test":
+            declared = self._license.allowed_hosts or list(DEFAULT_TEST_ALLOWED_HOSTS)
+            loopback = [host for host in declared if host in LOOPBACK_HOSTS]
+            return loopback or list(DEFAULT_TEST_ALLOWED_HOSTS)
         return list(self._license.allowed_hosts)
 
     def is_valid_for_host(self, client_ip: str) -> bool:
@@ -631,7 +648,7 @@ class LicenseManager:
         allowed = self.get_allowed_hosts()
         if not allowed:
             return True
-        localhost_variants = ("127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1")
+        localhost_variants = LOOPBACK_HOSTS
         client = (client_ip or "").strip()
         for host in allowed:
             if client == host:

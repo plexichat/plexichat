@@ -98,6 +98,7 @@ Cryptography:
     - All license data is signed except the signature field itself
 """
 
+import math
 import os
 from pathlib import Path
 from typing import Any, Optional, Dict, List
@@ -571,6 +572,26 @@ def is_license_valid_for_host(client_ip: str) -> bool:
 LICENSE_LIMIT_KEYS = ("max_users", "max_servers", "max_file_size_mb")
 
 
+def _coerce_license_limit(value: Any, default: Any) -> Any:
+    """Coerce a license limit to an int, or return ``default`` if unusable.
+
+    License JSON is parsed with Python's ``json`` module, which accepts the
+    non-standard ``NaN``/``Infinity`` literals. A crafted (unsigned, test-type)
+    license can therefore carry ``max_users: Infinity``. ``int()`` raises
+    ``OverflowError`` on infinity and ``ValueError`` on NaN; neither was caught
+    by the enforcement callers, so a single crafted license could crash user
+    registration, upload and server-creation paths with a 500. Non-finite
+    values are semantically "unlimited" and are mapped to ``default`` (the
+    callers' ``-1`` sentinel) instead of escaping as an exception.
+    """
+    try:
+        if isinstance(value, float) and not math.isfinite(value):
+            return default
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def get_license_limit(name: str, default: int = -1) -> int:
     """
     Return a license resource limit, or ``default`` if unset / free tier.
@@ -581,18 +602,15 @@ def get_license_limit(name: str, default: int = -1) -> int:
     _ensure_setup()
     if _free_tier_mode:
         return default
-    try:
-        return int(_get_manager().get_feature_limit(name, default))
-    except (TypeError, ValueError):
-        return default
+    return _coerce_license_limit(
+        _get_manager().get_feature_limit(name, default), default
+    )
 
 
 def is_limit_enforced(value: Any) -> bool:
     """Return True if ``value`` is a finite, enforceable cap (not -1/None)."""
-    try:
-        return value is not None and int(value) >= 0
-    except (TypeError, ValueError):
-        return False
+    coerced = _coerce_license_limit(value, None)
+    return coerced is not None and coerced >= 0
 
 
 def generate_test_license_dict(
