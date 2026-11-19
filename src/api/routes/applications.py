@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.common import ErrorResponse, SnowflakeID
+from src.core.security.hardening import HardeningViolation, parse_id
 from src.api.schemas.policy_types import UIText
 from src.core import applications
 from src.core.database import check_rate_limit
@@ -36,6 +37,26 @@ router = APIRouter(prefix="/applications", tags=["Applications"])
 MAX_APPLICATION_PAGE_SIZE = 100
 MAX_APPLICATION_OFFSET = 100_000
 MAX_APPLICATION_FILTER_LENGTH = 128
+
+
+def _parse_application_id(raw: str) -> int:
+    """Parse an application id from the URL as a bounded positive snowflake.
+
+    Bare ``int()`` accepted negatives, zero, values past the signed 64-bit
+    snowflake ceiling and Python-only spellings (``"1_2"`` -> 12, Unicode
+    decimal homoglyphs such as ``"٤٢"`` -> 42). Those flowed into the
+    ownership-checked application lookups as an id the caller never actually
+    wrote, a parser differential the rest of the route layer already closes
+    via ``parse_id``. Reject non-canonical ids with the endpoint's 400 contract
+    before any service call.
+    """
+    try:
+        return parse_id(raw, "application_id")
+    except HardeningViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid application ID"}},
+        ) from exc
 
 
 # === Schemas ===
@@ -302,9 +323,10 @@ async def get_application(
 ):
     """Get details of a specific application."""
     require_user_token(current_user)
+    app_id = _parse_application_id(application_id)
     try:
         app = applications.get_application(
-            application_id=int(application_id),
+            application_id=app_id,
             user_id=current_user.user_id,
         )
         if not app:
@@ -350,10 +372,11 @@ async def update_application(
 ):
     """Update an application's details."""
     require_user_token(current_user)
+    app_id = _parse_application_id(application_id)
     try:
         app = applications.update_application(
             user_id=current_user.user_id,
-            application_id=int(application_id),
+            application_id=app_id,
             name=body.name,
             description=body.description,
             redirect_uris=body.redirect_uris,
@@ -396,10 +419,11 @@ async def delete_application(
 ):
     """Delete an application."""
     require_user_token(current_user)
+    app_id = _parse_application_id(application_id)
     try:
         applications.delete_application(
             user_id=current_user.user_id,
-            application_id=int(application_id),
+            application_id=app_id,
         )
     except ApplicationNotFoundError:
         raise HTTPException(
@@ -436,12 +460,13 @@ async def create_bot(
 ):
     """Create a bot account for an application and return its token."""
     require_user_token(current_user)
+    app_id = _parse_application_id(application_id)
     try:
         # If bot already exists, this will raise ApplicationAccessDeniedError
         # In that case, return success with a placeholder message
         result = applications.create_bot_for_application(
             user_id=current_user.user_id,
-            application_id=int(application_id),
+            application_id=app_id,
         )
         raw_bot_id = result.get("bot_id")
         return BotTokenResponse(
@@ -488,9 +513,10 @@ async def regenerate_secret(
 ):
     """Regenerate the client secret for an application."""
     require_user_token(current_user)
+    app_id = _parse_application_id(application_id)
     try:
         result = applications.regenerate_client_secret(
-            application_id=int(application_id),
+            application_id=app_id,
             user_id=current_user.user_id,
         )
         return {"secret": result}
