@@ -15,7 +15,8 @@ from src.api.schemas.admin import (
 from src.api.schemas.common import ErrorResponse
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
+    # Kept for existing test doubles that patch this module attribute.
+    get_admin_from_token,  # noqa: F401
     require_admin_permission,
 )
 from ._summary_cache import get_or_compute
@@ -335,7 +336,9 @@ async def get_cross_worker_tuning_audit(
 ):
     """Return recent cross-worker tuning audit log entries."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    # This reads the same admin_audit_log (admin ids, usernames, IPs, details)
+    # as the /audit endpoints, so it must honour the same audit-read scope.
+    require_admin_permission(request, "admin.audit.read")
 
     try:
         import src.api as _api

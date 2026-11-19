@@ -247,6 +247,8 @@ def test_cross_worker_tuning_audit_stringifies_admin_id():
     patchers = (
         patch.object(dashboard_routes, "check_host_restriction"),
         patch.object(dashboard_routes, "get_admin_from_token", return_value=1),
+        # The audit read now carries an explicit admin.audit.read scope gate.
+        patch.object(dashboard_routes, "require_admin_permission", return_value=1),
         patch("src.api.get_db", return_value=_AuditDB()),
     )
     for p in patchers:

@@ -35,7 +35,9 @@ from src.api.schemas.common import (
 )
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
+    # Kept for existing test doubles that patch this module attribute; every
+    # read route now uses the combined scope gate instead of auth-only access.
+    get_admin_from_token,  # noqa: F401
     require_admin_permission,
 )
 from ._summary_cache import get_or_compute
@@ -48,7 +50,7 @@ router = APIRouter()
 
 # Short window for the read-only moderator queue/count summaries.  The scope
 # gate runs before the cache is read, so a cached page is never served to a
-# caller without ``reports.read``.
+# caller without the matching read scope.
 _REPORTS_TTL_SECONDS = 2.0
 
 
@@ -211,7 +213,7 @@ async def get_hash_reports(
     Allows filtering by status and supports pagination.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "reports.read")
     from src.core import admin
 
     try:
@@ -259,7 +261,7 @@ async def get_hash_report_counts(request: Request):
     Get the total number of content hash reports, grouped by status.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "reports.read")
     from src.core import admin
 
     return HashReportCountsResponse(**admin.get_hash_report_counts())
@@ -316,7 +318,7 @@ async def get_message_reports(
 ):
     """Retrieve message reports for admin review."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "reports.read")
     reports = _get_reports_module()
 
     try:
@@ -344,7 +346,7 @@ async def get_message_reports(
 async def get_message_report_counts(request: Request):
     """Get message report counts grouped by status."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "reports.read")
     return ModerationReportCountsResponse(
         **_get_reports_module().get_message_report_counts()
     )
@@ -526,7 +528,7 @@ async def get_user_reports(
 ):
     """Retrieve user behavior reports for admin review."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "reports.read")
     reports = _get_reports_module()
 
     try:
@@ -554,7 +556,7 @@ async def get_user_reports(
 async def get_user_report_counts(request: Request):
     """Get user report counts grouped by status."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "reports.read")
     return ModerationReportCountsResponse(
         **_get_reports_module().get_user_report_counts()
     )
@@ -608,7 +610,7 @@ async def get_blocked_hashes(
     List all currently blocked content hashes.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "blocked_hashes.read")
     from src.core import admin
 
     return [
@@ -713,7 +715,7 @@ async def get_blocked_users(
     Retrieve a list of all currently blocked or banned users.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "blocked_users.read")
     from src.core import admin
 
     return [
@@ -840,7 +842,7 @@ async def get_automod_rules(request: Request, server_id: SnowflakeIDParam):
     Retrieve the list of AutoMod rules configured for a specific server.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "automod.read")
     from src.core import automod
 
     try:
@@ -1027,7 +1029,7 @@ async def get_automod_config(request: Request):
     Retrieve the global configuration settings for the AutoMod system.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "automod.read")
     automod_config = config.get("automod", {}) or {}
     return AutomodConfigResponse(
         enabled=automod_config.get("enabled", True),
