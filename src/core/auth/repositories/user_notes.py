@@ -22,11 +22,27 @@ class UserNotesRepository:
         created_at: int,
         updated_at: int,
     ) -> None:
-        """Create a new user note."""
+        """Create or replace a user note atomically.
+
+        ``auth_user_notes`` enforces ``UNIQUE(user_id, target_user_id)``. Callers
+        previously raced an ``exists()``/``get()`` check followed by a plain
+        INSERT, so two concurrent writes for the same note both saw "missing"
+        and one raised ``IntegrityError`` (losing the note). Folding the write
+        into a single ``INSERT ... ON CONFLICT DO UPDATE`` enforces the
+        uniqueness constraint at the database boundary: the statement is
+        atomic, concurrent callers can no longer interleave, and the latest
+        content wins without duplicating rows.
+
+        The conflict update deliberately leaves ``id`` and ``created_at``
+        untouched so a note keeps its stable identity and creation history.
+        """
         self._db.execute(
             """INSERT INTO auth_user_notes
                (id, user_id, target_user_id, note_encrypted, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT (user_id, target_user_id) DO UPDATE SET
+                   note_encrypted = EXCLUDED.note_encrypted,
+                   updated_at = EXCLUDED.updated_at""",
             (note_id, user_id, target_user_id, note_encrypted, created_at, updated_at),
         )
 
@@ -61,7 +77,7 @@ class UserNotesRepository:
             """SELECT id, user_id, target_user_id, note_encrypted, created_at, updated_at
                FROM auth_user_notes
                WHERE user_id = ?
-               ORDER BY updated_at DESC""",
+               ORDER BY updated_at DESC, id DESC""",
             (user_id,),
         )
 

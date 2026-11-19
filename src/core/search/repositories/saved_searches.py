@@ -46,7 +46,7 @@ class SavedSearchesRepository:
             """SELECT id, user_id, name, query, created_at
                FROM saved_searches
                WHERE user_id = ?
-               ORDER BY created_at DESC""",
+               ORDER BY created_at DESC, id DESC""",
             (user_id,),
         )
 
@@ -57,26 +57,33 @@ class SavedSearchesRepository:
         name: Optional[str] = None,
         query: Optional[str] = None,
     ) -> bool:
-        """Update a saved search."""
-        if name is None and query is None:
+        """Update a saved search in a single atomic statement.
+
+        The previous implementation issued one auto-committed UPDATE per field.
+        If the second statement failed (connection loss, lock, disk error) the
+        first field was already durable, leaving the row half-updated. Build a
+        single UPDATE from the supplied fields so either both changes land or
+        neither does. Only fixed column assignments enter the SQL; all values
+        stay bound parameters.
+        """
+        assignments: List[str] = []
+        params: List[Any] = []
+        if name:
+            assignments.append("name = ?")
+            params.append(name)
+        if query:
+            assignments.append("query = ?")
+            params.append(query)
+        if not assignments:
             return False
 
-        if name:
-            self._db.execute(
-                """UPDATE saved_searches
-                   SET name = ?
-                   WHERE id = ? AND user_id = ?""",
-                (name, search_id, user_id),
-            )
-
-        if query:
-            self._db.execute(
-                """UPDATE saved_searches
-                   SET query = ?
-                   WHERE id = ? AND user_id = ?""",
-                (query, search_id, user_id),
-            )
-
+        params.extend((search_id, user_id))
+        self._db.execute(
+            "UPDATE saved_searches SET "
+            + ", ".join(assignments)
+            + " WHERE id = ? AND user_id = ?",
+            tuple(params),
+        )
         return True
 
     def delete(self, search_id: SnowflakeID, user_id: SnowflakeID) -> bool:
