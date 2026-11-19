@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Optional, Dict, List, Tuple
 from src.core.security.hardening import bounded_int
 
+from ..pool_budget import resolve_connect_timeout, resolve_pool_limits
 from .base import BaseEngine
 from .pool import (
     ConnectionPool,
@@ -117,36 +118,78 @@ class SqliteEngine(BaseEngine):
         return conn
 
     def create_pool(self, min_conn: int, max_conn: int) -> SqlitePool:
-        logger.info(f"Creating SQLite connection pool (min={min_conn}, max={max_conn})")
+        # Every ``--scale backend=N`` replica builds its own pool from the same
+        # config. Apply the same fleet-wide budget division the PostgreSQL
+        # engine uses: SQLite handles reserve mmap/page-cache memory each, so
+        # N replicas opening N full-size pools is a real memory blow-up. The
+        # helper also orders min/max and rejects hostile values before they
+        # reach the pool constructor.
+        limits = resolve_pool_limits(
+            self.config, requested_min=min_conn, requested_max=max_conn
+        )
+        min_conn = limits.min_connections
+        max_conn = limits.max_connections
+        connect_timeout = resolve_connect_timeout(self.config, default=30.0)
+        logger.info(
+            f"Creating SQLite connection pool (min={min_conn}, max={max_conn}) "
+            f"with timeout {connect_timeout}s"
+        )
         start_time = time.time()
+
+        # ``SqlitePool.__init__`` opens ``min_conn`` warm connections eagerly.
+        # If one of them fails part-way through, the already-opened handles in
+        # the half-built pool are otherwise leaked. Track everything created
+        # for construction and close it on the error path, then stop tracking
+        # so the wrapper does not retain every handle the pool opens later.
+        created: List[sqlite3.Connection] = []
+        tracking = True
+
+        def _tracked_create() -> sqlite3.Connection:
+            conn = self._create_single_connection()
+            if tracking:
+                created.append(conn)
+            return conn
+
         try:
             pool = SqlitePool(
-                create_conn=self._create_single_connection,
+                create_conn=_tracked_create,
                 min_size=min_conn,
                 max_size=max_conn,
                 idle_reclaim_seconds=float(
                     self._pool_config.get("idle_reclaim_seconds", 5.0)
                 ),
             )
-            elapsed = time.time() - start_time
-            logger.info(
-                f"SQLite connection pool created successfully in {elapsed:.2f}s"
-            )
-            self._pool = pool
-            return pool
         except Exception as e:
+            for conn in created:
+                try:
+                    conn.close()
+                except Exception as close_error:
+                    logger.debug(f"SQLite pool cleanup close failed: {close_error}")
             elapsed = time.time() - start_time
             logger.error(
                 f"SQLite connection pool creation FAILED after {elapsed:.2f}s: {e}"
             )
             raise
+        finally:
+            tracking = False
+
+        # The pool owns the warm connections now; drop the temporary references
+        # still captured by the tracking closure.
+        created.clear()
+        elapsed = time.time() - start_time
+        logger.info(
+            f"SQLite connection pool created successfully in {elapsed:.2f}s"
+        )
+        self._pool = pool
+        return pool
 
     def connect(self, pool: Optional[Any] = None) -> sqlite3.Connection:
         if pool is not None and isinstance(pool, SqlitePool):
-            # Honor the configured ``connect_timeout`` (default 30s) so pool
-            # exhaustion surfaces fast instead of every thread blocking the
-            # hardcoded 30s default.
-            timeout = self._pool_config.get("connect_timeout", 30.0)
+            # Clamp the configured timeout at the boundary: a raw config value
+            # may be negative, NaN or enormous, which would park a request
+            # thread forever on an exhausted pool. Keep parity with the
+            # PostgreSQL engine's bounded acquire path.
+            timeout = resolve_connect_timeout(self.config, default=30.0)
             return pool.get_connection(timeout=timeout)
         return self._create_single_connection()
 
