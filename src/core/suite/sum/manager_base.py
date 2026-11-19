@@ -274,6 +274,20 @@ class SumManagerBase(SumManagerProtocol):
         except Exception:
             return False
 
+    @staticmethod
+    def _decode_grant_cell(value: Optional[str]) -> set:
+        """Decode one ``sum_grants.permissions`` cell.
+
+        Kept as the single decoder for both the per-workbook and the batched
+        grant lookups so their permission semantics cannot drift.
+        """
+        perms = SumManagerBase._decode(value, [])
+        if isinstance(perms, list):
+            return {p for p in perms if isinstance(p, str)}
+        if isinstance(perms, str):
+            return set(perms.split(","))
+        return set()
+
     def _grant_permissions(self, workbook_id: int, user_id: int) -> frozenset:
         """All live grant permissions for ``user_id`` on ``workbook_id``.
 
@@ -292,12 +306,47 @@ class SumManagerBase(SumManagerProtocol):
         )
         permissions: set = set()
         for row in rows:
-            perms = self._decode(row.get("permissions"), [])
-            if isinstance(perms, list):
-                permissions.update(p for p in perms if isinstance(p, str))
-            elif isinstance(perms, str):
-                permissions.update(perms.split(","))
+            permissions.update(self._decode_grant_cell(row.get("permissions")))
         return frozenset(permissions)
+
+    def _grant_permissions_bulk(
+        self, workbook_ids: List[int], user_id: int, now: Optional[int] = None
+    ) -> Dict[int, frozenset]:
+        """Live grant permissions for one viewer across many workbooks.
+
+        Used by workbook listing, which needs the same ``my_permissions``
+        projection as ``get_workbook`` for every row on the page. Resolving
+        each row separately made a page of N shared workbooks issue N grant
+        queries; this issues one query keyed to BOTH the requesting viewer and
+        the page's workbook ids. Grant rows for other subjects, revoked rows,
+        and expired rows are filtered in SQL with the same predicates as
+        ``_grant_permissions``, so the result is fail-closed and cannot leak a
+        third party's grants. Callers may pass the listing's own ``now`` so the
+        permission projection is consistent with the visibility filter.
+        """
+        ids = [int(workbook_id) for workbook_id in workbook_ids]
+        if not ids:
+            return {}
+        if now is None:
+            now = int(time.time() * 1000)
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._db.fetch_all(
+            "SELECT workbook_id, permissions FROM sum_grants "
+            "WHERE subject_id = ? AND revoked_at IS NULL "
+            "AND (expires_at IS NULL OR expires_at > ?) "
+            f"AND workbook_id IN ({placeholders})",
+            (int(user_id), int(now), *ids),
+        )
+        by_workbook: Dict[int, set] = {}
+        for row in rows:
+            workbook_id = int(row["workbook_id"])
+            by_workbook.setdefault(workbook_id, set()).update(
+                self._decode_grant_cell(row.get("permissions"))
+            )
+        return {
+            workbook_id: frozenset(permissions)
+            for workbook_id, permissions in by_workbook.items()
+        }
 
     def _has_grant(
         self, workbook_id: int, user_id: int, permission: str = "view"
@@ -354,6 +403,7 @@ class SumManagerBase(SumManagerProtocol):
         workbook_id: int,
         sheet_id: Optional[int] = None,
         workbook: Optional[Dict[str, Any]] = None,
+        grants: Optional[frozenset] = None,
     ) -> Dict[str, Any]:
         """Effective access for ``user_id`` on a workbook.
 
@@ -362,15 +412,26 @@ class SumManagerBase(SumManagerProtocol):
         editing without trusting client-supplied capability labels. The owner
         bypasses range protections; every other authorized user (including
         edit grantees) is blocked inside ranges the owner locked read-only.
+
+        ``grants`` may carry a precomputed grant set for this same viewer and
+        workbook (used by the batched listing path). When omitted, it is
+        resolved locally with one grant query.
         """
         if workbook is None:
             workbook = self._workbook(user_id, workbook_id)
         wb_id = int(workbook["id"])
         uid = int(user_id)
         is_owner = int(workbook["owner_id"]) == uid
-        # One grant query per call replaces the up-to-three ``_has_grant``
+        # One grant read per check replaces the up-to-three ``_has_grant``
         # probes this method used to make (edit, view, then edit again).
-        grants = frozenset() if is_owner else self._grant_permissions(wb_id, uid)
+        # Batched callers (workbook listing) pass the viewer's grants for this
+        # workbook so a whole page costs one query instead of one per row.
+        # The owner always bypasses the grant table regardless of what a caller
+        # passes, so this remains fail-closed for direct callers too.
+        if is_owner:
+            grants = frozenset()
+        elif grants is None:
+            grants = self._grant_permissions(wb_id, uid)
 
         can_edit = is_owner or "edit" in grants
         server_id = workbook.get("server_id")

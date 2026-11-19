@@ -124,6 +124,9 @@ class SumManagerProtocol:
     def _grant_permissions(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
+    def _grant_permissions_bulk(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
     def _live_connection(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 

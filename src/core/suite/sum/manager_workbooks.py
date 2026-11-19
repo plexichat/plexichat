@@ -412,8 +412,20 @@ class SumManagerWorkbooks(SumManagerProtocol):
             f"SELECT * FROM sum_workbooks WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
             tuple(params) + (limit, offset),
         )
+        # Resolve the page's viewer grants in one query. Using the same ``now``
+        # as the visibility filter keeps the reported permissions consistent
+        # with the rows that made it onto the page; the lookup is keyed to this
+        # viewer and these workbook ids, so no other user's grants can leak.
+        grants_by_workbook = (
+            self._grant_permissions_bulk(
+                [int(row["id"]) for row in rows], user_id, now=now
+            )
+            if rows
+            else {}
+        )
         items = []
         for row in rows:
+            workbook_id = int(row["id"])
             items.append(
                 {
                     "id": str(row["id"]),
@@ -439,7 +451,10 @@ class SumManagerWorkbooks(SumManagerProtocol):
                     # full-edit grant on every listed workbook, so a view-only
                     # grantee was told they could edit.
                     "my_permissions": self._viewer_permissions(
-                        user_id, int(row["id"]), workbook=row
+                        user_id,
+                        workbook_id,
+                        workbook=row,
+                        grants=grants_by_workbook.get(workbook_id, frozenset()),
                     ),
                 }
             )
