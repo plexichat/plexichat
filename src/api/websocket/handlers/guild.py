@@ -28,6 +28,27 @@ if TYPE_CHECKING:
 _CHUNK_SIZE = 100
 _MAX_PAGES = 50
 
+# Bulk user/presence lookups bind one placeholder per id inside the underlying
+# ``IN (...)`` queries. Chunking keeps every statement at or below the same
+# 500-id budget used by the other bulk read paths in the backend, while the
+# per-request dedup below keeps the number of round trips proportional to
+# ``ceil(distinct_users / 500)`` instead of to the member count.
+_BULK_LOOKUP_CHUNK_SIZE = 500
+
+
+def _chunk_ids(user_ids: List[int]):
+    """Yield bounded slices of ``user_ids``, preserving first-seen order."""
+    for start in range(0, len(user_ids), _BULK_LOOKUP_CHUNK_SIZE):
+        yield user_ids[start : start + _BULK_LOOKUP_CHUNK_SIZE]
+
+
+def _map_lookup(mapping, user_id: int):
+    """Bulk helpers key by int (auth) or sometimes by str (legacy caches)."""
+    value = mapping.get(user_id)
+    if value is None:
+        value = mapping.get(str(user_id))
+    return value
+
 
 class GuildHandler:
     """Handles guild-related opcodes."""
@@ -167,8 +188,16 @@ class GuildHandler:
             )
             return None, None, None
 
-        # Build member entries with per-request caches so repeated
-        # user/presence lookups stay O(distinct users), not O(lookups).
+        # Resolve every distinct member with bounded bulk lookups. The replaced
+        # code issued one ``get_user`` and one ``get_presence`` per member (the
+        # REQUEST_GUILD_MEMBERS N+1); a large guild therefore cost ~2N DB
+        # round trips. Both lookups are now set-based and chunked at 500 ids.
+        #
+        # Presence goes through the *visible* bulk resolver rather than the raw
+        # per-user one: it applies the viewer's block list and invisible-mode
+        # scrubbing for every target, so a member cannot learn another user's
+        # real presence through this payload. Any failure fails closed to
+        # "offline" for the affected chunk.
         import src.api as api
 
         auth = api.get_auth()
@@ -179,36 +208,57 @@ class GuildHandler:
             # The guild payload still goes out without presence data.
             logger.debug(f"guild payload presence module unavailable: {presence_error}")
 
-        user_cache: Dict[int, Any] = {}
-        status_cache: Dict[int, str] = {}
+        user_ids: List[int] = []
+        seen_users = set()
+        for m in members:
+            u_id = int(m.user_id)
+            if u_id not in seen_users:
+                seen_users.add(u_id)
+                user_ids.append(u_id)
+
+        users_map: Dict[int, Any] = {}
+        bulk_users = getattr(auth, "get_users_bulk", None) if auth else None
+        if callable(bulk_users):
+            for chunk in _chunk_ids(user_ids):
+                try:
+                    users_map.update(await run_in_threadpool(bulk_users, chunk) or {})
+                except Exception as user_error:
+                    # A per-chunk failure only degrades the affected names to
+                    # the "User <id>" fallback; it never reintroduces per-id
+                    # lookups.
+                    logger.debug(f"guild member user lookup failed: {user_error}")
+
+        presences_map: Dict[int, Any] = {}
+        visible_presences = (
+            getattr(presence_module, "get_visible_presences_bulk", None)
+            if presence_module
+            else None
+        )
+        if callable(visible_presences):
+            for chunk in _chunk_ids(user_ids):
+                try:
+                    # ``user_id`` is the authenticated viewer: the bulk helper
+                    # scopes block/invisible filtering to this connection.
+                    presences_map.update(
+                        await run_in_threadpool(visible_presences, user_id, chunk) or {}
+                    )
+                except Exception as status_error:
+                    # Fail closed: a missing entry means "offline" for that
+                    # chunk, never a raw presence read.
+                    logger.debug(f"guild member presence lookup failed: {status_error}")
 
         member_list: List[Dict[str, Any]] = []
         for m in members:
-            u_id = m.user_id
+            u_id = int(m.user_id)
+            user = _map_lookup(users_map, u_id)
+            presence = _map_lookup(presences_map, u_id)
 
-            if u_id not in user_cache:
-                user_cache[u_id] = None
-                if auth:
-                    try:
-                        user_cache[u_id] = await run_in_threadpool(auth.get_user, u_id)
-                    except Exception as user_error:
-                        logger.debug(f"guild member user lookup failed: {user_error}")
+            status = "offline"
+            if presence is not None:
+                raw_status = getattr(presence, "status", None)
+                if raw_status is not None:
+                    status = getattr(raw_status, "value", None) or str(raw_status)
 
-            if u_id not in status_cache:
-                status_cache[u_id] = "offline"
-                if presence_module:
-                    try:
-                        presence_status = await run_in_threadpool(
-                            presence_module.get_presence, u_id
-                        )
-                        if presence_status:
-                            status_cache[u_id] = presence_status.status.value
-                    except Exception as status_error:
-                        logger.debug(
-                            f"guild member presence lookup failed: {status_error}"
-                        )
-
-            user = user_cache[u_id]
             member_list.append(
                 {
                     "user_id": str(u_id),
@@ -218,7 +268,7 @@ class GuildHandler:
                     or getattr(m, "avatar_url", None),
                     "joined_at": m.joined_at,
                     "roles": [str(r) for r in (m.roles or [])],
-                    "presence": {"status": status_cache[u_id]},
+                    "presence": {"status": status},
                 }
             )
 
