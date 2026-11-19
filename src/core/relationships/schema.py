@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS rel_friends (
 -- Friends indexes
 CREATE INDEX IF NOT EXISTS idx_rel_friends_user ON rel_friends(user_id);
 CREATE INDEX IF NOT EXISTS idx_rel_friends_friend ON rel_friends(friend_id);
+-- The friends list filters by user_id and pages newest-first. The single-column
+-- index finds the rows but forces a temporary sort B-tree; this composite
+-- serves the ordered scan directly. Migration 009 adds it to databases
+-- created before the index was defined.
+CREATE INDEX IF NOT EXISTS idx_rel_friends_user_created ON rel_friends(user_id, created_at);
 
 -- Friend requests table
 CREATE TABLE IF NOT EXISTS rel_friend_requests (
@@ -40,6 +45,12 @@ CREATE TABLE IF NOT EXISTS rel_friend_requests (
 -- Friend requests indexes
 CREATE INDEX IF NOT EXISTS idx_rel_requests_sender ON rel_friend_requests(sender_id);
 CREATE INDEX IF NOT EXISTS idx_rel_requests_recipient ON rel_friend_requests(recipient_id);
+-- Incoming/outgoing pending-request lists filter by (recipient|sender, status)
+-- and page newest-first. The single-column indexes find the rows but force a
+-- temporary sort B-tree; these composites serve the ordered scans directly.
+-- Migration 009 adds them to databases created before the indexes were defined.
+CREATE INDEX IF NOT EXISTS idx_rel_requests_recipient_status_created ON rel_friend_requests(recipient_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_rel_requests_sender_status_created ON rel_friend_requests(sender_id, status, created_at);
 -- Note: idx_rel_requests_status removed - low cardinality (pending/accepted/declined), rarely queried alone
 
 -- Blocked users table
