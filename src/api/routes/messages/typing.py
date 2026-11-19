@@ -2,6 +2,8 @@
 Typing indicator routes - Typing indicators for channels.
 """
 
+from typing import List
+
 from src.core.security.hardening import parse_id
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -12,6 +14,47 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 
 router = APIRouter(tags=["Messages"])
+
+
+def _filter_blocked_dm_recipients(
+    actor_id: int,
+    user_ids: List[int],
+    relationships=None,
+) -> List[int]:
+    """Drop DM recipients who have a block relationship with the actor.
+
+    Typing events are published with an *explicit* recipient list, so the
+    gateway router's DM block filter (which only applies to implicit
+    routing) never sees them. Without this gate a blocked pair still
+    receives each other's "is typing" frames in a shared DM, leaking
+    presence across a block that ``send_message`` already enforces.
+
+    ``get_all_blocked_ids`` is the authoritative two-way block set. A
+    lookup failure fails closed: nobody receives the event rather than
+    risking delivery to an unverified recipient. When no relationship
+    source is wired at all, the audience is left unchanged (matching the
+    gateway router's behaviour) so typing keeps working on deployments
+    without the optional relationships module.
+    """
+    if not user_ids:
+        return user_ids
+    if relationships is None:
+        from src.core import relationships as rel_module
+
+        if not (
+            getattr(rel_module, "_setup_complete", False)
+            and getattr(rel_module, "_manager", None) is not None
+        ):
+            return user_ids
+        relationships = rel_module
+    try:
+        blocked_ids = {
+            int(x) for x in relationships.get_all_blocked_ids(actor_id)
+        }
+    except Exception as e:
+        logger.debug(f"typing DM block lookup failed: {e}")
+        return []
+    return [uid for uid in user_ids if int(uid) not in blocked_ids]
 
 
 @router.post(
@@ -93,6 +136,12 @@ async def trigger_typing(
                         for p in participants
                         if p.user_id != current_user.user_id
                     ]
+                    # The dispatcher takes an explicit audience, bypassing the
+                    # router's DM block filter. Apply it here so a blocked pair
+                    # never sees each other's typing frames.
+                    user_ids = _filter_blocked_dm_recipients(
+                        current_user.user_id, user_ids
+                    )
             except Exception as participant_error:
                 logger.debug(f"typing audience lookup failed: {participant_error}")
 

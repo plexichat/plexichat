@@ -66,15 +66,37 @@ class ConversationService(BaseService):
         recipient_settings = self._user_settings_svc.get_message_settings(recipient_id)
 
         # Enforce relationship-based DM privacy rules (blocks, friends-only).
+        # These checks MUST NOT fail open when the optional relationships
+        # module is unavailable: a block is still authoritative in the
+        # database, and a friends-only recipient cannot be verified as having
+        # a friend without the relationship source.
         relationships = _get_relationships_module()
         if relationships is not None:
             if relationships.is_blocked_by_either(user_id, recipient_id):
                 raise ConversationAccessDeniedError("Recipient does not accept DMs")
+        else:
+            # Fallback to the authoritative block table so a partial outage of
+            # the relationships module cannot reopen DMs to a blocked pair.
+            try:
+                blocked_row = self._db.fetch_one(
+                    "SELECT 1 AS ok FROM rel_blocked WHERE "
+                    "(blocker_id = ? AND blocked_id = ?) OR "
+                    "(blocker_id = ? AND blocked_id = ?)",
+                    (user_id, recipient_id, recipient_id, user_id),
+                )
+            except Exception as e:
+                logger.debug(f"DM block fallback lookup failed: {e}")
+                blocked_row = None
+            if blocked_row is not None:
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
 
-            if recipient_settings.allow_dms_from == "friends":
-                friend_ids = relationships.get_friend_ids(recipient_id)
-                if user_id not in {int(fid) for fid in (friend_ids or [])}:
-                    raise ConversationAccessDeniedError("Recipient does not accept DMs")
+        if recipient_settings.allow_dms_from == "friends":
+            if relationships is None:
+                # No way to prove the requester is a friend: fail closed.
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+            friend_ids = relationships.get_friend_ids(recipient_id)
+            if user_id not in {int(fid) for fid in (friend_ids or [])}:
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
 
         if recipient_settings.allow_dms_from == "none":
             raise ConversationAccessDeniedError("Recipient does not accept DMs")
