@@ -435,7 +435,15 @@ def resolve_channel_event_recipients(
     # 1. Known private thread: exact member set (fail closed on lookup error).
     thread_members = _known_private_thread_members(channel_id)
     if thread_members is not None:
-        return _final(thread_members)
+        # A private thread is an intimate audience, just like a DM. The
+        # channel-scoped emitters (typing, read receipts, reactions, polls)
+        # pass this list to ``dispatch`` as an explicit ``user_ids`` audience,
+        # so the EventRouter's DM block filter is bypassed for these events.
+        # Apply the same two-way filter here: a thread member who blocked the
+        # actor, or whom the actor blocked, must not receive the actor's
+        # ephemeral events. Without it a blocked member still saw them even
+        # though the identical event routed through EventRouter was withheld.
+        return _final(_dm_participants_without_blocks(thread_members, actor_id))
 
     # 2. Server channel: members with channels.view, never the raw member list.
     server_id = guild_id
