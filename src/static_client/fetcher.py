@@ -44,6 +44,8 @@ _CHUNK = 64 * 1024
 # which is far larger than any real client dist while still bounding a
 # decompression bomb.
 _UNCOMPRESSED_FACTOR = 20
+# A SHA256 digest is exactly 32 bytes rendered as 64 lowercase hex characters.
+_SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 class FetchError(RuntimeError):
@@ -344,6 +346,7 @@ def download_and_verify_release(
         sha_path = tmp / f"{_ZIP_NAME}{_SHA256_SUFFIX}"
         zip_path = tmp / _ZIP_NAME
 
+        expected = ""
         if asset.sha256_url:
             logger.info(f"static_client: downloading sha256 from {asset.sha256_url}")
             with open(sha_path, "wb") as out:
@@ -354,13 +357,38 @@ def download_and_verify_release(
                     verify=git_lab.verify_tls,
                     max_bytes=4096,
                 )
-            expected = sha_path.read_text(encoding="utf-8").strip().split()[0]
+            sha_text = sha_path.read_text(encoding="utf-8").strip()
+            parts = sha_text.split()
+            if not parts:
+                raise FetchError(
+                    f"Empty SHA256 checksum file for release {asset.tag_name}"
+                )
+            expected = parts[0].lower()
+            # Fail closed on a malformed checksum. The previous code accepted
+            # any token from the file, so a truncated/placeholder value could
+            # turn verification into a no-op against a crafted archive.
+            if not _SHA256_HEX_RE.fullmatch(expected):
+                raise FetchError(
+                    f"Malformed SHA256 checksum for release {asset.tag_name}"
+                )
             logger.info(
                 f"static_client: expected sha256={expected[:16]}… ({asset.tag_name})"
             )
+        elif getattr(git_lab, "require_sha256", True):
+            # The zip becomes the web app served to every user. Installing it
+            # with no checksum asset means a tampered/compromised release is
+            # accepted silently. Refuse by default; the explicit opt-out is
+            # git_lab.require_sha256 = false for legacy release pipelines.
+            raise FetchError(
+                f"Release {asset.tag_name} has no SHA256 checksum asset; "
+                "refusing to install unverified client code"
+            )
         else:
-            expected = ""
-            logger.info("static_client: no sha256 file in release, skipping hash check")
+            logger.warning(
+                "static_client: release %s has no sha256 file and require_sha256 "
+                "is disabled; installing WITHOUT integrity verification",
+                asset.tag_name,
+            )
 
         logger.info(
             f"static_client: downloading zip from {asset.zip_url} "
@@ -376,6 +404,10 @@ def download_and_verify_release(
             )
         logger.info(f"static_client: downloaded {written} bytes to {zip_path.name}")
 
+        if getattr(git_lab, "require_sha256", True) and not expected:
+            raise FetchError(
+                f"Release {asset.tag_name} has no SHA256 checksum to verify"
+            )
         if expected:
             logger.info("static_client: verifying sha256…")
             verify_zip_with_sha256(zip_path, expected)

@@ -24,6 +24,13 @@ class GitLabConfig:
     private_token_env: str = "PLEXICHAT_GITLAB_TOKEN"
     verify_tls: bool = True
     request_timeout_seconds: int = 30
+    # Integrity gate for downloaded client code. A release without a matching
+    # ``dist.zip.sha256`` asset must not be installed silently: the zip becomes
+    # the web app served to every user, so an unverified download is a
+    # supply-chain hole. Operators with legacy releases that genuinely lack a
+    # checksum asset can opt out explicitly, but the secure default is to
+    # refuse.
+    require_sha256: bool = True
 
     def resolved_token(self) -> Optional[str]:
         """Return the configured private token from the environment, if any."""
@@ -223,6 +230,7 @@ def get_static_client_config() -> StaticClientConfig:
             request_timeout_seconds=_coerce_int(
                 git_raw.get("request_timeout_seconds"), 30
             ),
+            require_sha256=_coerce_bool(git_raw.get("require_sha256"), True),
         ),
         cache_control=CacheControlConfig(
             hashed_assets=_coerce_str(
