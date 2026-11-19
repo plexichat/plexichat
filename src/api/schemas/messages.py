@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from .common import SnowflakeID
+from .policy_types import reject_unsafe_unicode
 from .url_types import HttpUrl
 from .reactions import ReactionResponse
 from .polls import PollInlineCreateRequest, PollResponse, PollResultsResponse
@@ -29,6 +30,12 @@ def _parse_iso_bound(value: str):
 _MAX_FILENAME_LEN = 255
 _MAX_CONTENT_TYPE_LEN = 255
 _MAX_ATTACHMENT_URL_LEN = 2048
+# A content hash is a fixed-width digest (SHA-256 is 64 hex chars). It is
+# persisted verbatim as the attachment ``checksum`` (messages send.py) and used
+# in hash/dedup lookups, so an unbounded, control-char-laden value must never
+# reach storage or a query. 128 leaves room for other digest widths while still
+# rejecting a multi-megabyte token that only fits inside the body cap.
+_MAX_HASH_LEN = 128
 
 
 def _reject_control_chars(value: str, field_name: str) -> str:
@@ -50,13 +57,32 @@ class AttachmentRequest(BaseModel):
     url: HttpUrl = Field(
         ..., min_length=1, max_length=_MAX_ATTACHMENT_URL_LEN, description="File URL"
     )
-    hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
+    hash: Optional[str] = Field(
+        None,
+        max_length=_MAX_HASH_LEN,
+        description="SHA-256 hash for content reporting",
+    )
     metadata: Optional[Dict[str, Any]] = Field(None, description="Attachment metadata")
 
     @field_validator("filename", "content_type", "url")
     @classmethod
     def _no_control_chars(cls, value: str, info) -> str:
         return _reject_control_chars(value, info.field_name)
+
+    @field_validator("hash")
+    @classmethod
+    def _no_hash_control_chars(cls, value: Optional[str], info) -> Optional[str]:
+        """Reject control characters and bidi/invisible overrides in the hash.
+
+        The neighbouring attachment fields only gate C0 controls, but this
+        value is a machine-readable digest that is stored as the attachment
+        checksum and used in hash lookups; it must contain none of the
+        C1/bidi/format characters that ``reject_unsafe_unicode`` covers either.
+        A plain hex digest is unaffected.
+        """
+        if value is None:
+            return value
+        return reject_unsafe_unicode(value, info.field_name)
 
 
 class MessageCreateRequest(BaseModel):

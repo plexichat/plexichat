@@ -1,9 +1,17 @@
+import re
+
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
 
 from src.api.schemas.common import SnowflakeID, _reject_ui_text_chars
+from src.api.schemas.policy_types import reject_unsafe_unicode
 from src.api.schemas.url_types import HttpUrl
 from src.core.security.outbound import resolve_outbound_url
+
+# A perceptual hash is a fixed-width hex digest (most algorithms emit 16 or 64
+# hex chars). Anchor the pattern so a value merely *containing* hex characters
+# cannot pass, and so no control/format character can enter the hash pipeline.
+_PHASH_HEX_RE = re.compile(r"^[0-9a-fA-F]{1,64}$")
 
 
 class HashReportRequest(BaseModel):
@@ -43,6 +51,29 @@ class HashReportRequest(BaseModel):
         if value is None:
             return value
         return _reject_ui_text_chars(value, info.field_name)
+
+    @field_validator("hash_value")
+    @classmethod
+    def _no_hash_control_chars(cls, value: str) -> str:
+        """Keep control/bidi characters out of a persisted hash and its queries.
+
+        ``hash_value`` is stored in ``media_hash_reports``, used as a lookup key
+        in ``is_hash_blocked`` / ``block_hash`` and interpolated into log lines.
+        Plain hex digests (and any other control-char-free value within the
+        declared length bounds) are unaffected; C0/C1 controls, bidi overrides
+        and invisible format characters are not.
+        """
+        return reject_unsafe_unicode(value, "hash_value")
+
+    @field_validator("phash_value")
+    @classmethod
+    def _phash_is_hex(cls, value: Optional[str]) -> Optional[str]:
+        """A perceptual hash must be an anchored hex string (or empty to clear)."""
+        if not value:
+            return value
+        if not _PHASH_HEX_RE.fullmatch(value):
+            raise ValueError("phash_value must be an anchored hex string of at most 64 characters")
+        return value
 
     @field_validator("attachment_url")
     @classmethod
