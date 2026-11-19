@@ -10,7 +10,11 @@ from typing import Any
 
 
 from .helpers import _hash_admin_token
-from ..request_roles import clear_session_roles, remember_session_roles
+from ..request_roles import (
+    clear_session_roles,
+    remember_session_credential,
+    remember_session_roles,
+)
 
 
 def _row_value(row, key: str, index: int, default=None):
@@ -98,6 +102,10 @@ class SessionMixin:
             admin_id,
             tuple(_row_value(row, "permissions", 1) for row in rows),
         )
+        # Bind the validated session's one-way fingerprint so the short-lived
+        # role-grant cache can partition grants by caller. The raw token never
+        # leaves this method.
+        remember_session_credential(token_hash)
         return admin_id
 
     def logout(self, token: str) -> bool:

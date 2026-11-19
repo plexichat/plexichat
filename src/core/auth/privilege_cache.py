@@ -27,3 +27,12 @@ def invalidate_privilege_caches() -> None:
 
     for pattern in _AUTH_CACHE_PREFIXES:
         invalidate_pattern(pattern)
+
+    # The admin role-grant cache lives in a different core package. Import it
+    # lazily to avoid an auth<->admin import cycle at module load time. Every
+    # admin mutation route calls this helper after its write, so routing the
+    # grant-cache drop through here guarantees a revocation is visible on the
+    # next delegation check even if a caller omitted the admin-side helper.
+    from src.core.admin.permission_grant_cache import invalidate_grant_cache
+
+    invalidate_grant_cache()

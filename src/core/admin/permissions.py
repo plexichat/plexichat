@@ -14,10 +14,18 @@ from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 import utils.logger as logger
 
-from .request_roles import cached_session_roles, clear_session_roles
+from .request_roles import (
+    cached_session_roles,
+    clear_session_roles,
+    current_session_credential,
+)
 from .permission_cache import (
     get_cached_max_position,
     invalidate_position_cache,
+)
+from .permission_grant_cache import (
+    get_cached_grants,
+    invalidate_grant_cache,
 )
 
 
@@ -335,18 +343,35 @@ def get_admin_granted_permissions(db, admin_id: int) -> frozenset:
     """Return the set of permission scopes granted to an admin by its roles.
 
     Wildcard keys are returned verbatim (``"*"``, ``"scope.*"``); callers are
-    responsible for expanding them.  Fetching the role rows once keeps the
-    delegation check to a single database round trip.
+    responsible for expanding them.  The lookup is memoised in a bounded,
+    short-TTL store keyed by ``(db, credential, admin_id)``: a privileged
+    request resolves the same role set for the permission gate, the delegation
+    check and the hierarchy helper, so those collapse to one database read.
+    Every privilege mutation clears the store (see
+    :func:`invalidate_admin_permission_caches`), so a revoked scope is gone on
+    the very next check.  The loader fails closed -- a query error or a broken
+    role row grants nothing and is never cached as a grant.
     """
-    granted = set()
-    for role in _get_admin_roles(db, admin_id):
-        permissions = role.permissions
-        if not isinstance(permissions, dict):
-            continue
-        for permission, allowed in permissions.items():
-            if _is_granted(allowed):
-                granted.add(permission)
-    return frozenset(granted)
+
+    def _load() -> frozenset:
+        granted = set()
+        try:
+            roles = _get_admin_roles(db, admin_id)
+        except Exception as e:
+            # Fail closed: a database/parse error must never be interpreted as
+            # a grant, cached or otherwise.
+            logger.error(f"Error resolving granted permissions for {admin_id}: {e}")
+            return frozenset()
+        for role in roles:
+            permissions = role.permissions
+            if not isinstance(permissions, dict):
+                continue
+            for permission, allowed in permissions.items():
+                if _is_granted(allowed):
+                    granted.add(permission)
+        return frozenset(granted)
+
+    return get_cached_grants(db, current_session_credential(), admin_id, _load)
 
 
 def can_delegate_permissions(db, admin_id: int, permissions: Dict[str, bool]) -> bool:
@@ -722,7 +747,9 @@ def invalidate_admin_permission_caches() -> None:
     * the request-scoped role payloads that :func:`check_permission` reuses via
       ``cached_session_roles``; and
     * the bounded, short-TTL role-position cache behind
-      :func:`get_admin_max_position` (used by the hierarchy gates).
+      :func:`get_admin_max_position` (used by the hierarchy gates); and
+    * the bounded ``(db, credential, admin)`` role-grant cache behind
+      :func:`get_admin_granted_permissions` (used by the delegation checks).
 
     Without this call, a role edit / assignment / revocation followed by any
     further authorization check in the same request would be decided against
@@ -734,6 +761,7 @@ def invalidate_admin_permission_caches() -> None:
     """
     clear_session_roles()
     invalidate_position_cache()
+    invalidate_grant_cache()
 
 
 def log_admin_action(

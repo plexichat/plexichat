@@ -51,6 +51,24 @@ _session_roles: ContextVar[Optional[_CachedRoles]] = ContextVar(
     "admin_session_roles", default=None
 )
 
+# Fingerprint of the admin session credential that was validated for this
+# request. It is a one-way hash (never the raw bearer value) and is only used
+# to partition the short-lived role-grant cache by caller. ``None`` means no
+# session was validated (direct core call / self-test identity path).
+_session_credential: ContextVar[Optional[str]] = ContextVar(
+    "admin_session_credential", default=None
+)
+
+
+def remember_session_credential(credential: Optional[str]) -> None:
+    """Bind the validated admin session fingerprint to the current request."""
+    _session_credential.set(credential)
+
+
+def current_session_credential() -> Optional[str]:
+    """Return the current request's admin session fingerprint, if any."""
+    return _session_credential.get()
+
 
 def remember_session_roles(db, admin_id: int, permission_payloads) -> None:
     """Store the role payloads resolved alongside a successful session lookup."""
@@ -92,3 +110,4 @@ def cached_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
 def clear_session_roles() -> None:
     """Drop the cached roles (used by tests and request-boundary tooling)."""
     _session_roles.set(None)
+    _session_credential.set(None)
