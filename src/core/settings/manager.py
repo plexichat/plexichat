@@ -25,6 +25,20 @@ from .exceptions import (
 )
 
 
+# A bulk write may carry many keys, so bind them in bounded slices instead of
+# building one enormous ``IN (...)`` statement. 500 is the same chunk size the
+# notification/voice/search bulk helpers use: well under SQLite's bind-variable
+# cap on every supported build. The ``user_id`` predicate is bound alongside
+# each chunk, so a lookup can never observe another user's rows.
+_BULK_KEY_CHUNK_SIZE = 500
+
+
+def _key_chunks(keys: List[str]):
+    """Yield bounded slices of setting keys for IN-clause binding."""
+    for start in range(0, len(keys), _BULK_KEY_CHUNK_SIZE):
+        yield keys[start : start + _BULK_KEY_CHUNK_SIZE]
+
+
 class SettingsManager(BaseManager):
     """
     Manages user settings with configurable limits.
@@ -461,7 +475,13 @@ class SettingsManager(BaseManager):
         self._db.begin_transaction()
         try:
             count = self.get_count(user_id)
-            new_keys = [k for k in items if not self._exists(user_id, k)]
+            # One bounded batch lookup replaces the old per-key ``_exists``
+            # probe + ``fetch_one`` pair (2N reads -> ceil(N / 500)). The
+            # lookup is user-scoped, so an existing key belonging to a
+            # different user is invisible and can never be updated here.
+            keys = list(items)
+            existing_by_key = self._get_existing_bulk(user_id, keys)
+            new_keys = [k for k in keys if k not in existing_by_key]
             if count + len(new_keys) > self.config.max_settings_per_user:
                 raise SettingsLimitExceeded(
                     f"Bulk write would exceed maximum of "
@@ -469,11 +489,8 @@ class SettingsManager(BaseManager):
                 )
 
             for key, value in items.items():
-                existing = self._db.fetch_one(
-                    "SELECT id, created_at FROM user_settings WHERE user_id = ? AND key = ?",
-                    (user_id, key),
-                )
-                if existing:
+                existing = existing_by_key.get(key)
+                if existing is not None:
                     setting_id = existing.get("id")
                     created_at = existing.get("created_at")
                     self._db.execute(
@@ -511,6 +528,33 @@ class SettingsManager(BaseManager):
 
         logger.info(f"Bulk set {len(results)} settings for user {user_id}")
         return results
+
+    def _get_existing_bulk(
+        self, user_id: SnowflakeID, keys: List[str]
+    ) -> Dict[str, dict]:
+        """Load existing rows for ``keys`` in at most ``ceil(N / 500)`` reads.
+
+        This replaces the old per-key ``_exists`` probe followed by a second
+        ``fetch_one`` in :meth:`set_many`. Every statement carries the
+        ``user_id`` predicate, so a key owned by another user is deliberately
+        absent from the result: a bulk write can neither update that row nor
+        echo its id/timestamps back to the caller (fail closed, no cross-user
+        leak). Callers must invoke this inside their transaction so the
+        decision and the subsequent writes see one consistent snapshot.
+        """
+        existing: Dict[str, dict] = {}
+        for chunk in _key_chunks(keys):
+            if not chunk:
+                continue
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                "SELECT key, id, created_at FROM user_settings "
+                f"WHERE user_id = ? AND key IN ({placeholders})",
+                (user_id, *chunk),
+            )
+            for row in rows:
+                existing[row["key"]] = row
+        return existing
 
     def _exists(self, user_id: SnowflakeID, key: str) -> bool:
         """Return True when a setting row already exists (inside callers' txn)."""
