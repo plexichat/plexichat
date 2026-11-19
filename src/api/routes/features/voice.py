@@ -113,6 +113,19 @@ def _validate_voice_metadata(
         raise_bad_request("Invalid storage URL")
     if parsed.username or parsed.password:
         raise_bad_request("Invalid storage URL")
+    # A literal backslash in the authority is a parser differential: urlparse
+    # derives the host from the text to the RIGHT of an '@', but browsers and
+    # http(s) clients following WHATWG read '\' as '/' and connect to the
+    # address on the LEFT. Without this check,
+    # ``https://169.254.169.254\@public.example/x`` passes the DNS screening
+    # below (as public.example) yet is stored verbatim as a voice attachment
+    # URL - so every recipient whose client follows it reaches the link-local
+    # metadata address on their own network. A literal backslash has no
+    # legitimate place in a URL authority; data must be percent-encoded
+    # (``%5C``), which keeps it out of the authority. Mirrors
+    # outbound.parse_outbound_url and profiles._ssrf_guard_url.
+    if "\\" in (parsed.netloc or ""):
+        raise_bad_request("Invalid storage URL")
     # The DNS + IP screening is deliberately NOT done here: see
     # _assert_public_storage_host, which the route awaits off the event loop.
 

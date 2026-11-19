@@ -253,6 +253,19 @@ def vetted_export_addresses(
     if parsed.netloc and "@" in parsed.netloc:
         raise UnsafeExportURL("Credentials in export URL are not allowed")
 
+    # A literal backslash in the authority is a parser differential between
+    # urlsplit (which derives the host from the text to the RIGHT of an '@')
+    # and http(s) clients following the WHATWG URL standard (which treat '\'
+    # as '/' and connect to the address on the LEFT). Without this check,
+    # ``https://169.254.169.254\@public.example/x`` is vetted as the public
+    # host but fetched at the link-local metadata address by any sink that
+    # re-resolves the URL. A literal backslash has no legitimate place in an
+    # authority: data meant as data must be percent-encoded (``%5C``), which
+    # keeps it out of the authority. Mirrors outbound.parse_outbound_url,
+    # web_push._require_public_endpoint and URLValidator.
+    if "\\" in (parsed.netloc or ""):
+        raise UnsafeExportURL("Backslash in export URL authority is not allowed")
+
     host = parsed.hostname
     if not host:
         raise UnsafeExportURL("Export URL has no host")
