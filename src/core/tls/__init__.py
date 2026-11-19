@@ -22,7 +22,11 @@ from typing import Any, List, Optional, Tuple
 import utils.config as config
 import utils.logger as logger
 
-from .chain_validation import TLSChainError, validate_certificate_file
+from .chain_validation import (
+    TLSChainError,
+    invalidate_validation_cache,
+    validate_certificate_file,
+)
 from .path_validation import TLSPathError, validate_config_path_tokens
 from .ssl_settings import (
     SECURE_CIPHERS,
@@ -211,6 +215,10 @@ def ensure_certificates(
         hostname,
         preserved_sans=preserved_sans,
     )
+    # A regenerated certificate must never be validated through an entry cached
+    # for the previous material at the same path. The content digest already
+    # changes the cache key; clearing makes the invalidation explicit.
+    invalidate_validation_cache()
 
     logger.warning("=" * 60)
     logger.warning("SECURITY WARNING: Using self-signed TLS certificate!")

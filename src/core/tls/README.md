@@ -72,6 +72,27 @@ Generated certificates use the following properties:
   - `IP: 127.0.0.1`
   - `IP: ::1`
 
+## Validation cache
+
+`validate_certificate_file` reuses the result of a **successful** chain /
+hostname / pin validation through a small, thread-safe LRU + TTL cache
+(`validation_cache.py`, 64 entries / 60 seconds by default). This avoids
+repeating expensive signature checks on every startup or worker boot.
+
+Invalidation is fail-closed:
+
+- the key includes the SHA-256 of the certificate bytes, so rotated material
+  misses instead of resuming an old verdict;
+- hostname and pins are part of the key, so another domain cannot reuse a
+  validation performed for a different one;
+- entries expire on a monotonic TTL and at the earliest certificate `notAfter`
+  in the chain, so a cached result cannot outlive the certificate;
+- failed validations are never cached, and `ensure_certificates()` clears the
+  cache after regenerating a certificate.
+
+Observability is available through `validation_cache_stats()`; operators can
+force a cold validation with `invalidate_validation_cache()`.
+
 ## File locations
 
 Default certificate storage:

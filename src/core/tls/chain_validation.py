@@ -30,6 +30,12 @@ from .config_validation import (
     validate_fingerprint,
     validate_hostname,
 )
+from .validation_cache import (
+    DEFAULT_MAX_ENTRIES,
+    DEFAULT_TTL_SECONDS,
+    BoundedTTLCache,
+    CacheStats,
+)
 
 MAX_CHAIN_CERTS = 10
 MAX_CERT_BYTES = 1_000_000
@@ -267,19 +273,77 @@ def validate_certificate_bundle(
     )
 
 
+# Chain verification is expensive (PEM parsing plus a signature check per link)
+# and startup/worker boot repeats it for the same certificate. Cache only fully
+# validated results. The key is the certificate *content* digest together with
+# the hostname and pins, so rotating the file or asking for another domain can
+# never resume a verdict computed for different inputs. A TTL and the
+# certificate validity window bound how long even an identical key is trusted.
+_VALIDATION_CACHE: BoundedTTLCache[tuple, ValidatedChain] = BoundedTTLCache(
+    DEFAULT_MAX_ENTRIES, DEFAULT_TTL_SECONDS
+)
+
+
+def _chain_valid_until(chain: ValidatedChain) -> Optional[datetime]:
+    """Earliest notAfter in the chain, or ``None`` if it cannot be read.
+
+    Returning ``None`` only means "no extra validity bound"; the TTL still
+    applies and the certs were already fully validated before being cached.
+    """
+    earliest: Optional[datetime] = None
+    for cert in chain.certificates:
+        try:
+            raw = getattr(cert, "not_valid_after_utc", None)
+            if raw is None:
+                raw = getattr(cert, "not_valid_after")
+        except (AttributeError, TypeError, ValueError):
+            return None
+        try:
+            value = _as_utc(raw)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if earliest is None or value < earliest:
+            earliest = value
+    return earliest
+
+
+def invalidate_validation_cache() -> None:
+    """Drop cached validation results (call after regenerating certificates)."""
+    _VALIDATION_CACHE.clear()
+
+
+def validation_cache_stats() -> CacheStats:
+    """Return counters for the validation cache (observability only)."""
+    return _VALIDATION_CACHE.stats
+
+
 def validate_certificate_file(
     cert_path: str,
     *,
     hostname: Optional[str] = None,
     pins: Iterable[Any] = (),
 ) -> ValidatedChain:
-    """Read a certificate file and validate it with fail-closed semantics."""
+    """Read a certificate file and validate it with fail-closed semantics.
+
+    Repeated calls for identical material reuse a bounded, short-lived cache of
+    *successful* validations. Failures are never cached, and any change to the
+    bytes, hostname or pins is a cache miss that re-runs every TLS check.
+    """
+    normalized_pins = tuple(pins)
     try:
         with open(cert_path, "rb") as handle:
             data = handle.read(MAX_CERT_BYTES + 1)
     except OSError as exc:
         raise TLSChainError("certificate file could not be read") from exc
-    return validate_certificate_bundle(data, hostname=hostname, pins=pins)
+
+    key = (str(cert_path), hashlib.sha256(data).hexdigest(), hostname, normalized_pins)
+    cached = _VALIDATION_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    result = validate_certificate_bundle(data, hostname=hostname, pins=normalized_pins)
+    _VALIDATION_CACHE.put(key, result, valid_until=_chain_valid_until(result))
+    return result
 
 
 __all__ = [
@@ -287,9 +351,11 @@ __all__ = [
     "MAX_CHAIN_CERTS",
     "TLSChainError",
     "ValidatedChain",
+    "invalidate_validation_cache",
     "load_certificates",
     "validate_certificate_bundle",
     "validate_certificate_file",
+    "validation_cache_stats",
     "verify_chain",
     "verify_hostname",
     "verify_pin",
