@@ -6,6 +6,7 @@ import time
 
 from typing import Any, Dict, List, Optional
 
+from ..boundaries import bound_workspace_json, bound_workspace_text
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
     SumNotFoundError,
@@ -98,7 +99,19 @@ class SumManagerFeatures(SumManagerProtocol):
             raise SumValidationError("Invalid validation range")
         validation_id = self._generate_id()
         now = int(time.time() * 1000)
-        criteria = dict(criteria or {})
+        # Criteria and message are serialized into the workbook blob and read
+        # back on every viewport/list call. Without a ceiling a single rule
+        # could persist an unbounded JSON string (storage/CPU DoS).
+        criteria = dict(
+            bound_workspace_json(
+                criteria, field="validation criteria", error_cls=SumValidationError
+            )
+            or {}
+        )
+        if message:
+            message = bound_workspace_text(
+                message, "validation message", error_cls=SumValidationError
+            )
 
         def mutate(connection: sqlite3.Connection) -> None:
             sheet = connection.execute(
@@ -347,6 +360,25 @@ class SumManagerFeatures(SumManagerProtocol):
             or column_end <= column_start
         ):
             raise SumValidationError("Invalid conditional format range")
+        # Both objects are serialized into the workbook file and echoed on
+        # every list/viewport read, so apply the same JSON-object ceiling used
+        # for cell styles to this unbounded metadata path too.
+        criteria = dict(
+            bound_workspace_json(
+                criteria,
+                field="conditional format criteria",
+                error_cls=SumValidationError,
+            )
+            or {}
+        )
+        style = dict(
+            bound_workspace_json(
+                style,
+                field="conditional format style",
+                error_cls=SumValidationError,
+            )
+            or {}
+        )
         rule_id = self._generate_id()
         now = int(time.time() * 1000)
 

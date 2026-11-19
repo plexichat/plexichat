@@ -5,7 +5,12 @@ import time
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..boundaries import MAX_CSV_IMPORT_BYTES, bound_cell_value, bound_import_text
+from ..boundaries import (
+    MAX_CSV_IMPORT_BYTES,
+    bound_cell_value,
+    bound_import_text,
+    bound_workspace_json,
+)
 from .formulas import FormulaEvaluator, is_error
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
@@ -392,7 +397,13 @@ class SumManagerData(SumManagerProtocol):
                         cell.get("value"), error_cls=SumValidationError
                     ),
                     "formula": cell.get("formula"),
-                    "style": cell.get("style"),
+                    # Same choke point as the direct operation path: a chunked
+                    # importer must not be able to persist an oversized style.
+                    "style": bound_workspace_json(
+                        cell.get("style"),
+                        field="cell style",
+                        error_cls=SumValidationError,
+                    ),
                 }
                 for cell in cells
             ]

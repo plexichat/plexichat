@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
 
+import json
+import math
 import re
 
 from src.core.security.hardening import (
@@ -42,6 +44,16 @@ MAX_IMPORT_CELLS = 1_000_000
 # export (storage/CPU DoS). Keep it generous for legitimate long text yet
 # finite, matching the shared "no unbounded workspace field" rule.
 MAX_CELL_VALUE_LENGTH = 100_000
+# Free-form JSON metadata objects (cell styles, validation criteria and
+# conditional-format styles) are serialized into the workbook blob, the
+# durable operation-log payload, the live SQLite session and every read/segment
+# rebuild. Without a ceiling a single object is a storage/CPU amplification
+# vector, and deep nesting makes json.dumps/json.loads recurse dangerously.
+# Keep these generous for legitimate formatting but finite.
+MAX_WORKSPACE_JSON_SERIALIZED_LENGTH = 16_000
+MAX_WORKSPACE_JSON_DEPTH = 12
+MAX_WORKSPACE_JSON_CONTAINER_ITEMS = 200
+MAX_WORKSPACE_JSON_STRING_LENGTH = 4_000
 
 
 # The same catalog the registry serves. Kept here as an explicit allowlist so
@@ -254,6 +266,68 @@ def bound_cell_value(
     return value
 
 
+def bound_workspace_json(
+    value: Any,
+    *,
+    field: str = "metadata",
+    error_cls: Type[Exception] = HardeningViolation,
+) -> Any:
+    """Refuse an unbounded or pathological free-form JSON object.
+
+    These objects travel the same write choke points as cell values but are
+    nested JSON rather than a flat string, so a length ceiling alone is not
+    enough: deep nesting can exhaust the recursion limit in ``json.dumps`` and
+    a wide container can inflate the serialized payload with a small input.
+    Bound the tree (depth, container width, key/string length, finite numbers)
+    and its final serialized size. ``None`` is the legitimate "no explicit
+    value" case and is passed through untouched.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise error_cls(f"{field} must be an object")
+
+    def walk(node: Any, depth: int) -> None:
+        if depth > MAX_WORKSPACE_JSON_DEPTH:
+            raise error_cls(f"{field} is nested too deeply")
+        if isinstance(node, str):
+            if len(node) > MAX_WORKSPACE_JSON_STRING_LENGTH:
+                raise error_cls(f"{field} contains a string that is too long")
+            try:
+                reject_control_characters(node, field)
+            except HardeningViolation as exc:
+                raise error_cls(str(exc)) from exc
+        elif isinstance(node, (dict, list, tuple)):
+            if len(node) > MAX_WORKSPACE_JSON_CONTAINER_ITEMS:
+                raise error_cls(f"{field} contains too many entries")
+            if isinstance(node, dict):
+                for key in node:
+                    if not isinstance(key, str):
+                        raise error_cls(f"{field} keys must be strings")
+                    if len(key) > MAX_WORKSPACE_JSON_STRING_LENGTH:
+                        raise error_cls(f"{field} contains a key that is too long")
+                    try:
+                        reject_control_characters(key, f"{field} key")
+                    except HardeningViolation as exc:
+                        raise error_cls(str(exc)) from exc
+            children = node.values() if isinstance(node, dict) else node
+            for child in children:
+                walk(child, depth + 1)
+        elif isinstance(node, float):
+            if not math.isfinite(node):
+                raise error_cls(f"{field} contains a non-finite number")
+        elif node is not None and not isinstance(node, (bool, int)):
+            raise error_cls(f"{field} contains an unsupported value")
+
+    walk(value, 0)
+    # ``_json`` will serialize this again when persisting; reject an oversized
+    # payload here so it never reaches the blob, log or response path.
+    encoded = json.dumps(value, separators=(",", ":"))
+    if len(encoded) > MAX_WORKSPACE_JSON_SERIALIZED_LENGTH:
+        raise error_cls(f"{field} exceeds {MAX_WORKSPACE_JSON_SERIALIZED_LENGTH} bytes")
+    return value
+
+
 def bound_workspace_payload(
     data: Any,
     *,
@@ -303,6 +377,8 @@ __all__ = [
     "SUITE_CAPABILITIES",
     "bound_formula_text",
     "bound_cell_value",
+    "bound_workspace_json",
+    "MAX_WORKSPACE_JSON_SERIALIZED_LENGTH",
     "bound_import_bytes",
     "bound_import_text",
     "bound_workspace_payload",

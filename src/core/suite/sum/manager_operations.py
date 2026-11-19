@@ -13,7 +13,7 @@ from .schema import (
 from src.core.security.hardening import HardeningViolation
 
 from .segments import SegmentEncoder
-from ..boundaries import bound_cell_value, bound_formula_text
+from ..boundaries import bound_cell_value, bound_formula_text, bound_workspace_json
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
     INDEX_PROMOTION_THRESHOLD,
@@ -256,6 +256,13 @@ class SumManagerOperations(SumManagerProtocol):
                 or column_index > 16_384
             ):
                 raise SumValidationError("Cell coordinates are out of bounds")
+            # A style is serialized into the workbook blob, the durable
+            # operation log and every read/segment rebuild, exactly like the
+            # cell value. Bound it at the same single write choke point so one
+            # cell cannot persist a multi-megabyte or deeply nested JSON blob.
+            style = bound_workspace_json(
+                cell.get("style"), field="cell style", error_cls=SumValidationError
+            )
             if operation_type == "clear_cell":
                 normalized.append(
                     {
@@ -264,7 +271,7 @@ class SumManagerOperations(SumManagerProtocol):
                         "value_type": "blank",
                         "value": None,
                         "formula": None,
-                        "style": cell.get("style"),
+                        "style": style,
                     }
                 )
                 continue
@@ -276,7 +283,7 @@ class SumManagerOperations(SumManagerProtocol):
                         "value_type": "__preserve__",
                         "value": "__preserve__",
                         "formula": "__preserve__",
-                        "style": cell.get("style"),
+                        "style": style,
                     }
                 )
                 continue
@@ -314,7 +321,7 @@ class SumManagerOperations(SumManagerProtocol):
                     "value_type": value_type,
                     "value": value,
                     "formula": formula,
-                    "style": cell.get("style"),
+                    "style": style,
                 }
             )
         return normalized
