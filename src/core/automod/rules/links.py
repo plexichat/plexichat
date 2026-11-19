@@ -5,12 +5,52 @@ Handles server invite links and external link whitelist/blacklist.
 """
 
 import re
+import unicodedata
 from typing import Dict, Any, Optional, Set, List
 
 import utils.logger as logger
 
 from .base import BaseRule
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+
+
+# Invisible format/control codepoints (zero-width space/joiner, bidi overrides,
+# soft hyphen, BOM, NUL, ...) are visually undetectable yet change the bytes of
+# a message. The keyword/duplicate-spam layers already fold them away through
+# ``canonicalize_for_matching``; the link layers must do the same or a single
+# U+200B spliced into a URL silently defeats the domain blocklist and the invite
+# code detector. Cf = format, Cc = control — matching the shared canonicalizer
+# so both moderation layers agree on what "the same text" means.
+_INVISIBLE_CATEGORIES = frozenset({"Cf", "Cc"})
+
+
+def _fold_link_text(text: str) -> str:
+    """NFKC-fold a message and delete invisible characters.
+
+    Deleting invisibles restores URLs whose scheme/host/path was split by a
+    zero-width separator (``discord\u200b.gg/x`` -> ``discord.gg/x``) and folds
+    compatibility forms (fullwidth letters) to the ASCII shapes the detectors
+    understand. No lowercasing: reporting keeps the original casing.
+    """
+    return "".join(
+        ch
+        for ch in unicodedata.normalize("NFKC", text)
+        if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES
+    )
+
+
+def _separate_invisible(text: str) -> str:
+    """Replace invisible characters with a space instead of deleting them.
+
+    Complementary to :func:`_fold_link_text`: when an attacker *glues* a domain
+    to surrounding prose with a zero-width separator (``visit\u200bevil.com``),
+    deleting it would produce one unrecognisable token. Turning it into a space
+    restores the word boundary so the domain is tokenised on its own.
+    """
+    return "".join(
+        " " if unicodedata.category(ch) in _INVISIBLE_CATEGORIES else ch
+        for ch in unicodedata.normalize("NFKC", text)
+    )
 
 
 class InviteLinkRule(BaseRule):
@@ -89,8 +129,24 @@ class InviteLinkRule(BaseRule):
         """Check for invite codes."""
         context = context or {}
         known_invites = set(context.get("known_invite_codes", []))
+        content = content or ""
 
-        potential_codes = self._pattern.findall(content)
+        # Scan two complementary canonical views of the message. An attacker
+        # can hide an invite behind invisible separators inside the URL (a
+        # zero-width space after ``discord.gg/``) or glue it to a word; one view
+        # deletes the invisibles, the other turns them into word boundaries.
+        # Both are needed — deleting alone would fuse ``join<ZWSP>discord.gg``
+        # into an unrecognisable token, while splitting alone would break a code
+        # spliced in the middle.
+        potential_codes: List[str] = []
+        shaped_lower: Set[str] = set()
+        for view in (_fold_link_text(content), _separate_invisible(content)):
+            for code in self._pattern.findall(view):
+                if code not in potential_codes:
+                    potential_codes.append(code)
+            shaped_lower.update(
+                code.lower() for code in self._INVITE_SHAPE_RE.findall(view)
+            )
 
         confirmed = [
             code
@@ -102,9 +158,6 @@ class InviteLinkRule(BaseRule):
         # inside an invite URL) plus confirmed codes. Generic pattern matches
         # are indicators only: blocking every 8-char word just because some
         # other invite was confirmed would mass false-positive.
-        shaped_lower = {
-            code.lower() for code in self._INVITE_SHAPE_RE.findall(content or "")
-        }
         if self._block_all:
             detected = [
                 code
@@ -273,13 +326,21 @@ class ExternalLinkRule(BaseRule):
         urls = []
         domains = []
         seen_hosts = set()
-        for token in self._TOKEN_SPLIT.split(content or ""):
-            host = self._extract_host(token)
-            if not host or host in seen_hosts:
-                continue
-            seen_hosts.add(host)
-            urls.append(token.strip("\"'()[]{}<>,;:!?."))
-            domains.append(host)
+        # Two complementary canonical views close the invisible-character
+        # evasion class: deleting invisibles restores a URL split inside its
+        # scheme/host, while replacing them with spaces restores a domain the
+        # sender glued to adjacent prose with a zero-width separator. Without
+        # this, a single U+200B inside ``evil.com`` made _extract_host return
+        # None and both whitelist and blacklist modes failed open.
+        content = content or ""
+        for view in (_fold_link_text(content), _separate_invisible(content)):
+            for token in self._TOKEN_SPLIT.split(view):
+                host = self._extract_host(token)
+                if not host or host in seen_hosts:
+                    continue
+                seen_hosts.add(host)
+                urls.append(token.strip("\"'()[]{}<>,;:!?."))
+                domains.append(host)
 
         if not urls:
             return self._no_match()
