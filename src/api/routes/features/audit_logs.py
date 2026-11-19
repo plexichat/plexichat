@@ -10,6 +10,49 @@ from .common import parse_id, raise_forbidden, raise_internal
 
 router = APIRouter()
 
+# The servers module already caps ``get_servers`` at 200 entries, but enforce
+# the same ceiling here before building the SQL ``IN (...)`` list: a custom or
+# misconfigured servers module must not turn one request into an unbounded
+# placeholder list or a full srv_audit_log scan.
+_MAX_AUDIT_SERVERS = 200
+
+
+def _resolve_view_audit_server_ids(servers_mod, user_id, server_ids):
+    """Return the subset of ``server_ids`` where ``user_id`` may view audit logs.
+
+    Prefer the manager's set-based ``get_permissions_bulk`` resolver so an
+    N-server read costs a constant number of queries instead of one
+    ``get_permissions`` lookup (up to ~3 DB queries on a cold cache) per server.
+    The per-server loop is kept as a fallback for servers modules that do not
+    expose the batched resolver, preserving the exact prior authorisation
+    decision either way. Only server ids passed in can ever be returned, so the
+    caller's scope can never widen through this helper.
+    """
+    bulk = getattr(servers_mod, "get_permissions_bulk", None)
+    if bulk is not None:
+        try:
+            perm_map = bulk(user_id, server_ids) or {}
+            return [
+                sid
+                for sid in server_ids
+                if perm_map.get(sid, {}).get("server.view_audit_log", False)
+            ]
+        except Exception as exc:
+            logger.debug(f"bulk audit permission resolution failed: {exc}")
+
+    visible = []
+    for sid in server_ids:
+        try:
+            perms = servers_mod.get_permissions(user_id, sid)
+            if perms.get("server.view_audit_log", False):
+                visible.append(sid)
+        except Exception as perm_error:
+            logger.debug(
+                f"audit log permission check failed for {sid}: {perm_error}"
+            )
+            continue
+    return visible
+
 
 @router.get(
     "/users/@me/audit-logs",
@@ -45,21 +88,25 @@ async def get_user_audit_logs(
     except Exception:
         servers = []
 
-    visible_server_ids = []
+    # Collect candidate ids once, then resolve view-audit-log access in a
+    # single batched call. Bounding here keeps both the permission fan-out and
+    # the SQL IN-list below bounded regardless of what the servers module
+    # returns (defence in depth alongside get_servers' own cap).
+    candidate_ids = []
     for srv in servers or []:
         sid = getattr(srv, "id", None) or (
             srv.get("id") if isinstance(srv, dict) else None
         )
         if sid:
             try:
-                perms = servers_mod.get_permissions(current_user.user_id, int(sid))
-                if perms.get("server.view_audit_log", False):
-                    visible_server_ids.append(int(sid))
-            except Exception as perm_error:
-                logger.debug(
-                    f"audit log permission check failed for {sid}: {perm_error}"
-                )
+                candidate_ids.append(int(sid))
+            except (TypeError, ValueError):
                 continue
+    candidate_ids = candidate_ids[:_MAX_AUDIT_SERVERS]
+
+    visible_server_ids = _resolve_view_audit_server_ids(
+        servers_mod, current_user.user_id, candidate_ids
+    )
 
     if not visible_server_ids:
         return {"entries": []}
@@ -69,6 +116,13 @@ async def get_user_audit_logs(
             raise_forbidden("No audit log access for this server")
         visible_server_ids = [target_sid]
 
+    # AUTHORIZATION BOUNDARY: server_id IN (...) is the sole scope filter on
+    # this query. It must always be present so a user can only ever read audit
+    # rows for servers where they hold ``server.view_audit_log``; removing it
+    # would expose every server's audit log (a cross-user leak). The IN-list is
+    # built from the bounded, permission-filtered ids above, never from the
+    # raw ``server_id`` query parameter. idx_srv_audit_server_created serves
+    # this predicate and the created_at DESC ordering without a full scan.
     placeholders = ",".join("?" for _ in visible_server_ids)
     query = f"SELECT * FROM srv_audit_log WHERE server_id IN ({placeholders})"
     params: list = list(visible_server_ids)
