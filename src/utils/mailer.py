@@ -10,12 +10,38 @@ this file and dies with ``ModuleNotFoundError: No module named
 'email.utils'``, because this module is not a package.
 """
 
+import re
 import smtplib
 import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 import utils.logger as logger
+
+
+# ``email.message.Message.__setitem__`` does NOT reject CR/LF in header values:
+# ``msg["To"] = "a@b.com\r\nBcc: attacker@evil.test"`` is serialised as two
+# separate headers. Any value that reaches this mailer from an upstream caller
+# is therefore a potential header-injection primitive (extra Bcc/Subject/
+# Reply-To headers, phishing relay through the server's trusted SMTP account).
+# This is the last boundary before the message is handed to smtplib, so enforce
+# it here even though the current auth callers happen to pre-validate addresses.
+# Tab (0x09) is the only C0 character permitted in an RFC 5322 header value.
+_HEADER_CONTROL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
+def _safe_header(value: object, name: str) -> str:
+    """Return a header value that cannot inject additional SMTP headers.
+
+    Raises ``ValueError`` fail-closed on non-strings or embedded control
+    characters (CR, LF, NUL, ESC, DEL, ...). Tab is allowed because it is a
+    legal part of a folded header value.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    if _HEADER_CONTROL_RE.search(value):
+        raise ValueError(f"{name} contains control characters")
+    return value
 
 
 class SMTPEmailSender:
@@ -34,7 +60,9 @@ class SMTPEmailSender:
         self.port = port
         self.user = user
         self.password = password
-        self.from_email = from_email
+        # Validate the operator-supplied From address once, at construction,
+        # so a misconfigured value cannot become an injection vector later.
+        self.from_email = _safe_header(from_email, "from_email")
         self.use_tls = use_tls
 
     def send(self, to: str, subject: str, body: str, html: bool = False) -> bool:
@@ -51,6 +79,11 @@ class SMTPEmailSender:
             True if successful, False otherwise
         """
         try:
+            # Validate every value that becomes an SMTP header. Without this,
+            # a caller passing CRLF in ``to``/``subject`` would let smtplib
+            # serialise injected Bcc/Subject headers into the outgoing mail.
+            to = _safe_header(to, "to")
+            subject = _safe_header(subject, "subject")
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = self.from_email
