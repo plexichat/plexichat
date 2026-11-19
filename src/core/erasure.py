@@ -82,6 +82,11 @@ _RESIDUE_TABLES = (
     "auth_api_access_token_scopes",
     "auth_api_access_token_events",
     "auth_passkey_challenges",
+    # Storage-quota rows key on a bare user id with no FK to ``auth_users``.
+    # The override's admin ``note`` can carry PII about the person, and these
+    # tables are created lazily, so a missing table is an older install.
+    "user_storage_quotas",
+    "storage_quota_reservations",
 )
 
 
@@ -691,6 +696,40 @@ def purge_user_message_residue(db: Any, user_id: int) -> int:
     return affected
 
 
+def purge_user_storage_quota(db: Any, user_id: int) -> int:
+    """Delete quota overrides and reservations keyed only by a dead user id.
+
+    ``user_storage_quotas.user_id`` and ``storage_quota_reservations.user_id``
+    have no foreign key to ``auth_users``, so dropping the account leaves both
+    behind under an id that no longer exists. This is a real erasure gap: the
+    override row carries a free-text admin ``note`` (up to 500 chars) that
+    routinely describes the person, keeping PII queryable after a GDPR purge.
+    Reservations are short-lived, but a purge that lands mid-upload must not
+    leave one pointing at the deleted account either.
+
+    The tables are created lazily by the storage-quota manager, so an install
+    that predates storage quotas simply has nothing to delete here - that must
+    not abort the rest of the erasure.
+
+    Returns the number of rows deleted.
+    """
+    uid = int(user_id)
+    affected = 0
+    for table in ("storage_quota_reservations", "user_storage_quotas"):
+        try:
+            cursor = db.execute(
+                f"DELETE FROM {require_identifier(table)} "
+                f"WHERE {require_identifier('user_id')} = ?",
+                (uid,),
+            )
+            affected += int(getattr(cursor, "rowcount", 0) or 0)
+        except Exception as exc:
+            if table not in _RESIDUE_TABLES:
+                raise
+            logger.debug("Erase: optional quota cleanup skipped (%s): %s", table, exc)
+    return affected
+
+
 # === orchestration ===
 
 
@@ -708,6 +747,9 @@ def erase_user_residue(
     notifications = purge_user_notifications(db, user_id)
     personal_rows = purge_user_personal_rows(db, user_id)
     credentials = purge_user_credentials(db, user_id)
+    # Quota rows have no FK cascade and the override note can hold PII, so they
+    # are part of a complete erasure just like the credential rows above.
+    quota_rows = purge_user_storage_quota(db, user_id)
     servers = purge_owned_servers(db, user_id)
     conversations = purge_user_conversations(db, user_id)
     unswept_media = purge_user_media(db, user_id, media=media)
@@ -718,18 +760,20 @@ def erase_user_residue(
         or notifications
         or personal_rows
         or credentials
+        or quota_rows
         or message_residue
     ):
         logger.info(
             "Erase: user %s left %s message-residue row(s), "
             "%s notification(s), %s personal row(s), "
-            "%s credential row(s), %s server(s), %s conversation(s), "
-            "%s unswept media object(s) cleaned up",
+            "%s credential row(s), %s quota row(s), %s server(s), "
+            "%s conversation(s), %s unswept media object(s) cleaned up",
             user_id,
             message_residue,
             notifications,
             personal_rows,
             credentials,
+            quota_rows,
             len(servers),
             len(conversations),
             len(unswept_media),
@@ -739,6 +783,7 @@ def erase_user_residue(
         "notifications": notifications,
         "personal_rows": personal_rows,
         "credentials": credentials,
+        "storage_quota": quota_rows,
         "servers": servers,
         "conversations": conversations,
         "media_unswept": unswept_media,
@@ -805,25 +850,47 @@ def sweep_orphans(db: Any, media: Optional[Any] = None) -> Dict[str, List]:
     for owner in orphan_credential_owners:
         purge_user_credentials(db, owner)
 
+    # Accounts purged by a build that predates the quota cleanup kept their
+    # override (and its PII-bearing admin note) and any in-flight reservations
+    # under a dead id. Reap those the same way as the credential residue.
+    orphan_quota_owners = set()
+    for table in ("user_storage_quotas", "storage_quota_reservations"):
+        try:
+            for row in _rows(
+                db,
+                f"SELECT DISTINCT q.user_id AS owner FROM {require_identifier(table)} q "
+                "LEFT JOIN auth_users u ON u.id = q.user_id WHERE u.id IS NULL",
+            ):
+                if row["owner"] is not None:
+                    orphan_quota_owners.add(int(row["owner"]))
+        except Exception as exc:
+            logger.debug("Erase: orphan quota sweep query skipped: %s", exc)
+    for owner in orphan_quota_owners:
+        purge_user_storage_quota(db, owner)
+
     result = {
         "servers": sweep_orphaned_servers(db),
         "conversations": purge_orphaned_conversations(db),
         "media_unswept": unswept,
         "credentials": sorted(orphan_credential_owners),
+        "storage_quota": sorted(orphan_quota_owners),
     }
     if (
         result["servers"]
         or result["conversations"]
         or unswept
         or orphan_credential_owners
+        or orphan_quota_owners
     ):
         logger.info(
             "Erase: swept %s orphan server(s), %s orphan conversation(s), "
-            "%s unswept media object(s), %s orphan credential owner(s)",
+            "%s unswept media object(s), %s orphan credential owner(s), "
+            "%s orphan quota owner(s)",
             len(result["servers"]),
             len(result["conversations"]),
             len(unswept),
             len(orphan_credential_owners),
+            len(orphan_quota_owners),
         )
     return result
 
@@ -843,6 +910,7 @@ __all__ = [
     "purge_user_media",
     "purge_user_notifications",
     "purge_user_personal_rows",
+    "purge_user_storage_quota",
     "sweep_orphaned_servers",
     "sweep_orphans",
 ]
