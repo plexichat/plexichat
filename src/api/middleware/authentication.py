@@ -413,18 +413,26 @@ class AuthenticationMiddleware:
                 sec_fetch_site = request.headers.get("Sec-Fetch-Site")
                 if sec_fetch_site == "cross-site":
                     csrf_ok = False
-                elif sec_fetch_site in ("same-origin", "same-site", "none"):
-                    # ``same-origin``/``same-site`` cannot be forged by a
-                    # cross-origin page; ``none`` marks direct user agent
-                    # navigation (no fetch initiator).
+                elif sec_fetch_site == "same-origin":
+                    # Only an EXACT same-origin request is safe to trust on the
+                    # browser-set fetch-metadata signal alone: a cross-origin
+                    # page cannot make its own request carry this value, and
+                    # the header cannot be overwritten by web content.
                     csrf_ok = True
                 else:
-                    # M2: browsers that do not implement Sec-Fetch-* (or
-                    # non-browser clients) fall through to the marker
-                    # header PLUS an Origin/Referer allowlist check — the
-                    # marker alone is a static, guessable constant, so a
-                    # CORS misconfiguration or header-injecting plugin
-                    # would otherwise complete a cross-site write.
+                    # ``same-site`` is NOT a CSRF boundary: any sibling
+                    # subdomain under the same registrable domain (a shared
+                    # CDN, user-content host, or sibling app) can send a
+                    # credentialed request classified as same-site. ``none``
+                    # is no stronger — it is emitted for initiator-less
+                    # navigations and non-fetch contexts that a browser
+                    # extension or a header-stripping proxy can produce.
+                    # Missing/unknown values are equally unproven. For all of
+                    # these, require BOTH the marker header AND an Origin/
+                    # Referer that matches the configured CORS allowlist —
+                    # the marker alone is a static, guessable constant, so a
+                    # CORS misconfiguration or header-injecting plugin would
+                    # otherwise complete a cross-site write.
                     csrf_ok = request.headers.get("X-Plexichat-Request") == "1"
                     if csrf_ok and not self._origin_allowed(request):
                         csrf_ok = False
