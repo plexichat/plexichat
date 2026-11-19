@@ -756,12 +756,17 @@ class TestValkeyStorageConcurrency:
         import src.core.ratelimit.storage.valkey as valkey_module
         from src.core.ratelimit.storage import ValkeyStorage
 
+        from src.core.ratelimit.exceptions import RateLimitStoreUnavailable
+
         fake = _DeadlockFakeValkey()
         monkeypatch.setattr(valkey_module, "get_client", lambda: fake)
         monkeypatch.setattr(valkey_module, "is_available", lambda: True)
         storage = ValkeyStorage()
 
-        assert await storage.aincrement("ctr", "count", 1) == 0
+        # A lock that cannot be acquired must fail closed (raise), never
+        # silently return 0 -- that would drop the deduction and under-count.
+        with pytest.raises(RateLimitStoreUnavailable, match="distributed rate-limit lock"):
+            await storage.aincrement("ctr", "count", 1)
         # Fail closed, and never touch the bucket without the lock.
         assert fake.data == {}
         assert fake.acquire_failures == 1

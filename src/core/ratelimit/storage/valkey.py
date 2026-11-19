@@ -116,6 +116,13 @@ class ValkeyStorage(RateLimitStorage):
     # matches MemoryStorage's default cleanup cadence and keeps the hot path
     # free of scans in the common case.
     _CAP_CHECK_INTERVAL = 60.0
+    # Every distributed-lock acquisition in this module is explicitly bounded.
+    # The token-bucket paths already use 5.0. The four public mutators used to
+    # call ``acquire_lock`` with no timeout at all, inheriting the client's
+    # implicit default (10s) -- inconsistent with the rest of the module and
+    # unbounded at the call site. Pin every mutator to the same finite window
+    # so a stalled/contended lock can never park a worker indefinitely.
+    _MUTATOR_LOCK_TIMEOUT = 5.0
 
     def __init__(self, key_prefix: str = "ratelimit"):
         """
@@ -270,125 +277,100 @@ class ValkeyStorage(RateLimitStorage):
         """Clear all stored buckets."""
         self.delete_by_prefix("")
 
-    def increment(self, key: str, field: str, amount: int = 1) -> int:
-        """Atomically increment a field in a bucket."""
-        client = get_client()
-        if not client or not is_available():
-            return 0
+    def _locked_update(
+        self,
+        key: str,
+        mutate: Callable[[Dict[str, Any]], Any],
+        default: Any,
+    ) -> Any:
+        """Read-modify-write ``key`` under the distributed lock (blocking).
 
-        full_key = self._get_key(key)
-        # SECURITY: use the same lock namespace as the async mutators and the
-        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
-        # paths would not serialise and a concurrent write could clobber this
-        # deduction. Data itself stays under full_key.
-        token = client.acquire_lock(f"extlock:{key}")
-        if token:
-            try:
-                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
-                current = bucket.get(field, 0)
-                new_value = current + amount
-                bucket[field] = new_value
-                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
-                self._maybe_enforce_key_cap(client)
-                return new_value
-            except ValkeyOperationError:
-                return 0
-            finally:
-                if token:  # Re-check for type narrowing
-                    client.release_lock(f"extlock:{key}", token)
-        return 0
+        Fail-closed counterpart of :meth:`_alocked_update`. The four public
+        mutators must NOT return ``default`` when the lock cannot be acquired:
+        that silently drops the read-modify-write, so an abuse counter (upload
+        bytes, sticker/friend-request quotas, ...) under-counts and multiplies
+        an attacker's budget by the number of contending workers. Refuse the
+        operation instead, letting callers fail closed.
 
-    def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
-        """Atomically get current value and set new value."""
+        The lock name matches the async mutators, the public lock helpers and
+        the token-bucket path (``extlock:<key>``), so every writer serialises
+        on the same lock. Data itself stays under ``full_key``.
+        """
         client = get_client()
         if not client or not is_available():
             return default
 
         full_key = self._get_key(key)
-        # SECURITY: use the same lock namespace as the async mutators and the
-        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
-        # paths would not serialise and a concurrent write could clobber this
-        # deduction. Data itself stays under full_key.
-        token = client.acquire_lock(f"extlock:{key}")
-        if token:
-            try:
-                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
-                previous = bucket.get(field, default)
-                bucket[field] = value
-                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
-                self._maybe_enforce_key_cap(client)
-                return previous
-            except ValkeyOperationError:
-                return default
-            finally:
-                if token:  # Re-check for type narrowing
-                    client.release_lock(f"extlock:{key}", token)
-        return default
+        lock_key = f"extlock:{key}"
+        # Explicit, finite timeout: never depend on the client's default.
+        token = client.acquire_lock(lock_key, timeout=self._MUTATOR_LOCK_TIMEOUT)
+        if not token:
+            raise RateLimitStoreUnavailable(
+                f"could not acquire distributed rate-limit lock for {key!r}"
+            )
+        try:
+            bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
+            result = mutate(bucket)
+            client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
+            self._maybe_enforce_key_cap(client)
+            return result
+        except ValkeyOperationError:
+            return default
+        finally:
+            # The client verifies the token before deleting the lock key, so
+            # a late holder cannot free a lock another worker now owns.
+            client.release_lock(lock_key, token)
+
+    def increment(self, key: str, field: str, amount: int = 1) -> int:
+        """Atomically increment a field in a bucket."""
+
+        def _mutate(bucket: Dict[str, Any]) -> int:
+            new_value = bucket.get(field, 0) + amount
+            bucket[field] = new_value
+            return int(new_value)
+
+        return int(self._locked_update(key, _mutate, 0))
+
+    def get_and_set(self, key: str, field: str, value: Any, default: Any = None) -> Any:
+        """Atomically get current value and set new value."""
+
+        def _mutate(bucket: Dict[str, Any]) -> Any:
+            previous = bucket.get(field, default)
+            bucket[field] = value
+            return previous
+
+        return self._locked_update(key, _mutate, default)
 
     def add_to_list(
         self, key: str, field: str, value: Any, max_size: int = 1000
     ) -> int:
         """Add value to a list field, maintaining max size."""
-        client = get_client()
-        if not client or not is_available():
-            return 0
 
-        full_key = self._get_key(key)
-        # SECURITY: use the same lock namespace as the async mutators and the
-        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
-        # paths would not serialise and a concurrent write could clobber this
-        # deduction. Data itself stays under full_key.
-        token = client.acquire_lock(f"extlock:{key}")
-        if token:
-            try:
-                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
-                lst = bucket.get(field, [])
-                if not isinstance(lst, list):
-                    lst = []
-                lst.append(value)
-                if len(lst) > max_size:
-                    lst = lst[-max_size:]
-                bucket[field] = lst
-                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
-                self._maybe_enforce_key_cap(client)
-                return len(lst)
-            except ValkeyOperationError:
-                return 0
-            finally:
-                if token:  # Re-check for type narrowing
-                    client.release_lock(f"extlock:{key}", token)
-        return 0
+        def _mutate(bucket: Dict[str, Any]) -> int:
+            lst = bucket.get(field, [])
+            if not isinstance(lst, list):
+                lst = []
+            lst.append(value)
+            if len(lst) > max_size:
+                lst = lst[-max_size:]
+            bucket[field] = lst
+            return len(lst)
+
+        return int(self._locked_update(key, _mutate, 0))
 
     def trim_list(self, key: str, field: str, min_value: Any) -> int:
         """Remove list items less than min_value."""
-        client = get_client()
-        if not client or not is_available():
-            return 0
 
-        full_key = self._get_key(key)
-        # SECURITY: use the same lock namespace as the async mutators and the
-        # public acquire_lock/release_lock (extlock:<key>), otherwise the two
-        # paths would not serialise and a concurrent write could clobber this
-        # deduction. Data itself stays under full_key.
-        token = client.acquire_lock(f"extlock:{key}")
-        if token:
-            try:
-                bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
-                lst = bucket.get(field, [])
-                if not isinstance(lst, list):
-                    return 0
-                original_len = len(lst)
-                lst = [v for v in lst if v >= min_value]
-                bucket[field] = lst
-                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
-                self._maybe_enforce_key_cap(client)
-                return original_len - len(lst)
-            except ValkeyOperationError:
+        def _mutate(bucket: Dict[str, Any]) -> int:
+            lst = bucket.get(field, [])
+            if not isinstance(lst, list):
                 return 0
-            finally:
-                if token:  # Re-check for type narrowing
-                    client.release_lock(f"extlock:{key}", token)
-        return 0
+            original_len = len(lst)
+            lst = [v for v in lst if v >= min_value]
+            bucket[field] = lst
+            return original_len - len(lst)
+
+        return int(self._locked_update(key, _mutate, 0))
 
     def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
         """Acquire a lock for atomic operations."""
@@ -539,16 +521,22 @@ class ValkeyStorage(RateLimitStorage):
 
         The lock is held across the whole get->mutate->set sequence, so two
         workers (or the blocking path) cannot lose each other's update.
-        Returns ``default`` when the backend is unavailable or errors.
+        Returns ``default`` when the backend is unavailable or errors, but
+        FAILS CLOSED (raises) when the distributed lock cannot be acquired --
+        an unlocked read-modify-write silently drops the counter deduction.
         """
         client = get_client()
         if not client or not is_available():
             return default
 
         full_key = self._get_key(key)
-        token = await client.aacquire_lock(f"extlock:{key}", timeout=5.0)
+        token = await client.aacquire_lock(
+            f"extlock:{key}", timeout=self._MUTATOR_LOCK_TIMEOUT
+        )
         if not token:
-            return default
+            raise RateLimitStoreUnavailable(
+                f"could not acquire distributed rate-limit lock for {key!r}"
+            )
         try:
             bucket = cast(Dict[str, Any], await client.aget_json(full_key) or {})
             result = mutate(bucket)
