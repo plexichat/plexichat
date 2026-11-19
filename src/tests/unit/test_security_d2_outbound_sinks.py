@@ -14,6 +14,7 @@ SSRF guard before anything connects. This module proves two things:
 """
 
 import ast
+import functools
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -118,8 +119,15 @@ def _called_names(tree: ast.Module) -> set[str]:
     return names
 
 
-def _http_sinks():
-    """Yield ``(relative_path, called_names)`` for modules with HTTP calls."""
+@functools.lru_cache(maxsize=1)
+def _http_sinks() -> tuple[tuple[str, frozenset[str]], ...]:
+    """Every module with an HTTP call, and the names it calls.
+
+    One AST walk of the tree serves every assertion in this module. Walking it
+    per test made four tests pay the parse four times, which is what pushed the
+    audit past the default per-test timeout on a loaded CI worker.
+    """
+    sinks: list[tuple[str, frozenset[str]]] = []
     for path in _python_files(SRC):
         tree = _parse(path)
         if tree is None:
@@ -136,10 +144,12 @@ def _http_sinks():
             and _root_name(node.func) in aliases
         ]
         if sites:
-            yield str(path.relative_to(ROOT)), _called_names(tree)
+            sinks.append((str(path.relative_to(ROOT)), frozenset(_called_names(tree))))
+    return tuple(sinks)
 
 
-def _api_low_level_validator_calls():
+@functools.lru_cache(maxsize=1)
+def _api_low_level_validator_calls() -> tuple[str, ...]:
     offenders = []
     for path in _python_files(SRC / "api"):
         tree = _parse(path)
@@ -148,10 +158,15 @@ def _api_low_level_validator_calls():
         called = _called_names(tree)
         if called & {"URLValidator", "validate_url_for_request"}:
             offenders.append(str(path.relative_to(ROOT)))
-    return offenders
+    return tuple(offenders)
 
 
 class TestStaticSinkAudit:
+    # A full AST walk of the source tree is bounded, deterministic work, not a
+    # hang: it measured 50s of the 60s default on a runner shared with another
+    # pipeline. The scan itself is cached above, so only the first test pays.
+    pytestmark = pytest.mark.timeout(180)
+
     def test_sink_discovery_is_not_vacuous(self):
         sinks = dict(_http_sinks())
         assert len(sinks) >= 4, f"only found {len(sinks)} HTTP sink modules"
