@@ -663,12 +663,14 @@ async def join_request_inbound(request: Request):
 
     payload = _parse_json_body(body)
 
-    remote_instance_id = str(payload.get("instance_id") or "").strip()
-    if not remote_instance_id:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "instance_id is required"}},
-        )
+    # A valid HMAC proves which peer sent the join request, not that the
+    # instance id it claims is safe to persist and later show to an admin for
+    # approval. ``bound_text`` in the manager caps length and strips control
+    # characters, but an instance id is an identifier, not free text: bind it
+    # to the same restrictive grammar the outbound validators use so Unicode
+    # look-alikes, whitespace and punctuation cannot be smuggled into a stored
+    # request, an admin review screen or an exact-match connection lookup.
+    remote_instance_id = validate_remote_id(payload.get("instance_id"), "instance_id")
 
     # The remote_url is attacker-supplied in the signed envelope and is later
     # surfaced to an admin for approval, after which it becomes an outbound
