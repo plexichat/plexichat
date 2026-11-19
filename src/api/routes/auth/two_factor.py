@@ -35,6 +35,7 @@ from src.core.auth.exceptions import (
     TwoFactorInvalidError,
     TwoFactorSetupError,
     UserNotFoundError,
+    EmailNotVerifiedError,
 )
 from src.core.auth.models import AuthStatus
 from src.utils.net import get_client_ip
@@ -146,6 +147,15 @@ async def complete_2fa(
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid challenge"}},
+        )
+    except (AccountLockedError, EmailNotVerifiedError):
+        # Account state changed between challenge mint and completion. Report
+        # the same generic failure as an invalid challenge so locked/unverified
+        # accounts stay indistinguishable from a bogus credential.
+        logger.warning("2FA completion refused: account state no longer valid")
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid or expired challenge"}},
         )
     except Exception as e:
         logger.error(f"Unexpected error in complete_2fa: {e}", exc_info=True)

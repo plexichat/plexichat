@@ -12,6 +12,8 @@ from ..exceptions import (
     TokenExpiredError,
     TwoFactorInvalidError,
     InvalidCredentialsError,
+    AccountLockedError,
+    EmailNotVerifiedError,
 )
 from ..models import (
     User,
@@ -36,6 +38,32 @@ class TwoFactorMixin(AuthManagerProtocol):
     # In-process sliding-window fallback used only when no Valkey backend is
     # configured (single-worker deployments and tests).
     _2fa_verify_attempts_local: dict = {}
+
+    # Expired 2FA challenges are otherwise never removed: every login by a
+    # 2FA-enabled account inserts a row that lives forever, so an attacker
+    # with valid credentials (or anyone able to reach the login endpoint)
+    # can grow ``auth_2fa_challenges`` without bound. Prune lazily on the
+    # challenge-minting path, rate-limited like the TOTP replay DB cleanup so
+    # a busy server never pays a full DELETE scan on every login.
+    _last_challenge_cleanup: int = 0
+    _challenge_cleanup_interval_ms: int = 300_000
+
+    def _prune_expired_challenges(self, now: int) -> None:
+        """Best-effort purge of expired challenge rows (rate-limited)."""
+        if (
+            now - TwoFactorMixin._last_challenge_cleanup
+            < TwoFactorMixin._challenge_cleanup_interval_ms
+        ):
+            return
+        TwoFactorMixin._last_challenge_cleanup = now
+        try:
+            self._db.execute(
+                "DELETE FROM auth_2fa_challenges WHERE expires_at <= ?", (now,)
+            )
+        except Exception as exc:
+            # Pruning is best-effort: expired rows are still rejected on read,
+            # so a failure only costs space until the next successful prune.
+            logger.debug(f"2FA challenge prune failed: {exc}")
 
     def _check_and_record_2fa_attempt(
         self, user_id: int, max_attempts: int = 5, window_seconds: int = 300
@@ -85,8 +113,9 @@ class TwoFactorMixin(AuthManagerProtocol):
         ip: Optional[str],
         ua: Optional[str],
     ) -> TwoFactorChallenge:
-        cid = self._generate_id()
         now = self._get_timestamp()
+        self._prune_expired_challenges(now)
+        cid = self._generate_id()
         expires = now + 300000
         token, token_hash = create_2fa_challenge_token(cid)
 
@@ -196,6 +225,40 @@ class TwoFactorMixin(AuthManagerProtocol):
         )
         if not user_row:
             raise UserNotFoundError("User not found")
+
+        # A challenge stays valid for minutes. Re-check the account state at
+        # completion time, not just at challenge-mint time: a challenge minted
+        # for a healthy account must not be exchangeable for a fresh session
+        # after that account was locked, frozen, had 2FA disabled, or still has
+        # an unverified email when verification is required. The HTTP route
+        # performs a similar re-check, but every manager-level caller must be
+        # safe on its own — otherwise those callers can mint a usable session
+        # for a locked/frozen account and bypass the lockout entirely.
+        if user_row.get("deletion_status") == "frozen":
+            raise AccountLockedError("Account is scheduled for deletion")
+        if user_row["account_locked"]:
+            locked_until = user_row.get("locked_until")
+            if not locked_until or locked_until > self._get_timestamp():
+                raise AccountLockedError("Account locked", locked_until)
+            # The lockout has elapsed. Mirror login() and clear the stale flag
+            # so the session we are about to mint does not carry
+            # account_locked=True into the auth middleware.
+            self._db.execute(
+                "UPDATE auth_users SET account_locked = 0, failed_login_attempts = 0 WHERE id = ?",
+                (user_row["id"],),
+            )
+        accounts_config = self._config.get("accounts", {})
+        if accounts_config.get("require_email_verification", False) and not bool(
+            user_row.get("email_verified", 0)
+        ):
+            raise EmailNotVerifiedError("Email not verified")
+        if not user_row.get("totp_enabled") or not user_row.get(
+            "totp_secret_encrypted"
+        ):
+            # 2FA was disabled (or never confirmed) after the challenge was
+            # minted. Fail closed instead of decrypting a NULL secret (which
+            # previously raised deep in the crypto layer).
+            raise TokenInvalidError("2FA no longer enabled")
 
         user_id = user_row["id"]
         secret = totp_module.decrypt_totp_secret(user_row["totp_secret_encrypted"])
