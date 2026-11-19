@@ -89,16 +89,25 @@ def sql_identifier(
     if not isinstance(value, str):
         # Let the central helper produce the (ValueError-derived) rejection.
         return require_identifier(value, field)
-    parts = value.split(".")
+    # Materialise the segments: a str subclass may return a one-shot iterable
+    # from split(), or a list whose __iter__/bool disagree with its contents.
+    parts = list(value.split("."))
     if not parts or any(not part for part in parts):
         raise HardeningViolation(f"{field} is not a valid SQL identifier")
     for part in parts:
         require_identifier(part, field)
+    # Rebuild a fresh, plain str from the *validated* segments instead of
+    # returning ``value``. ``value`` may be a str subclass whose ``split``,
+    # ``__str__`` or ``__format__`` do not reflect the characters that end up in
+    # the statement (e.g. split() lies about a dotted name, or __format__ emits
+    # SQL). Joining the segments uses their real Unicode data, so the returned
+    # string is exactly what was checked and cannot carry injected SQL.
+    safe_name = ".".join(parts)
     if quote is None:
-        return value
+        return safe_name
     if quote not in ('"', "`"):
         raise HardeningViolation("unsupported SQL identifier quote")
-    return f"{quote}{value}{quote}"
+    return f"{quote}{safe_name}{quote}"
 
 
 def sql_identifier_list(values: Iterable[Any], field: str = "identifier") -> str:
@@ -128,13 +137,21 @@ def sql_offset(value: Any, field: str = "OFFSET") -> int:
 
 
 def sql_operator(value: Any) -> str:
-    """Return the canonical form of an allow-listed WHERE operator."""
+    """Return the canonical form of an allow-listed WHERE operator.
+
+    The caller's object is never returned: a ``str`` subclass can pass the
+    allow-list check on its underlying characters while lying in ``__format__``
+    or ``__str__`` (which is what the f-strings in :func:`sql_condition` use).
+    Returning the matching member of the module-level allow-list guarantees a
+    plain ``str`` whose text is exactly the keyword that was validated.
+    """
     if not isinstance(value, str):
         raise HardeningViolation("SQL operator must be a string")
     operator = value.upper()
-    if operator not in VALID_OPERATORS | VALID_OPERATORS_UNARY:
-        raise HardeningViolation(f"invalid SQL operator: {value!r}")
-    return operator
+    for allowed in VALID_OPERATORS | VALID_OPERATORS_UNARY:
+        if operator == allowed:
+            return allowed
+    raise HardeningViolation(f"invalid SQL operator: {value!r}")
 
 
 def sql_condition(column: Any, operator: Any, value_count: int = 0) -> str:
