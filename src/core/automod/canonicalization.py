@@ -60,3 +60,32 @@ def canonicalize_for_matching(content: Any, *, case_sensitive: bool = False) -> 
     if len(text) > MAX_CANONICAL_LENGTH:
         text = text[:MAX_CANONICAL_LENGTH]
     return text
+
+
+def fold_invisible_for_matching(content: Any) -> str:
+    """NFKC-fold text and strip visually invisible characters, nothing else.
+
+    ``canonicalize_for_matching`` also case-folds and collapses whitespace,
+    which is right for substring/blocklist matching but wrong for rules that
+    inspect the *shape* of the text: the repeated-character rule needs the exact
+    run length, and the mass-emoji rule needs the exact character sequence to
+    tell emoji from surrounding prose.
+
+    Those rules previously matched the raw message, so a single zero-width
+    separator (U+200B), soft hyphen, word joiner, bidi override or BOM spliced
+    between repeated characters broke the run while rendering identically to a
+    human -- obvious spam sailed through the filter. Folding both seeks and
+    obfuscated forms to the same canonical bytes closes that gap. Length is
+    bounded because NFKC can expand a single codepoint into many.
+    """
+    if content is None:
+        return ""
+    if not isinstance(content, str):
+        content = str(content)
+    text = unicodedata.normalize("NFKC", content)
+    text = "".join(
+        ch for ch in text if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES
+    )
+    if len(text) > MAX_CANONICAL_LENGTH:
+        text = text[:MAX_CANONICAL_LENGTH]
+    return text

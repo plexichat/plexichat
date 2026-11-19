@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 from src.core.security.hardening import HardeningViolation, bounded_int
 
 from .base import BaseRule
+from ..canonicalization import fold_invisible_for_matching
 from ..limits import MAX_REPEATS
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
@@ -67,7 +68,12 @@ class RepeatedCharsRule(BaseRule):
         examples = []
         total_occurrences = 0
 
-        for m in self._pattern.finditer(content):
+        # Match against a canonical view of the text. Invisible format/control
+        # characters (ZWSP, soft hyphen, bidi overrides, BOM, ...) spliced
+        # between repeated characters break the ``(.)\1{n,}`` run while looking
+        # identical on screen, which turned obvious cap/character spam into a
+        # detection bypass. NFKC folding also catches fullwidth lookalikes.
+        for m in self._pattern.finditer(fold_invisible_for_matching(content)):
             char = m.group(1)
             if self._ignore_whitespace and char.isspace():
                 continue

@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 from src.core.security.hardening import HardeningViolation, bounded_int
 
 from .base import BaseRule
+from ..canonicalization import fold_invisible_for_matching
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
@@ -58,6 +59,13 @@ class MassEmojiRule(BaseRule):
         context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for excessive emoji usage."""
+        # Canonicalize before matching. Invisible separators between emoji used
+        # to (a) split one emoji run into many and (b) pad ``text_length`` with
+        # invisible characters, deflating the emoji percentage below the cap
+        # even though a human sees a wall of emoji. NFKC folding also folds
+        # compatibility-codepoint lookalikes onto the patterns below.
+        content = fold_invisible_for_matching(content)
+
         custom_count = 0
         unicode_count = 0
 
