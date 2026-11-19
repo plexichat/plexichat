@@ -25,14 +25,23 @@ CANONICAL_HEADERS: dict[bytes, bytes] = {
     b"x-xss-protection": b"1; mode=block",
 }
 
-# Values that are safe to keep when a handler deliberately sets a stronger
-# policy than our default. Anything else is replaced.
+# Values that are safe to keep when a handler deliberately sets a *stronger*
+# policy than our canonical ``strict-origin-when-cross-origin``. Only values
+# that leak strictly less referrer information may be kept; anything else is
+# replaced with the canonical value.
+#
+# ``no-referrer-when-downgrade`` and ``origin-when-cross-origin`` are NOT in
+# this set. Both are weaker than the canonical policy: the former sends the
+# full URL (path and query, which routinely carry tokens and ids) to arbitrary
+# cross-origin HTTPS destinations, and the latter still emits the origin on an
+# HTTPS->HTTP downgrade where the canonical policy emits nothing. Treating
+# them as "safe to keep" let an upstream handler or a reflected value silently
+# downgrade the referrer boundary -- exactly the weakening this module exists
+# to prevent.
 _REFERRER_SAFE = frozenset(
     {
         b"no-referrer",
-        b"no-referrer-when-downgrade",
         b"origin",
-        b"origin-when-cross-origin",
         b"same-origin",
         b"strict-origin",
         b"strict-origin-when-cross-origin",
