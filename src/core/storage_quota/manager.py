@@ -20,12 +20,15 @@ concurrent uploads see each other's pending bytes.
 Multi-worker correctness
 ------------------------
 
-The enforcement read (live usage + other pending reservations) is folded into
-the reservation INSERT as a single conditional ``INSERT ... SELECT`` statement.
+The enforcement read (live usage + other pending reservations + the
+authoritative override limit) is folded into the reservation INSERT as a single
+conditional ``INSERT ... SELECT ... LEFT JOIN user_storage_quotas`` statement.
 A statement is atomic on both SQLite and PostgreSQL, so no worker can observe
-an old total and insert a second reservation that pushes the user over quota.
-PostgreSQL additionally serialises the whole check on a per-user advisory lock;
-SQLite serialises the write at the first DELETE inside the transaction.
+an old total and insert a second reservation that pushes the user over quota,
+and an admin quota change cannot be bypassed with a limit snapshotted in Python
+before the INSERT. PostgreSQL additionally serialises the whole check on a
+per-user advisory lock; SQLite serialises the write at the first DELETE inside
+the transaction.
 
 The database layer maintains a short-TTL (1s) per-connection query cache. Every
 quota *mutation* explicitly invalidates it, so a worker never enforces a limit
@@ -96,20 +99,35 @@ MAX_MANAGER_CACHE_ENTRIES = 64
 MAX_RESERVATION_BYTES = MAX_OVERRIDE_LIMIT_BYTES + 1
 
 #: One statement performs the quota check and the reservation insert. The
-#: ``? = 1`` branch short-circuits the guard for unlimited users; otherwise the
-#: live usage and the other live reservations must leave room for ``amount``.
+#: guard reads the *authoritative* limit from ``user_storage_quotas`` inside the
+#: same statement, so an administrator quota change committed between the
+#: Python-side :meth:`resolve_limit` read and this INSERT can never be bypassed
+#: with a stale limit snapshot (a multi-worker TOCTOU). The Python-resolved
+#: limit is only the fallback for users with no override row. The unlimited
+#: branch short-circuits the arithmetic guard for unlimited users; otherwise
+#: live usage plus other live reservations plus ``amount`` must fit the limit.
 #: Both subqueries are keyed by the reserving user, so no other user's bytes can
-#: influence the decision.
+#: influence the decision. Scalar clamping uses a portable CASE expression
+#: (PostgreSQL has no scalar two-argument MIN/MAX).
 _ATOMIC_RESERVE_SQL = """
 INSERT INTO storage_quota_reservations
     (token, user_id, bytes, created_at, expires_at)
 SELECT ?, ?, ?, ?, ?
-WHERE ? = 1 OR (
+FROM (SELECT 1) AS one
+LEFT JOIN user_storage_quotas q ON q.user_id = ?
+WHERE COALESCE(q.unlimited, ?) = 1
+   OR (
     (SELECT COALESCE(SUM(size), 0) FROM media_files
       WHERE uploaded_by = ? AND deleted = 0) +
     (SELECT COALESCE(SUM(bytes), 0) FROM storage_quota_reservations
-      WHERE user_id = ? AND expires_at > ?) + ? <= ?
-)
+      WHERE user_id = ? AND expires_at > ?) + ? <=
+    CASE
+        WHEN q.user_id IS NULL THEN ?
+        WHEN COALESCE(q.limit_bytes, 0) <= 0 THEN 0
+        WHEN q.limit_bytes >= ? THEN ?
+        ELSE q.limit_bytes
+    END
+   )
 """
 
 #: Distinguishes "caller did not supply an override row" from an explicit
@@ -520,12 +538,15 @@ class StorageQuotaManager:
                     amount,
                     now,
                     expires,
-                    1 if unlimited else 0,
-                    uid,
-                    uid,
-                    now,
+                    uid,  # LEFT JOIN user_storage_quotas
+                    1 if unlimited else 0,  # fallback when no override row
+                    uid,  # media_files usage subquery
+                    uid,  # reservation pending subquery
+                    now,  # expires_at > now
                     amount,
-                    int(limit) if limit is not None else 0,
+                    int(limit) if limit is not None else 0,  # no-override fallback
+                    MAX_OVERRIDE_LIMIT_BYTES,  # clamp legacy override rows
+                    MAX_OVERRIDE_LIMIT_BYTES,
                 ),
             )
             if getattr(cursor, "rowcount", 0) != 1:

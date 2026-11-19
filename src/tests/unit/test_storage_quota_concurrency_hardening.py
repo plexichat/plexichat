@@ -271,3 +271,62 @@ def test_global_prune_keeps_other_users_live_reservations(quota_db):
     )
     assert row is not None
     assert row["user_id"] == user_b
+
+
+# ── limit-snapshot TOCTOU ──────────────────────────────────────────────────────
+
+
+def test_guard_uses_live_override_limit_not_stale_python_snapshot(
+    quota_db, monkeypatch
+):
+    """An admin quota shrink racing reserve() must win, not a stale snapshot.
+
+    Models the multi-worker interleaving: worker A reads a generous limit in
+    Python (``resolve_limit``), worker B commits a smaller override, then A's
+    reservation guard executes. Before the fix the guard trusted A's Python
+    limit and let the oversized reservation through (a TOCTOU). Enforcement
+    must read the committed limit inside the atomic guard instead.
+    """
+    user_id = 123456789
+    manager = _manager(quota_db, user_id, limit_bytes=10_000)
+
+    # Simulate the stale Python snapshot captured before the admin change.
+    stale = dict(manager.resolve_limit(user_id))
+    stale["limit_bytes"] = 10_000
+    stale["unlimited"] = False
+    monkeypatch.setattr(manager, "resolve_limit", lambda _uid, **_kw: dict(stale))
+
+    # Worker B commits a smaller cap after A's snapshot was taken.
+    quota_db.execute(
+        "UPDATE user_storage_quotas SET limit_bytes = ?, unlimited = 0 "
+        "WHERE user_id = ?",
+        (500, user_id),
+    )
+
+    # 1000 fits the stale 10000 snapshot but not the live 500 cap.
+    with pytest.raises(StorageQuotaExceededError):
+        manager.reserve(user_id, 1000)
+    assert manager.pending_bytes(user_id) == 0
+
+
+def test_guard_honors_live_unlimited_override_not_stale_snapshot(
+    quota_db, monkeypatch
+):
+    """A live unlimited grant racing reserve() is honored by the guard."""
+    user_id = 123456789
+    manager = _manager(quota_db, user_id, limit_bytes=100)
+
+    stale = dict(manager.resolve_limit(user_id))
+    stale["limit_bytes"] = 100
+    stale["unlimited"] = False
+    monkeypatch.setattr(manager, "resolve_limit", lambda _uid, **_kw: dict(stale))
+
+    quota_db.execute(
+        "UPDATE user_storage_quotas SET limit_bytes = NULL, unlimited = 1 "
+        "WHERE user_id = ?",
+        (user_id,),
+    )
+
+    token = manager.reserve(user_id, 5000)
+    assert token
+    assert manager.pending_bytes(user_id) == 5000
