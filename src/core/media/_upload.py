@@ -28,9 +28,12 @@ from .exceptions import (
 from src.core.security.hardening import bounded_int
 
 from .security.validation import (
+    ACTIVE_MARKUP_SCAN_LIMIT,
     BLOCKED_EXTENSIONS,
     BLOCKED_MIME_TYPES,
+    contains_active_markup,
     get_validator,
+    is_browser_renderable,
 )
 
 logger = logging.getLogger(__name__)
@@ -222,6 +225,16 @@ class _UploadMixin:
         if not media_type:
             media_type = self._detect_media_type(content_type)
         file_size = len(file_data)
+
+        # SECURITY: the declared type may map to a looser bucket than the type
+        # actually detected from the magic bytes. For example ``text/plain``
+        # is classified as a document (25 MB limit) but a PNG carrying that
+        # declaration is re-labelled ``image/png`` above (10 MB limit). The
+        # caller validated size/allow-list against the *declared* type, so
+        # re-check here with the resolved type; otherwise mislabelling lets a
+        # client pick whichever per-type limit is largest.
+        self._validate_content_type(content_type, media_type)
+        self._validate_file_size(file_size, media_type)
 
         # Blocked extensions
         ext = os.path.splitext(filename.lower())[1]
@@ -502,6 +515,14 @@ class _UploadMixin:
                 content_type = detected_type
                 media_type = self._detect_media_type(content_type)
 
+            # SECURITY: re-check the allow-list and size limit with the type
+            # detected from the bytes. The declared type was validated before
+            # the stream was read (and may be a looser bucket, e.g. the 25 MB
+            # "document" bucket for a mislabelled PNG), so without this the
+            # per-type limits can be chosen by the client's declaration.
+            self._validate_content_type(content_type, media_type)
+            self._validate_file_size(file_size, media_type)
+
             if content_type.lower() in BLOCKED_MIME_TYPES:
                 raise FileTypeError(
                     f"Content type not allowed: {content_type}",
@@ -526,6 +547,29 @@ class _UploadMixin:
                         "content does not match declared MIME type"
                     ],
                 )
+
+            # DEEP: large streamed uploads with a non-XML content type skip
+            # the FileValidator call below (it only runs for in-memory data
+            # or an XML/SVG preview). Scan the leading bytes here so a
+            # polyglot such as PNG magic + ``<svg onload=...>`` cannot be
+            # stored verbatim merely because it arrived as a stream.
+            if is_browser_renderable(content_type):
+                scan_head = file_data
+                if scan_head is None and temp_path:
+                    try:
+                        with open(temp_path, "rb") as _scan_file:
+                            scan_head = _scan_file.read(ACTIVE_MARKUP_SCAN_LIMIT)
+                    except OSError:
+                        scan_head = None
+                        logger.warning(
+                            "Could not inspect streamed upload for active markup"
+                        )
+                if scan_head is None or contains_active_markup(scan_head):
+                    raise FileTypeError(
+                        "File contains active or markup content",
+                        content_type,
+                        ["Media files may not contain scripts or markup"],
+                    )
 
             # Security validation: run the full validator on in-memory data;
             # for streamed XML/SVG payloads sanitize the leading bytes.

@@ -167,6 +167,65 @@ BLOCKED_MIME_TYPES = {
 }
 
 
+# DEEP: active markup / script tokens smuggled into a file that declares a
+# browser-renderable type. ``_sanitize_svg`` only runs when the declared type
+# is exactly ``image/svg+xml``, so a polyglot such as PNG magic bytes followed
+# by ``<svg onload=...>`` declared as ``image/png`` used to sail through the
+# magic-byte check and be stored verbatim. These ASCII sequences have a
+# negligible collision rate inside compressed image/audio bytes (unlike the
+# short binary container signatures whose chance occurrences make a full
+# polyglot detector unsuitable here), so scanning for them does not reject
+# legitimate media.
+_ACTIVE_MARKUP_TOKENS = (
+    b"<svg",
+    b"<script",
+    b"</script",
+    b"<foreignobject",
+    b"<iframe",
+    b"<embed",
+    b"<object",
+    b"javascript:",
+    b"vbscript:",
+    b"data:text/html",
+)
+# HTML/SVG permit whitespace before ``=`` (``onload =...``, ``onerror\t=``),
+# so match the handler name followed by optional whitespace and ``=``.
+_ACTIVE_EVENT_RE = re.compile(
+    rb"\bon(?:load|error|click|mouseover|mouseenter|mousedown|mouseup|"
+    rb"dblclick|focus|blur|change|input|submit|keydown|keyup|keypress|"
+    rb"contextmenu|drag|drop|wheel|scroll|toggle|play|playing|pause|"
+    rb"begin|end|animationstart|animationend|animationiteration|"
+    rb"transitionend|message|storage|hashchange|pageshow|beforeunload)\s*=",
+    re.IGNORECASE,
+)
+# How much of the payload to inspect. 8 MiB covers every default per-type
+# image/audio limit; for larger streams the leading window still catches a
+# polyglot placed near the container header (the common case).
+ACTIVE_MARKUP_SCAN_LIMIT = 8 * 1024 * 1024
+_BROWSER_RENDERABLE_PREFIXES = ("image/", "video/", "audio/")
+
+
+def contains_active_markup(file_data: bytes) -> bool:
+    """True when browser-renderable bytes carry markup/script at any offset.
+
+    Fail closed on inspection errors. Callers gate this on the declared type
+    so inert document uploads (e.g. ``text/plain`` served as a download) are
+    not rejected for legitimately containing markup-like text.
+    """
+    try:
+        head = bytes(file_data[:ACTIVE_MARKUP_SCAN_LIMIT]).lower()
+    except Exception:
+        return True
+    if any(token in head for token in _ACTIVE_MARKUP_TOKENS):
+        return True
+    return _ACTIVE_EVENT_RE.search(head) is not None
+
+
+def is_browser_renderable(content_type: str) -> bool:
+    """Whether ``content_type`` may be rendered inline by a browser."""
+    return (content_type or "").lower().startswith(_BROWSER_RENDERABLE_PREFIXES)
+
+
 class FileValidator:
     """Validates uploaded files for security."""
 
@@ -365,6 +424,18 @@ class FileValidator:
             if not is_safe:
                 logger.warning(f"Unsafe SVG blocked: {reason}")
                 return False, "Unsafe content detected in SVG file", safe_filename
+
+        # DEEP: reject active markup regardless of the declared type. A file
+        # claiming a raster/video/audio type whose bytes carry ``<svg
+        # onload=...>`` is a polyglot that never reaches the SVG sanitizer
+        # above; storing it verbatim reintroduces stored-XSS material.
+        if is_browser_renderable(content_type) and contains_active_markup(file_data):
+            logger.warning("Active markup blocked in browser-renderable upload")
+            return (
+                False,
+                "File contains active or markup content",
+                safe_filename,
+            )
 
         return True, None, safe_filename
 
