@@ -300,26 +300,38 @@ class ChunkedUploadManager:
             logger.error(f"Failed to create temp file: {e}")
             return None
 
-        self._db.execute(
-            """INSERT INTO media_upload_sessions 
-               (id, user_id, filename, content_type, total_size, chunk_size, 
-                total_chunks, uploaded_chunks, uploaded_bytes, status, 
-                created_at, updated_at, expires_at, temp_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?, ?, ?)""",
-            (
-                session_id,
-                user_id,
-                filename,
-                content_type,
-                total_size,
-                chunk_size,
-                total_chunks,
-                now,
-                now,
-                expires_at,
-                temp_path,
-            ),
-        )
+        try:
+            self._db.execute(
+                """INSERT INTO media_upload_sessions 
+                   (id, user_id, filename, content_type, total_size, chunk_size, 
+                    total_chunks, uploaded_chunks, uploaded_bytes, status, 
+                    created_at, updated_at, expires_at, temp_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?, ?, ?)""",
+                (
+                    session_id,
+                    user_id,
+                    filename,
+                    content_type,
+                    total_size,
+                    chunk_size,
+                    total_chunks,
+                    now,
+                    now,
+                    expires_at,
+                    temp_path,
+                ),
+            )
+        except Exception:
+            # The sparse file was pre-allocated before the session row existed,
+            # so cleanup_expired() (which walks session rows) can never reap
+            # it. Unlink it on the failed-insert path or every failed create
+            # leaks a file of up to total_size bytes with no owner. Preserve
+            # the original exception -- callers still observe the DB failure.
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
 
         logger.debug(
             f"Created upload session {session_id} for {filename} ({total_chunks} chunks)"
