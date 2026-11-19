@@ -8,6 +8,7 @@ import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.api.schemas.policy_types import UIText
+from src.api.routes.users.helpers import require_user_token
 
 router = APIRouter()
 
@@ -61,6 +62,7 @@ def _get_devices(user_id: int):
 async def list_devices(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[DeviceResponse]:
+    require_user_token(current_user)
     _, devices = _get_devices(current_user.user_id)
     return [
         DeviceResponse(
@@ -91,6 +93,7 @@ async def rename_device(
     body: RenameDeviceRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth, _ = _get_devices(current_user.user_id)
     if not auth.rename_device(current_user.user_id, int(device_id), body.name):
         raise HTTPException(
@@ -119,6 +122,7 @@ async def revoke_device(
     device_id: SnowflakeID,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth, _ = _get_devices(current_user.user_id)
     if not auth.revoke_device(current_user.user_id, int(device_id)):
         raise HTTPException(
@@ -148,6 +152,7 @@ async def trust_device(
     body: TrustDeviceRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth, _ = _get_devices(current_user.user_id)
     if not auth.trust_device(current_user.user_id, body.fingerprint):
         raise HTTPException(
@@ -172,6 +177,7 @@ async def untrust_device(
     body: TrustDeviceRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth, _ = _get_devices(current_user.user_id)
     if not auth.untrust_device(current_user.user_id, body.fingerprint):
         raise HTTPException(

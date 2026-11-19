@@ -13,6 +13,7 @@ from src.api.schemas.auth import (
     WsTicketResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+from src.api.routes.users.helpers import require_user_token
 from .helpers import _user_to_response
 from .cookies import (
     clear_session_cookie,
@@ -44,6 +45,7 @@ def logout(
     response: Response,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -87,6 +89,7 @@ async def create_ws_ticket(
     Lets the browser authenticate the WebSocket without exposing its
     long-lived bearer token; the ticket is consumed on first use.
     """
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -219,6 +222,7 @@ async def refresh_session(request: Request, response: Response) -> LoginResponse
 async def get_sessions_list(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[SessionResponse]:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -267,6 +271,7 @@ async def get_sessions_list(
 async def revoke_session(
     session_id: SnowflakeID, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -312,6 +317,7 @@ async def revoke_all_sessions(
     response: Response,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> RevokeAllSessionsResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
