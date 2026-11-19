@@ -4,7 +4,7 @@ Admin user management mixin - CRUD and status toggle for admin accounts.
 
 import time
 
-from fastapi import Request, HTTPException
+from fastapi import Request, HTTPException, Query
 from pydantic import BaseModel
 
 from src.api.schemas.common import SuccessResponse
@@ -201,15 +201,89 @@ def _can_manage_role_at(
     return current_pos > role_pos
 
 
+# Write-time hierarchy guard for admin-account mutations. The handlers above
+# authorize against a single read snapshot (``_load_admin_hierarchy``), then
+# write in a separate, autocommitted statement. Without re-asserting the
+# decision at write time, a concurrent role grant to the target (or revocation
+# from the actor) in that window lets the stale, previously-authorized snapshot
+# still mutate an admin that is no longer beneath the actor -- the same TOCTOU
+# the role routes close with compare-and-swap in their WHERE clauses. These
+# subqueries recompute both max positions from the database *as the write
+# executes*. Fixed SQL text; every external value stays a bound parameter.
+_ACTOR_POSITION_SQL = (
+    "(SELECT COALESCE(MAX(r.position), 0) "
+    "FROM admin_roles r "
+    "JOIN admin_role_assignments a ON r.id = a.role_id "
+    "WHERE a.admin_id = ?)"
+)
+
+
+def _hierarchy_write_guard(actor_id: int, target_admin_id: int):
+    """Return a predicate + params re-asserting ``actor_pos > target_pos``.
+
+    Prepend ``WHERE id = ?`` (or an equivalent target-id predicate) to the
+    caller's write; both position values are then recomputed at write time so a
+    promotion/demotion that lands after the read makes the write affect zero
+    rows instead of silently succeeding.
+    """
+    predicate = f"{_ACTOR_POSITION_SQL} > {_ACTOR_POSITION_SQL}"
+    return predicate, (actor_id, target_admin_id)
+
+
+def _write_missed(cursor) -> bool:
+    """True when a guarded write matched no row (lost the hierarchy race).
+
+    Drivers that do not report a row count are treated as an unknown outcome
+    rather than a failure, so observability-only doubles and backends without
+    rowcount support keep their previous behaviour.
+    """
+    rowcount = getattr(cursor, "rowcount", None)
+    return isinstance(rowcount, int) and rowcount <= 0
+
+
+def _assert_hierarchy_at_write(db, actor_id: int, target_admin_id: int) -> None:
+    """Fail closed with 409 if the actor no longer outranks the target.
+
+    A no-op ``UPDATE`` is used as an atomic check because every driver here
+    reports matched-row counts for ``UPDATE`` (unlike ``SELECT``). The target's
+    presence is already guaranteed by ``WHERE id = ?``.
+    """
+    guard_sql, guard_params = _hierarchy_write_guard(actor_id, target_admin_id)
+    cursor = db.execute(
+        f"UPDATE admin_users SET id = id WHERE id = ? AND {guard_sql}",
+        (target_admin_id, *guard_params),
+    )
+    if _write_missed(cursor):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Admin privileges changed concurrently, retry",
+                }
+            },
+        )
+
+
 class AdminUsersMixin(AdminUsersRouterProtocol):
-    async def list_admin_users(self, request: Request):
+    async def list_admin_users(
+        self,
+        request: Request,
+        # SECURITY: bound the page so one poll cannot materialise the entire
+        # admin roster. Mirrors the limits on the role/admin-role listings.
+        limit: int = Query(500, ge=1, le=1000),
+        offset: int = Query(0, ge=0, le=1_000_000),
+    ):
         """List administrator accounts from the canonical admin tables."""
         check_host_restriction(request)
         require_admin_permission(request, "admin.read")
 
         try:
             db = self._get_db()
-            rows = db.fetch_all(_admin_user_query("ORDER BY a.created_at DESC"))
+            rows = db.fetch_all(
+                _admin_user_query("ORDER BY a.created_at DESC LIMIT ? OFFSET ?"),
+                (limit, offset),
+            )
             users = [
                 AdminUserResponse(
                     id=str(_row_value(row, "id", 0)),
@@ -412,6 +486,11 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                     },
                 )
 
+            # Re-assert the hierarchy at write time: a concurrent promotion of
+            # the target (or revocation from the actor) after the read above
+            # must abort the whole mutation instead of using the stale grant.
+            _assert_hierarchy_at_write(db, admin_id, uid)
+
             auth = self._get_auth()
             changed = {}
             if user_data.username:
@@ -555,6 +634,10 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                         }
                     },
                 )
+            # Atomic compare-and-swap: re-check the hierarchy as the write
+            # executes. A concurrent promotion of the target turns this into a
+            # 409 before any of the cascading deletes below run.
+            _assert_hierarchy_at_write(db, admin_id, uid)
             db.execute("DELETE FROM admin_role_assignments WHERE admin_id = ?", (uid,))
             db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (uid,))
             db.execute("DELETE FROM admin_users WHERE id = ?", (uid,))
@@ -623,10 +706,27 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                 )
             current_locked = bool(hierarchy["account_locked"])
             new_status = 0 if current_locked else 1
-            db.execute(
-                "UPDATE auth_users SET account_locked = ? WHERE id = ?",
-                (new_status, uid),
+            # Fold the write-time hierarchy check and a compare-and-swap on the
+            # observed lock state into the UPDATE itself. A concurrent promotion
+            # of the target (or a second toggle) makes this match zero rows, so
+            # neither the account state nor its sessions are changed on a stale
+            # authorization decision.
+            guard_sql, guard_params = _hierarchy_write_guard(admin_id, uid)
+            cursor = db.execute(
+                "UPDATE auth_users SET account_locked = ? "
+                f"WHERE id = ? AND account_locked = ? AND {guard_sql}",
+                (new_status, uid, int(current_locked), *guard_params),
             )
+            if _write_missed(cursor):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": "Admin privileges changed concurrently, retry",
+                        }
+                    },
+                )
             if new_status:
                 db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (uid,))
             # This writes auth_users directly (bypassing auth.update_user), so
