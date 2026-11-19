@@ -10,6 +10,24 @@ from src.core.events.router import (
     get_required_intent as _get_required_intent,
 )
 
+from .intent_decision_cache import IntentDecisionCache
+
+# Shared fan-out memo. A single event is filtered once per recipient
+# connection (and once per worker on the cross-worker replay path), but the
+# answer depends only on (event type, scope class, intent mask). See
+# ``intent_decision_cache`` for the identity/bounding/fail-closed rationale.
+_intent_decision_cache = IntentDecisionCache()
+
+
+def get_intent_decision_cache_stats() -> dict:
+    """Expose hit/miss/size counters for observability and regression tests."""
+    return _intent_decision_cache.stats()
+
+
+def clear_intent_decision_cache() -> None:
+    """Invalidate every cached decision (intent-rule change / test isolation)."""
+    _intent_decision_cache.clear()
+
 
 DEFAULT_INTENTS = GatewayIntent.default_intents()
 ALL_INTENTS = GatewayIntent.all_intents()
@@ -77,6 +95,24 @@ def get_privileged_intents_requested(intents: int) -> list:
     return requested
 
 
+def _compute_filter_decision(event: Event, intents: int) -> bool:
+    """Evaluate the full intent gate (uncached). Caller has validated ``intents``."""
+    # The upstream router classifies any event with no ``server_id`` but a
+    # ``channel_id`` as a DM and consults only the DM intent map. Event types
+    # that exist only in the guild map (artifacts, PlexiSum workbooks,
+    # presence, ...) then fall through to "no intent required" and leak to
+    # clients that never requested that intent. Enforce the guild-scope
+    # requirement here as well, but skip event types that have a legitimate
+    # DM counterpart (typing, messages, reactions) — those are correctly
+    # gated by the DM map and must not additionally require a guild intent.
+    if _get_dm_intent(event.event_type) is None:
+        required = _get_required_intent(event.event_type)
+        if required is not None and not (intents & required):
+            return False
+
+    return bool(_filter_by_intents(event, intents))
+
+
 def filter_event_by_intents(event: Event, intents: int) -> bool:
     """
     Check if an event should be sent based on intents.
@@ -92,23 +128,23 @@ def filter_event_by_intents(event: Event, intents: int) -> bool:
     # session is created, but a resumed/persisted session can carry a stale or
     # corrupted value; a negative, boolean or out-of-range mask must never be
     # treated as "all intents granted" by the bitwise checks downstream.
+    # This check runs BEFORE any cache lookup and is never memoised away.
     if not validate_intents(intents):
         return False
 
-    # The upstream router classifies any event with no ``server_id`` but a
-    # ``channel_id`` as a DM and consults only the DM intent map. Event types
-    # that exist only in the guild map (artifacts, PlexiSum workbooks,
-    # presence, ...) then fall through to "no intent required" and leak to
-    # clients that never requested that intent. Enforce the guild-scope
-    # requirement here as well, but skip event types that have a legitimate
-    # DM counterpart (typing, messages, reactions) — those are correctly
-    # gated by the DM map and must not additionally require a guild intent.
-    if _get_dm_intent(event.event_type) is None:
-        required = _get_required_intent(event.event_type)
-        if required is not None and not (intents & required):
-            return False
+    # Scope class is part of the cache key: the gateway keeps *separate*
+    # guild/DM intent tables, so two events of the same type but different
+    # scope must never share a decision. Omitting this from the key would let
+    # a DM decision be served for a guild event (or vice versa) -- an
+    # audience/intent-gate leak.
+    is_dm = event.server_id is None and event.channel_id is not None
+    cached = _intent_decision_cache.get(event.event_type, is_dm, intents)
+    if cached is not None:
+        return cached
 
-    return bool(_filter_by_intents(event, intents))
+    decision = _compute_filter_decision(event, intents)
+    _intent_decision_cache.put(event.event_type, is_dm, intents, decision)
+    return decision
 
 
 def should_include_message_content(intents: int, is_dm: bool) -> bool:
