@@ -551,25 +551,53 @@ class LifecycleMixin(AuthManagerProtocol):
     def logout_all(self, user_id: int, except_token: Optional[str] = None) -> int:
         invalidate_pattern("token_verify:*")
 
+        # ``except_token`` decides which live session SURVIVES a mass
+        # revocation, so it is a credential and must be treated as one. Every
+        # other token-consuming path here (``logout``, ``refresh_session``,
+        # ``_verify_ws_ticket``) verifies the presented secret against the
+        # stored hash before acting. This path previously used only the
+        # *unverified* id parsed from the token, letting anyone who can
+        # influence the argument keep an arbitrary session id alive by forging
+        # ``<that id>.<any secret>``. Verify both the secret and that the
+        # session actually belongs to ``user_id`` before honouring the
+        # exception; a forged/mismatched token fails closed to "revoke all".
+        except_session_id: Optional[int] = None
         if except_token:
             parsed = parse_token(except_token)
             if parsed and parsed["token_type"] == "session":
-                count_row = self._db.fetch_one(
-                    "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND id != ? AND revoked = 0",
-                    (user_id, parsed["id"]),
+                keep_row = self._db.fetch_one(
+                    "SELECT user_id, token_hash FROM auth_sessions WHERE id = ?",
+                    (parsed["id"],),
                 )
-                self._db.execute(
-                    "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND id != ?",
-                    (user_id, parsed["id"]),
-                )
-                try:
-                    from src.core.events.gateway_emit import emit_security_alert
+                if (
+                    keep_row
+                    and keep_row["user_id"] == user_id
+                    and verify_token_hash(parsed["secret"], keep_row["token_hash"])
+                ):
+                    except_session_id = parsed["id"]
+                else:
+                    logger.warning(
+                        "logout_all: rejected unverified except_token for user %s",
+                        user_id,
+                    )
 
-                    emit_security_alert(user_id, "session_revoked")
-                except Exception as exc:
-                    # Sessions are already revoked; the alert is advisory.
-                    logger.debug(f"session_revoked alert not emitted: {exc}")
-                return count_row["cnt"] if count_row else 0
+        if except_session_id is not None:
+            count_row = self._db.fetch_one(
+                "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND id != ? AND revoked = 0",
+                (user_id, except_session_id),
+            )
+            self._db.execute(
+                "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND id != ?",
+                (user_id, except_session_id),
+            )
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(user_id, "session_revoked")
+            except Exception as exc:
+                # Sessions are already revoked; the alert is advisory.
+                logger.debug(f"session_revoked alert not emitted: {exc}")
+            return count_row["cnt"] if count_row else 0
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND revoked = 0",
             (user_id,),
