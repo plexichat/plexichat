@@ -97,10 +97,18 @@ class LastChatService:
         """
         now = self._get_timestamp()
 
-        # Verify user is a participant
-        if self._participant_svc and not self._participant_svc.is_participant(
-            conversation_id, user_id
-        ):
+        # Authorization MUST fail closed. This check used to be guarded by
+        # ``if self._participant_svc and ...``: when no participation checker
+        # was available (messaging module not initialised, or a manager
+        # implementation without ``_participant_svc``), it was silently skipped
+        # and any user could point their last-chat state at a conversation they
+        # do not belong to (poisoning recent-chat/last-message restoration with
+        # an arbitrary conversation/message id). Every other messaging write
+        # path denies when the checker is missing (see forwarding.py). Mirror
+        # that policy: no checker => no save.
+        if not self._participant_svc:
+            raise PermissionError("Cannot verify conversation participation")
+        if not self._participant_svc.is_participant(conversation_id, user_id):
             raise PermissionError("Not a participant in this conversation")
 
         # Upsert the last chat record
