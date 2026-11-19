@@ -30,7 +30,7 @@ def _resolve_recipients(
     (``channels.view`` permission) receive the event — never the entire
     member list, which would leak message content to members barred from
     private/restricted channels. Falls back to conversation participants
-    for DM/group conversations.
+    ONLY for DM/group conversations.
 
     ``server_id_hint`` lets system actors that are not server members
     (AutoMod, background scans — user id 0 or a bot id that may not be a
@@ -43,20 +43,23 @@ def _resolve_recipients(
     """
     user_ids: list = []
     server_id = None
+    is_server_channel = False
 
     if servers_mod:
         try:
             channel = servers_mod.get_channel(channel_id, actor_id)
         except Exception:
             channel = None
-        if channel:
+        if channel is not None:
+            is_server_channel = True
             server_id = getattr(channel, "server_id", None)
         elif server_id_hint:
             # System-actor path: the actor cannot pass the membership check
             # inside get_channel, so the caller-supplied scope is used purely
             # as the filter domain — recipients are still verified per member.
+            is_server_channel = True
             server_id = int(server_id_hint)
-        if server_id:
+        if is_server_channel and server_id:
             try:
                 members = servers_mod.get_member_user_ids(server_id)
             except Exception:
@@ -75,8 +78,16 @@ def _resolve_recipients(
                 except Exception as member_error:
                     logger.debug(f"broadcast member lookup failed: {member_error}")
                     continue
+            # An empty permission-filtered audience is authoritative. Falling
+            # back to the raw conversation participants here would reconstruct
+            # the server-wide audience for a restricted channel the members
+            # cannot view — the exact leak this filter exists to prevent.
+            # (Mirrors core.events.gateway_emit.resolve_channel_event_recipients.)
 
-    if not user_ids and messaging:
+    # The participant fallback is for DMs/groups ONLY. A server channel that
+    # resolved to zero viewers must broadcast to nobody, not to the whole
+    # conversation — a failed/empty permission walk must fail closed.
+    if not user_ids and messaging and not is_server_channel:
         participants_conversation_id = (
             conversation_id if conversation_id is not None else channel_id
         )
@@ -87,6 +98,21 @@ def _resolve_recipients(
             user_ids = [p.user_id for p in (participants or [])]
         except Exception as participant_error:
             logger.debug(f"broadcast participant lookup failed: {participant_error}")
+
+        # Reuse the router's two-way block filter: a blocked party must not
+        # receive the actor's message events just because this emitter hands
+        # the dispatcher an explicit user_ids list instead of routing by
+        # server_id. Fails open only when the relationship source is absent,
+        # matching the router's own behaviour.
+        if user_ids:
+            try:
+                from src.core.events.gateway_emit import (
+                    _dm_participants_without_blocks,
+                )
+
+                user_ids = _dm_participants_without_blocks(user_ids, actor_id)
+            except Exception as filter_error:
+                logger.debug(f"DM block filter unavailable: {filter_error}")
 
     return user_ids, server_id
 
