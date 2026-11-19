@@ -248,6 +248,11 @@ CREATE INDEX IF NOT EXISTS idx_srv_events_server ON srv_scheduled_events(server_
 CREATE INDEX IF NOT EXISTS idx_srv_events_status ON srv_scheduled_events(status);
 CREATE INDEX IF NOT EXISTS idx_srv_events_start ON srv_scheduled_events(start_time);
 CREATE INDEX IF NOT EXISTS idx_srv_events_parent ON srv_scheduled_events(parent_event_id);
+-- The server event list is also read without a status filter (every event,
+-- paged by start_time). The (server_id, status, start_time) index cannot give
+-- an ordered start_time when status is unconstrained, so it temp-sorts; this
+-- leading-prefix index serves that path in one ordered scan.
+CREATE INDEX IF NOT EXISTS idx_srv_events_server_start ON srv_scheduled_events(server_id, start_time);
 
 -- Event RSVPs table
 CREATE TABLE IF NOT EXISTS srv_event_rsvps (
@@ -264,6 +269,9 @@ CREATE TABLE IF NOT EXISTS srv_event_rsvps (
 -- Event RSVPs indexes
 CREATE INDEX IF NOT EXISTS idx_srv_rsvps_event ON srv_event_rsvps(event_id);
 CREATE INDEX IF NOT EXISTS idx_srv_rsvps_user ON srv_event_rsvps(user_id);
+-- RSVP lists are paged oldest-first by created_at; the single-column event
+-- index finds the rows but forces a temporary sort B-tree on every read.
+CREATE INDEX IF NOT EXISTS idx_srv_event_rsvps_event_created ON srv_event_rsvps(event_id, created_at);
 
 -- Server templates table
 CREATE TABLE IF NOT EXISTS srv_templates (
