@@ -25,6 +25,7 @@ from .constants import (
     is_safe_avatar_identifier,
 )
 from .errors import AvatarValidationError
+from src.core.security.hardening import HardeningViolation, parse_id
 
 _svg_guard = cast(Any, importlib.import_module("src.core.avatars.manager.svg_guard"))
 _config_mod = cast(Any, importlib.import_module("utils.config"))
@@ -158,17 +159,23 @@ def is_serve_safe(
 
 
 def parse_server_id(server_id: str) -> int:
-    """Parse and validate a server id path parameter.
+    """Parse a server id path parameter through the canonical snowflake gate.
 
-    Rejects non-integers, negatives and path-traversal markers so server id
-    values can never escape their intended namespace.
+    Bare ``int()`` accepted Unicode decimal homoglyphs (``"１２"`` -> 12), PEP
+    515 separators (``"1_2"`` -> 12), a leading sign/zero, ``0`` and arbitrarily
+    large integers. Those spellings reached icon storage paths and permission
+    checks as a *different* identifier than the caller wrote, and disagreed with
+    every other route boundary, which parses ids with ``parse_id``. Route it
+    through the shared ASCII-only, 64-bit-bounded gate so validation and every
+    downstream consumer agree on a single interpretation of the token.
     """
     try:
-        sid = int(server_id)
-    except (ValueError, TypeError):
-        raise AvatarValidationError("Invalid server ID")
-    if sid < 0:
-        raise AvatarValidationError("Invalid server ID")
+        sid = parse_id(server_id, "server ID")
+    except (HardeningViolation, TypeError, ValueError) as exc:
+        raise AvatarValidationError("Invalid server ID") from exc
+    # Defence in depth: the canonical id is now a plain ASCII decimal string,
+    # but keep the traversal guard so a future parser change cannot reintroduce
+    # a separator or null byte into an icon storage path.
     if not is_safe_avatar_identifier(str(sid)):
         raise AvatarValidationError("Invalid server ID")
     return sid
