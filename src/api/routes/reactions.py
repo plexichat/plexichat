@@ -3,7 +3,7 @@ Reaction routes - Message reaction endpoints.
 """
 
 from src.core.reactions.manager.bounds import validate_route_emoji
-from src.core.security.hardening import parse_id
+from src.core.security.hardening import SNOWFLAKE_MAX, bounded_int, parse_id
 
 import asyncio
 
@@ -794,7 +794,23 @@ async def get_reaction_users(
             )
 
         try:
-            after_id = int(after) if after else None
+            # ``after`` is a user-id pagination cursor, so it must pass the
+            # same ASCII-only snowflake gate as ``message_id`` above. Bare
+            # ``int()`` accepted Unicode digit homoglyphs ("٤٢", "４２"), PEP
+            # 515 underscores ("1_2" -> 12), negatives and values past
+            # 2**63-1. Those then reached the ``user_id > ?`` cursor predicate
+            # with a different meaning than the raw token, and a value above
+            # the SQLite INTEGER range raised an OverflowError at bind time
+            # (surfacing as a 500), so the same bytes were interpreted
+            # differently by the boundary and the manager. Route the cursor
+            # through the shared bounded parser so validation and consumption
+            # agree. Keep the lower bound at 0 to preserve the historical
+            # "0 means no cursor" behaviour.
+            after_id = (
+                bounded_int(after, "after", minimum=0, maximum=SNOWFLAKE_MAX)
+                if after
+                else None
+            )
         except (ValueError, TypeError):
             logger.warning(f"Invalid 'after' ID format for reaction users: {after}")
             raise HTTPException(
