@@ -9,7 +9,6 @@ import math
 from typing import Optional
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
     require_admin_permission,
 )
 from src.api.schemas.common import ErrorResponse
@@ -18,6 +17,16 @@ import utils.licensing as licensing_module
 from src.core.admin.logging import AdminLogEntry, get_admin_logger
 
 router = APIRouter(prefix="/license", tags=["Admin", "Licensing"])
+
+# The license surface is privileged: the status/feature reads expose the
+# instance id, validation result, expiry and allowed-host list, and the
+# validation endpoint accepts arbitrary license payloads. Authentication alone
+# used to be enough for those three reads (they called ``get_admin_from_token``,
+# which only validates the session), so any admin holding a valid session --
+# including a read-only/low-privilege role -- could enumerate all of it. A
+# single scope, shared with the mutation endpoints, now gates every license
+# route so the whole module has one authorization boundary that cannot drift.
+_LICENSE_SCOPE = "admin.license.manage"
 
 
 def _expiry_date_iso(expiry_ts: float) -> str:
@@ -98,7 +107,7 @@ async def get_license_status(request: Request):
     Retrieve current license status and validation state.
     """
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    require_admin_permission(request, _LICENSE_SCOPE)
 
     try:
         status_data = licensing_module.to_dict()
@@ -152,7 +161,7 @@ async def get_license_features(request: Request):
     Retrieve feature matrix showing all licensed features and their state.
     """
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    require_admin_permission(request, _LICENSE_SCOPE)
 
     try:
         features = [
@@ -210,7 +219,7 @@ async def validate_license_key(request: Request, body: LicenseKey):
     Validate a proposed license payload without applying it.
     """
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    require_admin_permission(request, _LICENSE_SCOPE)
 
     try:
         license_payload = body.license_key
@@ -258,7 +267,7 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     stays idempotent for the self-test pipeline.
     """
     check_host_restriction(request)
-    _admin_id = require_admin_permission(request, "admin.license.manage")
+    _admin_id = require_admin_permission(request, _LICENSE_SCOPE)
 
     # Capture current state before applying
     before_instance = licensing_module.get_instance_id()
@@ -385,7 +394,7 @@ async def force_validate_license(request: Request):
     current state; only a real, broken license triggers a 400.
     """
     check_host_restriction(request)
-    _admin_id = require_admin_permission(request, "admin.license.manage")
+    _admin_id = require_admin_permission(request, _LICENSE_SCOPE)
 
     if licensing_module.is_free_tier():
         _audit_license_action(

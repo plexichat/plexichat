@@ -142,7 +142,7 @@ class TestLicenseStatusIdContract:
         app.include_router(licensing_routes.router, prefix="/api/v1/admin")
         patchers = (
             patch.object(licensing_routes, "check_host_restriction"),
-            patch.object(licensing_routes, "get_admin_from_token", return_value=1),
+            patch.object(licensing_routes, "require_admin_permission", return_value=1),
             patch.object(
                 licensing_routes.licensing_module,
                 "to_dict",
