@@ -20,6 +20,17 @@ from .boundaries import (
 from .intents import validate_intents
 
 
+#: Hard ceiling on sessions retained in this worker's local map. Sessions
+#: must outlive their socket so a client can RESUME, and ``remove_connection``
+#: deliberately does not drop them. ``cleanup_stale_sessions`` exists but is
+#: only ever called from tests (no production janitor), so without a cap a
+#: single ticket-holding client can grow ``_sessions`` and its replay buffers
+#: without bound by churning IDENTIFY on short-lived sockets. Over the cap we
+#: evict the least-recently-active session; denying an occasional RESUME is the
+#: safe direction versus unbounded memory growth.
+MAX_LOCAL_SESSIONS = 8192
+
+
 @dataclass
 class Session:
     """Represents a resumable gateway session."""
@@ -167,6 +178,7 @@ class SessionManager:
         heartbeat_interval_ms: int = 45000,
         session_timeout_ms: int = 60000,
         max_connections_per_user: int = 5,
+        max_local_sessions: int = MAX_LOCAL_SESSIONS,
     ):
         """
         Initialize the session manager.
@@ -175,10 +187,18 @@ class SessionManager:
             heartbeat_interval_ms: Heartbeat interval in milliseconds
             session_timeout_ms: Session timeout for resume in milliseconds
             max_connections_per_user: Maximum concurrent connections per user
+            max_local_sessions: Hard cap on locally retained resumable sessions
         """
         self._heartbeat_interval_ms = heartbeat_interval_ms
         self._session_timeout_ms = session_timeout_ms
         self._max_connections_per_user = max_connections_per_user
+        # Corrupted/negative config must not disable the cap.
+        try:
+            self._max_local_sessions = max(
+                1, min(int(max_local_sessions), MAX_LOCAL_SESSIONS)
+            )
+        except (TypeError, ValueError, OverflowError):
+            self._max_local_sessions = MAX_LOCAL_SESSIONS
 
         self._connections: Dict[str, Connection] = {}
         self._sessions: Dict[str, Session] = {}
@@ -220,6 +240,70 @@ class SessionManager:
             )
         except Exception as exc:
             logger.debug(f"Valkey session persistence failed: {exc}")
+
+    def _delete_shared_session(self, session_id: str) -> None:
+        """Drop a session's cross-worker record (best effort, no lock held)."""
+        if not valkey_available():
+            return
+        client = get_valkey_client()
+        if not client:
+            return
+        try:
+            client.delete(self._session_key(session_id))
+        except Exception as exc:
+            logger.debug(f"Valkey session removal failed: {exc}")
+
+    def _evict_sessions_if_needed(self) -> None:
+        """Keep the local session map under ``_max_local_sessions``.
+
+        Called after every insertion (new IDENTIFY or cross-worker hydration).
+        First drop sessions that are past the resume timeout *and* have no
+        live local connection — those can never be resumed and are pure leak.
+        If that is not enough, evict the least-recently-active sessions. The
+        shared record is deleted alongside each eviction so a sibling worker
+        (or a later lookup here) cannot immediately rehydrate the same state
+        and defeat the cap. Valkey I/O is done outside the lock.
+        """
+        with self._lock:
+            if len(self._sessions) <= self._max_local_sessions:
+                return
+            now_mono = time.monotonic()
+            now_epoch = time.time()
+            timeout = self._session_timeout_ms / 1000
+            stale = [
+                sid
+                for sid, sess in self._sessions.items()
+                if sess.connection_id not in self._connections
+                and (
+                    now_mono - sess.last_activity > timeout
+                    or (
+                        sess.last_activity_epoch
+                        and now_epoch - sess.last_activity_epoch > timeout
+                    )
+                )
+            ]
+            evicted = []
+            for sid in stale:
+                if len(self._sessions) <= self._max_local_sessions:
+                    break
+                self._sessions.pop(sid, None)
+                evicted.append(sid)
+            # Still over the cap: shed the coldest sessions regardless of
+            # resumability. Bounded memory wins over an unlikely late RESUME.
+            while len(self._sessions) > self._max_local_sessions:
+                victim = min(
+                    self._sessions,
+                    key=lambda sid: self._sessions[sid].last_activity,
+                )
+                self._sessions.pop(victim, None)
+                evicted.append(victim)
+        for sid in evicted:
+            self._delete_shared_session(sid)
+        if evicted:
+            logger.warning(
+                f"Session map at cap ({self._max_local_sessions}); evicted "
+                f"{len(evicted)} stale/idle sessions"
+            )
 
     def _load_shared_session(self, session_id: str) -> Optional[Session]:
         """Hydrate a session created by another worker, if it is still valid."""
@@ -442,6 +526,9 @@ class SessionManager:
         # Register in Valkey since we now know the user_id
         self._valkey_register_connection(user_id, connection.connection_id)
         self._persist_session(session)
+        # Sessions outlive their socket for RESUME; nothing removes them in
+        # production, so enforce the hard cap on every insertion.
+        self._evict_sessions_if_needed()
 
         connection.set_identified(user_id, session_id, intents)
         return session
@@ -455,19 +542,16 @@ class SessionManager:
         if shared is not None:
             with self._lock:
                 self._sessions[session_id] = shared
+            # Hydration inserts into the same map; cap it here too so an
+            # attacker cannot grow the map by probing many valid ids.
+            self._evict_sessions_if_needed()
         return shared
 
     def remove_session(self, session_id: str) -> Optional[Session]:
         """Remove a local and shared session."""
         with self._lock:
             session = self._sessions.pop(session_id, None)
-        if valkey_available():
-            client = get_valkey_client()
-            if client:
-                try:
-                    client.delete(self._session_key(session_id))
-                except Exception as exc:
-                    logger.debug(f"Valkey session removal failed: {exc}")
+        self._delete_shared_session(session_id)
         return session
 
     def can_resume_session(self, session_id: str, user_id: int) -> bool:
@@ -662,6 +746,11 @@ class SessionManager:
 
             for session_id in stale_ids:
                 self._sessions.pop(session_id, None)
+
+        # Drop the shared copies too, outside the lock, so a sibling worker
+        # cannot rehydrate a session just declared stale here.
+        for session_id in stale_ids:
+            self._delete_shared_session(session_id)
 
         return len(stale_ids)
 

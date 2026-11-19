@@ -291,7 +291,13 @@ def validate_handshake(websocket: Any, is_selftest: bool = False) -> None:
                 "Too many gateway handshake attempts", HANDSHAKE_THROTTLE_CLOSE_CODE
             )
 
-    headers = getattr(websocket, "headers", {})
+    # FAIL CLOSED on missing metadata: ``_UNINSPECTABLE`` flows through the
+    # readers below and is treated as a rejection. Using ``{}``/``None`` as the
+    # getattr default here used to turn a transport without these attributes
+    # into "no browser Origin / no handshake token", silently opening the
+    # cross-site-hijacking gate. A handshake whose inputs cannot be read must
+    # never be waved through.
+    headers = getattr(websocket, "headers", _UNINSPECTABLE)
     raw_origin = _get_header(headers, "origin")
 
     # Origin gate (skipped only for an authenticated local self-test request).
@@ -305,7 +311,7 @@ def validate_handshake(websocket: Any, is_selftest: bool = False) -> None:
     # well-formed ticket. The authoritative verification still happens at
     # IDENTIFY; this only rejects malformed values at the earliest boundary.
     # This check is never skipped, including for self-test connections.
-    query = getattr(websocket, "query_params", None)
+    query = getattr(websocket, "query_params", _UNINSPECTABLE)
     raw_token = _get_query_value(query, "token")
     if raw_token is _UNINSPECTABLE:
         raise HandshakeRejected("Handshake query could not be inspected")
