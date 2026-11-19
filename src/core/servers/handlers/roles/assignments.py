@@ -15,6 +15,7 @@ from ...exceptions import (
 )
 from ...permission_utils import (
     can_manage_role,
+    can_manage_member,
     has_permission,
     validate_permission_dict,
     check_permissions_grantable,
@@ -23,6 +24,42 @@ from .protocol import RoleHandlerProtocol
 
 
 class RoleAssignmentMixin(RoleHandlerProtocol):
+    def _guard_member_target(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        member_user_id: SnowflakeID,
+    ) -> None:
+        """Refuse role edits on members the actor cannot manage.
+
+        ``assign_role`` / ``remove_role`` historically checked only the
+        position of the *role* being changed (``can_manage_role``) and never
+        the rank of the *member* whose roles were being edited. That let a
+        holder of ``members.manage_roles`` strip or attach roles on a member
+        outranking them -- and on the server owner -- whenever the role itself
+        sat below the actor's highest role. Every other member-target operation
+        (kick/ban/update, channel overrides, voice moderation) already applies
+        ``can_manage_member``; this mirrors that rule. Self-service changes are
+        left allowed.
+        """
+        # Self-service role changes (adding/removing a role on yourself) are
+        # legitimate; the hierarchy rule only governs changes to other members.
+        if int(user_id) == int(member_user_id):
+            return
+
+        server = self.manager.get_server(server_id, user_id)
+        is_owner = server is not None and server.owner_id == user_id
+        target_is_owner = server is not None and server.owner_id == member_user_id
+        if target_is_owner:
+            raise RoleHierarchyError("Cannot manage the roles of the server owner")
+
+        user_roles = self.manager._get_member_role_rows(server_id, user_id)
+        target_roles = self.manager._get_member_role_rows(server_id, member_user_id)
+        if not can_manage_member(user_roles, target_roles, is_owner, target_is_owner):
+            raise RoleHierarchyError(
+                "Cannot manage the roles of a member at or above your own rank"
+            )
+
     def get_member_roles(
         self, server_id: SnowflakeID, member_user_id: SnowflakeID
     ) -> List[Role]:
@@ -56,6 +93,11 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         member = self.manager.get_member(server_id, member_user_id)
         if not member:
             raise MemberNotFoundError("Member not found")
+
+        # The role-position check below is not enough on its own: changing a
+        # member's roles is a member-target action and must respect that
+        # member's rank (and never target the owner).
+        self._guard_member_target(user_id, server_id, member_user_id)
 
         user_roles = self.manager._get_member_role_rows(server_id, user_id)
         server = self.manager.get_server(server_id, user_id)
@@ -124,6 +166,11 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         member = self.manager.get_member(server_id, member_user_id)
         if not member:
             raise MemberNotFoundError("Member not found")
+
+        # The role-position check below is not enough on its own: changing a
+        # member's roles is a member-target action and must respect that
+        # member's rank (and never target the owner).
+        self._guard_member_target(user_id, server_id, member_user_id)
 
         user_roles = self.manager._get_member_role_rows(server_id, user_id)
         server = self.manager.get_server(server_id, user_id)
