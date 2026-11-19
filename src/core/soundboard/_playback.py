@@ -12,6 +12,8 @@ from typing import Any, Callable, List, Optional
 import utils.config as config
 import utils.logger as logger
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
 from .models import Sound, SoundPlayback
 from .exceptions import (
     ChannelNotFoundError,
@@ -20,6 +22,31 @@ from .exceptions import (
     SoundCooldownError,
     SoundNotFoundError,
 )
+
+
+# Hard ceiling for discovery pages at the core boundary. The HTTP layer may
+# validate a route's ``limit`` query param, but these manager methods are
+# public internal APIs called directly by other modules and tests that bypass
+# those schemas. Bound both directions here: a huge value would otherwise
+# force SQLite to materialise the entire usage/history result set.
+MAX_DISCOVERY_LIMIT = 200
+
+
+def _bounded_sound_limit(value: Any, default: int = 10) -> int:
+    """Coerce a caller-supplied page limit into ``[1, MAX_DISCOVERY_LIMIT]``.
+
+    ``bounded_int`` rejects bools, fractions, Unicode digit homoglyphs and
+    absurd integers so type confusion cannot smuggle an unbounded value
+    through. Invalid input fails closed to a single row (the historical
+    ``max(1, limit)`` floor), never an unlimited page.
+    """
+    if value is None:
+        return default
+    try:
+        number = bounded_int(value, "limit", minimum=-(2**63), maximum=2**63 - 1)
+    except HardeningViolation:
+        return 1
+    return max(1, min(number, MAX_DISCOVERY_LIMIT))
 
 
 # Attributes/methods provided by the composing SoundboardManager. Declared as
@@ -461,7 +488,7 @@ class SoundboardPlaybackMixin(_PlaybackContract):
                GROUP BY s.id
                ORDER BY usage_count DESC
                LIMIT ?""",
-            (server_id, needle, max(1, limit)),
+            (server_id, needle, _bounded_sound_limit(limit)),
         )
         return [self._row_to_sound(row) for row in rows]
 
@@ -475,7 +502,7 @@ class SoundboardPlaybackMixin(_PlaybackContract):
                GROUP BY s.id
                ORDER BY usage_count DESC
                LIMIT ?""",
-            (server_id, max(1, limit)),
+            (server_id, _bounded_sound_limit(limit)),
         )
         return [self._row_to_sound(row) for row in rows]
 
@@ -491,7 +518,7 @@ class SoundboardPlaybackMixin(_PlaybackContract):
                GROUP BY s.id
                ORDER BY last_used DESC
                LIMIT ?""",
-            (server_id, user_id, max(1, limit)),
+            (server_id, user_id, _bounded_sound_limit(limit)),
         )
         return [self._row_to_sound(row) for row in rows]
 

@@ -10,6 +10,8 @@ from typing import Any, Optional, List
 
 import utils.logger as logger
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
 from .models import (
     StickerPack,
     Sticker,
@@ -23,6 +25,35 @@ from .exceptions import (
     MessageNotFoundError,
     PermissionDeniedError,
 )
+
+
+# Hard, non-overridable ceiling for discovery/list pages at the core boundary.
+# The HTTP layer validates ``limit`` with Pydantic (e.g. sticker suggestions is
+# ``ge=1, le=20``), but these manager methods are public internal APIs called
+# directly by other modules and by tests that bypass those schemas. A limit
+# routed straight into SQL ``LIMIT ?`` is dangerous in both directions:
+# ``LIMIT -1`` means *unlimited* in SQLite, and a huge value forces the whole
+# result set to be materialised. Both directions are bounded here so the
+# invariant holds regardless of which caller reaches the manager.
+MAX_DISCOVERY_LIMIT = 200
+
+
+def _bounded_listing_limit(value: Any, default: int = 10) -> int:
+    """Coerce a caller-supplied page limit into ``[0, MAX_DISCOVERY_LIMIT]``.
+
+    ``bounded_int`` rejects bools, fractions, Unicode digit homoglyphs and
+    absurd integers, so type confusion cannot smuggle an unbounded value
+    through. Negative / oversized / unparsable limits fail closed to an empty
+    page (``LIMIT 0``), preserving the historical negative-limit behaviour
+    asserted by the regression tests while removing the unbounded case.
+    """
+    if value is None:
+        return default
+    try:
+        number = bounded_int(value, "limit", minimum=-(2**63), maximum=2**63 - 1)
+    except HardeningViolation:
+        return 0
+    return max(0, min(number, MAX_DISCOVERY_LIMIT))
 
 
 # Attributes/methods provided by the composing StickerManager. Declared as a
@@ -84,9 +115,9 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
 
     def get_popular_stickers(self, limit: int = 10) -> List[Sticker]:
         """Return the top-N most-used stickers across all public/personal packs."""
-        # Clamp from below: SQLite treats LIMIT -1 as unlimited, so a
-        # negative limit would bypass the page cap and dump the whole table.
-        limit = max(0, limit)
+        # Bounded at the core boundary (see _bounded_listing_limit): callers
+        # that bypass the API schema cannot turn this into an unbounded read.
+        limit = _bounded_listing_limit(limit)
         rows = self._db.fetch_all(
             """SELECT s.*, COUNT(u.id) as usage_count
                FROM sticker_stickers s
@@ -100,9 +131,8 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
 
     def get_recent_stickers(self, user_id: int, limit: int = 10) -> List[Sticker]:
         """Return the distinct stickers `user_id` used most recently."""
-        # Clamp from below: SQLite treats LIMIT -1 as unlimited, so a
-        # negative limit would bypass the page cap and dump the whole history.
-        limit = max(0, limit)
+        # Bounded at the core boundary (see _bounded_listing_limit).
+        limit = _bounded_listing_limit(limit)
         rows = self._db.fetch_all(
             """SELECT s.*, COUNT(u.id) as usage_count, MAX(u.used_at) as last_used
                FROM sticker_stickers s
@@ -121,9 +151,8 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
         """Free-text search across name + tag columns."""
         if not query or not query.strip():
             return []
-        # Clamp from below: SQLite treats LIMIT -1 as unlimited, so a
-        # negative limit would bypass the page cap and dump every match.
-        limit = max(0, limit)
+        # Bounded at the core boundary (see _bounded_listing_limit).
+        limit = _bounded_listing_limit(limit)
         # Escape LIKE metacharacters so ``%``/``_``/``\`` are matched
         # literally instead of acting as wildcards (docs/admin-hardening.md).
         escaped = (
@@ -251,10 +280,15 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
                 return []
             if not self._is_server_member(user_id, server_id):
                 server_id = None
-        max_suggestions = limit or self._config.get("max_suggestions", 10)
-        # Clamp from below: a negative limit would otherwise flow into
-        # ``suggestions[:limit]`` and return every match but the last.
-        max_suggestions = max(0, max_suggestions)
+        # Only fall back to config when the caller supplied no limit at all;
+        # ``limit or ...`` used to treat an explicit 0 as "use default". Route
+        # the resolved value through the same core bound so a direct caller
+        # cannot bypass the API schema's ``le=20`` with an oversized value.
+        if limit is None:
+            max_suggestions = self._config.get("max_suggestions", 10)
+        else:
+            max_suggestions = limit
+        max_suggestions = _bounded_listing_limit(max_suggestions, default=10)
         content_lower = content.lower()
         words = set(re.findall(r"\w+", content_lower))
         suggestions = []
