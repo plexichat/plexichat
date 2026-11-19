@@ -90,16 +90,19 @@ def _normalize_sql(statement: str) -> str:
 # code paths are checked against this denylist in tests to keep the
 # self-test permanently non-destructive.
 #
-# The unscoped-DELETE pattern must run to the *logical* end of the statement.
-# A bare ``DELETE FROM t`` is the obvious case, but ``DELETE FROM t;`` or
-# ``DELETE FROM t; SELECT 1`` is just as destructive. Comments have already
-# been removed by ``_normalize_sql``; allow a statement terminator (and any
-# following statements) after the table name -- but not a WHERE clause.
+# A DELETE is only safe when it carries a WHERE scope restriction. Matching
+# the statement's *end* is not enough: ``DELETE FROM t RETURNING *``,
+# ``DELETE FROM t ORDER BY id LIMIT 10`` and ``DELETE FROM t USING other``
+# are whole-table wipes that no longer end at the table name, so an
+# end-anchored ``DELETE FROM t$`` denylist silently accepts them. Key the
+# check on the presence of a real WHERE clause instead; a trailing comment
+# that once held a WHERE has already been removed by ``_normalize_sql``.
+_UNSCOPED_DELETE_RE = re.compile(
+    r"\bDELETE\s+FROM\s+[\"'`]?\w+[\"'`]?", re.IGNORECASE
+)
+_SCOPE_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
+
 _FORBIDDEN_PATTERNS = (
-    re.compile(
-        r"DELETE\s+FROM\s+[\"'`]?\w+[\"'`]?\s*(?:;.*)?$",
-        re.IGNORECASE,
-    ),  # unscoped whole-table wipe (with optional trailing statements)
     re.compile(r"DROP\s+TABLE", re.IGNORECASE),
     re.compile(r"TRUNCATE", re.IGNORECASE),
 )
@@ -112,9 +115,17 @@ def assert_non_destructive(statement: str) -> None:
     can never destroy shared data on a live deployment. Trailing semicolons
     and SQL comments are ignored so they cannot be used to disguise an
     otherwise unscoped DELETE; comments used *between* keywords are also
-    normalized away so a comment can never act as a keyword separator.
+    normalized away so a comment can never act as a keyword separator. A
+    DELETE is accepted only with a genuine WHERE clause -- trailing clauses
+    such as RETURNING / USING / ORDER BY / LIMIT do not scope the delete.
     """
     normalized = _normalize_sql(statement)
+    if _UNSCOPED_DELETE_RE.search(normalized) and not _SCOPE_WHERE_RE.search(
+        normalized
+    ):
+        raise ValueError(
+            f"Self-test cleanup refuses destructive statement: {normalized[:120]}"
+        )
     for pattern in _FORBIDDEN_PATTERNS:
         if pattern.search(normalized):
             raise ValueError(
