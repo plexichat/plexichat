@@ -11,10 +11,11 @@ cannot reach config or licensing get a best-effort `MISCONFIGURED`/`DISABLED`
 state rather than an exception.
 """
 
-import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
+
+from src.core.bounded_lru import BoundedLRU
 
 
 class CapabilityState(str, Enum):
@@ -451,14 +452,47 @@ def capability_allows_artifact(
 # capability gates call ``get_capability(feature)`` on every request; the
 # underlying license/config lookups are already cached, but re-running the
 # evaluator (and, for voice transcription, the provider availability probe)
-# on each call is still avoidable work. A short TTL bounds staleness after a
-# license hot-swap or config reload to a couple of seconds.
-_capability_cache: Dict[str, tuple[float, CapabilityInfo]] = {}
+# on each call is still avoidable work.
+#
+# The cache is a bounded LRU (entry + byte cap + TTL), not a plain dict. A bare
+# ``dict`` kept every feature name ever evaluated forever: TTL was only
+# checked on access, so a capability that stopped being asked about (a renamed
+# artifact, a removed suite manifest) stayed resident indefinitely, and a
+# flood of distinct feature strings could grow the process without limit.
+# A short TTL still bounds staleness after a license hot-swap/config reload;
+# ``clear_capability_cache`` remains the authoritative full-invalidation hook
+# used by the licensing admin routes. Eviction never weakens the gate: a
+# missing entry is recomputed from the live license/config, and unknown or
+# failing features resolve fail-closed to MISCONFIGURED.
 _CAPABILITY_CACHE_TTL_SECONDS = 5.0
+_CAPABILITY_CACHE_MAX_ENTRIES = 256
+_CAPABILITY_CACHE_MAX_BYTES = 256 * 1024
+
+
+def _capability_info_size(info: CapabilityInfo) -> int:
+    """Approximate footprint of one memoized capability verdict."""
+    return (
+        len(str(info.feature).encode("utf-8", "ignore"))
+        + len(str(info.message).encode("utf-8", "ignore"))
+        + len(str(info.details).encode("utf-8", "ignore"))
+        + 64
+    )
+
+
+_capability_cache = BoundedLRU(
+    max_entries=_CAPABILITY_CACHE_MAX_ENTRIES,
+    max_bytes=_CAPABILITY_CACHE_MAX_BYTES,
+    ttl_seconds=_CAPABILITY_CACHE_TTL_SECONDS,
+    size_of=_capability_info_size,
+)
 
 
 def clear_capability_cache() -> None:
-    """Drop memoized capability results (call after a license/config change)."""
+    """Drop memoized capability results (call after a license/config change).
+
+    This is a full invalidation: after a hot-swap no cached AVAILABLE verdict
+    may gate a feature that the new license has disabled.
+    """
     _capability_cache.clear()
 
 
@@ -478,10 +512,9 @@ def get_capability(
     cache so callers and tests always get a freshly-evaluated result.
     """
     if config is None:
-        now = time.monotonic()
         cached = _capability_cache.get(feature)
-        if cached is not None and now - cached[0] < _CAPABILITY_CACHE_TTL_SECONDS:
-            return cached[1]
+        if cached is not None:
+            return cached
     try:
         artifacts = _load_config(config)
         evaluator = _evaluators().get(feature)
@@ -502,7 +535,7 @@ def get_capability(
             details={},
         )
     if config is None:
-        _capability_cache[feature] = (time.monotonic(), info)
+        _capability_cache.set(feature, info)
     return info
 
 

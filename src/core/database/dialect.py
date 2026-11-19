@@ -1,14 +1,26 @@
 import re
-import threading
 
+from src.core.bounded_lru import BoundedLRU
 from src.core.security.hardening import require_identifier
 
 # Regex pattern to match ? placeholders (not inside single or double quotes)
 _PLACEHOLDER_PATTERN = re.compile(r"""('(?:''|[^'])*'|"(?:""|[^"])*")|(\?)""")
 
-# Global cache for converted queries to avoid redundant regex processing
-_QUERY_CONVERSION_CACHE = {}
-_CACHE_LOCK = threading.Lock()
+# Process-local cache for converted queries. It used to be a plain dict with a
+# hard stop at 1000 entries: once full it silently stopped caching (so stale
+# entries were kept forever) and had no byte bound, letting a flood of large,
+# distinct query strings pin arbitrary memory. A bounded LRU keeps the hot
+# conversions while capping entries, bytes and staleness. Conversion is pure,
+# so eviction is safe -- a miss simply recomputes the identical statement; no
+# auth or security decision is cached here.
+_QUERY_CONVERSION_CACHE_MAX_ENTRIES = 1000
+_QUERY_CONVERSION_CACHE_MAX_BYTES = 4 * 1024 * 1024
+_QUERY_CONVERSION_CACHE_TTL_SECONDS = 1800.0
+_QUERY_CONVERSION_CACHE = BoundedLRU(
+    max_entries=_QUERY_CONVERSION_CACHE_MAX_ENTRIES,
+    max_bytes=_QUERY_CONVERSION_CACHE_MAX_BYTES,
+    ttl_seconds=_QUERY_CONVERSION_CACHE_TTL_SECONDS,
+)
 
 
 def convert_placeholders(query: str, db_type: str) -> str:
@@ -21,9 +33,9 @@ def convert_placeholders(query: str, db_type: str) -> str:
 
     # Check cache first
     cache_key = f"{db_type}:{query}"
-    with _CACHE_LOCK:
-        if cache_key in _QUERY_CONVERSION_CACHE:
-            return _QUERY_CONVERSION_CACHE[cache_key]
+    cached = _QUERY_CONVERSION_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     # 1. Convert abs(random()) to floor(random() * ...) for PostgreSQL
     if "abs(random())" in query.lower():
@@ -63,10 +75,9 @@ def convert_placeholders(query: str, db_type: str) -> str:
     )
     converted_query = pattern.sub(replace, query)
 
-    # Store in cache (limit size to prevent memory growth)
-    with _CACHE_LOCK:
-        if len(_QUERY_CONVERSION_CACHE) < 1000:
-            _QUERY_CONVERSION_CACHE[cache_key] = converted_query
+    # Store in the bounded cache (entry, byte and TTL limits are enforced by
+    # BoundedLRU; an evicted entry is simply recomputed on the next call).
+    _QUERY_CONVERSION_CACHE.set(cache_key, converted_query)
 
     return converted_query
 
