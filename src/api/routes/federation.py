@@ -34,6 +34,7 @@ from src.core.security.outbound import (
 )
 from src.utils.security import pinned_request_target
 
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urljoin, urlparse
@@ -456,6 +457,16 @@ def _bound_payload_value(value: Any, depth: int = 0) -> None:
             raise _invalid_payload()
         return
     if isinstance(value, float):
+        # Python's ``json.loads`` accepts the non-standard ``NaN``,
+        # ``Infinity`` and ``-Infinity`` literals (and a huge exponent such as
+        # ``1e400`` parses to ``inf``), so a signed envelope can carry them
+        # despite not being valid RFC 8259 JSON. They are not bounded by the
+        # integer check above and previously sailed through into the relayed
+        # op and application logs; re-serialising them emits bare ``NaN`` /
+        # ``Infinity`` tokens that strict JSON parsers (including browser
+        # clients) reject, a parser differential. Refuse them at the boundary.
+        if not math.isfinite(value):
+            raise _invalid_payload()
         return
     if isinstance(value, str):
         if len(value) > MAX_PAYLOAD_TEXT:
@@ -617,6 +628,16 @@ async def artifact_event_inbound(request: Request):
         )
 
     payload = _parse_json_body(body)
+
+    # A valid HMAC proves which peer sent the event, not that its fields are
+    # safe to use. ``message_inbound`` binds ``message_type`` and
+    # ``artifact_op_inbound`` binds ``op_type`` to the restrictive token
+    # grammar, but this route copied ``event_type`` straight into an
+    # application log line. A signed envelope carrying a control character
+    # (e.g. ``"evt\nFORGED"``) or an oversized value could forge a log entry in
+    # any log handler that does not scrub, or blow up log storage. Bind it to
+    # the same grammar as its sibling routes before it reaches the logger.
+    validate_type_field(payload.get("event_type"), "event_type")
 
     logger.info(
         "federation inbound: received artifact event %s for artifact %s",
