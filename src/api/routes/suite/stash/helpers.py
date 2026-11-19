@@ -6,6 +6,7 @@ from typing import Any
 import src.api as api
 from fastapi import HTTPException, status
 
+from src.core.security.hardening import HardeningViolation, parse_id
 from src.core.suite import stash as stash_domain
 from src.core.suite.stash import StashManager
 from src.core.suite.stash.manager import (
@@ -13,6 +14,29 @@ from src.core.suite.stash.manager import (
     StashPermissionError,
     StashValidationError,
 )
+
+
+def parse_stash_id(raw: object, field: str = "id") -> int:
+    """Parse a Stash boundary id through the shared snowflake id gate.
+
+    The Stash route handlers used bare ``int(raw)`` on path/query ids. ``int``
+    accepts Unicode decimal homoglyphs ("١٢٣", "１２３"), PEP 515 underscores
+    ("1_2"), signs and arbitrarily large magnitudes, while every other route
+    boundary funnels ids through the ASCII-only, 64-bit bounded ``parse_id``
+    gate. That is a parser differential: a homoglyph can be read as a different
+    id by an upstream ASCII-only validator (or another language's digit
+    matcher), and an
+    oversized value reaches SQL bindings as an OverflowError-inducing 500
+    instead of a clean 400.
+
+    Route all Stash ids through the same guard. ``StashValidationError`` is a
+    ``ValueError`` subclass, so every handler's existing ``except ValueError``
+    / ``_error`` mapping keeps returning its documented 400 response.
+    """
+    try:
+        return parse_id(raw, field)
+    except HardeningViolation as exc:
+        raise StashValidationError(f"Invalid Stash {field}") from exc
 
 
 def _package() -> Any:

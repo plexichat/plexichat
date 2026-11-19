@@ -14,7 +14,7 @@ from src.api.schemas.stash import (
 from src.core.suite.stash.manager import (
     StashValidationError,
 )
-from .helpers import _error, resolve_manager as _manager
+from .helpers import _error, parse_stash_id, resolve_manager as _manager
 from .router import router
 from .serializers import (
     _item_response,
@@ -50,7 +50,9 @@ async def list_items(
     clients can walk more than one page with no silent truncation.
     """
     try:
-        parsed_server = int(server_id) if server_id is not None else None
+        parsed_server = (
+            parse_stash_id(server_id, "server id") if server_id is not None else None
+        )
         if cursor is not None:
             items, total, next_cursor = _manager().list_items_page(
                 current_user.user_id,

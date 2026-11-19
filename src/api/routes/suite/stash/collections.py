@@ -14,7 +14,7 @@ from src.api.schemas.stash import (
     StashCollectionListResponse,
     StashCollectionResponse,
 )
-from .helpers import _error, resolve_manager as _manager
+from .helpers import _error, parse_stash_id, resolve_manager as _manager
 from .router import router
 from .serializers import (
     _attach_grant_profile,
@@ -38,7 +38,9 @@ async def list_collections(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashCollectionListResponse:
     try:
-        parsed_server = int(server_id) if server_id is not None else None
+        parsed_server = (
+            parse_stash_id(server_id, "server id") if server_id is not None else None
+        )
         collections = _manager().list_collections(current_user.user_id, parsed_server)
         return StashCollectionListResponse(
             items=[
@@ -99,7 +101,7 @@ async def grant_collection(
     try:
         grant = _manager().grant_collection(
             current_user.user_id,
-            int(collection_id),
+            parse_stash_id(collection_id, "collection id"),
             int(body.subject_id),
             body.permissions,
             body.expires_at,
@@ -129,7 +131,7 @@ async def list_collection_grants(
 ) -> StashCollectionGrantListResponse:
     try:
         grants = _manager().list_collection_grants(
-            current_user.user_id, int(collection_id)
+            current_user.user_id, parse_stash_id(collection_id, "collection id")
         )
         cache = _grant_profile_cache([g.get("subject_id") for g in grants])
         return StashCollectionGrantListResponse(
@@ -161,7 +163,9 @@ async def revoke_collection_grant(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> None:
     try:
-        _manager().revoke_collection_grant(current_user.user_id, int(grant_id))
+        _manager().revoke_collection_grant(
+            current_user.user_id, parse_stash_id(grant_id, "grant id")
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=400, detail="Invalid collection grant id"

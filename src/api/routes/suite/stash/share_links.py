@@ -14,7 +14,7 @@ from src.api.schemas.stash import (
     StashShareLinkResponse,
     StashShareLinkSummary,
 )
-from .helpers import _error, resolve_manager as _manager
+from .helpers import _error, parse_stash_id, resolve_manager as _manager
 from .router import router
 
 
@@ -38,7 +38,7 @@ async def create_share_link(
     try:
         link = _manager().create_share_link(
             current_user.user_id,
-            int(item_id),
+            parse_stash_id(item_id, "item id"),
             password=body.password,
             permissions=body.permissions,
             expires_at=body.expires_at,
@@ -65,7 +65,9 @@ async def list_share_links(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashShareLinkListResponse:
     try:
-        links = _manager().list_share_links(current_user.user_id, int(item_id))
+        links = _manager().list_share_links(
+            current_user.user_id, parse_stash_id(item_id, "item id")
+        )
         return StashShareLinkListResponse(
             items=[StashShareLinkSummary.model_validate(link) for link in links]
         )
@@ -90,7 +92,9 @@ async def revoke_share_link(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> None:
     try:
-        _manager().revoke_share_link(current_user.user_id, int(link_id))
+        _manager().revoke_share_link(
+            current_user.user_id, parse_stash_id(link_id, "share link id")
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid share link id") from exc
     except Exception as exc:

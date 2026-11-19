@@ -15,7 +15,7 @@ from src.api.schemas.stash import (
     StashGrantRequest,
     StashGrantResponse,
 )
-from .helpers import _error, resolve_manager as _manager
+from .helpers import _error, parse_stash_id, resolve_manager as _manager
 from .router import router
 from .serializers import (
     _grant_response,
@@ -41,7 +41,7 @@ async def grant_item(
     try:
         grant = _manager().grant(
             current_user.user_id,
-            int(item_id),
+            parse_stash_id(item_id, "item id"),
             int(body.subject_id),
             body.permissions,
             body.expires_at,
@@ -75,8 +75,10 @@ async def create_download_ticket(
     try:
         ticket = _manager().create_download_ticket(
             current_user.user_id,
-            int(item_id),
-            int(version_id) if version_id is not None else None,
+            parse_stash_id(item_id, "item id"),
+            parse_stash_id(version_id, "version id")
+            if version_id is not None
+            else None,
             ttl_seconds,
         )
         return StashDownloadTicketResponse.model_validate(ticket)
@@ -171,7 +173,9 @@ async def revoke_grant(
 ) -> None:
     """Revoke a share grant; revoked grants cannot redeem future tickets."""
     try:
-        _manager().revoke_grant(current_user.user_id, int(grant_id))
+        _manager().revoke_grant(
+            current_user.user_id, parse_stash_id(grant_id, "grant id")
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid grant id") from exc
     except Exception as exc:

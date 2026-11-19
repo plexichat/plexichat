@@ -9,7 +9,7 @@ from src.api.schemas.common import ErrorResponse
 from src.api.schemas.stash import (
     StashVersionDiffResponse,
 )
-from .helpers import _error, resolve_manager as _manager
+from .helpers import _error, parse_stash_id, resolve_manager as _manager
 from .router import router
 
 
@@ -35,9 +35,9 @@ async def diff_versions(
     try:
         diff = _manager().diff_versions(
             current_user.user_id,
-            int(item_id),
-            int(a),
-            int(b) if b is not None else None,
+            parse_stash_id(item_id, "item id"),
+            parse_stash_id(a, "version id"),
+            parse_stash_id(b, "version id") if b is not None else None,
         )
         return StashVersionDiffResponse.model_validate(diff)
     except (ValueError, TypeError) as exc:

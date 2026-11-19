@@ -8,7 +8,7 @@ from src.api.schemas.stash import (
     StashVersionCreateRequest,
     StashVersionResponse,
 )
-from .helpers import _error, resolve_manager as _manager
+from .helpers import _error, parse_stash_id, resolve_manager as _manager
 from .router import router
 
 
@@ -28,7 +28,7 @@ async def list_versions(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> list[StashVersionResponse]:
     try:
-        versions = _manager().list_versions(current_user.user_id, int(item_id), limit)
+        versions = _manager().list_versions(current_user.user_id, parse_stash_id(item_id, "item id"), limit)
         return [StashVersionResponse.model_validate(version) for version in versions]
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid Stash item id") from exc
@@ -54,7 +54,7 @@ async def create_version(
 ) -> StashVersionResponse:
     try:
         version = _manager().create_version(
-            current_user.user_id, int(item_id), **body.model_dump()
+            current_user.user_id, parse_stash_id(item_id, "item id"), **body.model_dump()
         )
         return StashVersionResponse.model_validate(version)
     except (ValueError, TypeError) as exc:
