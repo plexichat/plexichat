@@ -19,8 +19,14 @@ from typing import Any
 # comment used as a separator. Strip comments first, then match.
 
 
+# PostgreSQL dollar-quoted strings ($$...$$ or $tag$...$tag$) are opaque
+# literals just like single-quoted ones: their contents may hold any keyword
+# or comment marker without the parser treating it as SQL.
+_DOLLAR_QUOTE_OPEN_RE = re.compile(r"\$[A-Za-z_][A-Za-z_0-9]*\$|\$\$")
+
+
 def _normalize_sql(statement: str) -> str:
-    """Strip SQL comments and collapse whitespace before denylist matching.
+    """Strip comments and blank quoted literals before denylist matching.
 
     PostgreSQL nests block comments: in ``/* a /* b */ c */`` the first ``*/``
     closes only the inner comment, and the text after it is still a comment to
@@ -31,11 +37,23 @@ def _normalize_sql(statement: str) -> str:
     comment. Track block-comment depth instead and emit a single separator
     only when the outermost comment closes.
 
+    Quoted regions are opaque to the SQL parser too. A keyword inside a string
+    literal is data, not syntax: ``DELETE FROM t RETURNING 'WHERE'`` and
+    ``DELETE FROM t USING (SELECT 'WHERE') x`` are whole-table wipes whose only
+    ``WHERE`` is a literal, and a naive substring check accepts them. Likewise
+    a ``/*`` inside a literal must not open a comment that swallows the rest of
+    a stacked statement (``SELECT '/*'; DELETE FROM t``). Single-quoted and
+    dollar-quoted literal contents are therefore blanked, and quoted identifier
+    text is replaced with a harmless placeholder so a table literally named
+    ``"WHERE"`` cannot manufacture a scope restriction either. Comments are
+    recognized only outside these quoted regions.
+
     That single space preserves keyword boundaries (so ``DELETE/**/FROM`` is
     still recognized as ``DELETE FROM``) and makes trailing comments
-    irrelevant: a ``WHERE`` that only exists inside a comment is not a scope
-    restriction and must not disable the guard. An unterminated comment
-    swallows everything after it, as it does for the database.
+    irrelevant: a ``WHERE`` that only exists inside a comment or a literal is
+    not a scope restriction and must not disable the guard. An unterminated
+    comment or literal swallows everything after it, as it does for the
+    database.
     """
     out: list[str] = []
     depth = 0
@@ -69,6 +87,47 @@ def _normalize_sql(statement: str) -> str:
                     out.append(" ")
                 continue
             index += 1
+            continue
+
+        if char == "'":
+            # SQL string literal; a doubled '' is an escaped quote inside it.
+            # Blanking the contents keeps the WHERE/DELETE tokens outside the
+            # literal intact while making their in-literal copies invisible.
+            index += 1
+            while index < length:
+                if statement[index] == "'":
+                    if index + 1 < length and statement[index + 1] == "'":
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            out.append(" ")
+            continue
+
+        if char == "$":
+            dollar = _DOLLAR_QUOTE_OPEN_RE.match(statement, index)
+            if dollar is not None:
+                delimiter = dollar.group(0)
+                closing = statement.find(delimiter, dollar.end())
+                index = length if closing < 0 else closing + len(delimiter)
+                out.append(" ")
+                continue
+
+        if char == '"':
+            # Quoted identifier: keep a harmless token so a table name still
+            # triggers unscoped-DELETE detection, but drop the original text
+            # so a table named "WHERE" cannot fake a scope restriction.
+            index += 1
+            while index < length:
+                if statement[index] == '"':
+                    if index + 1 < length and statement[index + 1] == '"':
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            out.append('"x"')
             continue
 
         if char == "/" and following == "*":
