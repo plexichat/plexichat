@@ -7,7 +7,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
-from src.core.database import cached
+from src.core.database import cached, invalidate_pattern
+from src.api.routes.users.helpers import authenticated_cache_key
 from src.core.presence.validation import (
     validate_emoji,
     validate_status,
@@ -261,6 +262,10 @@ async def update_presence(
                 return presence.get_presence(current_user.user_id)
 
             pres = await run_in_threadpool(perform_presence_update)
+            # A status/custom-status change invalidates any warm single-user
+            # presence bodies for this user, including invisible -> visible
+            # transitions that other viewers would otherwise keep seeing stale.
+            _invalidate_presence_read_cache()
             response = _presence_to_response(pres, current_user.user_id)
 
             # Get all users who should receive this presence update (uses cached function)
@@ -364,6 +369,58 @@ def _can_view_presence(viewer_id: int, target_id: int) -> bool:
     return False
 
 
+# GET /users/{id}/presence is a hot poll: on every cold read the core visibility
+# layer issues two uncached block lookups plus a presence fetch before the
+# response is serialized. Memoize the serialized body for a short window. The
+# key is partitioned per credential by ``authenticated_cache_key`` (a bot token
+# carries its owner's ``user_id``, so it needs its own namespace), and the route
+# re-runs the live relationship gate on *every* request before this helper is
+# consulted -- a denied viewer never reaches a warm entry, and a revoked
+# friendship cannot be served a still-warm body. The L1 copy is deliberately
+# shorter than the shared one to bound cross-worker staleness after invalidation.
+_PRESENCE_READ_CACHE_TTL = 5
+_PRESENCE_READ_L1_TTL = 2
+_PRESENCE_READ_PREFIX = "presence_read_api"
+
+
+def _invalidate_presence_read_cache() -> None:
+    """Drop all cached single-user presence bodies after a mutation."""
+    invalidate_pattern(f"{_PRESENCE_READ_PREFIX}:*")
+
+
+@cached(
+    ttl=_PRESENCE_READ_CACHE_TTL,
+    prefix=_PRESENCE_READ_PREFIX,
+    key_builder=authenticated_cache_key(_PRESENCE_READ_PREFIX),
+    l1_ttl=_PRESENCE_READ_L1_TTL,
+)
+def _get_visible_presence_cached(*, user_id: int, current_user: TokenInfo) -> dict:
+    """Cold path for GET /users/{id}/presence.
+
+    Returns a JSON-safe dict so a cache hit (which reconstructs a dict) and a
+    miss are byte-for-byte identical. Authorization is deliberately NOT checked
+    here: the caller evaluates the live relationship gate first, so this helper
+    is only ever reached by a viewer who is allowed to see the target.
+    """
+    presence = api.get_presence()
+    pres = (
+        presence.get_visible_presence(current_user.user_id, user_id)
+        if presence
+        else None
+    )
+    if not pres:
+        response = PresenceResponse(
+            user_id=SnowflakeID(user_id),
+            status="offline",
+            custom_status=None,
+            custom_emoji=None,
+            last_seen=None,
+        )
+    else:
+        response = _presence_to_response(pres, user_id)
+    return response.model_dump(mode="json")
+
+
 @router.get(
     "/users/{user_id}/presence",
     response_model=PresenceResponse,
@@ -404,16 +461,13 @@ def get_user_presence(
 
     try:
         try:
-            pres = presence.get_visible_presence(current_user.user_id, user_id)
-            if not pres:
-                return PresenceResponse(
-                    user_id=SnowflakeID(user_id),
-                    status="offline",
-                    custom_status=None,
-                    custom_emoji=None,
-                    last_seen=None,
-                )
-            return _presence_to_response(pres, user_id)
+            # The relationship gate above is re-evaluated on every request,
+            # before any cache lookup. The helper key is scoped to this viewer
+            # and target, so no other credential's body can be served here.
+            data = _get_visible_presence_cached(
+                user_id=user_id, current_user=current_user
+            )
+            return PresenceResponse.model_validate(data)
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:

@@ -46,6 +46,12 @@ class RelationshipsBase:
 
     def _invalidate_relationship_list_cache(self, *user_ids: int) -> None:
         """Invalidate cached relationship listings for each supplied user ID."""
+        # Single-user presence reads cache the viewer-specific visible body.
+        # A friend/block change alters both the read gate and the visibility
+        # scrubbing baked into that body, so drop those entries on any
+        # relationship mutation. Mutations are far rarer than presence polls.
+        invalidate_pattern("presence_read_api:*")
+
         prefix = "relationships_api"
         seen_ids = set()
 
