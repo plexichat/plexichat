@@ -152,16 +152,27 @@ class ForwardingService:
             raise ValueError("Original message not found")
         original = _row_to_dict(original_row, _MESSAGE_COLUMNS)
 
+        # Authorization MUST fail closed. These checks used to be guarded by
+        # ``if self._participant_svc and ...``: when no participation checker
+        # was available (messaging module not initialised, or a manager
+        # implementation without ``_participant_svc``), BOTH checks were
+        # silently skipped. Any authenticated user could then read and decrypt
+        # an arbitrary message and insert a forward record pointing at a
+        # conversation they do not belong to. Every other messaging service
+        # (pin, edit_history, send, retrieval, ...) denies when the checker is
+        # missing, and ``get_forward_history`` in this module already does
+        # exactly that. Mirror that policy: no checker => no forward.
+        if not self._participant_svc:
+            raise PermissionError("Cannot verify conversation participation")
+
         # Check user can read the original message
-        if self._participant_svc and not self._participant_svc.is_participant(
+        if not self._participant_svc.is_participant(
             original["conversation_id"], user_id
         ):
             raise PermissionError("Cannot read the original message")
 
         # Check user can write to target conversation
-        if self._participant_svc and not self._participant_svc.is_participant(
-            target_conversation_id, user_id
-        ):
+        if not self._participant_svc.is_participant(target_conversation_id, user_id):
             raise PermissionError("Cannot send to the target conversation")
 
         # Rate limit check
