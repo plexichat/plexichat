@@ -97,6 +97,37 @@ def _bounded_data(value: Any) -> Dict[str, Any]:
     return bounded
 
 
+def _bounded_unique_users(user_ids, limit: int):
+    """Dedupe a bulk audience (first-seen order) and hard-cap it.
+
+    ``send_bulk_push`` used to do ``list(user_ids)[:MAX_BULK_PUSH_USERS]`` (and
+    the async path ``[int(uid) for uid in user_ids][:MAX_BULK_PUSH_USERS]``).
+    Both materialised/coerced the *entire* input before slicing, so a caller
+    handing over a huge or highly-duplicated id list did unbounded work, and a
+    repeated id produced one full device fan-out per occurrence (duplicate
+    delivery). This helper walks at most ``limit`` *unique* ids, collapsing
+    repeats as it goes and stopping the input stream early once the cap is
+    reached — bounded work AND exactly one delivery per recipient.
+
+    The input is streamed (never materialised) so generator callers stop being
+    drained the moment the ceiling is hit. Values are deduped as-is; callers
+    that need integer normalisation pass a lazy ``(int(uid) for uid in ...)``
+    generator, which keeps the historical coercion behaviour without the
+    unbounded up-front list build.
+    """
+    ceiling = max(1, int(limit))
+    seen = set()
+    ordered = []
+    for uid in user_ids:
+        if uid in seen:
+            continue
+        if len(ordered) >= ceiling:
+            break
+        seen.add(uid)
+        ordered.append(uid)
+    return ordered
+
+
 class DeliveryMixin(PushManagerBase):
     """Send a notification to every valid device of a user."""
 
@@ -319,7 +350,12 @@ class DeliveryMixin(PushManagerBase):
         body: str,
         data: Optional[Dict[str, Any]] = None,
     ) -> int:
-        """Send push notification to multiple users."""
+        """Send push notification to multiple users (deduped and capped).
+
+        A repeated user id produces one delivery, not one per occurrence, and
+        the audience is streamed to the cap so an oversized input cannot make
+        the caller do unbounded work before the bound is applied.
+        """
         # Mirror send_bulk_push_async: a single bulk call may fan out to at
         # most MAX_BULK_PUSH_USERS so one caller cannot enqueue unbounded
         # work through the synchronous path (which would block the worker).
@@ -328,7 +364,11 @@ class DeliveryMixin(PushManagerBase):
         title = _bounded_text(title, "title", MAX_TITLE_LENGTH)
         body = _bounded_text(body, "body", MAX_BODY_LENGTH)
         data = _bounded_data(data)
-        users = list(user_ids)[:MAX_BULK_PUSH_USERS]
+        # Dedupe + hard-cap before any per-user work. A repeated id used to
+        # trigger one full device fan-out per occurrence; streaming through
+        # the helper also stops an oversized input early instead of
+        # materialising the whole list just to slice it.
+        users = _bounded_unique_users(user_ids, MAX_BULK_PUSH_USERS)
         total_sent = 0
         for user_id in users:
             try:
@@ -351,12 +391,19 @@ class DeliveryMixin(PushManagerBase):
         blocking for the full duration of every device send. After: a fixed
         pool of user jobs is fed by a bounded queue (backpressure) and each
         user's device fan-out is itself bounded and async. The user list is
-        capped so a single call cannot enqueue unbounded work.
+        deduped and capped so a single call cannot enqueue unbounded work or
+        deliver the same notification to one user more than once.
         """
         title = _bounded_text(title, "title", MAX_TITLE_LENGTH)
         body = _bounded_text(body, "body", MAX_BODY_LENGTH)
         data = _bounded_data(data)
-        users = [int(uid) for uid in user_ids][:MAX_BULK_PUSH_USERS]
+        # Same pre-fan-out dedupe + early cap as the synchronous path. The
+        # ``int`` coercion stays lazy so a huge/duplicated stream is stopped
+        # at the cap rather than being fully coerced before slicing; malformed
+        # ids still raise as before (the check is not weakened).
+        users = _bounded_unique_users(
+            (int(uid) for uid in user_ids), MAX_BULK_PUSH_USERS
+        )
         if not users:
             return 0
 
