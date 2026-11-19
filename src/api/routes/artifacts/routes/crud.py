@@ -30,6 +30,7 @@ from ...artifacts_helpers import (
     _deep_merge_payload,
     _emit_artifact_message,
     _get_manager,
+    _prime_conversation_server_cache,
     _require_artifact_capability,
     _validate_artifact_scope,
     payload_revision,
@@ -263,6 +264,10 @@ async def list_artifacts(
         )
         total = manager.count(filters)
 
+        # Resolve every item's conversation ``metadata.server_id`` once, instead
+        # of letting _artifact_response -> _my_permissions re-read the same
+        # msg_conversations row once per artifact (N+1 across a page).
+        _prime_conversation_server_cache(artifacts, auth_cache)
         author_cache = _author_profile_cache(artifacts)
         items = [
             _artifact_response(current_user.user_id, a, author_cache, auth_cache)

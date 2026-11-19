@@ -128,20 +128,12 @@ def _conversation_server_id(
     return result
 
 
-def _conversation_server_id_uncached(
-    conversation_id: Optional[int],
-) -> Optional[int]:
-    db = api.get_db()
-    if db is None:
-        return None
-    row = db.fetch_one(
-        "SELECT metadata FROM msg_conversations WHERE id = ? AND deleted = 0",
-        (conversation_id,),
-    )
-    if not row or not row.get("metadata"):
+def _server_id_from_conversation_metadata(raw_metadata: Any) -> Optional[int]:
+    """Extract ``server_id`` from a serialized ``msg_conversations.metadata`` blob."""
+    if not raw_metadata:
         return None
     try:
-        parsed = json.loads(row["metadata"])
+        parsed = json.loads(raw_metadata)
     except (TypeError, ValueError):
         return None
     if not isinstance(parsed, dict):
@@ -153,6 +145,72 @@ def _conversation_server_id_uncached(
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _conversation_server_id_uncached(
+    conversation_id: Optional[int],
+) -> Optional[int]:
+    db = api.get_db()
+    if db is None:
+        return None
+    row = db.fetch_one(
+        "SELECT metadata FROM msg_conversations WHERE id = ? AND deleted = 0",
+        (conversation_id,),
+    )
+    if not row:
+        return None
+    return _server_id_from_conversation_metadata(row.get("metadata"))
+
+
+def _prime_conversation_server_cache(
+    artifacts: Any, cache: Optional[_AuthCache] = None
+) -> None:
+    """Resolve every artifact conversation's ``server_id`` in one bulk read.
+
+    ``_my_permissions`` (and ``_authorize_scope``) resolve the conversation's
+    ``metadata.server_id`` through ``_conversation_server_id`` for each artifact
+    whose caller is a conversation member. Without priming, a page of N
+    artifacts spread across N distinct conversations issues N
+    ``msg_conversations`` reads — the N+1 this helper collapses into one
+    ``IN (?, ...)`` query. Results are memoized in ``cache.conversation_servers``
+    so subsequent per-item lookups are dict hits.
+
+    Best-effort: ids already resolved (e.g. by scope validation) are skipped,
+    and any DB failure leaves the cache untouched so the per-item fallback in
+    ``_conversation_server_id`` still works exactly as before.
+    """
+    if cache is None:
+        return
+    pending = sorted(
+        {
+            int(cid)
+            for cid in (getattr(a, "conversation_id", None) for a in artifacts)
+            if cid is not None
+        }
+    )
+    pending = [cid for cid in pending if cid not in cache.conversation_servers]
+    if not pending:
+        return
+    db = api.get_db()
+    if db is None:
+        return
+    try:
+        rows = db.fetch_many_by_ids(
+            "msg_conversations", pending, columns=["id", "metadata", "deleted"]
+        )
+    except Exception as e:  # pragma: no cover - defensive; fallback stays correct
+        logger.debug(f"Failed to bulk-resolve artifact conversation metadata: {e}")
+        return
+    for cid in pending:
+        row = rows.get(cid)
+        if isinstance(row, dict) and not row.get("deleted"):
+            cache.conversation_servers[cid] = _server_id_from_conversation_metadata(
+                row.get("metadata")
+            )
+        else:
+            # Soft-deleted or missing conversation: mirror the per-item query,
+            # which filters ``deleted = 0`` and resolves to None.
+            cache.conversation_servers[cid] = None
 
 
 def _authorize_scope(
