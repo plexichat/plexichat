@@ -205,10 +205,15 @@ def validate_password(password: str) -> PasswordValidation:
                 issues.append(
                     "Password is too common; choose a less predictable password"
                 )
-        except OSError:
-            # A missing bundled policy file must not make password changes
-            # fail closed unexpectedly; log/configuration monitoring catches it.
-            pass
+        except OSError as exc:
+            # Fail CLOSED: the common/breached-password list is a security
+            # control, not an optional hint. If it cannot be read we cannot
+            # tell a strong password from a known-compromised one, so reject
+            # the candidate instead of silently dropping the check.
+            issues.append(
+                "Password strength policy is temporarily unavailable; "
+                f"please try again later ({exc.__class__.__name__})"
+            )
 
     if pwd_config.get("require_uppercase", True):
         if not re.search(r"[A-Z]", password):

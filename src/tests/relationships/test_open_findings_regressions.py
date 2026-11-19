@@ -112,6 +112,13 @@ class TestBlockOracleM3:
                 "_check_friend_request_rate_limit",
                 return_value=None,
             ),
+            # This test is about the block/missing oracle, not the privacy
+            # gate. Stub the opt-out lookup as "unset" so the route reaches
+            # the manager; the privacy gate has its own dedicated tests.
+            patch(
+                "src.api.routes.relationships.friend_requests.api.get_settings",
+                return_value=SimpleNamespace(get=lambda uid, key: None),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(cast(Any, handler).create_relationship(body, current_user))

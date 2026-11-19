@@ -31,7 +31,9 @@ import utils.logger as logger
 # Maximum friend requests a single user may send per rolling minute.
 FRIEND_REQUEST_RATE_LIMIT = 10
 
-# Setting key consulted on the recipient's profile. Absent/unreadable → open.
+# Setting key consulted on the recipient's profile. An *absent* flag means the
+# user never opted out, so it stays open; an *unreadable* flag is a failed
+# privacy check and must deny (see _recipient_accepts_friend_requests).
 ALLOW_FRIEND_REQUESTS_SETTING_KEY = "allow_friend_requests"
 
 # Stored values treated as "not accepting friend requests".
@@ -41,24 +43,38 @@ _FRIEND_REQUESTS_DISABLED_VALUES = frozenset(
 
 
 def _recipient_accepts_friend_requests(recipient_id: int) -> bool:
-    """Best-effort read of the recipient's allow_friend_requests flag.
+    """Read the recipient's allow_friend_requests flag, failing CLOSED.
 
-    Defaults to open (accepting) when the settings module is unavailable,
-    the flag is unset, or the lookup fails — matching the historical
-    behaviour. Never raises.
+    An unset flag (``None``) means the user never recorded an opt-out, so
+    requests are allowed. Every error path — settings module unavailable,
+    lookup raising, or a corrupt value — denies the request instead of
+    silently delivering it to a recipient whose preference we cannot read.
+    Never raises.
     """
     try:
         settings = api.get_settings()
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"Friend-request privacy check unavailable: {e}")
-        return True
+    except Exception as e:
+        logger.warning(f"Friend-request privacy check unavailable: {e}")
+        return False
     if settings is None:
-        return True
+        logger.warning(
+            "Friend-request privacy check unavailable: settings module not wired"
+        )
+        return False
+    # The settings dependency is wired either as the SettingsManager instance
+    # (``.get``) or as the ``src.core.settings`` module facade
+    # (``.get_setting``). Support both rather than treating a shape mismatch
+    # as a denial-worthy lookup failure.
     try:
-        raw = settings.get(recipient_id, ALLOW_FRIEND_REQUESTS_SETTING_KEY)
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"Friend-request privacy lookup failed for {recipient_id}: {e}")
-        return True
+        if hasattr(settings, "get"):
+            raw = settings.get(recipient_id, ALLOW_FRIEND_REQUESTS_SETTING_KEY)
+        elif hasattr(settings, "get_setting"):
+            raw = settings.get_setting(recipient_id, ALLOW_FRIEND_REQUESTS_SETTING_KEY)
+        else:
+            raise AttributeError("settings dependency has no setting reader")
+    except Exception as e:
+        logger.warning(f"Friend-request privacy lookup failed for {recipient_id}: {e}")
+        return False
     if raw is None:
         return True
     if isinstance(raw, bool):
