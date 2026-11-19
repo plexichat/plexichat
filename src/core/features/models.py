@@ -135,6 +135,31 @@ def invalidate_badge_catalog_cache() -> None:
     _badge_catalog_snapshot.invalidate()
 
 
+def warm_badge_catalog_cache() -> None:
+    """Prime the static badge catalogue off the request path (best-effort).
+
+    On a cold process the first ``Badge.get_badge_info`` pays for both the
+    version check (a config-file stat) and ``_build_badge_catalog`` (eight
+    ``Badge`` objects). Boot warm-up calls this on a worker thread so the first
+    real profile/message request is a cheap cache hit.
+
+    This primes the very same version-keyed, short-TTL snapshot the request path
+    reads; it does not change its key or staleness ceiling, so a config reload
+    or on-disk edit is still observed exactly as before. A failure is logged
+    and swallowed: the request path rebuilds on demand exactly as it always
+    has, and warm-up must never turn into a startup failure.
+    """
+    try:
+        _badge_catalog_snapshot.snapshot()
+    except Exception as e:  # pragma: no cover - best-effort by design
+        try:
+            import utils.logger as logger
+
+            logger.debug(f"Badge catalog warm-up skipped: {e}")
+        except Exception:
+            pass
+
+
 @dataclass
 class TierLimits:
     """Rate limit tier configuration."""

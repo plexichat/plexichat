@@ -5,11 +5,13 @@ snapshot on the profile/message hot path.
 objects) on every call just to look up one entry.  It now reads a versioned
 snapshot keyed on the config loader identity + config file mtime/size, with a
 short staleness ceiling so the hot path does not even stat the config file on
-every request.
+every request.  Boot warm-up primes that same snapshot off the request path so
+the first real profile/message request is a hit rather than the cold build.
 
 These tests pin: identical output, a single compute across many calls,
-invalidation (explicit and config-driven) forcing exactly one rebuild, and no
-weakening of the badge fallback/validation behaviour.
+invalidation (explicit and config-driven) forcing exactly one rebuild, no
+weakening of the badge fallback/validation behaviour, and the warm-up contract
+(primes once, idempotent, non-fatal, and invoked by ``warm_once``).
 """
 
 import os
@@ -150,3 +152,95 @@ def test_all_known_badges_resolve():
         assert info.name == name
         assert info.display_name
         assert info.icon
+
+
+# --------------------------------------------------------------------------- #
+# Boot warm-up                                                                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_warmup_primes_catalogue_before_first_request(monkeypatch):
+    """Warming builds the catalogue once; the hot path then only reads it."""
+    snapshot = models._badge_catalog_snapshot
+    real_loader = snapshot._loader
+    builds = []
+
+    def counting_loader():
+        builds.append(1)
+        return real_loader()
+
+    monkeypatch.setattr(snapshot, "_loader", counting_loader)
+
+    baseline = snapshot.stats()["rebuilds"]
+    models.warm_badge_catalog_cache()
+    assert len(builds) == 1, "warm-up must prime the catalogue exactly once"
+    assert snapshot.stats()["rebuilds"] == baseline + 1
+
+    results = [models.Badge.get_badge_info("staff") for _ in range(200)]
+    assert all(result == results[0] for result in results)
+    assert len(builds) == 1, "warmed catalog serves every request without rebuild"
+
+
+def test_warmup_is_idempotent_within_ceiling(monkeypatch):
+    """Repeated warm-up calls must not multiply builds."""
+    snapshot = models._badge_catalog_snapshot
+    real_loader = snapshot._loader
+    builds = []
+
+    def counting_loader():
+        builds.append(1)
+        return real_loader()
+
+    monkeypatch.setattr(snapshot, "_loader", counting_loader)
+
+    models.warm_badge_catalog_cache()
+    models.warm_badge_catalog_cache()
+    models.warm_badge_catalog_cache()
+
+    assert len(builds) == 1
+
+
+def test_warmup_does_not_bypass_config_invalidation(monkeypatch):
+    """A warmed catalogue is still rebuilt once after an explicit invalidate."""
+    snapshot = models._badge_catalog_snapshot
+    real_loader = snapshot._loader
+    builds = []
+
+    def counting_loader():
+        builds.append(1)
+        return real_loader()
+
+    monkeypatch.setattr(snapshot, "_loader", counting_loader)
+
+    models.warm_badge_catalog_cache()
+    before = models.Badge.get_badge_info("staff")
+    models.invalidate_badge_catalog_cache()
+    after = models.Badge.get_badge_info("staff")
+
+    assert after == before
+    assert len(builds) == 2, "invalidation must force exactly one fresh build"
+
+
+def test_warmup_is_non_fatal(monkeypatch):
+    """A broken loader is logged and swallowed, never raised into startup."""
+    snapshot = models._badge_catalog_snapshot
+
+    def boom():
+        raise RuntimeError("catalogue exploded")
+
+    monkeypatch.setattr(snapshot, "_loader", boom)
+
+    # Must not raise even though the underlying build fails.
+    models.warm_badge_catalog_cache()
+
+
+def test_warm_once_invokes_badge_warmup(monkeypatch):
+    """The boot warm-up task actually primes the badge catalogue."""
+    from src.api import warmup
+
+    called = []
+    monkeypatch.setattr(warmup, "_warm_badge_catalog", lambda: called.append(True))
+
+    warmup.warm_once()
+
+    assert called == [True]

@@ -138,6 +138,24 @@ def _warm_capability_catalogs() -> None:
         logger.debug(f"Startup warm-up admin catalog skipped: {e}")
 
 
+def _warm_badge_catalog() -> None:
+    """Prime the static badge catalogue off the request path.
+
+    ``Badge.get_badge_info`` sits on the profile/message hot path. Its catalogue
+    is a version-keyed, short-TTL snapshot; the cold first lookup builds all
+    eight ``Badge`` objects and stats the config file. Warming here moves that
+    one-off build onto this worker thread so the first real request is a hit.
+    The snapshot key/ceiling are unchanged, so reloads and edits are still
+    observed, and a failure is non-fatal - the route rebuilds on demand.
+    """
+    try:
+        from src.core.features.models import warm_badge_catalog_cache
+
+        warm_badge_catalog_cache()
+    except Exception as e:
+        logger.debug(f"Startup warm-up badge catalog skipped: {e}")
+
+
 def _warm_openapi(app: Any) -> None:
     """Generate and cache the OpenAPI schema off the request path."""
     if app is None:
@@ -184,6 +202,11 @@ def warm_once(app: Any = None) -> float:
         _warm_capability_catalogs()
     except Exception as e:
         logger.debug(f"Startup warm-up capability catalogs failed: {e}")
+
+    try:
+        _warm_badge_catalog()
+    except Exception as e:
+        logger.debug(f"Startup warm-up badge catalog failed: {e}")
 
     try:
         _db_probe(api)
