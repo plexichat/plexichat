@@ -1,3 +1,5 @@
+import base64
+import binascii
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -5,6 +7,65 @@ from .._shared import (
     StashValidationError,
 )
 from ..stash_manager_protocol import StashManagerProtocol
+
+_KEYSET_PREFIX = "k1."
+_MAX_KEYSET_CURSOR_LENGTH = 128
+
+
+class ItemKeysetCursor:
+    """Opaque ``(pinned, updated_at, id)`` anchor for keyset item paging.
+
+    The legacy cursor is a decimal row offset. Tokens produced here carry an
+    explicit ``k1.`` prefix so the two schemes can coexist: a decimal value
+    always keeps its historic offset meaning, while a ``k1.`` token always
+    takes the seek path. The three-part anchor mirrors the listing sort order
+    (``pinned DESC, updated_at DESC``) with ``id`` as a stable tiebreaker, so a
+    deep page costs the same as page one instead of walking skipped rows.
+    """
+
+    @staticmethod
+    def encode(pinned: Any, updated_at: Any, item_id: Any) -> str:
+        raw = f"{int(pinned)}:{int(updated_at)}:{int(item_id)}".encode("ascii")
+        return _KEYSET_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip(
+            "="
+        )
+
+    @staticmethod
+    def is_keyset_token(token: Optional[str]) -> bool:
+        return isinstance(token, str) and token.startswith(_KEYSET_PREFIX)
+
+    @staticmethod
+    def decode(token: Optional[str]) -> Optional[Tuple[int, int, int]]:
+        """Return the seek anchor, or ``None`` for no/legacy cursor.
+
+        A malformed prefixed token fails closed with ``StashValidationError``
+        instead of silently restarting the listing or skipping rows. Bounds on
+        the token length and on each component keep a client from injecting a
+        huge range predicate.
+        """
+        if not ItemKeysetCursor.is_keyset_token(token):
+            return None
+        assert token is not None
+        if len(token) > _MAX_KEYSET_CURSOR_LENGTH:
+            raise StashValidationError("Invalid pagination cursor")
+        payload = token[len(_KEYSET_PREFIX) :]
+        try:
+            padded = payload + "=" * (-len(payload) % 4)
+            raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii")
+            parts = raw.split(":")
+            if len(parts) != 3 or not all(part.isdigit() for part in parts):
+                raise ValueError("malformed keyset cursor")
+            pinned, updated_at, item_id = (int(part) for part in parts)
+            if (
+                pinned not in (0, 1)
+                or updated_at < 0
+                or item_id <= 0
+                or item_id >= 1 << 64
+            ):
+                raise ValueError("out-of-range keyset cursor")
+            return pinned, updated_at, item_id
+        except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+            raise StashValidationError("Invalid pagination cursor") from exc
 
 
 class ItemListingMixin(StashManagerProtocol):
@@ -24,6 +85,18 @@ class ItemListingMixin(StashManagerProtocol):
         collection_id: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         limit = max(1, min(int(limit), 100))
+        if ItemKeysetCursor.is_keyset_token(cursor):
+            items, total, _ = self._query_item_page_keyset(
+                user_id,
+                limit=limit,
+                cursor=cursor,
+                search=search,
+                scope=scope,
+                server_id=server_id,
+                pinned=pinned,
+                collection_id=collection_id,
+            )
+            return items, total
         offset = self._resolve_list_offset(offset, cursor)
         return self._query_item_page(
             user_id,
@@ -47,16 +120,37 @@ class ItemListingMixin(StashManagerProtocol):
         server_id: Optional[int] = None,
         pinned: Optional[bool] = None,
         collection_id: Optional[int] = None,
+        keyset: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int, Optional[str]]:
         """Cursor-paginated item listing.
 
-        ``cursor`` is the opaque ``next_cursor`` value from a previous page
-        (a decimal row offset). ``limit`` is clamped to ``[1, 100]``. Returns
+        ``cursor`` is the opaque ``next_cursor`` value from a previous page.
+        Decimal cursors keep the legacy offset behaviour. ``keyset=True`` (or
+        a ``k1.`` cursor issued by ``list_items_keyset``) switches to an index
+        seek over ``(pinned, updated_at, id)`` so deep pages cost the same as
+        page one. ``limit`` is clamped to ``[1, 100]``. Returns
         ``(items, total, next_cursor)`` where ``next_cursor`` is ``None`` when
         the page reaches the end, so callers can enumerate every visible item
         with no silent truncation.
         """
         limit = max(1, min(int(limit), 100))
+        if keyset or ItemKeysetCursor.is_keyset_token(cursor):
+            if (
+                keyset
+                and cursor is not None
+                and not ItemKeysetCursor.is_keyset_token(cursor)
+            ):
+                raise StashValidationError("Invalid pagination cursor")
+            return self._query_item_page_keyset(
+                user_id,
+                limit=limit,
+                cursor=cursor,
+                search=search,
+                scope=scope,
+                server_id=server_id,
+                pinned=pinned,
+                collection_id=collection_id,
+            )
         offset = self._resolve_list_offset(0, cursor)
         items, total = self._query_item_page(
             user_id,
@@ -72,6 +166,47 @@ class ItemListingMixin(StashManagerProtocol):
         if offset + len(items) < total:
             next_cursor = str(offset + len(items))
         return items, total, next_cursor
+
+    def list_items_keyset(
+        self,
+        user_id: int,
+        *,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+        search: Optional[str] = None,
+        scope: Optional[str] = None,
+        server_id: Optional[int] = None,
+        pinned: Optional[bool] = None,
+        collection_id: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int, Optional[str]]:
+        """Return one keyset (seek) page and the token for the following page.
+
+        BEFORE: a page was addressed by a decimal OFFSET, so SQLite walked and
+        discarded every skipped row and deep pages got progressively slower.
+
+        AFTER: the page is addressed by the last visible row's
+        ``(pinned, updated_at, id)`` anchor. A bounded ``pinned < ? OR ...``
+        range predicate seeks through the existing owner/pinned indexes; cost is
+        independent of page depth. One extra row is fetched purely to compute
+        ``has_more``/``next_cursor`` and is never returned.
+
+        The visibility, scope, server, pinned, collection and search clauses
+        are shared verbatim with the offset path, so the two pages are identical
+        and no authorization filter is relaxed.
+        """
+        limit = max(1, min(int(limit), 100))
+        if cursor is not None and not ItemKeysetCursor.is_keyset_token(cursor):
+            raise StashValidationError("Invalid pagination cursor")
+        return self._query_item_page_keyset(
+            user_id,
+            limit=limit,
+            cursor=cursor,
+            search=search,
+            scope=scope,
+            server_id=server_id,
+            pinned=pinned,
+            collection_id=collection_id,
+        )
 
     @staticmethod
     def _resolve_list_offset(offset: int, cursor: Optional[str]) -> int:
@@ -91,18 +226,21 @@ class ItemListingMixin(StashManagerProtocol):
             raise StashValidationError("Invalid pagination cursor")
         return resolved
 
-    def _query_item_page(
+    def _build_item_visibility_clause(
         self,
         user_id: int,
         *,
-        limit: int,
-        offset: int,
         search: Optional[str] = None,
         scope: Optional[str] = None,
         server_id: Optional[int] = None,
         pinned: Optional[bool] = None,
         collection_id: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+    ) -> Tuple[str, List[Any]]:
+        """Build the shared visibility/filter WHERE clause and its params.
+
+        Both the offset and keyset page queries call this, so a keyset page
+        can never see a row the offset page would hide (or vice versa).
+        """
         now = int(time.time() * 1000)
         # Keyset-paginate the user's grants (cursor over item_id) so a user
         # with more than one batch of grants still sees every granted item.
@@ -165,7 +303,7 @@ class ItemListingMixin(StashManagerProtocol):
             params.append(normalized_scope)
         if server_id is not None:
             if not self._is_member(user_id, int(server_id)):
-                return [], 0
+                return "0 = 1", []
             clauses.append("server_id = ?")
             params.append(int(server_id))
         if pinned is not None:
@@ -198,7 +336,28 @@ class ItemListingMixin(StashManagerProtocol):
                 "AND LOWER(t.content_text) LIKE ? ESCAPE '\\'))"
             )
             params.extend([needle, needle, needle, needle])
-        where = " AND ".join(clauses)
+        return " AND ".join(clauses), params
+
+    def _query_item_page(
+        self,
+        user_id: int,
+        *,
+        limit: int,
+        offset: int,
+        search: Optional[str] = None,
+        scope: Optional[str] = None,
+        server_id: Optional[int] = None,
+        pinned: Optional[bool] = None,
+        collection_id: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        where, params = self._build_item_visibility_clause(
+            user_id,
+            search=search,
+            scope=scope,
+            server_id=server_id,
+            pinned=pinned,
+            collection_id=collection_id,
+        )
         count_row = self._db.fetch_one(
             f"SELECT COUNT(*) AS count FROM stash_items WHERE {where}", tuple(params)
         )
@@ -212,3 +371,71 @@ class ItemListingMixin(StashManagerProtocol):
             self._row_to_item(row, include_storage=exposure[int(row["id"])])
             for row in rows
         ], total
+
+    def _query_item_page_keyset(
+        self,
+        user_id: int,
+        *,
+        limit: int,
+        cursor: Optional[str] = None,
+        search: Optional[str] = None,
+        scope: Optional[str] = None,
+        server_id: Optional[int] = None,
+        pinned: Optional[bool] = None,
+        collection_id: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int, Optional[str]]:
+        anchor = ItemKeysetCursor.decode(cursor)
+        where, params = self._build_item_visibility_clause(
+            user_id,
+            search=search,
+            scope=scope,
+            server_id=server_id,
+            pinned=pinned,
+            collection_id=collection_id,
+        )
+        count_row = self._db.fetch_one(
+            f"SELECT COUNT(*) AS count FROM stash_items WHERE {where}", tuple(params)
+        )
+        total = int(count_row["count"]) if count_row else 0
+
+        page_where = where
+        page_params = list(params)
+        if anchor is not None:
+            anchor_pinned, anchor_updated, anchor_id = anchor
+            # Expanded row comparison keeps this portable across SQLite and
+            # Postgres: seek to rows strictly after the anchor in the same
+            # DESC order, with id as the stable tiebreaker.
+            page_where += (
+                " AND (pinned < ? OR (pinned = ? AND "
+                "(updated_at < ? OR (updated_at = ? AND id < ?))))"
+            )
+            page_params.extend(
+                [
+                    anchor_pinned,
+                    anchor_pinned,
+                    anchor_updated,
+                    anchor_updated,
+                    anchor_id,
+                ]
+            )
+        # One-row lookahead computes has_more/next_cursor without returning it.
+        page_params.append(limit + 1)
+        rows = self._db.fetch_all(
+            f"SELECT * FROM stash_items WHERE {page_where} "
+            "ORDER BY pinned DESC, updated_at DESC, id DESC LIMIT ?",
+            tuple(page_params),
+        )
+        has_more = len(rows) > limit
+        page_rows = rows[:limit]
+        next_cursor: Optional[str] = None
+        if has_more and page_rows:
+            last = page_rows[-1]
+            next_cursor = ItemKeysetCursor.encode(
+                last["pinned"], last["updated_at"], last["id"]
+            )
+        exposure = self._can_expose_storage_batch(page_rows, user_id)
+        items = [
+            self._row_to_item(row, include_storage=exposure[int(row["id"])])
+            for row in page_rows
+        ]
+        return items, total, next_cursor
