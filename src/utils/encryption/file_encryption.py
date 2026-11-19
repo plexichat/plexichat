@@ -35,6 +35,15 @@ CHUNK_SIZE = 256 * 1024  # 256KB chunks for streaming
 NONCE_SIZE = 12
 TAG_SIZE = 16
 KEY_SIZE = 32
+# Each chunk's ciphertext length lives in a 4-byte, *unauthenticated* length
+# prefix. The decrypt loop feeds that value straight to ``read_exactly()`` /
+# ``stream.read()``, so a corrupt or malicious blob could declare a ~4 GiB
+# chunk and force a multi-gigabyte allocation (or an unbounded blocking read)
+# before AES-GCM ever checks a tag. A chunk's ciphertext is at most one
+# plaintext chunk + the GCM tag; cap both the encrypt and decrypt sides well
+# above any sane streaming chunk size.
+MAX_CHUNK_SIZE = 16 * 1024 * 1024  # 16 MiB plaintext chunk ceiling
+MAX_CHUNK_CIPHERTEXT_BYTES = MAX_CHUNK_SIZE + TAG_SIZE
 
 # Deprecation warning for legacy format
 _LEGACY_FORMAT_WARNING = "Legacy PXENC format detected. Files will be migrated to PXSTR v2 format on rewrite."
@@ -387,6 +396,10 @@ class StreamingFileEncryptor:
             Path.home() / ".plexichat" / "data" / "file_keyring.json",
             kek_env_var="PLEXICHAT_MEDIA_KEY",
         )
+        if not (0 < chunk_size <= MAX_CHUNK_SIZE):
+            raise ValueError(
+                f"chunk_size must be in 1..{MAX_CHUNK_SIZE}, got {chunk_size}"
+            )
         self.chunk_size = chunk_size
 
     def encrypt_stream(
@@ -500,6 +513,18 @@ class StreamingFileEncryptor:
                 if not len_bytes:
                     break
                 encrypted_len = struct.unpack(">I", len_bytes)[0]
+
+                # The length prefix is plaintext metadata controlled by whoever
+                # wrote the blob. Validate it before reading: an oversized value
+                # would otherwise make ``read_exactly`` attempt a huge (or
+                # unbounded) read, and a value below the GCM tag size can never
+                # be an authentic chunk. Fail closed with a clear error rather
+                # than letting the I/O layer allocate from attacker input.
+                if not (TAG_SIZE <= encrypted_len <= MAX_CHUNK_CIPHERTEXT_BYTES):
+                    raise DecryptionError(
+                        f"invalid encrypted chunk length {encrypted_len} "
+                        f"(expected {TAG_SIZE}..{MAX_CHUNK_CIPHERTEXT_BYTES})"
+                    )
 
                 encrypted_chunk = read_exactly(input_stream, encrypted_len)
                 if len(encrypted_chunk) < encrypted_len:
