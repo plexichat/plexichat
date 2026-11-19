@@ -212,6 +212,8 @@ def _is_safe_url(url: str) -> bool:
         import socket
         from urllib.parse import urlparse
 
+        from src.utils.security import URLValidator
+
         parsed = urlparse(url.strip())
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             return False
@@ -240,16 +242,15 @@ def _is_safe_url(url: str) -> bool:
                 ]
             except OSError:
                 return False
+        # Delegate the IP-range policy to the central SSRF gate so this
+        # submission path applies exactly the same non-public rules as the
+        # fetchers that later consume these evidence URLs. A hand-rolled
+        # ``is_private`` check let RFC 6598 CGNAT space (100.64.0.0/10) and
+        # its IPv4-mapped IPv6 form through -- ranges the shared validator
+        # explicitly blocks because they route to non-public infrastructure.
+        validator = URLValidator()
         return bool(addresses) and all(
-            not (
-                addr.is_private
-                or addr.is_loopback
-                or addr.is_link_local
-                or addr.is_multicast
-                or addr.is_reserved
-                or addr.is_unspecified
-            )
-            for addr in addresses
+            not validator.is_private_ip(str(addr)) for addr in addresses
         )
     except Exception:
         return False

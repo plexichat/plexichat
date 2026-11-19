@@ -136,20 +136,21 @@ def _assert_public_storage_host(hostname: str) -> None:
     Separate from the metadata checks because it performs blocking I/O.
     """
     try:
+        from src.utils.security import URLValidator
+
         addresses = [
             ipaddress.ip_address(info[4][0])
             for info in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
         ]
     except (OSError, ValueError):
         raise_bad_request("Invalid storage URL")
+    # Use the central SSRF policy instead of an ad-hoc ``is_private`` check:
+    # ipaddress flags only a subset of non-global space, and the shared gate
+    # additionally rejects RFC 6598 CGNAT (100.64.0.0/10), NAT64 and mapped
+    # forms that otherwise resolve to a viewer's internal network.
+    validator = URLValidator()
     if not addresses or any(
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-        for address in addresses
+        validator.is_private_ip(str(address)) for address in addresses
     ):
         raise_bad_request("Invalid storage URL")
     # External URLs are accepted only after DNS/IP safety checks. This keeps
