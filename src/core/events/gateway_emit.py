@@ -87,8 +87,19 @@ def _emit(
 
         if not events.is_setup():
             return
+        # Stamp the authoritative scope onto the Event itself, not just the
+        # dispatch kwargs. Intent filtering happens on the Event object (both
+        # for local subscribers and, via the cross-worker envelope, on sibling
+        # workers). A scope-less Event made every one of these guild/DM events
+        # classify as guild-scoped, applying the wrong intent gate. Routing is
+        # unchanged: ``dispatch`` already receives the same scope kwargs.
         events.dispatch(
-            events.Event(event_type=event_type, data=data),
+            events.Event(
+                event_type=event_type,
+                data=data,
+                server_id=server_id,
+                channel_id=channel_id,
+            ),
             user_ids=user_ids,
             server_id=server_id,
             channel_id=channel_id,
@@ -947,6 +958,10 @@ def emit_typing_start(
             "username": username or "Someone",
         },
         user_ids=recipients,
+        # Carry the real scope: without it both the local intent gate and the
+        # cross-worker envelope classify this DM-capable event as guild-scoped.
+        server_id=guild_id,
+        channel_id=channel_id,
     )
 
 
@@ -965,6 +980,8 @@ def emit_typing_stop(
         EventType.TYPING_STOP,
         {"channel_id": str(channel_id), "user_id": str(user_id)},
         user_ids=recipients,
+        server_id=guild_id,
+        channel_id=channel_id,
     )
 
 
@@ -991,4 +1008,6 @@ def emit_message_ack(
             "message_id": str(message_id) if message_id is not None else None,
         },
         user_ids=recipients,
+        server_id=guild_id,
+        channel_id=channel_id,
     )

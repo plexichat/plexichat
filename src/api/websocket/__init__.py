@@ -321,9 +321,26 @@ async def _handle_cross_worker_message(raw_message: str) -> None:
     if not event_type or not user_ids:
         return
 
+    # The publisher carries the authoritative routing scope in its own
+    # envelope field because ``d`` is not required to duplicate it. Pass it
+    # through to the dispatcher so the intent gate uses the real scope; a
+    # legacy payload without the field keeps the data-derived fallback. The
+    # scope is validated/coerced in ``dispatch_remote_event``.
+    envelope_scope = payload.get("scope")
+    has_scope = (
+        isinstance(envelope_scope, (list, tuple)) and len(envelope_scope) == 2
+    )
+
     if _dispatcher is not None:
         try:
-            await _dispatcher.dispatch_remote_event(event_type, event_data, user_ids)
+            if has_scope:
+                await _dispatcher.dispatch_remote_event(
+                    event_type, event_data, user_ids, scope=envelope_scope
+                )
+            else:
+                await _dispatcher.dispatch_remote_event(
+                    event_type, event_data, user_ids
+                )
         except Exception:
             logger.debug(
                 "Failed to dispatch remote event %s to %d users",

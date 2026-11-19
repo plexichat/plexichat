@@ -36,6 +36,23 @@ def _serving_loop() -> Optional[asyncio.AbstractEventLoop]:
     return loop
 
 
+#: Sentinel distinguishing "no explicit envelope scope was supplied" from an
+#: explicit ``(None, None)`` scope (a real, scope-less event). Legacy payloads
+#: arrive without the envelope ``scope`` field and must still be inferred from
+#: event data; a present scope is authoritative and must NOT be re-inferred.
+_SCOPE_UNSET = object()
+
+
+def _coerce_envelope_scope_id(value: Any) -> Optional[int]:
+    """Coerce one explicit envelope scope id; bools/invalid values -> None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _event_scope_from_data(event_data: Any) -> tuple:
     """Recover ``(server_id, channel_id)`` from a cross-worker event payload.
 
@@ -51,7 +68,11 @@ def _event_scope_from_data(event_data: Any) -> tuple:
     cross-worker and local dispatch apply identical intent gates.
 
     Values are coerced defensively: an unparseable scope is left unset rather
-    than raising out of the pub/sub receive path.
+    than raising out of the pub/sub receive path. This is now a *fallback*:
+    current publishers include the authoritative scope in the envelope's
+    ``scope`` field (see ``EventManager._publish_cross_worker``), which the
+    receiver prefers. Only legacy payloads without that field rely on this
+    inference.
     """
     if not isinstance(event_data, dict):
         return None, None
@@ -247,6 +268,8 @@ class GatewayDispatcher:
         event_type: str,
         event_data: Dict[str, Any],
         user_ids: List[int],
+        *,
+        scope=_SCOPE_UNSET,
     ) -> int:
         """Dispatch an event received from a sibling worker via Valkey pub/sub.
 
@@ -259,6 +282,10 @@ class GatewayDispatcher:
             event_data: Event payload dict.
             user_ids: Target user IDs (already filtered by the
                       publishing worker's EventRouter).
+            scope: Optional ``(server_id, channel_id)`` carried explicitly in
+                the pub/sub envelope. When present it is authoritative; the
+                data-derived scope is only a fallback for legacy publishers
+                that did not include an envelope scope.
 
         Returns:
             Number of local connections the event was sent to.
@@ -273,11 +300,22 @@ class GatewayDispatcher:
             )
             return 0
 
-        # Restore the routing scope that the pub/sub envelope drops. Without
-        # it ``filter_event_by_intents`` sees no server_id/channel_id and
-        # classifies a DM as a guild event, leaking DM payloads to clients
-        # that only hold the guild intent.
-        server_id, channel_id = _event_scope_from_data(event_data)
+        # Restore the routing scope for the intent gate. Prefer the explicit
+        # envelope scope: payload builders are NOT required to duplicate the
+        # scope inside ``d``, so inferring it from data alone misclassifies a
+        # guild event (no ``guild_id`` in d) as a DM, or a DM as a guild
+        # event, applying the wrong intent and leaking to the wrong audience.
+        # A malformed explicit scope falls back to data inference so a partial
+        # envelope can never widen the audience beyond the legacy behaviour.
+        if (
+            scope is not _SCOPE_UNSET
+            and isinstance(scope, (list, tuple))
+            and len(scope) == 2
+        ):
+            server_id = _coerce_envelope_scope_id(scope[0])
+            channel_id = _coerce_envelope_scope_id(scope[1])
+        else:
+            server_id, channel_id = _event_scope_from_data(event_data)
         event = Event(
             event_type=resolved_type,
             data=event_data,

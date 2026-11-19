@@ -24,6 +24,22 @@ from .router import EventRouter
 _CROSS_WORKER_CHANNEL = "events:cross_worker"
 
 
+def _envelope_scope_id(value) -> Optional[int]:
+    """Normalize an ``Event`` scope id for the cross-worker envelope.
+
+    ``SnowflakeID`` may be a decimal string on the wire; the receiving worker
+    needs a plain int (or ``None``) for the intent router. Booleans and
+    unparseable values collapse to ``None`` rather than raising out of the
+    publish path.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 class EventManager:
     """Manages event dispatch and subscriptions."""
 
@@ -158,6 +174,15 @@ class EventManager:
         # this adds no unbounded "retained message" growth.
         event_id = f"{self._worker_id}:{uuid.uuid4().hex}"
         try:
+            # Carry the AUTHORITATIVE routing scope in its own envelope field.
+            # ``event.data`` is not required to duplicate ``server_id``/
+            # ``channel_id`` (several payload builders omit them), so the old
+            # envelope forced the receiver to re-infer scope from ``d``. A
+            # guild event whose data lacks ``guild_id`` was then classified as
+            # a DM on sibling workers and gated by the DM intent instead of
+            # the guild one (and vice versa) -- an intent-gate/audience leak.
+            # The receiver prefers this explicit scope and only falls back to
+            # data-derived scope for legacy payloads without the field.
             payload = json.dumps(
                 {
                     "id": event_id,
@@ -165,6 +190,10 @@ class EventManager:
                     "d": event.data,
                     "u": [int(uid) for uid in recipients],
                     "sw": self._worker_id,
+                    "scope": [
+                        _envelope_scope_id(event.server_id),
+                        _envelope_scope_id(event.channel_id),
+                    ],
                 }
             )
         except (TypeError, ValueError) as e:
