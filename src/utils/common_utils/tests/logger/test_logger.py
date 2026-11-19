@@ -566,7 +566,13 @@ class TestSecurityLogInjection:
 
         with open(os.path.join(TEMP_LOG_DIR, "latest.log"), "r") as f:
             content = f.read()
-            assert malicious_msg in content
+            # The file sink renders C0 controls as visible ``\xNN`` escapes, so
+            # the injected newline cannot start a second, forged log line. Pin
+            # both halves: the text survives, the line break does not.
+            assert "User login\\x0aFAKE ERROR: System compromised" in content
+            assert not any(
+                line.startswith("FAKE ERROR") for line in content.splitlines()
+            )
 
     def test_carriage_return_injection(self, clean_log_dir):
         logger_manager = Logger(log_dir=TEMP_LOG_DIR)

@@ -78,8 +78,7 @@ def test_pip_install_is_hash_pinned() -> None:
             "pip install must use --require-hashes: " + line
         )
         assert "--no-cache-dir" in line, (
-            "pip install must use --no-cache-dir to keep wheels out of layers: "
-            + line
+            "pip install must use --no-cache-dir to keep wheels out of layers: " + line
         )
 
 
@@ -99,9 +98,7 @@ def test_no_secrets_or_add_baked_into_images() -> None:
             r"(?mi)^\s*ENV\s+([A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|APIKEY|PRIVATE_KEY)[A-Z0-9_]*)=(\S+)",
             text,
         ):
-            assert False, (
-                f"{path.name} bakes a secret into ENV: {match.group(1)}"
-            )
+            assert False, f"{path.name} bakes a secret into ENV: {match.group(1)}"
 
 
 def test_healthchecks_present() -> None:
@@ -202,7 +199,9 @@ def test_backend_strips_build_toolchain_but_keeps_runtime_libs() -> None:
         "the purge must use --auto-remove to drop orphaned build-only deps"
     )
     for dep in build_deps:
-        assert re.search(rf"\b{re.escape(dep)}\b", purge_line), f"purge is missing {dep}"
+        assert re.search(rf"\b{re.escape(dep)}\b", purge_line), (
+            f"purge is missing {dep}"
+        )
     # Runtime binaries pulled in by name must survive the purge.
     for kept in ("ffmpeg", "curl", "libbrotli1"):
         assert not re.search(rf"\b{kept}\b", purge_line), (

@@ -520,7 +520,15 @@ test:pytest:
   # and test:database_backends both `needs:` this job, and
   # test:timing_under_load is in a later stage.
   parallel: 2
-  resource_group: pytest-suite-${CI_NODE_INDEX}
+  # Scoped by branch as well as shard: two pipelines for the same branch (a
+  # push while the previous pipeline is still running) used to run their
+  # suites side by side, and #2691/#2692 shared the box at a load of 45 on 8
+  # cores. The slow-test gate widens its ceiling to at most 4x, so a fourth
+  # overlapping suite measured the queue and redded two jobs that were fine --
+  # and test:shuffled_order, which is a wall-clock suite run, flaked in the
+  # same window. Different branches still run concurrently, which is what the
+  # per-shard group exists for.
+  resource_group: pytest-suite-${CI_COMMIT_REF_SLUG}-${CI_NODE_INDEX}
   needs: []
   rules:
     - if: $CI_COMMIT_TAG
@@ -765,8 +773,10 @@ test:shuffled_order:
   extends: .python_base
   stage: test
   timeout: 1h
-  # Same resource group as test:pytest: see the note above it.
-  resource_group: pytest-suite
+  # Same resource group as test:pytest: see the note above it. Branch-scoped
+  # for the same reason -- a second pipeline's suite must not be timed beside
+  # this one.
+  resource_group: pytest-suite-${CI_COMMIT_REF_SLUG}
   # Waits for both shards of test:pytest. It used to queue behind that job
   # because they shared a resource group; the shards now carry their own
   # groups, so the ordering has to be stated. Its tests are the same suite, and
@@ -794,7 +804,7 @@ test:shuffled_order_serial:
   extends: .python_base
   stage: test
   timeout: 1h
-  resource_group: pytest-suite
+  resource_group: pytest-suite-${CI_COMMIT_REF_SLUG}
   variables:
     SHUFFLE_SEED: "424242"
   script:
@@ -826,7 +836,7 @@ test:timing_under_load:
     - when: on_success
   # Same resource group as test:pytest: the burners this job runs are exactly
   # the load a duration gate must not be measuring.
-  resource_group: pytest-suite
+  resource_group: pytest-suite-${CI_COMMIT_REF_SLUG}
   variables:
     # Busy-loop burners per CPU; >1 deliberately oversubscribes the scheduler.
     PLEXICHAT_LOAD_PER_CPU: "2"
@@ -886,7 +896,7 @@ test:database_backends:
   stage: test
   timeout: 30m
   # Its JUnit report is judged by the same gate; see the note at test:pytest.
-  resource_group: pytest-suite
+  resource_group: pytest-suite-${CI_COMMIT_REF_SLUG}
   needs: [test:pytest]
   rules:
     - if: $CI_COMMIT_TAG

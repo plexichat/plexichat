@@ -91,11 +91,6 @@ PUBLIC_MUTATING_ROUTES = {
         "/auth/2fa/regenerate-backup-codes",
     ): "pending admin session regenerates its own codes",
     (
-        "src/api/routes/admin/licensing.py",
-        "post",
-        "/validate",
-    ): "public license-key validation",
-    (
         "src/api/routes/applications.py",
         "post",
         "/interactions/{interaction_token}/callback",

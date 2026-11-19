@@ -43,9 +43,7 @@ def test_backslash_in_path_and_percent_encoded_backslash_still_allowed():
     # Backslashes that are data (path) or percent-encoded never enter the
     # authority and must keep working.
     _validate_voice_metadata(**_VALID_KW, url=r"https://93.184.216.34/a\b.webm")
-    _validate_voice_metadata(
-        **_VALID_KW, url="https://93.184.216.34/a%5Cb.webm"
-    )
+    _validate_voice_metadata(**_VALID_KW, url="https://93.184.216.34/a%5Cb.webm")
 
 
 def test_local_storage_prefix_still_allowed():

@@ -15,7 +15,7 @@ import io
 
 import pytest
 
-from src.core.media.exceptions import StorageError, StorageWriteError
+from src.core.media.exceptions import StorageError
 from src.core.media.storage.local import LocalStorage
 
 
@@ -41,7 +41,10 @@ def test_write_refuses_symlink_component_within_base(tmp_path, method):
             storage.store(payload, "link.bin", "application/octet-stream")
         else:
             storage.store_stream(
-                io.BytesIO(payload), "link.bin", "application/octet-stream", len(payload)
+                io.BytesIO(payload),
+                "link.bin",
+                "application/octet-stream",
+                len(payload),
             )
 
     assert victim.read_bytes() == b"original"
@@ -112,7 +115,10 @@ def test_normal_write_roundtrip_still_works(tmp_path):
     assert storage.store(b"second-longer", "a/b/obj.bin", "application/octet-stream")
     assert storage.retrieve("a/b/obj.bin") == b"second-longer"
 
-    assert storage.store_stream(
-        io.BytesIO(b"streamed"), "a/b/stream.bin", "application/octet-stream", 8
-    ) == "a/b/stream.bin"
+    assert (
+        storage.store_stream(
+            io.BytesIO(b"streamed"), "a/b/stream.bin", "application/octet-stream", 8
+        )
+        == "a/b/stream.bin"
+    )
     assert storage.retrieve("a/b/stream.bin") == b"streamed"

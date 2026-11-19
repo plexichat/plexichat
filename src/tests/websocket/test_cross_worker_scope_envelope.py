@@ -75,12 +75,8 @@ def test_publish_envelope_carries_explicit_scope(events_module, monkeypatch):
 async def test_explicit_dm_scope_withheld_from_guild_only_intent(session_manager):
     """Envelope scope (not ``d``) drives the gate: DM needs DIRECT_MESSAGES."""
     dispatcher = GatewayDispatcher(session_manager=session_manager)
-    _, guild_ws = _identified(
-        session_manager, 111, int(GatewayIntent.GUILD_MESSAGES)
-    )
-    _, dm_ws = _identified(
-        session_manager, 222, int(GatewayIntent.DIRECT_MESSAGES)
-    )
+    _, guild_ws = _identified(session_manager, 111, int(GatewayIntent.GUILD_MESSAGES))
+    _, dm_ws = _identified(session_manager, 222, int(GatewayIntent.DIRECT_MESSAGES))
 
     # ``d`` has no scope keys at all; only the envelope says this is a DM.
     sent = await dispatcher.dispatch_remote_event(
@@ -97,12 +93,8 @@ async def test_explicit_dm_scope_withheld_from_guild_only_intent(session_manager
 async def test_explicit_guild_scope_withheld_from_dm_only_intent(session_manager):
     """A guild event whose ``d`` lacks guild_id still needs GUILD_MESSAGES."""
     dispatcher = GatewayDispatcher(session_manager=session_manager)
-    _, guild_ws = _identified(
-        session_manager, 333, int(GatewayIntent.GUILD_MESSAGES)
-    )
-    _, dm_ws = _identified(
-        session_manager, 444, int(GatewayIntent.DIRECT_MESSAGES)
-    )
+    _, guild_ws = _identified(session_manager, 333, int(GatewayIntent.GUILD_MESSAGES))
+    _, dm_ws = _identified(session_manager, 444, int(GatewayIntent.DIRECT_MESSAGES))
 
     sent = await dispatcher.dispatch_remote_event(
         "MESSAGE_CREATE", {"content": "guild-msg"}, [333, 444], scope=(7, None)
@@ -117,9 +109,7 @@ async def test_explicit_guild_scope_withheld_from_dm_only_intent(session_manager
 async def test_legacy_payload_without_scope_still_uses_data_fallback(session_manager):
     """A publisher without the envelope field still infers scope from ``d``."""
     dispatcher = GatewayDispatcher(session_manager=session_manager)
-    _, dm_ws = _identified(
-        session_manager, 555, int(GatewayIntent.DIRECT_MESSAGES)
-    )
+    _, dm_ws = _identified(session_manager, 555, int(GatewayIntent.DIRECT_MESSAGES))
 
     sent = await dispatcher.dispatch_remote_event(
         "MESSAGE_CREATE", {"channel_id": "999", "content": "dm"}, [555]

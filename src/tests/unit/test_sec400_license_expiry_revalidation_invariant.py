@@ -72,7 +72,8 @@ def _has_stale_validate_guard(function) -> bool:
             and any(isinstance(op, (ast.Eq, ast.Is)) for op in test.ops)
             and ast.unparse(test.left) == "self._validation_result"
             and any(
-                isinstance(c, ast.Constant) and c.value is None for c in test.comparators
+                isinstance(c, ast.Constant) and c.value is None
+                for c in test.comparators
             )
         )
         if is_none_check and _called_attr(node, "validate"):

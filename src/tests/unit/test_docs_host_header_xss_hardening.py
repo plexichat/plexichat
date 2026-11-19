@@ -52,7 +52,9 @@ def test_runtime_config_keeps_legitimate_hosts():
 
 
 def test_runtime_config_rejects_nonstandard_scheme():
-    conf = _runtime_docs_config(_request("docs.example.com", scheme="javascript"), get_docs_config())
+    conf = _runtime_docs_config(
+        _request("docs.example.com", scheme="javascript"), get_docs_config()
+    )
 
     assert conf.base_url.startswith("http://")
     assert conf.websocket_url.startswith("ws://")

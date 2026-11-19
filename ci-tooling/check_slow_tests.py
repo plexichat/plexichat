@@ -139,6 +139,48 @@ MAX_LOAD_FACTOR = 4.0
 # cheap by ordering the fixtures differently -- so it is a named test with a
 # budget, and the module's six assertions run free behind it.
 SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
+    # The whole-tree static audits. Their cost is the repository, not the code
+    # under test: each one walks src/ (about 1,200 modules), reads and parses
+    # every file with ``ast``, and the three in test_security_d2 each build the
+    # inventory from scratch. Measured at -n0 on the build box (idle): 17.52s,
+    # 16.38s, 15.25s. In pipeline #2691/#2692, which shared the box at a load
+    # of 45 on 8 cores, they measured 57.75s/50.94s/39.02s -- past the 20s
+    # ceiling the 4x load factor allows. The branch-scoped resource groups now
+    # stop two pipelines of one branch from overlapping; these budgets price the
+    # sweep itself, and the first two entries in test_sec3 below the same way.
+    "src.tests.unit.test_security_d2_outbound_sinks.TestStaticSinkAudit::test_every_http_sink_is_gated_or_explicitly_operator_scoped": (
+        25.0,
+        "AST sweep of every module under src: 17.52s idle, 57.75s at 5.7x load (#2691)",
+    ),
+    "src.tests.unit.test_security_d2_outbound_sinks.TestStaticSinkAudit::test_operator_sink_allowlist_has_no_stale_entries": (
+        25.0,
+        "second full-tree AST sweep in the same class: 15.25s idle, 50.94s at 5.7x load (#2691)",
+    ),
+    "src.tests.unit.test_security_d2_outbound_sinks.TestStaticSinkAudit::test_sink_discovery_is_not_vacuous": (
+        25.0,
+        "third full-tree AST sweep in the same class: 16.38s idle, 39.02s at 5.7x load (#2691)",
+    ),
+    "src.tests.unit.test_sec3_outbound_gate::test_every_direct_outbound_call_has_a_bounded_timeout": (
+        15.0,
+        "AST sweep of the production tree for outbound calls: 8.36s idle, 27.84s at 5.7x load (#2691)",
+    ),
+    "src.tests.unit.test_sec3_outbound_gate::test_no_production_module_imports_the_raw_urlopen": (
+        15.0,
+        "second AST sweep of the production tree in the same module: 8.79s idle, 26.00s at 5.7x load (#2691)",
+    ),
+    "src.tests.unit.test_sec100_ci_guard::test_real_tree_has_no_unallowlisted_findings": (
+        12.0,
+        "runs the dangerous-pattern guard over the real tree: 5.30s idle, 25.20s at 5.7x load (#2691)",
+    ),
+    # Builds the real app (its own lifespan, middleware stack and routes) for
+    # one assertion: 6.67s setup + 5.49s call idle, 25.09s in #2691 where two
+    # pipelines shared the box. The budget covers standing the app up rather
+    # than a slow assertion; a regression in the compression path still lands
+    # well past it.
+    "src.tests.features.test_response_compression::test_json_responses_are_gzipped_through_the_real_app": (
+        18.0,
+        "builds the real app: 12.16s setup+call idle, 25.09s at 5.7x load (#2691)",
+    ),
     # Fixture-bound tests that run in a few hundredths of a second alone but
     # queue behind the shard's own four xdist workers and the sibling jobs on
     # the shared runner. Pipeline #2534 judged them against a 9.45s ceiling

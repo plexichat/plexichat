@@ -27,7 +27,9 @@ from src.utils import encryption
 
 def _make_2fa_user(auth_manager, username):
     with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-        user = auth_manager.register(username, f"{username}@example.com", "TestPass123!")
+        user = auth_manager.register(
+            username, f"{username}@example.com", "TestPass123!"
+        )
     setup = auth_manager.setup_2fa(user.id)
     totp = pyotp.TOTP(setup.secret)
     auth_manager.confirm_2fa(user.id, totp.now())

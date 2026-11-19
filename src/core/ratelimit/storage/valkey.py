@@ -516,7 +516,9 @@ class ValkeyStorage(RateLimitStorage):
             except Exception as release_error:
                 import utils.logger as logger
 
-                logger.debug(f"rate limit token-bucket lock release failed: {release_error}")
+                logger.debug(
+                    f"rate limit token-bucket lock release failed: {release_error}"
+                )
 
     # ------------------------------------------------------------------
     # Async API
@@ -717,7 +719,9 @@ class ValkeyStorage(RateLimitStorage):
             except Exception as release_error:
                 import utils.logger as logger
 
-                logger.debug(f"rate limit token-bucket lock release failed: {release_error}")
+                logger.debug(
+                    f"rate limit token-bucket lock release failed: {release_error}"
+                )
 
     async def aupdate_bucket(
         self,

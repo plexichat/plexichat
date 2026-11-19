@@ -30,7 +30,9 @@ class _InboundRequest:
         return json.dumps(self._payload).encode("utf-8")
 
 
-def _invoke(payload: Dict[str, Any]) -> Tuple[Optional[dict], MagicMock, Optional[HTTPException]]:
+def _invoke(
+    payload: Dict[str, Any],
+) -> Tuple[Optional[dict], MagicMock, Optional[HTTPException]]:
     manager = MagicMock()
     manager.submit_inbound_request.return_value = {"id": 1}
     request = _InboundRequest(payload)

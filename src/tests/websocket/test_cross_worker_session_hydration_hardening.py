@@ -116,8 +116,6 @@ def test_get_replay_events_rechecks_size_backstop():
     from src.api.websocket.session import Session
 
     session = Session(session_id="s", user_id=1)
-    session.replay_events.append(
-        {"s": 1, "d": "x" * (MAX_REPLAY_EVENT_BYTES + 1)}
-    )
+    session.replay_events.append({"s": 1, "d": "x" * (MAX_REPLAY_EVENT_BYTES + 1)})
     session.replay_events.append({"s": 2, "d": "ok"})
     assert [event["s"] for event in session.get_replay_events(0)] == [2]

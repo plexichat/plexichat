@@ -172,8 +172,10 @@ def _invokers(bad):
             threads_route.ThreadMessageRequest(content="hi"),
             current_user=_user(),
         ),
-        "create_channel_thread/parent_message_id": lambda: threads_route.create_channel_thread(
-            "8", _create_request(bad), current_user=_user()
+        "create_channel_thread/parent_message_id": lambda: (
+            threads_route.create_channel_thread(
+                "8", _create_request(bad), current_user=_user()
+            )
         ),
     }
 

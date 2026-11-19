@@ -44,17 +44,20 @@ HARDENED_ID_MODULES = (
     "src/api/routes/polls.py",
 )
 
-HTTP_METHODS = frozenset(
-    {"get", "post", "put", "patch", "delete", "head", "options"}
-)
+HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 
 
 def _is_id_or_cursor(name: str) -> bool:
-    return name == "id" or name.endswith("_id") or name in {
-        "cursor",
-        "after",
-        "before",
-    }
+    return (
+        name == "id"
+        or name.endswith("_id")
+        or name
+        in {
+            "cursor",
+            "after",
+            "before",
+        }
+    )
 
 
 def _annotation_is_str(annotation) -> bool:

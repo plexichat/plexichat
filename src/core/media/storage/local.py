@@ -80,9 +80,7 @@ class LocalStorage(StorageBackendBase):
                 # Not created yet - nothing to hijack at this component.
                 break
             if stat.S_ISLNK(mode):
-                raise StorageError(
-                    "Invalid path: symlink component detected", "local"
-                )
+                raise StorageError("Invalid path: symlink component detected", "local")
 
     @staticmethod
     def _open_for_write(full_path: str) -> int:

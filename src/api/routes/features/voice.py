@@ -137,7 +137,10 @@ def _assert_public_storage_host(hostname: str) -> None:
     Separate from the metadata checks because it performs blocking I/O.
     """
     try:
-        from src.utils.security import URLValidator
+        from src.core.security.outbound import (
+            OutboundUrlRejected,
+            reject_forbidden_ip_literal,
+        )
 
         addresses = [
             ipaddress.ip_address(info[4][0])
@@ -149,11 +152,13 @@ def _assert_public_storage_host(hostname: str) -> None:
     # ipaddress flags only a subset of non-global space, and the shared gate
     # additionally rejects RFC 6598 CGNAT (100.64.0.0/10), NAT64 and mapped
     # forms that otherwise resolve to a viewer's internal network.
-    validator = URLValidator()
-    if not addresses or any(
-        validator.is_private_ip(str(address)) for address in addresses
-    ):
+    if not addresses:
         raise_bad_request("Invalid storage URL")
+    for address in addresses:
+        try:
+            reject_forbidden_ip_literal(str(address), "storage_url")
+        except OutboundUrlRejected:
+            raise_bad_request("Invalid storage URL")
     # External URLs are accepted only after DNS/IP safety checks. This keeps
     # legacy JSON clients working while preventing loopback/private targets.
 

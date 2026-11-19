@@ -143,7 +143,10 @@ def test_perf_before_and_after_call_counts(monkeypatch):
 
     events, members = 100, 500
     counts = {}
-    for label, cache in (("before", _NoCache()), ("after", ge._channel_recipient_cache)):
+    for label, cache in (
+        ("before", _NoCache()),
+        ("after", ge._channel_recipient_cache),
+    ):
         servers = _Servers(
             members=list(range(1, members + 1)),
             viewers=set(range(2, members + 1)),

@@ -33,6 +33,10 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
         1,
         "slow-build double widens the window where two readers race the cache fill",
     ),
+    "api/test_capability_catalog_warmup.py": (
+        1,
+        "stubbed catalog stands in for the cold provider probe so the warm-up overlap is measurable",
+    ),
     "api/test_dual_tombstone_contract.py": (
         1,
         "yield to the loop so fire-and-forget create_task() broadcasts run",
@@ -48,6 +52,10 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
     "api/routes/test_avatars_hardening.py": (
         1,
         "let the bounded avatar checksum-cache TTL expire",
+    ),
+    "artifacts/test_transcription_scheduling_hardening.py": (
+        1,
+        "poll for the scheduled transcription worker to pick up the queued row",
     ),
     "artifacts/test_voice_calls.py": (
         1,
@@ -85,6 +93,10 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
     "encryption/test_key_rotation.py": (
         1,
         "let the rotation thread start before forcing a concurrent rotate",
+    ),
+    "events/test_cross_worker_dedupe.py": (
+        1,
+        "wait out a 10ms dedupe TTL before asserting the id is reprocessed",
     ),
     "events/test_queued_delivery_integration.py": (
         1,
@@ -240,6 +252,10 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
         1,
         "simulate a slow config loader so the cache window is measurable",
     ),
+    "notifications/test_background_dispatcher_hardening.py": (
+        1,
+        "poll interval inside the local _wait_for helper",
+    ),
     "plexijoin/test_admin_connections_hardening.py": (
         1,
         "slow decrypt double widens the window where the connection list races the fill",
@@ -259,6 +275,10 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
     "unit/test_gateway_throughput_regression.py": (
         1,
         "advance the fixed throughput measurement window",
+    ),
+    "unit/test_inprocess_cache_bounds.py": (
+        2,
+        "spin until the holder thread enters the lock; hold it so the waiter is provably blocked",
     ),
     "unit/test_message_render_cache.py": (
         1,

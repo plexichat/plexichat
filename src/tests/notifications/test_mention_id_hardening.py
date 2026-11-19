@@ -27,10 +27,10 @@ class TestMentionIdHardening:
     @pytest.mark.parametrize(
         "content",
         [
-            "<@٤٢>",       # Arabic-Indic digits for "42"
-            "<@４２>",      # fullwidth digits for "42"
-            "<@&٤٢>",      # role mention
-            "<#٤٢>",       # channel mention
+            "<@٤٢>",  # Arabic-Indic digits for "42"
+            "<@４２>",  # fullwidth digits for "42"
+            "<@&٤٢>",  # role mention
+            "<#٤٢>",  # channel mention
         ],
     )
     def test_unicode_digit_homoglyphs_are_not_mentions(self, content):
@@ -39,12 +39,12 @@ class TestMentionIdHardening:
     @pytest.mark.parametrize(
         "content",
         [
-            "<@0>",                                  # zero is not a snowflake
-            "<@-1>",                                 # signs are not parsed at all
-            f"<@{SNOWFLAKE_MAX + 1}>",               # just past snowflake max
-            "<@999999999999999999999999999999>",     # far out of range
-            f"<@&{SNOWFLAKE_MAX + 1}>",              # role
-            f"<#{SNOWFLAKE_MAX + 1}>",               # channel
+            "<@0>",  # zero is not a snowflake
+            "<@-1>",  # signs are not parsed at all
+            f"<@{SNOWFLAKE_MAX + 1}>",  # just past snowflake max
+            "<@999999999999999999999999999999>",  # far out of range
+            f"<@&{SNOWFLAKE_MAX + 1}>",  # role
+            f"<#{SNOWFLAKE_MAX + 1}>",  # channel
         ],
     )
     def test_out_of_range_ids_are_not_mentions(self, content):

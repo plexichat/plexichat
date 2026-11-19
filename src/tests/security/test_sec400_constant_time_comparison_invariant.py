@@ -64,7 +64,10 @@ CT_VERIFIERS = (
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -188,7 +191,9 @@ def test_every_hardened_verifier_still_compares_in_constant_time():
 
 def test_admin_otp_backup_codes_never_use_short_circuit_comparison():
     """The d972e9d9 fix must not be undone in the admin backup-code branch."""
-    tree = ast.parse((ROOT / "src/core/admin/auth/otp_mixin.py").read_text(encoding="utf-8"))
+    tree = ast.parse(
+        (ROOT / "src/core/admin/auth/otp_mixin.py").read_text(encoding="utf-8")
+    )
     verify = _find_function(tree, "verify_otp")
     assert verify is not None
     offenders = []

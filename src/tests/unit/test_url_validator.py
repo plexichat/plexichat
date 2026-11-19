@@ -129,9 +129,7 @@ def test_rejects_backslash_in_authority(monkeypatch, url):
 
     def fake_getaddrinfo(*args, **kwargs):
         calls.append(args[0])
-        return [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
-        ]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
 
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
     # A malformed bracketed authority is rejected even earlier by urlparse

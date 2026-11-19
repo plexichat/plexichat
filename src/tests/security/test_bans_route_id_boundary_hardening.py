@@ -27,18 +27,16 @@ from src.core.auth.models import TokenInfo
 
 pytestmark = [pytest.mark.security, pytest.mark.unit]
 
-_BANS_SOURCE = (
-    Path(__file__).resolve().parents[2] / "api/routes/servers/bans.py"
-)
+_BANS_SOURCE = Path(__file__).resolve().parents[2] / "api/routes/servers/bans.py"
 
 # Values ``int()`` accepts but a positive ASCII snowflake must not. The guard
 # tolerates a leading ``+`` and surrounding whitespace (both still yield a
 # plain in-range integer), so those are not in this list.
 _BAD_IDS = (
-    "-1",       # negative
-    "0",        # zero / sentinel
-    "1_2",      # underscore-separated -> 12 (PEP 515)
-    "١٢",       # Unicode (Arabic-Indic) digits -> 12
+    "-1",  # negative
+    "0",  # zero / sentinel
+    "1_2",  # underscore-separated -> 12 (PEP 515)
+    "١٢",  # Unicode (Arabic-Indic) digits -> 12
     "99000000000000000000",  # beyond 2**63-1
 )
 
@@ -116,9 +114,7 @@ def test_mutating_ban_rejects_malformed_ids_before_core_call(handler, bad):
     with patch("src.api.get_servers", return_value=servers):
         with pytest.raises(HTTPException) as exc:
             if handler == "ban_member":
-                asyncio.run(
-                    bans_routes.ban_member("12", bad, None, _token())
-                )
+                asyncio.run(bans_routes.ban_member("12", bad, None, _token()))
             else:
                 asyncio.run(bans_routes.unban_member("12", bad, _token()))
     assert exc.value.status_code == 400
@@ -127,9 +123,7 @@ def test_mutating_ban_rejects_malformed_ids_before_core_call(handler, bad):
 
 
 @pytest.mark.parametrize("bad", _BAD_IDS)
-@pytest.mark.parametrize(
-    "handler", ["get_server_bans", "ban_member", "unban_member"]
-)
+@pytest.mark.parametrize("handler", ["get_server_bans", "ban_member", "unban_member"])
 def test_server_id_rejects_malformed_ids_before_core_call(handler, bad):
     servers = Mock()
     with patch("src.api.get_servers", return_value=servers):
@@ -137,9 +131,7 @@ def test_server_id_rejects_malformed_ids_before_core_call(handler, bad):
             if handler == "get_server_bans":
                 asyncio.run(bans_routes.get_server_bans(bad, _token()))
             elif handler == "ban_member":
-                asyncio.run(
-                    bans_routes.ban_member(bad, "12", None, _token())
-                )
+                asyncio.run(bans_routes.ban_member(bad, "12", None, _token()))
             else:
                 asyncio.run(bans_routes.unban_member(bad, "12", _token()))
     assert exc.value.status_code == 400

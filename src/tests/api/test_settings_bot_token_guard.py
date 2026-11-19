@@ -109,7 +109,9 @@ _HANDLERS = [
     ),
     (
         "bulk_update_settings",
-        lambda tok: _call(bulk_update_settings, body={"theme": "evil"}, current_user=tok),
+        lambda tok: _call(
+            bulk_update_settings, body={"theme": "evil"}, current_user=tok
+        ),
     ),
 ]
 

@@ -81,14 +81,14 @@ def test_committed_sbom_matches_runtime_lock() -> None:
     assert bom.get("bomFormat") == "CycloneDX"
 
     props = {
-        p["name"]: p["value"]
-        for p in bom.get("metadata", {}).get("properties", [])
+        p["name"]: p["value"] for p in bom.get("metadata", {}).get("properties", [])
     }
     assert props.get("plexichat:sbom:source") == "lockfile"
     assert props.get("plexichat:sbom:lockfile") == RUNTIME_LOCK.name
-    assert props.get("plexichat:sbom:lockfile-sha256") == hashlib.sha256(
-        RUNTIME_LOCK.read_bytes()
-    ).hexdigest(), "committed SBOM was generated from a different requirements.txt"
+    assert (
+        props.get("plexichat:sbom:lockfile-sha256")
+        == hashlib.sha256(RUNTIME_LOCK.read_bytes()).hexdigest()
+    ), "committed SBOM was generated from a different requirements.txt"
 
     components = {c["name"]: c for c in bom["components"]}
     lock = _parse_lock(RUNTIME_LOCK)
@@ -104,9 +104,7 @@ def test_committed_sbom_matches_runtime_lock() -> None:
         )
         assert component["purl"] == f"pkg:pypi/{name}@{version}"
         sbom_hashes = {
-            h["content"]
-            for h in component.get("hashes", [])
-            if h["alg"] == "SHA-256"
+            h["content"] for h in component.get("hashes", []) if h["alg"] == "SHA-256"
         }
         assert sbom_hashes == hashes, f"{name}: SBOM hashes != lock hashes"
 
@@ -151,7 +149,8 @@ def test_compiled_locks_are_fully_hashed_with_resolving_via_refs() -> None:
             assert hashes, f"{path.name}: {name} has no SHA-256 hash"
 
         refs = {
-            _norm(m.group(1)) for m in VIA_REF_RE.finditer(path.read_text(encoding="utf-8"))
+            _norm(m.group(1))
+            for m in VIA_REF_RE.finditer(path.read_text(encoding="utf-8"))
         }
         unresolved = sorted(r for r in refs if r not in lock and not r.startswith("-r"))
         assert not unresolved, f"{path.name}: unresolved # via refs: {unresolved}"
@@ -173,13 +172,12 @@ def test_environment_source_remains_an_explicit_opt_in(tmp_path) -> None:
     """The legacy pip-freeze snapshot is preserved but never the default."""
     module = _load_generator()
     out = tmp_path / "env"
-    assert module.main(
-        ["--sbom-only", "--source", "environment", "--out", str(out)]
-    ) == 0
+    assert (
+        module.main(["--sbom-only", "--source", "environment", "--out", str(out)]) == 0
+    )
     assert (out / "python.freeze.txt").is_file()
     env_bom = json.loads((out / "python.cdx.json").read_text(encoding="utf-8"))
     props = {
-        p["name"]: p["value"]
-        for p in env_bom.get("metadata", {}).get("properties", [])
+        p["name"]: p["value"] for p in env_bom.get("metadata", {}).get("properties", [])
     }
     assert props.get("plexichat:sbom:source") != "lockfile"

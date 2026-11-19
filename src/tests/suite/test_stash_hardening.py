@@ -112,9 +112,7 @@ class TestWorkspaceFieldsBoundedOnUpdate:
             owner.id, item_type="note", title="Note", description="keep me"
         )
         with pytest.raises(StashValidationError):
-            manager.update_item(
-                owner.id, int(item["id"]), description="x" * 100_000
-            )
+            manager.update_item(owner.id, int(item["id"]), description="x" * 100_000)
         assert manager.get_item(owner.id, int(item["id"]))["description"] == "keep me"
 
     @pytest.mark.parametrize(

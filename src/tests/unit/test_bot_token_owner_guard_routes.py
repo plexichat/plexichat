@@ -148,6 +148,5 @@ def test_every_owner_scoped_handler_rejects_bot_tokens():
                 omissions.append(f"{name}:{node.name}")
 
     assert not omissions, (
-        "owner-scoped handlers without require_user_token:\n  "
-        + "\n  ".join(omissions)
+        "owner-scoped handlers without require_user_token:\n  " + "\n  ".join(omissions)
     )

@@ -69,7 +69,10 @@ def _writerow_cells(tree):
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -98,7 +101,9 @@ def test_export_scan_is_not_vacuous():
     assert len(rows) >= 2, f"only found {len(rows)} writerow calls in {EXPORT}"
     # The data-row writer must actually be neutralised, otherwise the
     # "no raw cells" assertion below would pass trivially.
-    assert sum(1 for _, cells in rows if any(_contains_neutralizer(c) for c in cells)) >= 1
+    assert (
+        sum(1 for _, cells in rows if any(_contains_neutralizer(c) for c in cells)) >= 1
+    )
     assert _find_function(_TREE, NEUTRALIZER) is not None
 
 

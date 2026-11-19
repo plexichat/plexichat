@@ -136,7 +136,9 @@ class ThreadListingMixin(ThreadProtocol):
         # Bound the page size before it reaches ``LIMIT ?``. A negative limit
         # is *unlimited* in SQLite; validate at this boundary because direct
         # callers bypass the HTTP route's ``ge=1`` constraint.
-        limit = bounded_int(limit, "limit", minimum=0, maximum=_MAX_ARCHIVED_THREAD_PAGE)
+        limit = bounded_int(
+            limit, "limit", minimum=0, maximum=_MAX_ARCHIVED_THREAD_PAGE
+        )
 
         channel = _get_channel(self._db, channel_id)
         if not channel:

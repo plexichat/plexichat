@@ -980,6 +980,14 @@ class TestDatabaseSecurity:
         db.execute("CREATE TABLE timing_test (id INTEGER PRIMARY KEY, value TEXT)")
         db.execute("INSERT INTO timing_test (value) VALUES (?)", ("exists",))
 
+        # Warm both statements first. The measurement below is a comparison of
+        # two steady-state lookups; without this pass the first query of each
+        # shape pays one-time prepare/plan and cold-page costs, which showed up
+        # as a 24ms "difference" between the branches that has nothing to do
+        # with how a hit and a miss are matched.
+        for value in ("exists", "nonexistent"):
+            db.fetch_one("SELECT * FROM timing_test WHERE value = ?", (value,))
+
         times = []
         for _ in range(10):
             start = time.time()

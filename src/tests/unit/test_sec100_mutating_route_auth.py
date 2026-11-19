@@ -156,11 +156,6 @@ PUBLIC_MUTATING_ROUTES: dict[tuple[str, str, str], str] = {
         "post",
         "/auth/2fa/regenerate-backup-codes",
     ): "pending admin session regenerates its own codes",
-    (
-        "src/api/routes/admin/licensing.py",
-        "post",
-        "/validate",
-    ): "public license-key validation",
 }
 
 

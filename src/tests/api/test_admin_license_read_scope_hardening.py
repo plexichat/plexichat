@@ -51,9 +51,9 @@ def test_license_reads_require_a_permission_scope():
             assert response.status_code == 403, (path, response.text)
 
     assert len(seen_scopes) == len(_LICENSE_READ_CALLS)
-    assert all(
-        scope == licensing_routes._LICENSE_SCOPE for scope in seen_scopes
-    ), seen_scopes
+    assert all(scope == licensing_routes._LICENSE_SCOPE for scope in seen_scopes), (
+        seen_scopes
+    )
     assert licensing_routes._LICENSE_SCOPE == "admin.license.manage"
 
 

@@ -41,9 +41,7 @@ class TestValkeyAupdateBucketOutage:
 
     @pytest.mark.asyncio
     async def test_unavailable_flag_raises_instead_of_returning(self, monkeypatch):
-        monkeypatch.setattr(
-            valkey_storage, "get_client", lambda: object()
-        )
+        monkeypatch.setattr(valkey_storage, "get_client", lambda: object())
         monkeypatch.setattr(valkey_storage, "is_available", lambda: False)
         storage = ValkeyStorage()
         with pytest.raises(RateLimitStoreUnavailable):

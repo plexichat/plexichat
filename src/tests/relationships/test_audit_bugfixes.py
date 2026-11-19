@@ -35,11 +35,15 @@ class TestRel1CacheInvalidationPattern:
         # _invalidate_relationship_list_cache is a plain method; self is unused.
         RelationshipsBase._invalidate_relationship_list_cache(cast(Any, None), 1, 2)
 
-        assert captured["patterns"] == [
+        # Presence reads cache the viewer-specific visible body, so a
+        # relationship mutation drops them before the listing entries.
+        assert captured["patterns"][0] == "presence_read_api:*"
+        listings = captured["patterns"][1:]
+        assert listings == [
             "relationships_api:*:current_user:TokenInfo:1:*",
             "relationships_api:*:current_user:TokenInfo:2:*",
         ]
-        assert all(":current_user:TokenInfo:" in p for p in captured["patterns"])
+        assert all(":current_user:TokenInfo:" in p for p in listings)
 
     def test_pattern_matches_generated_listing_key(self):
         """The pattern matches the key format produced for a listing route.

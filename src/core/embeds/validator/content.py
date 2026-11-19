@@ -62,9 +62,7 @@ def sanitize_content(content: str, field_name: str = "content") -> str:
     # match them, so strip them explicitly. These forms are used for matching
     # only; the returned content is untouched so legitimate multilingual text
     # (Arabic tatweel, emoji ZWJ, ...) is not mutilated.
-    normalized_visible = "".join(
-        ch for ch in normalized_full if not _is_invisible(ch)
-    )
+    normalized_visible = "".join(ch for ch in normalized_full if not _is_invisible(ch))
     normalized_visible_lower = normalized_visible.lower()
     normalized_squashed = re.sub(r"\s+", "", normalized_visible_lower)
 

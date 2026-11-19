@@ -327,9 +327,7 @@ async def _handle_cross_worker_message(raw_message: str) -> None:
     # legacy payload without the field keeps the data-derived fallback. The
     # scope is validated/coerced in ``dispatch_remote_event``.
     envelope_scope = payload.get("scope")
-    has_scope = (
-        isinstance(envelope_scope, (list, tuple)) and len(envelope_scope) == 2
-    )
+    has_scope = isinstance(envelope_scope, (list, tuple)) and len(envelope_scope) == 2
 
     if _dispatcher is not None:
         try:

@@ -44,7 +44,9 @@ def _parse_lock(path: Path) -> dict[str, tuple[str, frozenset[str]]]:
 
     def close() -> None:
         if current_name is not None and current_version is not None:
-            assert current_name not in result, f"duplicate pin for {current_name} in {path}"
+            assert current_name not in result, (
+                f"duplicate pin for {current_name} in {path}"
+            )
             result[current_name] = (current_version, frozenset(hashes))
 
     for raw in path.read_text(encoding="utf-8").splitlines():
