@@ -142,6 +142,14 @@ MAX_OP_BATCH = 500
 #: Upper bound for one event stored in a session's replay buffer.
 MAX_REPLAY_EVENT_BYTES = 256 * 1024
 
+#: Upper bound for the *total* serialized size of a session's replay buffer.
+#: A per-event cap alone still allows a bounded-count buffer of near-ceiling
+#: events (100 x 256 KiB = 25 MiB) to be replayed in one burst on resume. This
+#: ceiling bounds the whole buffer so a single session cannot amplify into an
+#: unbounded replay frame, including when its state is rehydrated from a
+#: sibling worker (where events never passed through ``add_replay_event``).
+MAX_SESSION_REPLAY_BYTES = 8 * 1024 * 1024
+
 
 def payload_size(value: object) -> int:
     """Serialized byte size of a payload; oversized/unserializable -> too big.

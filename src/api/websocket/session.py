@@ -5,14 +5,19 @@ Session management - Manages gateway sessions and connections.
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Set, Any
 import time
-import json
 import secrets
 import threading
 from src.core.database import get_valkey_client, valkey_available
 import utils.logger as logger
 
 from .connection import Connection, ConnectionState
-from .boundaries import MAX_REPLAY_EVENT_BYTES, bounded_batch
+from .boundaries import (
+    MAX_REPLAY_EVENT_BYTES,
+    MAX_SESSION_REPLAY_BYTES,
+    bounded_batch,
+    payload_size,
+)
+from .intents import validate_intents
 
 
 @dataclass
@@ -32,6 +37,11 @@ class Session:
     connection_id: Optional[str] = None
     replay_events: List[Dict[str, Any]] = field(default_factory=list)
     max_replay_events: int = 100
+    # Running serialized size of ``replay_events``, maintained by
+    # ``add_replay_event`` and rebuilt in ``__post_init__`` so foreign state
+    # (cross-worker hydration) cannot smuggle an oversized buffer past the
+    # total-byte ceiling.
+    replay_bytes: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         # A corrupted/persisted limit must not turn the replay buffer into an
@@ -40,39 +50,111 @@ class Session:
             self.max_replay_events = bounded_batch(self.max_replay_events, default=100)
         except ValueError:
             self.max_replay_events = 100
+        # Events supplied at construction never passed through
+        # ``add_replay_event``. This is the cross-worker hydration path in
+        # particular: apply the same guards before any of them can be replayed
+        # to a resuming client. ``sanitize_replay_events`` returns a fresh list
+        # so a foreign/mutable payload cannot alias the session's buffer.
+        if self.replay_events:
+            self.replay_events = self.sanitize_replay_events(
+                self.replay_events, self.max_replay_events
+            )
+        self.replay_bytes = sum(payload_size(event) for event in self.replay_events)
+
+    @staticmethod
+    def sanitize_replay_events(events: object, max_events: int) -> List[Dict[str, Any]]:
+        """Return a bounded, well-formed replay list from untrusted ``events``.
+
+        Drops non-dict entries and per-event oversized frames, and evicts the
+        oldest entries until the list fits both ``max_events`` and the total
+        ``MAX_SESSION_REPLAY_BYTES`` budget. Fail closed: anything that cannot
+        be measured is dropped rather than replayed.
+        """
+        kept: List[Dict[str, Any]] = []
+        total = 0
+        limit = max(1, int(max_events))
+        if not isinstance(events, (list, tuple)):
+            return kept
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            size = payload_size(event)
+            if size > MAX_REPLAY_EVENT_BYTES:
+                logger.warning(
+                    f"Dropping oversized replay event during session hydration "
+                    f"(>{MAX_REPLAY_EVENT_BYTES} bytes)"
+                )
+                continue
+            while kept and (
+                len(kept) >= limit or total + size > MAX_SESSION_REPLAY_BYTES
+            ):
+                dropped = kept.pop(0)
+                total -= payload_size(dropped)
+            if total + size > MAX_SESSION_REPLAY_BYTES:
+                continue
+            kept.append(event)
+            total += size
+        return kept
 
     def add_replay_event(self, event: Dict[str, Any]) -> None:
         """Add an event to the replay buffer.
 
-        The buffer is bounded (``max_replay_events``): once full, the oldest
-        entry is evicted so a long disconnect can never miss more than the
-        window. Eviction is logged at WARNING (previously silent) so replay
-        gaps caused by buffer overflow are observable rather than invisible.
+        The buffer is bounded by count (``max_replay_events``) and by the
+        total ``MAX_SESSION_REPLAY_BYTES`` budget: once either is exceeded the
+        oldest entry is evicted, so a long disconnect can never miss more than
+        the window and a single session cannot amplify into an unbounded replay
+        frame. Eviction is logged at WARNING so replay gaps are observable.
         """
         # Never queue an oversized frame for later replay: a single huge
-        # event would be re-sent to every resuming connection.
-        if len(json.dumps(event, ensure_ascii=False, default=str).encode("utf-8")) > (
-            MAX_REPLAY_EVENT_BYTES
-        ):
+        # event would be re-sent to every resuming connection. Use the shared
+        # size helper so the guard matches hydration and every other boundary.
+        size = (
+            payload_size(event)
+            if isinstance(event, dict)
+            else MAX_REPLAY_EVENT_BYTES + 1
+        )
+        if size > MAX_REPLAY_EVENT_BYTES:
             logger.warning(
                 f"Session {self.session_id}: dropping oversized replay event "
                 f"(>{MAX_REPLAY_EVENT_BYTES} bytes)"
             )
             return
         self.replay_events.append(event)
-        if len(self.replay_events) > self.max_replay_events:
-            self.replay_events.pop(0)
-            if not getattr(self, "_replay_overflow_warned", False):
-                self._replay_overflow_warned = True
-                logger.warning(
-                    f"Session {self.session_id}: replay buffer overflow "
-                    f"(max {self.max_replay_events}); oldest events evicted "
-                    f"and unrecoverable on resume"
-                )
+        self.replay_bytes += size
+        evicted = False
+        while (
+            self.replay_events
+            and (
+                len(self.replay_events) > self.max_replay_events
+                or self.replay_bytes > MAX_SESSION_REPLAY_BYTES
+            )
+        ):
+            dropped = self.replay_events.pop(0)
+            self.replay_bytes -= payload_size(dropped)
+            evicted = True
+        if evicted and not getattr(self, "_replay_overflow_warned", False):
+            self._replay_overflow_warned = True
+            logger.warning(
+                f"Session {self.session_id}: replay buffer overflow "
+                f"(max {self.max_replay_events} events / "
+                f"{MAX_SESSION_REPLAY_BYTES} bytes); oldest events evicted "
+                f"and unrecoverable on resume"
+            )
 
     def get_replay_events(self, after_sequence: int) -> List[Dict[str, Any]]:
-        """Get events after a specific sequence number."""
-        return [e for e in self.replay_events if e.get("s", 0) > after_sequence]
+        """Get events after a specific sequence number.
+
+        Final backstop: re-check the per-event ceiling here so even a caller
+        that mutates ``replay_events`` directly cannot leak an oversized frame
+        to a resuming client.
+        """
+        return [
+            event
+            for event in self.replay_events
+            if isinstance(event, dict)
+            and event.get("s", 0) > after_sequence
+            and payload_size(event) <= MAX_REPLAY_EVENT_BYTES
+        ]
 
     def update_activity(self) -> None:
         """Update local and cross-worker activity timestamps."""
@@ -153,17 +235,32 @@ class SessionManager:
             raw = client.get_json(self._session_key(session_id))
             if not isinstance(raw, dict):
                 return None
+            # The payload must belong to the key it was read from. Otherwise a
+            # stale/mis-keyed record could be resumed under a different id.
+            stored_id = raw.get("session_id")
+            if not isinstance(stored_id, str) or stored_id != session_id:
+                return None
+            user_id = int(raw["user_id"])
+            if user_id <= 0:
+                return None
+            # Fail closed on an invalid intent mask instead of applying it to
+            # the resumed connection (which would silently blackhole events).
+            raw_intents = raw.get("intents", 0)
+            intents = int(raw_intents) if validate_intents(raw_intents) else 0
             last_epoch = float(raw.get("last_activity_epoch", 0))
             if time.time() - last_epoch > self._session_timeout_ms / 1000:
                 return None
+            # ``Session.__post_init__`` enforces the count, per-event byte and
+            # total-byte limits on ``replay_events`` here: this is the only
+            # path where events were not written through ``add_replay_event``.
             session = Session(
-                session_id=str(raw["session_id"]),
-                user_id=int(raw["user_id"]),
+                session_id=stored_id,
+                user_id=user_id,
                 sequence=int(raw.get("sequence", 0)),
-                intents=int(raw.get("intents", 0)),
+                intents=intents,
                 created_at_epoch=float(raw.get("created_at_epoch", last_epoch)),
                 last_activity_epoch=last_epoch,
-                replay_events=list(raw.get("replay_events") or [])[-100:],
+                replay_events=raw.get("replay_events") or [],
             )
             # Hydration must not refresh activity: merely probing a session
             # must not extend its resume TTL. Activity is refreshed only after
