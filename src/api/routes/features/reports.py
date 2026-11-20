@@ -620,6 +620,13 @@ async def update_report_status(
     body: ReportStatusUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    # This endpoint mutates moderation state (status, priority, assignment,
+    # resolution). A bot token carries its owner's ``user_id``, so the admin
+    # membership gate below would otherwise let an admin-owned bot perform
+    # those writes. Every other handler in this router is bound to a human
+    # account via require_user_token; apply the same rule here.
+    require_user_token(current_user)
+
     db: DatabaseProtocol | None = api.get_db()
     if not db:
         raise_internal("Database not available")
