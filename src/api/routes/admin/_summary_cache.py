@@ -101,6 +101,33 @@ def get_or_compute(
     return value
 
 
+def warm(
+    namespace: str,
+    params: Hashable,
+    producer: Callable[[], Any],
+    ttl: float = DEFAULT_TTL_SECONDS,
+) -> None:
+    """Prime one request-invariant summary off the request path (best-effort).
+
+    The caller passes the exact ``(namespace, params, producer, ttl)`` tuple its
+    route uses on a cache miss, so a warmed entry is indistinguishable from a
+    value the route would have cached itself -- no auth/scope gate is moved or
+    skipped and nothing is synthesised into the payload. Both snapshots are
+    single-entry, version/DB-keyed caches, so a second warm inside the TTL is a
+    no-op. A cold build that fails (e.g. the database is not ready yet) is
+    logged and swallowed: the route still computes on demand exactly as before.
+    """
+    try:
+        get_or_compute(namespace, params, producer, ttl)
+    except Exception as e:
+        try:
+            import utils.logger as logger
+
+            logger.debug(f"Summary cache warm-up skipped ({namespace}): {e}")
+        except Exception:
+            pass
+
+
 def clear(namespace: str | None = None) -> None:
     """Drop cached entries, optionally only those in ``namespace``."""
     with _LOCK:

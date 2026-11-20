@@ -2,7 +2,9 @@
 Admin dashboard and system metrics routes.
 """
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import APIRouter, Request, HTTPException, Query
@@ -19,6 +21,7 @@ from .utils import (
     get_admin_from_token,  # noqa: F401
     require_admin_permission,
 )
+from . import _summary_cache
 from ._summary_cache import get_or_compute
 from src.core.security.hardening.text import strip_control_characters
 from src.core import applications
@@ -178,6 +181,40 @@ def _build_dashboard_response() -> AdminDashboardResponse:
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
+
+
+def warm_admin_dashboard_summary_cache() -> None:
+    """Prime the dashboard summary off the request path (best-effort).
+
+    ``GET /admin/dashboard`` is polled frequently by the admin UI, and its
+    first call after a restart assembles the whole response (ticket counts,
+    telemetry endpoint stats, dashboard counts, system metrics, feature stats
+    and worker health) while holding a request open. That assembly is
+    request-invariant: the host/permission gates run in the route *before* the
+    cache is consulted, and the payload is a system-wide summary with no
+    per-admin data. Priming the same ``("dashboard", ())`` entry here moves the
+    one-off cost onto the boot worker thread so the first real poll is a cache
+    hit. Failures are logged and swallowed -- the route still builds on demand.
+    """
+    _summary_cache.warm(
+        "dashboard", (), _build_dashboard_response, _SUMMARY_TTL_SECONDS
+    )
+
+
+@asynccontextmanager
+async def _dashboard_summary_lifespan(app: Any):
+    """Run the cold summary build at boot, off the event loop and requests."""
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, warm_admin_dashboard_summary_cache
+        )
+    except Exception as e:
+        logger.debug(f"Admin dashboard summary warm-up failed: {e}")
+    yield
+
+
+# FastAPI merges this into the application lifespan via include_router().
+router.lifespan_context = _dashboard_summary_lifespan
 
 
 @router.get(
