@@ -10,6 +10,7 @@ Handles:
 """
 
 import re
+from functools import lru_cache
 from typing import Tuple, List, Optional, Dict, Any, Set
 from dataclasses import dataclass
 
@@ -17,6 +18,20 @@ import utils.validator as validator
 import utils.config as config
 
 from .models import ContentFilter, FilterAction, TextFormat
+
+
+@lru_cache(maxsize=512)
+def _compile_word_pattern(words: Tuple[str, ...]) -> re.Pattern[str]:
+    """Compile the blocked-word alternation once per distinct word tuple.
+
+    The cache key is derived only from the words -- never from a user id or
+    credential -- so a cached pattern cannot leak one user's filter into
+    another's result, and a miss simply recompiles the same pure regex. The
+    ``maxsize`` bound keeps attacker-chosen word sets from pinning unbounded
+    memory; no explicit invalidation is needed because the result is a pure
+    function of the words (config changes produce a new word tuple).
+    """
+    return re.compile("|".join(re.escape(w) for w in words), re.IGNORECASE)
 
 
 @dataclass
@@ -51,6 +66,7 @@ class ContentProcessor:
     def __init__(self) -> None:
         self._profanity_words: Set[str] = set()
         self._nsfw_patterns: List[str] = []
+        self._nsfw_regexes: List[re.Pattern[str]] = []
         self._load_config()
 
     def _load_config(self) -> None:
@@ -62,9 +78,14 @@ class ContentProcessor:
         custom_words = content_config.get("profanity_words", [])
         self._profanity_words = set(DEFAULT_PROFANITY_WORDS + custom_words)
 
-        # Load NSFW patterns
+        # Load NSFW patterns. Compile once here rather than on every validation:
+        # the strings are config-sourced, so a compiled pattern is reused for
+        # the life of the processor (no authz or user state is involved).
         custom_nsfw = content_config.get("nsfw_patterns", [])
         self._nsfw_patterns = NSFW_PATTERNS + custom_nsfw
+        self._nsfw_regexes = [
+            re.compile(pattern, re.IGNORECASE) for pattern in self._nsfw_patterns
+        ]
 
     def validate_content(
         self,
@@ -139,9 +160,13 @@ class ContentProcessor:
         # Check for spoiler tags
         has_spoilers = bool(re.search(TextFormat.PATTERNS["spoiler"], sanitized))
 
-        # Check for NSFW indicators
-        for pattern in self._nsfw_patterns:
-            if re.search(pattern, sanitized, re.IGNORECASE):
+        # Check for NSFW indicators. Patterns are compiled once at config load
+        # and reused: re.search(pattern_str, ...) hits re's internal cache on
+        # every call, so a hot send path pays a cache lookup per pattern per
+        # message (and the cache evicts under churn). A compiled pattern makes
+        # repeated validation a direct match.
+        for pattern in self._nsfw_regexes:
+            if pattern.search(sanitized):
                 has_nsfw = True
                 break
 
@@ -202,10 +227,7 @@ class ContentProcessor:
         # happened to try first, and the secondary key on the word itself keeps
         # the result independent of set iteration order.
         words.sort(key=lambda w: (-len(w), w))
-        combined = re.compile(
-            "|".join(re.escape(w) for w in words),
-            re.IGNORECASE,
-        )
+        combined = _compile_word_pattern(tuple(words))
 
         # Replacements must be built from the *matched* text and passed as a
         # callable. Blocked words are attacker-controlled data: a word
