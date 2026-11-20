@@ -31,6 +31,17 @@ eviction safe:
   high-water mark of the counter (0 in a fresh process). That value is >= every
   generation previously handed out, so it cannot match a stale page, and it is
   stable for later reads so the render LRU still gets normal hit rates.
+
+Hot-path cost
+-------------
+``bump`` runs on every message create/edit/delete/ack. The TTL expiry sweep is
+an O(n) pass over the whole registry (up to ``_MAX_ENTRIES`` entries), so paying
+it on every write made a hot path O(n). The entry/byte caps stay hard and are
+still enforced on every write; only the TTL sweep is amortised to at most once
+per ``min(_TTL_SECONDS, _SWEEP_INTERVAL_CAP_SECONDS)``. This never delays
+*serving* a correct generation: ``get`` drops an expired entry for the key it
+is asked about, and ``bump`` always writes a fresh generation. A short TTL
+(tests, short-TTL deployments) keeps its exact sweep semantics.
 """
 
 import sys
@@ -46,6 +57,12 @@ _MAX_ENTRIES = 50_000
 _MAX_BYTES = 16 * 1024 * 1024
 _TTL_SECONDS = 24 * 60 * 60  # reclaim untouched conversations eventually
 
+# The TTL sweep is an O(n) pass over the registry. With a 24h TTL there is no
+# benefit to paying that cost on every message write, so cap its frequency.
+# Reclaiming an expired-but-unaccessed entry may lag by up to this long;
+# serving one never does (get() drops the requested key's expired entry).
+_SWEEP_INTERVAL_CAP_SECONDS = 60.0
+
 # Rough per-entry container overhead (OrderedDict node + tuples) added to the
 # measured key/value sizes when tracking approximate retained bytes.
 _NODE_OVERHEAD = 96
@@ -55,6 +72,8 @@ _lock = threading.Lock()
 _generations: "OrderedDict[Any, tuple]" = OrderedDict()
 _next_generation = 0
 _total_bytes = 0
+_last_sweep_at = 0.0
+_sweeps = 0
 
 
 def _normalize(conversation_id: Any) -> Any:
@@ -88,16 +107,28 @@ def _drop_locked(key: Any) -> None:
 
 
 def _prune_and_evict_locked(now: float) -> None:
-    """Expire stale entries, then enforce the entry and byte caps (LRU)."""
-    global _total_bytes
+    """Expire stale entries, then enforce the entry and byte caps (LRU).
+
+    The entry/byte caps are hard and are enforced on every write. The TTL
+    sweep is O(n), so with a long TTL it is amortised to at most once per
+    ``min(_TTL_SECONDS, _SWEEP_INTERVAL_CAP_SECONDS)``. A short TTL keeps its
+    exact semantics; a long TTL only delays *reclaiming* an expired entry,
+    never serving one -- get() still drops an expired entry on access and
+    bump() always writes a fresh generation.
+    """
+    global _total_bytes, _last_sweep_at, _sweeps
     if _TTL_SECONDS > 0:
-        expired = [
-            key
-            for key, (_, stored_at, _) in _generations.items()
-            if now - stored_at > _TTL_SECONDS
-        ]
-        for key in expired:
-            _drop_locked(key)
+        interval = min(_TTL_SECONDS, _SWEEP_INTERVAL_CAP_SECONDS)
+        if now - _last_sweep_at >= interval:
+            _last_sweep_at = now
+            _sweeps += 1
+            expired = [
+                key
+                for key, (_, stored_at, _) in _generations.items()
+                if now - stored_at > _TTL_SECONDS
+            ]
+            for key in expired:
+                _drop_locked(key)
 
     while _generations and (
         len(_generations) > _MAX_ENTRIES or _total_bytes > _MAX_BYTES
@@ -163,11 +194,13 @@ def get(conversation_id: Any) -> int:
 
 def clear() -> None:
     """Reset all counters. Test helper only."""
-    global _next_generation, _total_bytes
+    global _next_generation, _total_bytes, _last_sweep_at, _sweeps
     with _lock:
         _generations.clear()
         _total_bytes = 0
         _next_generation = 0
+        _last_sweep_at = 0.0
+        _sweeps = 0
 
 
 def stats() -> Dict[str, int]:
@@ -179,4 +212,5 @@ def stats() -> Dict[str, int]:
             "bytes": _total_bytes,
             "max_bytes": _MAX_BYTES,
             "high_water": _next_generation,
+            "sweeps": _sweeps,
         }
