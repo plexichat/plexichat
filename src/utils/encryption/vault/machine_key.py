@@ -215,10 +215,25 @@ def _load_machine_key_impl(key_path: str) -> bytes:
     new_key = os.urandom(32)
     try:
         _persist_machine_key(key_file, new_key)
-        if key_file.exists():
-            logger.info("Machine-local key saved to %s", key_file)
     except Exception as exc:
-        logger.error("Failed to persist machine key: %s", exc)
+        # Fail CLOSED. A freshly generated KEK that was never durably stored
+        # cannot be used: the next process/start would mint a different one and
+        # every keyring (and all data encrypted under it) would silently become
+        # unreadable. Persistence failures are also security-relevant: the
+        # writer refuses to follow a symlink and raises RuntimeError, so
+        # swallowing that error would let a local attacker who wins the
+        # check/use race force an ephemeral, unpersisted KEK on every start.
+        # Surface the original error rather than returning the in-memory key.
+        logger.critical(
+            "Refusing to use machine-local encryption key: it could not be "
+            "persisted to %s (%s). Without a durable KEK every restart would "
+            "generate a new key and make all encrypted keyrings unreadable.",
+            key_file,
+            exc,
+        )
+        raise
+    if key_file.exists():
+        logger.info("Machine-local key saved to %s", key_file)
 
     validated = validate_kek(
         new_key, source="local", context=str(key_file), allow_bypass=True
