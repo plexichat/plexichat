@@ -20,6 +20,49 @@ from .boundaries import (
 from .intents import validate_intents
 
 
+# Sentinel for a value whose serialized size cannot be proven from a cheap
+# structural key (anything ``json.dumps`` would route through ``default=str``).
+# Such events are always re-measured with ``payload_size`` so the cache can
+# never weaken the byte guard.
+_UNCACHEABLE = object()
+
+_JSON_SCALARS = (bool, int, float, str)
+
+
+def _size_key(value: Any) -> Any:
+    """Cheap stand-in whose equality mirrors ``payload_size`` for JSON data.
+
+    Two values with equal ``_size_key`` serialize to the same JSON bytes under
+    ``payload_size`` (same keys, same string contents, same container shape),
+    so a cached size stays valid as long as the key matches. Strings are held
+    by reference, not copied: comparing an unchanged key is O(1) per string
+    thanks to CPython's identity shortcut. Non-JSON values (custom objects,
+    tuples, non-string dict keys, ...) yield ``_UNCACHEABLE`` and force a real
+    measurement, so no unusual payload can slip past the cap on a stale key.
+    """
+    if value is None or type(value) in _JSON_SCALARS:
+        return value
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            if not isinstance(key, str):
+                return _UNCACHEABLE
+            sub = _size_key(item)
+            if sub is _UNCACHEABLE:
+                return _UNCACHEABLE
+            parts.append((key, sub))
+        return ("dict", tuple(parts))
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            sub = _size_key(item)
+            if sub is _UNCACHEABLE:
+                return _UNCACHEABLE
+            parts.append(sub)
+        return ("list", tuple(parts))
+    return _UNCACHEABLE
+
+
 #: Hard ceiling on sessions retained in this worker's local map. Sessions
 #: must outlive their socket so a client can RESUME, and ``remove_connection``
 #: deliberately does not drop them. ``cleanup_stale_sessions`` exists but is
@@ -53,6 +96,14 @@ class Session:
     # (cross-worker hydration) cannot smuggle an oversized buffer past the
     # total-byte ceiling.
     replay_bytes: int = field(default=0, repr=False)
+    # Per-event size cache, aligned index-for-index with ``replay_events``.
+    # Each entry is ``(signature, size)`` where ``signature`` is a cheap
+    # structural key; ``_UNCACHEABLE`` signatures re-measure on use. The cache
+    # is validated against the live buffer before every read, so a caller that
+    # mutates ``replay_events`` directly falls back to the real ``payload_size``
+    # guard instead of trusting a stale size. Kept per instance (never shared)
+    # so one session's measurements can never leak into another's resume.
+    _replay_size_cache: List[tuple] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         # A corrupted/persisted limit must not turn the replay buffer into an
@@ -67,25 +118,36 @@ class Session:
         # to a resuming client. ``sanitize_replay_events`` returns a fresh list
         # so a foreign/mutable payload cannot alias the session's buffer.
         if self.replay_events:
-            self.replay_events = self.sanitize_replay_events(
+            kept, sizes = self._sanitize_with_sizes(
                 self.replay_events, self.max_replay_events
             )
-        self.replay_bytes = sum(payload_size(event) for event in self.replay_events)
+            self.replay_events = kept
+            # Build the cache from the sizes sanitize already measured: no
+            # second serialization of the whole buffer (the old code did one
+            # pass here after sanitize's pass).
+            self._replay_size_cache = [
+                (_size_key(event), size) for event, size in zip(kept, sizes)
+            ]
+            self.replay_bytes = sum(sizes)
+        else:
+            self._replay_size_cache = []
+            self.replay_bytes = 0
 
     @staticmethod
-    def sanitize_replay_events(events: object, max_events: int) -> List[Dict[str, Any]]:
-        """Return a bounded, well-formed replay list from untrusted ``events``.
+    def _sanitize_with_sizes(
+        events: object, max_events: int
+    ) -> tuple[List[Dict[str, Any]], List[int]]:
+        """Bounded sanitize that also returns each kept event's measured size.
 
-        Drops non-dict entries and per-event oversized frames, and evicts the
-        oldest entries until the list fits both ``max_events`` and the total
-        ``MAX_SESSION_REPLAY_BYTES`` budget. Fail closed: anything that cannot
-        be measured is dropped rather than replayed.
+        Keeping the measurement lets hydration seed the size cache in a single
+        pass instead of serializing the buffer twice.
         """
         kept: List[Dict[str, Any]] = []
+        sizes: List[int] = []
         total = 0
         limit = max(1, int(max_events))
         if not isinstance(events, (list, tuple)):
-            return kept
+            return kept, sizes
         for event in events:
             if not isinstance(event, dict):
                 continue
@@ -99,13 +161,51 @@ class Session:
             while kept and (
                 len(kept) >= limit or total + size > MAX_SESSION_REPLAY_BYTES
             ):
-                dropped = kept.pop(0)
-                total -= payload_size(dropped)
+                kept.pop(0)
+                total -= sizes.pop(0)
             if total + size > MAX_SESSION_REPLAY_BYTES:
                 continue
             kept.append(event)
+            sizes.append(size)
             total += size
+        return kept, sizes
+
+    @staticmethod
+    def sanitize_replay_events(events: object, max_events: int) -> List[Dict[str, Any]]:
+        """Return a bounded, well-formed replay list from untrusted ``events``.
+
+        Drops non-dict entries and per-event oversized frames, and evicts the
+        oldest entries until the list fits both ``max_events`` and the total
+        ``MAX_SESSION_REPLAY_BYTES`` budget. Fail closed: anything that cannot
+        be measured is dropped rather than replayed.
+        """
+        kept, _ = Session._sanitize_with_sizes(events, max_events)
         return kept
+
+    def _replay_sizes_current(self) -> Optional[List[Optional[int]]]:
+        """Validate the size cache against the live buffer.
+
+        Returns a per-index list of cached sizes (``None`` for entries that
+        must be re-measured), or ``None`` if the buffer was changed externally
+        and no cached size may be trusted. External mutation is detected by a
+        length mismatch or by a changed structural signature (whose string
+        contents point at the same objects, so validation stays cheap).
+        """
+        events = self.replay_events
+        cache = self._replay_size_cache
+        if len(cache) != len(events):
+            return None
+        sizes: List[Optional[int]] = []
+        for event, (signature, size) in zip(events, cache):
+            if not isinstance(event, dict):
+                return None
+            if signature is _UNCACHEABLE:
+                sizes.append(None)
+                continue
+            if _size_key(event) != signature:
+                return None
+            sizes.append(size)
+        return sizes
 
     def add_replay_event(self, event: Dict[str, Any]) -> None:
         """Add an event to the replay buffer.
@@ -116,6 +216,11 @@ class Session:
         the window and a single session cannot amplify into an unbounded replay
         frame. Eviction is logged at WARNING so replay gaps are observable.
         """
+        # A caller may have mutated ``replay_events`` directly since the last
+        # write. Rebuild only when the cache no longer aligns (length changed);
+        # content-level changes are re-validated on every resume read below.
+        if len(self._replay_size_cache) != len(self.replay_events):
+            self._rebuild_replay_size_cache()
         # Never queue an oversized frame for later replay: a single huge
         # event would be re-sent to every resuming connection. Use the shared
         # size helper so the guard matches hydration and every other boundary.
@@ -131,14 +236,16 @@ class Session:
             )
             return
         self.replay_events.append(event)
+        self._replay_size_cache.append((_size_key(event), size))
         self.replay_bytes += size
         evicted = False
         while self.replay_events and (
             len(self.replay_events) > self.max_replay_events
             or self.replay_bytes > MAX_SESSION_REPLAY_BYTES
         ):
-            dropped = self.replay_events.pop(0)
-            self.replay_bytes -= payload_size(dropped)
+            self.replay_events.pop(0)
+            _, dropped_size = self._replay_size_cache.pop(0)
+            self.replay_bytes -= dropped_size
             evicted = True
         if evicted and not getattr(self, "_replay_overflow_warned", False):
             self._replay_overflow_warned = True
@@ -149,20 +256,34 @@ class Session:
                 f"and unrecoverable on resume"
             )
 
+    def _rebuild_replay_size_cache(self) -> None:
+        """Recompute the per-event cache from the current buffer in one pass."""
+        cache: List[tuple] = []
+        for event in self.replay_events:
+            key = _size_key(event) if isinstance(event, dict) else _UNCACHEABLE
+            cache.append((key, payload_size(event)))
+        self._replay_size_cache = cache
+
     def get_replay_events(self, after_sequence: int) -> List[Dict[str, Any]]:
         """Get events after a specific sequence number.
 
         Final backstop: re-check the per-event ceiling here so even a caller
         that mutates ``replay_events`` directly cannot leak an oversized frame
-        to a resuming client.
+        to a resuming client. Sizes are taken from a validated per-session
+        cache; any external change to the buffer invalidates it and forces a
+        full re-measure, so the guard is never weaker than ``payload_size``.
         """
-        return [
-            event
-            for event in self.replay_events
-            if isinstance(event, dict)
-            and event.get("s", 0) > after_sequence
-            and payload_size(event) <= MAX_REPLAY_EVENT_BYTES
-        ]
+        sizes = self._replay_sizes_current()
+        result: List[Dict[str, Any]] = []
+        for index, event in enumerate(self.replay_events):
+            if not isinstance(event, dict) or event.get("s", 0) <= after_sequence:
+                continue
+            size = sizes[index] if sizes is not None else None
+            if size is None:
+                size = payload_size(event)
+            if size <= MAX_REPLAY_EVENT_BYTES:
+                result.append(event)
+        return result
 
     def update_activity(self) -> None:
         """Update local and cross-worker activity timestamps."""
