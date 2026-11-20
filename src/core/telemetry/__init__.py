@@ -9,6 +9,7 @@ import time
 import logging
 import re
 
+from src.core.bounded_lru import BoundedLRU
 from src.core.security.hardening import (
     SNOWFLAKE_MAX,
     HardeningViolation,
@@ -192,6 +193,59 @@ _seen_endpoints: set = set()
 _cardinality_rejections = 0
 
 
+# ---------------------------------------------------------------------------
+# Bounded memoization of the pure endpoint-key computation.
+#
+# ``submit_response_times`` runs on an unauthenticated sink and normalizes +
+# allowlists every submitted endpoint. Normalization walks each path segment
+# with regexes; the allowlist scans *every* registered route template. With a
+# few hundred routes that is ~70us per entry, paid again and again for the same
+# handful of endpoints in a flush. Both computations are pure functions of a
+# short string plus module constants, so memoize them in bounded L0 caches:
+#
+# * hard entry/byte caps stop a flood of distinct (hostile) endpoint strings
+#   from growing the caches without limit;
+# * a TTL bounds staleness even if a registration hook is missed; and
+# * ``register_route_templates`` clears the allowlist cache, so a template
+#   reload can never leave a stale accept/reject verdict behind.
+#
+# Neither cache holds user data or gates a decision: the endpoint string is
+# already a shared metric key persisted in the DB, and the cardinality gate
+# below still runs on every entry. Caching only removes repeated CPU work.
+# ---------------------------------------------------------------------------
+
+_ENDPOINT_CACHE_MAX_ENTRIES = 512
+_ENDPOINT_CACHE_MAX_BYTES = 128 * 1024
+_ENDPOINT_CACHE_TTL_SECONDS = 300.0
+
+_MISS = object()
+
+_normalized_endpoint_cache = BoundedLRU(
+    max_entries=_ENDPOINT_CACHE_MAX_ENTRIES,
+    max_bytes=_ENDPOINT_CACHE_MAX_BYTES,
+    ttl_seconds=_ENDPOINT_CACHE_TTL_SECONDS,
+)
+_template_match_cache = BoundedLRU(
+    max_entries=_ENDPOINT_CACHE_MAX_ENTRIES,
+    max_bytes=_ENDPOINT_CACHE_MAX_BYTES,
+    ttl_seconds=_ENDPOINT_CACHE_TTL_SECONDS,
+)
+
+
+def clear_endpoint_caches() -> None:
+    """Drop both memo tiers (registration hook, tests, out-of-band reloads)."""
+    _normalized_endpoint_cache.clear()
+    _template_match_cache.clear()
+
+
+def get_endpoint_cache_stats() -> Dict[str, Dict[str, Any]]:
+    """Counters/size for both tiers (regression tests and observability)."""
+    return {
+        "normalized": _normalized_endpoint_cache.stats(),
+        "template": _template_match_cache.stats(),
+    }
+
+
 def _cfg(key: str, default):
     try:
         import utils.config as config
@@ -274,9 +328,13 @@ def register_route_templates(paths) -> None:
         if cleaned not in _route_templates:
             _route_templates.append(cleaned)
     _templates_registered = True
+    # The allowlist verdict depends on this list; no old verdict may survive a
+    # reload. Normalization depends only on constants, but clearing both keeps
+    # the invalidation hook simple and cheap (startup/test only).
+    clear_endpoint_caches()
 
 
-def _matches_registered_template(endpoint: str) -> bool:
+def _matches_registered_template_uncached(endpoint: str) -> bool:
     ep_parts = endpoint.split("/")
     for tpl in _route_templates:
         tp_parts = tpl.split("/")
@@ -285,6 +343,15 @@ def _matches_registered_template(endpoint: str) -> bool:
         if all(tp.startswith("{") or tp == ep for tp, ep in zip(tp_parts, ep_parts)):
             return True
     return False
+
+
+def _matches_registered_template(endpoint: str) -> bool:
+    cached = _template_match_cache.get(endpoint, _MISS)
+    if cached is not _MISS:
+        return cached  # type: ignore[return-value]
+    verdict = _matches_registered_template_uncached(endpoint)
+    _template_match_cache.set(endpoint, verdict)
+    return verdict
 
 
 def get_cardinality_stats() -> Dict[str, Any]:
@@ -299,7 +366,7 @@ def get_cardinality_stats() -> Dict[str, Any]:
     }
 
 
-def _normalize_endpoint(endpoint: str) -> str:
+def _normalize_endpoint_uncached(endpoint: str) -> str:
     if not endpoint:
         return endpoint
     endpoint = endpoint.split("?", 1)[0].rstrip("/") or "/"
@@ -327,6 +394,15 @@ def _normalize_endpoint(endpoint: str) -> str:
             replacement = "{token}"
         normalized.append(replacement or part)
     return "/".join(normalized)
+
+
+def _normalize_endpoint(endpoint: str) -> str:
+    cached = _normalized_endpoint_cache.get(endpoint, _MISS)
+    if cached is not _MISS:
+        return cached  # type: ignore[return-value]
+    normalized = _normalize_endpoint_uncached(endpoint)
+    _normalized_endpoint_cache.set(endpoint, normalized)
+    return normalized
 
 
 def submit_response_times(
@@ -810,6 +886,8 @@ __all__ = [
     "cleanup_old_data",
     "register_route_templates",
     "get_cardinality_stats",
+    "clear_endpoint_caches",
+    "get_endpoint_cache_stats",
     "EndpointStats",
     "GENESIS_HASH",
     "AuditChain",
