@@ -197,6 +197,26 @@ emojis:
 
 Per-server overrides for `max_reactions_per_message` are read from `srv_servers` when available.
 
+### Reaction read cache
+
+The expensive per-viewer aggregation queries (batch hydration, `COUNT(*)`
+helpers, paginated reactor lists) are memoized in a bounded, short-lived
+in-process cache (`manager/cache.py`). The key includes the viewer and an
+optional `credential` discriminator, so blocked-user filtering and the `me`
+flag never cross between viewers or between a bot token and its owner. Message
+access is checked live *before* a warm body is served, and every reaction or
+custom-emoji mutation -- plus block/unblock changes -- drops the namespace.
+
+```yaml
+reactions:
+  reaction_read_cache_ttl: 3          # seconds; 0 disables caching
+  reaction_read_cache_max_entries: 512
+```
+
+The single-message `get_reactions` body is separately cached by the HTTP layer
+with per-credential keys; the core cache covers the read paths that have no
+response cache.
+
 ## Permissions
 
 | Permission | Required for |

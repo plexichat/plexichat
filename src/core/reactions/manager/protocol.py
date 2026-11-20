@@ -12,6 +12,13 @@ class ReactionProtocol:
     _relationships: Any = None
     _media: Any = None
     _config: Dict[str, Any] = {}
+    _reaction_read_cache: Any = None
+
+    def _cached_reaction_read(self, key, loader):
+        return cast(ReactionProtocol, super())._cached_reaction_read(key, loader)
+
+    def _invalidate_reaction_reads(self) -> None:
+        cast(ReactionProtocol, super())._invalidate_reaction_reads()
 
     def _get_timestamp(self) -> int:
         return cast(ReactionProtocol, super())._get_timestamp()

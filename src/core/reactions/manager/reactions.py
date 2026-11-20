@@ -20,6 +20,7 @@ from ..exceptions import (
 
 
 from .bounds import validate_bulk_message_ids
+from .cache import reaction_read_key, _MISS
 from .protocol import ReactionProtocol
 
 
@@ -151,6 +152,9 @@ class ReactionOpsMixin(ReactionProtocol):
             )
 
             self._db.commit()
+            # A committed write invalidates every viewer's cached aggregation:
+            # counts and the per-viewer ``me`` flag for this message changed.
+            self._invalidate_reaction_reads()
 
         except ReactionLimitError:
             self._db.rollback()
@@ -213,6 +217,7 @@ class ReactionOpsMixin(ReactionProtocol):
 
         logger.debug(f"Reaction removed from message {message_id} by user {user_id}")
 
+        self._invalidate_reaction_reads()
         return True
 
     def remove_all_reactions(
@@ -268,6 +273,7 @@ class ReactionOpsMixin(ReactionProtocol):
             f"All reactions ({count}) removed from message {message_id} by user {user_id}"
         )
 
+        self._invalidate_reaction_reads()
         return count
 
     def remove_all_reactions_for_emoji(
@@ -326,6 +332,7 @@ class ReactionOpsMixin(ReactionProtocol):
             f"All reactions for emoji {emoji} ({count}) removed from message {message_id}"
         )
 
+        self._invalidate_reaction_reads()
         return count
 
     def get_reaction(self, reaction_id: SnowflakeID) -> Optional[Reaction]:
@@ -341,6 +348,12 @@ class ReactionOpsMixin(ReactionProtocol):
     def get_reactions(
         self, user_id: SnowflakeID, message_id: SnowflakeID
     ) -> MessageReactions:
+        # NOTE: this single-message aggregate is deliberately NOT memoized here.
+        # The HTTP layer already caches its serialized body with a per-credential
+        # key (``authenticated_cache_key``), and callers/tests rely on each call
+        # re-running the block-filter query (e.g. the deterministic-params
+        # regression).  The L0 cache below targets the *other* hot read paths
+        # (batch hydration, counts, reactor lists) that have no response cache.
         msg = self._get_message(message_id)
         if not msg:
             raise MessageNotFoundError("Message not found")
@@ -395,7 +408,10 @@ class ReactionOpsMixin(ReactionProtocol):
         emoji: str,
         limit: int = 100,
         after_user_id: Optional[SnowflakeID] = None,
+        credential: Optional[str] = None,
     ) -> List[ReactionUser]:
+        # LIVE GATE: the message + participant checks stay OUTSIDE the cache so
+        # a viewer who loses access cannot read a warm reactor list.
         msg = self._get_message(message_id)
         if not msg:
             raise MessageNotFoundError("Message not found")
@@ -415,31 +431,47 @@ class ReactionOpsMixin(ReactionProtocol):
         # negative limit would bypass the page cap and dump every reactor.
         limit = max(0, min(limit, max_per_page))
 
-        query = """SELECT user_id, created_at FROM react_reactions 
-                   WHERE message_id = ? AND emoji = ?"""
-        params = [message_id, normalized_emoji]
+        def _load_reaction_users() -> List[ReactionUser]:
+            query = """SELECT user_id, created_at FROM react_reactions
+                       WHERE message_id = ? AND emoji = ?"""
+            params = [message_id, normalized_emoji]
 
-        clause, blocked_params = self._blocked_users_clause("user_id", user_id)
-        query += clause
-        params.extend(blocked_params)
+            clause, blocked_params = self._blocked_users_clause("user_id", user_id)
+            query += clause
+            params.extend(blocked_params)
 
-        if after_user_id:
-            query += " AND user_id > ?"
-            params.append(after_user_id)
+            if after_user_id:
+                query += " AND user_id > ?"
+                params.append(after_user_id)
 
-        query += " ORDER BY user_id LIMIT ?"
-        params.append(limit)
+            query += " ORDER BY user_id LIMIT ?"
+            params.append(limit)
 
-        rows = self._db.fetch_all(query, tuple(params))
+            rows = self._db.fetch_all(query, tuple(params))
 
-        return [
-            ReactionUser(user_id=row["user_id"], reacted_at=row["created_at"])
-            for row in rows
-        ]
+            return [
+                ReactionUser(user_id=row["user_id"], reacted_at=row["created_at"])
+                for row in rows
+            ]
+
+        key = reaction_read_key(
+            "reaction_users",
+            user_id,
+            message_id,
+            normalized_emoji,
+            limit,
+            after_user_id or 0,
+            credential=credential,
+        )
+        return self._cached_reaction_read(key, _load_reaction_users)
 
     def get_user_reactions(
-        self, user_id: SnowflakeID, message_id: SnowflakeID
+        self,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        credential: Optional[str] = None,
     ) -> List[Reaction]:
+        # LIVE GATE before the cache lookup (see get_reaction_users).
         msg = self._get_message(message_id)
         if not msg:
             raise MessageNotFoundError("Message not found")
@@ -447,15 +479,51 @@ class ReactionOpsMixin(ReactionProtocol):
         if not self._is_participant(msg["conversation_id"], user_id):
             raise MessageNotFoundError("Message not found")
 
-        rows = self._db.fetch_all(
-            "SELECT * FROM react_reactions WHERE message_id = ? AND user_id = ? ORDER BY created_at",
-            (message_id, user_id),
-        )
+        def _load_user_reactions() -> List[Reaction]:
+            rows = self._db.fetch_all(
+                "SELECT * FROM react_reactions WHERE message_id = ? AND user_id = ? ORDER BY created_at",
+                (message_id, user_id),
+            )
+            return [self._row_to_reaction(row) for row in rows]
 
-        return [self._row_to_reaction(row) for row in rows]
+        key = reaction_read_key(
+            "user_reactions", user_id, message_id, credential=credential
+        )
+        return self._cached_reaction_read(key, _load_user_reactions)
+
+    def _accessible_reaction_message_ids(
+        self, user_id: int, message_ids: List[int]
+    ):
+        """Live authorization gate for a batch reaction read.
+
+        One bounded query resolves which of the requested messages this viewer
+        may still read (the same participant/server-member rule the aggregation
+        query uses).  It runs on *every* batch call, including cache hits, so a
+        revoked membership hides its messages even while a warm aggregation
+        body still exists.  Only the expensive aggregation is cached.
+        """
+        placeholders = ",".join("?" * len(message_ids))
+        query = f"""SELECT m.id FROM msg_messages m
+                    WHERE m.id IN ({placeholders})
+                      AND (
+                        m.conversation_id IN (
+                            SELECT p.conversation_id FROM msg_participants p
+                            WHERE p.user_id = ?
+                        )
+                        OR m.conversation_id IN (
+                            SELECT sc.conversation_id FROM srv_channels sc
+                            JOIN srv_members sm ON sc.server_id = sm.server_id
+                            WHERE sm.user_id = ?
+                        )
+                      )"""
+        rows = self._db.fetch_all(query, (*message_ids, user_id, user_id))
+        return {row["id"] for row in rows}
 
     def get_reactions_batch(
-        self, user_id: int, message_ids: List[int]
+        self,
+        user_id: int,
+        message_ids: List[int],
+        credential: Optional[str] = None,
     ) -> Dict[int, List[Dict[str, Any]]]:
         if not message_ids:
             return {}
@@ -463,76 +531,107 @@ class ReactionOpsMixin(ReactionProtocol):
 
         logger.debug(f"Batch fetching reactions for {len(message_ids)} messages")
 
-        placeholders = ",".join("?" * len(message_ids))
+        def _load_batch() -> Dict[int, List[Dict[str, Any]]]:
+            placeholders = ",".join("?" * len(message_ids))
 
-        query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
-                           COUNT(*) as count,
-                           MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
-                    FROM react_reactions r
-                    LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
-                    WHERE r.message_id IN ({placeholders})
-                      AND (
-                        r.message_id IN (
-                            SELECT m.id FROM msg_messages m
-                            JOIN msg_participants p ON m.conversation_id = p.conversation_id
-                            WHERE p.user_id = ?
-                        )
-                        OR r.message_id IN (
-                            SELECT m.id FROM msg_messages m
-                            JOIN srv_channels sc ON m.conversation_id = sc.conversation_id
-                            JOIN srv_members sm ON sc.server_id = sm.server_id
-                            WHERE sm.user_id = ?
-                        )
-                      )"""
-        params = [user_id] + list(message_ids) + [user_id, user_id]
+            query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
+                               COUNT(*) as count,
+                               MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
+                        FROM react_reactions r
+                        LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
+                        WHERE r.message_id IN ({placeholders})
+                           AND (
+                             r.message_id IN (
+                                 SELECT m.id FROM msg_messages m
+                                 JOIN msg_participants p ON m.conversation_id = p.conversation_id
+                                 WHERE p.user_id = ?
+                             )
+                             OR r.message_id IN (
+                                 SELECT m.id FROM msg_messages m
+                                 JOIN srv_channels sc ON m.conversation_id = sc.conversation_id
+                                 JOIN srv_members sm ON sc.server_id = sm.server_id
+                                 WHERE sm.user_id = ?
+                             )
+                           )"""
+            params = [user_id] + list(message_ids) + [user_id, user_id]
 
-        clause, blocked_params = self._blocked_users_clause("r.user_id", user_id)
-        query += clause
-        params.extend(blocked_params)
+            clause, blocked_params = self._blocked_users_clause("r.user_id", user_id)
+            query += clause
+            params.extend(blocked_params)
 
-        query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
+            query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
 
-        rows = self._db.fetch_all(query, tuple(params))
+            rows = self._db.fetch_all(query, tuple(params))
 
-        result: Dict[int, List[Dict[str, Any]]] = {mid: [] for mid in message_ids}
+            loaded: Dict[int, List[Dict[str, Any]]] = {mid: [] for mid in message_ids}
+            for row in rows:
+                msg_id = row["message_id"]
+                count = row["count"]
 
-        for row in rows:
-            msg_id = row["message_id"]
-            count = row["count"]
+                if count > 0:
+                    loaded[msg_id].append(
+                        {
+                            "emoji": row["emoji"],
+                            "count": count,
+                            "me": bool(row["me"]),
+                            "is_custom": bool(row["is_custom"]),
+                            "custom_emoji_id": row["custom_emoji_id"],
+                            "url": row.get("url"),
+                        }
+                    )
+            return loaded
 
-            if count > 0:
-                result[msg_id].append(
-                    {
-                        "emoji": row["emoji"],
-                        "count": count,
-                        "me": bool(row["me"]),
-                        "is_custom": bool(row["is_custom"]),
-                        "custom_emoji_id": row["custom_emoji_id"],
-                        "url": row.get("url"),
-                    }
-                )
+        key = reaction_read_key(
+            "reactions_batch", user_id, *message_ids, credential=credential
+        )
+        cached = self._reaction_read_cache.get(key)
+        if cached is _MISS:
+            # Cold path: the aggregation query enforces the viewer's channel
+            # access inline, so no separate gate query is needed here.
+            cached = _load_batch()
+            self._reaction_read_cache.set(key, cached)
+            allowed_ids = None
+        else:
+            # LIVE GATE before serving a warm body: a revoked membership hides
+            # its messages even though the memoized aggregation still has them.
+            allowed_ids = self._accessible_reaction_message_ids(user_id, message_ids)
 
+        result: Dict[int, List[Dict[str, Any]]] = {}
+        for mid in message_ids:
+            visible = allowed_ids is None or mid in allowed_ids
+            result[mid] = list(cached.get(mid, [])) if visible else []
         return result
 
     def get_reaction_count(
-        self, message_id: SnowflakeID, viewer_id: Optional[SnowflakeID] = None
+        self,
+        message_id: SnowflakeID,
+        viewer_id: Optional[SnowflakeID] = None,
+        credential: Optional[str] = None,
     ) -> int:
-        query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ?"
-        params: List[Any] = [message_id]
+        def _load_count() -> int:
+            query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ?"
+            params: List[Any] = [message_id]
 
-        # Keep internal counters consistent with the filtered list APIs.
-        clause, blocked_params = self._blocked_users_clause("user_id", viewer_id)
-        query += clause
-        params.extend(blocked_params)
+            # Keep internal counters consistent with the filtered list APIs.
+            clause, blocked_params = self._blocked_users_clause("user_id", viewer_id)
+            query += clause
+            params.extend(blocked_params)
 
-        row = self._db.fetch_one(query, tuple(params))
-        return row["count"] if row else 0
+            row = self._db.fetch_one(query, tuple(params))
+            return row["count"] if row else 0
+
+        # ``viewer_id`` is part of the key: the block filter is viewer-specific.
+        key = reaction_read_key(
+            "reaction_count", viewer_id, message_id, credential=credential
+        )
+        return self._cached_reaction_read(key, _load_count)
 
     def get_reaction_count_by_emoji(
         self,
         message_id: SnowflakeID,
         emoji: str,
         viewer_id: Optional[SnowflakeID] = None,
+        credential: Optional[str] = None,
     ) -> int:
         # Legacy/stored junk rows may no longer pass the stricter validator;
         # report an empty count instead of erroring reads.
@@ -541,19 +640,29 @@ class ReactionOpsMixin(ReactionProtocol):
         except InvalidEmojiError:
             return 0
 
-        if is_custom:
-            query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND custom_emoji_id = ?"
-            params: List[Any] = [message_id, custom_id]
-        else:
-            query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND emoji = ? AND is_custom = 0"
-            params = [message_id, normalized]
+        def _load_count_by_emoji() -> int:
+            if is_custom:
+                query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND custom_emoji_id = ?"
+                params: List[Any] = [message_id, custom_id]
+            else:
+                query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND emoji = ? AND is_custom = 0"
+                params = [message_id, normalized]
 
-        clause, blocked_params = self._blocked_users_clause("user_id", viewer_id)
-        query += clause
-        params.extend(blocked_params)
+            clause, blocked_params = self._blocked_users_clause("user_id", viewer_id)
+            query += clause
+            params.extend(blocked_params)
 
-        row = self._db.fetch_one(query, tuple(params))
-        return row["count"] if row else 0
+            row = self._db.fetch_one(query, tuple(params))
+            return row["count"] if row else 0
+
+        key = reaction_read_key(
+            "reaction_count_emoji",
+            viewer_id,
+            message_id,
+            normalized,
+            credential=credential,
+        )
+        return self._cached_reaction_read(key, _load_count_by_emoji)
 
     def user_reacted_to_messages(
         self, user_id: int, message_ids: List[int]
@@ -570,14 +679,26 @@ class ReactionOpsMixin(ReactionProtocol):
         return [row["message_id"] for row in rows]
 
     def get_users_who_reacted(
-        self, user_id: int, message_id: SnowflakeID, emoji: str
+        self,
+        user_id: int,
+        message_id: SnowflakeID,
+        emoji: str,
+        credential: Optional[str] = None,
     ) -> List[SnowflakeID]:
         users = self.get_reaction_users(
-            user_id=user_id, message_id=message_id, emoji=emoji
+            user_id=user_id,
+            message_id=message_id,
+            emoji=emoji,
+            credential=credential,
         )
         return [u.user_id for u in users]
 
     def get_reactions_bulk(
-        self, user_id: int, message_ids: List[int]
+        self,
+        user_id: int,
+        message_ids: List[int],
+        credential: Optional[str] = None,
     ) -> Dict[int, List[Dict[str, Any]]]:
-        return self.get_reactions_batch(user_id=user_id, message_ids=message_ids)
+        return self.get_reactions_batch(
+            user_id=user_id, message_ids=message_ids, credential=credential
+        )
