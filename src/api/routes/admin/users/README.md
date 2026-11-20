@@ -41,7 +41,7 @@ Shared helpers in `AdminUsersRouterBase` are available to every mixin through `s
 
 | Helper | Description |
 |--------|-------------|
-| `_parse_user_id(user_id)` | Parses a string user ID as `int` or raises `400 Invalid user ID` |
+| `_parse_user_id(user_id)` | Parses a user-id path segment through the shared ASCII snowflake gate (`parse_id`) or raises `400 Invalid user ID` |
 | `_get_db()` | Returns the database from `src.api.get_db()` or raises `500` when unavailable |
 | `_get_auth()` | Returns the auth module from `src.api.get_auth()` or raises `500` when unavailable |
 
