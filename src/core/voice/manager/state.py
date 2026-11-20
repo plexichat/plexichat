@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from ...base import SnowflakeID
 from ..models import VoiceState
@@ -137,10 +137,6 @@ class StateMixin(VoiceProtocol):
 
         if updates:
             now = self._get_timestamp()
-            updates.append("last_activity = ?")
-            params.append(now)
-            params.append(user_id)
-
             allowed_columns = {
                 "self_deaf",
                 "self_mute",
@@ -149,37 +145,34 @@ class StateMixin(VoiceProtocol):
                 "video",
                 "last_activity",
             }
-            for i, update in enumerate(updates):
+
+            # BEFORE: one UPDATE per requested field (up to five), each writing
+            # ``last_activity`` and re-entering the DB, so a client that sent
+            # mute+deaf+stream+video paid five writes for one state change.
+            # AFTER: a single UPDATE covering every requested field.
+            #
+            # A repeated column (self_deaf=True forces mute, then an explicit
+            # self_mute) collapses to its last value: that is exactly the final
+            # state the old sequential statements produced, without depending
+            # on dialect-specific duplicate-assignment behaviour. The column
+            # allowlist still gates every interpolated identifier, the write is
+            # still scoped to the caller's user_id, and one atomic statement is
+            # strictly safer across replicas than a burst of partial updates.
+            assignments: Dict[str, Any] = {}
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
+                if col_name == "last_activity":
+                    continue
+                assignments[col_name] = value
 
-            for i, update in enumerate(updates):
-                if "self_deaf = ?" in update:
-                    self._db.execute(
-                        "UPDATE voice_states SET self_deaf = ?, last_activity = ? WHERE user_id = ?",
-                        (params[i], now, user_id),
-                    )
-                elif "self_mute = ?" in update:
-                    self._db.execute(
-                        "UPDATE voice_states SET self_mute = ?, last_activity = ? WHERE user_id = ?",
-                        (params[i], now, user_id),
-                    )
-                elif "suppress = ?" in update:
-                    self._db.execute(
-                        "UPDATE voice_states SET suppress = ?, last_activity = ? WHERE user_id = ?",
-                        (params[i], now, user_id),
-                    )
-                elif "streaming = ?" in update:
-                    self._db.execute(
-                        "UPDATE voice_states SET streaming = ?, last_activity = ? WHERE user_id = ?",
-                        (params[i], now, user_id),
-                    )
-                elif "video = ?" in update:
-                    self._db.execute(
-                        "UPDATE voice_states SET video = ?, last_activity = ? WHERE user_id = ?",
-                        (params[i], now, user_id),
-                    )
+            set_clause = ", ".join(f"{col} = ?" for col in assignments)
+            self._db.execute(
+                f"UPDATE voice_states SET {set_clause}, last_activity = ? "
+                "WHERE user_id = ?",
+                (*assignments.values(), now, user_id),
+            )
 
             self._invalidate_voice_state(user_id)
 
