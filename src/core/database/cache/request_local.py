@@ -14,11 +14,13 @@ tests). Without either, lookups pass straight through, so non-request code and
 existing tests keep their exact current behaviour.
 
 Nothing survives the request boundary: a fresh store per request means no TTL
-and no cross-request leakage. A short freshness window additionally bounds how
-long a coalesced value may live in a long-lived scope such as a WebSocket
-connection. Any delete of a key (through ``cache_delete`` -> ``mem_cache_delete``)
-drops its coalesced copy, and writers in this package invalidate explicitly, so
-a write-then-read in the same request never observes a stale memoised value.
+and no cross-request leakage. A short freshness window bounds how long a
+coalesced *value* may be reused, and a hard entry cap bounds the store's memory
+in long-lived scopes such as a WebSocket connection (where the ASGI scope --
+and therefore this memo -- lives for the whole socket). Any delete of a key
+(through ``cache_delete`` -> ``mem_cache_delete``) drops its coalesced copy, and
+writers in this package invalidate explicitly, so a write-then-read in the same
+request never observes a stale memoised value.
 """
 
 from __future__ import annotations
@@ -33,6 +35,16 @@ from typing import Any, Callable, Dict, Iterator, Optional
 # single request (notably WebSockets): a coalesced read is only reused for this
 # many seconds even when the request context itself is still bound.
 _COALESCE_MAX_AGE_SECONDS = 1.0
+
+# Hard cap on memoised keys per scope. HTTP scopes die with the request, but a
+# WebSocket scope lives for the whole connection. Rendering fan-out for many
+# users used to add one permanent entry per distinct ``presence:<user>`` /
+# ``session:<id>`` key to that scope, so a single long-lived socket could pin
+# thousands of values. Bounded LRU keeps hot keys and drops the oldest past the
+# cap; an evicted key simply costs one fresh backing read on its next lookup.
+# The cap is kept small (a single request resolves far fewer than this many
+# distinct keys) and is well below any per-connection memory budget.
+_COALESCE_MAX_ENTRIES = 256
 
 _ATTR = "_cache_lookups"
 _FALLBACK_STORE: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
@@ -80,6 +92,22 @@ def _store(create: bool) -> Optional[Dict[str, Any]]:
     return _FALLBACK_STORE.get()
 
 
+def _remember(store: Dict[str, Any], key: str, entry: Any) -> None:
+    """Store ``entry`` under ``key``, evicting the oldest keys past the cap.
+
+    Re-inserting an existing key moves it to the end, so a key touched on a hot
+    hit becomes the most-recently used and survives future sweeps. The original
+    ``created_at`` is preserved: refresh position, never the freshness window.
+    ``dict`` preserves insertion order, so the leading keys are the oldest.
+    """
+    store.pop(key, None)
+    store[key] = entry
+    overflow = len(store) - _COALESCE_MAX_ENTRIES
+    if overflow > 0:
+        for oldest in list(store)[:overflow]:
+            store.pop(oldest, None)
+
+
 def coalesced_cache_get(
     key: str, *, loader: Optional[Callable[[], Any]] = None
 ) -> Any:
@@ -88,7 +116,11 @@ def coalesced_cache_get(
     ``None`` (a cache miss) is memoised too: a second lookup of the same absent
     key in one request must not trigger a second Valkey round-trip either.
     ``loader`` defaults to ``operations.cache_get(key)`` and is injectable for
-    tests and alternate backends.
+    tests and alternate backends. The memo is a bounded LRU: in a long-lived
+    scope the least-recently used keys are dropped once ``_COALESCE_MAX_ENTRIES``
+    is exceeded. Eviction never changes *what* a key returns -- a recomputed
+    value comes from that key's own loader, so no value crosses user/scope
+    boundaries.
     """
     store = _store(create=True)
     if store is None:
@@ -99,10 +131,11 @@ def coalesced_cache_get(
     if entry is not None:
         created_at, value = entry
         if now - created_at < _COALESCE_MAX_AGE_SECONDS:
+            _remember(store, key, entry)
             return value
 
     value = loader() if loader is not None else _default_loader(key)
-    store[key] = (now, value)
+    _remember(store, key, (now, value))
     return value
 
 

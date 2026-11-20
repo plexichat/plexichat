@@ -175,3 +175,64 @@ def test_custom_loader_is_called_once(_isolated_backend):
 
     assert calls == [1]
     assert _isolated_backend.get_calls == 0
+
+
+def test_coalescing_store_is_bounded_in_long_lived_scope(_isolated_backend):
+    """A WebSocket scope outlives one request; its memo must not grow forever.
+
+    Every distinct ``presence:<user>``/``session:<id>`` lookup used to add a new
+    key to the scope dict and stay there. A connection that renders fan-out for
+    thousands of users therefore pinned thousands of memoised values for the
+    life of the socket. The store is now a bounded LRU: repeated keys stay hot
+    and the oldest entries are evicted once the cap is reached.
+    """
+    import src.core.database.cache.request_local as request_local
+
+    cap = getattr(request_local, "_COALESCE_MAX_ENTRIES", None)
+    assert cap is not None, "request-local coalescing must have a hard entry cap"
+    assert 0 < cap <= 1024
+
+    with request_cache_scope() as store:
+        for i in range(cap * 4):
+            assert coalesced_cache_get(
+                f"presence:{i}", loader=lambda i=i: {"u": i}
+            ) == {"u": i}
+        assert len(store) <= cap, (
+            f"memo grew to {len(store)} entries in one scope (cap {cap})"
+        )
+
+        # The most recently used keys survive the sweep: a repeat lookup of a
+        # hot key must still coalesce (no second backing read).
+        hot_key = f"presence:{cap * 4 - 1}"
+        reads_before = _isolated_backend.get_calls
+        assert coalesced_cache_get(hot_key, loader=lambda: {"u": -1}) == {
+            "u": cap * 4 - 1
+        }
+        assert _isolated_backend.get_calls == reads_before
+
+
+def test_evicted_entries_are_recomputed_and_never_cross_users(_isolated_backend):
+    """Eviction drops the memo only; a reload returns the right user's value.
+
+    A bounded store must fail closed: an evicted key is recomputed from its own
+    loader (never served from another key's stale copy), so one credential's
+    presence can never leak into another's read.
+    """
+    import src.core.database.cache.request_local as request_local
+
+    cap = request_local._COALESCE_MAX_ENTRIES
+    with request_cache_scope() as store:
+        for i in range(cap + 5):
+            coalesced_cache_get(f"presence:{i}", loader=lambda i=i: {"u": i})
+
+        # User 0 was evicted (it was inserted first); looking it up again must
+        # call its loader again and return its own fresh value, never a stale
+        # copy belonging to another user's key.
+        assert coalesced_cache_get("presence:0", loader=lambda: {"u": "reloaded"}) == {
+            "u": "reloaded"
+        }
+        assert store["presence:0"][1] == {"u": "reloaded"}
+
+        # A key that was not evicted still holds its own user's value.
+        newest = f"presence:{cap + 4}"
+        assert store[newest][1] == {"u": cap + 4}
