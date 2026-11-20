@@ -703,8 +703,18 @@ class StorageQuotaManager:
             where += " AND storage_path LIKE ? ESCAPE '\\'"
             params.append(escaped + "%")
 
+        # Per-file metadata is selected in the SAME statement as the page of
+        # rows. Resolving ``content_type``/``checksum``/``scan_status`` with a
+        # follow-up ``fetch_one`` per file would turn this bounded listing into
+        # an N+1 read (one query for the page plus one per returned file), which
+        # grows linearly with the page size. Joining the metadata columns here
+        # keeps the whole listing at exactly one query regardless of page size.
+        # ``metadata`` (free-form JSON) and ``uploaded_by`` (a snowflake) are
+        # deliberately not exposed through this user-facing response.
         rows = self._db.fetch_all(
-            "SELECT id, filename, original_filename, size, storage_path, uploaded_at "
+            "SELECT id, filename, original_filename, size, storage_path, "
+            "uploaded_at, content_type, media_type, storage_backend, "
+            "checksum, scan_status, scan_result "
             f"FROM media_files WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
             tuple(params) + (limit, offset),
         )
