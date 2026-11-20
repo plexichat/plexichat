@@ -117,8 +117,20 @@ def _build_policy() -> StaticPolicy:
     )
 
 
+# ``get_static_policy()`` is the first call the authentication middleware makes
+# on every HTTP request.  Its version token stats the config file, so repeating
+# that check on every request is needless filesystem traffic on the hottest
+# path.  A short staleness ceiling throttles the stat to at most once per
+# window, matching the pattern used by the API-config snapshot.  Version
+# identity (loader id, file mtime/size, API-config identity) still governs
+# rebuilds, so an on-disk edit or ``config.setup()`` is observed on the next
+# check after the ceiling and ``clear_static_policy_cache()`` stays immediate.
+_POLICY_MAX_AGE_SECONDS = 5.0
+
 _policy_snapshot = VersionedConfigSnapshot(
-    cast(Callable[[], Dict[str, Any]], _build_policy), version_fn=_config_version
+    cast(Callable[[], Dict[str, Any]], _build_policy),
+    version_fn=_config_version,
+    max_age=_POLICY_MAX_AGE_SECONDS,
 )
 
 
