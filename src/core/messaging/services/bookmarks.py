@@ -313,38 +313,67 @@ class BookmarkService:
 
         rows = self._db.fetch_all(query, tuple(params))
 
-        # Enrich with message content if messaging module available.
-        # M8: drop rows the caller can no longer view (deleted message or
-        # revoked membership) instead of leaking their metadata. The view
-        # check reuses the message retrieval path's own gate.
+        # Normalize rows once. Enrichment used to call ``get_message`` once per
+        # row -- each call paying a message-row query, a participant probe, a
+        # pin query and an attachment query. Resolve all message ids in one
+        # bounded fan-out instead, keeping the same view gate (a message the
+        # caller cannot see is still dropped, never leaked).
+        normalized = [
+            dict(row)
+            if isinstance(row, dict)
+            else {
+                "id": row[0],
+                "user_id": row[1],
+                "message_id": row[2],
+                "conversation_id": row[3],
+                "label": row[4],
+                "created_at": row[5],
+            }
+            for row in rows
+        ]
+
+        if not self._messaging:
+            return normalized
+
+        # A real bulk resolver returns an id -> message mapping. Anything else
+        # (a legacy/stub messaging object that only implements get_message)
+        # means we fall back to the per-row path so the listing contract holds.
+        messages = None
+        bulk = getattr(self._messaging, "get_messages_by_ids", None)
+        if callable(bulk):
+            try:
+                candidate = bulk(user_id, [data["message_id"] for data in normalized])
+                if isinstance(candidate, dict):
+                    messages = candidate
+            except Exception as enrich_error:
+                logger.debug(f"bookmark bulk enrichment failed: {enrich_error}")
+
         results = []
-        for row in rows:
-            data = (
-                dict(row)
-                if isinstance(row, dict)
-                else {
-                    "id": row[0],
-                    "user_id": row[1],
-                    "message_id": row[2],
-                    "conversation_id": row[3],
-                    "label": row[4],
-                    "created_at": row[5],
-                }
-            )
-            if self._messaging:
-                try:
+        for data in normalized:
+            try:
+                if messages is not None:
+                    mid = data["message_id"]
+                    msg = messages.get(mid)
+                    if msg is None:
+                        # Ids travel as ints through the bulk resolver; stored
+                        # rows may carry the snowflake as a string.
+                        try:
+                            msg = messages.get(int(mid))
+                        except (TypeError, ValueError):
+                            msg = None
+                else:
                     msg = self._messaging.get_message(user_id, data["message_id"])
-                    if not msg:
-                        # Not viewable (deleted or no longer a participant):
-                        # drop rather than leak metadata.
-                        continue
-                    data["content_preview"] = (msg.content or "")[:200]
-                    data["author_id"] = msg.author_id
-                    data["message_created_at"] = msg.created_at
-                except Exception as enrich_error:
-                    # Transient enrichment failure: keep the row without a
-                    # preview rather than hide a legitimate bookmark.
-                    logger.debug(f"bookmark enrichment failed: {enrich_error}")
+                if not msg:
+                    # Not viewable (deleted or no longer a participant):
+                    # drop rather than leak metadata.
+                    continue
+                data["content_preview"] = (msg.content or "")[:200]
+                data["author_id"] = msg.author_id
+                data["message_created_at"] = msg.created_at
+            except Exception as enrich_error:
+                # Transient enrichment failure: keep the row without a
+                # preview rather than hide a legitimate bookmark.
+                logger.debug(f"bookmark enrichment failed: {enrich_error}")
             results.append(data)
         return results
 

@@ -14,6 +14,13 @@ from ...exceptions import ConversationAccessDeniedError
 from ..base import BaseService
 from .protocol import MessageServiceProtocol
 
+# IN predicates are built from bound-parameter counts (never untrusted text),
+# but SQLite/PostgreSQL still cap host parameters. Keep each fan-out chunk at
+# or below this ceiling so a large listing degrades to a handful of round
+# trips instead of one query per row (an N+1).
+_BULK_ID_CHUNK = 500
+
+
 # L6: the rebuild previously did DELETE + RPUSH as two separate commands,
 # so a concurrent send (lpush) or a concurrent rebuild could interleave and
 # leave a partially-built list that readers then trusted via the llen
@@ -89,6 +96,90 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
 
         cache_set(f"msg:obj:{message_id}", msg, ttl=3600)
         return msg
+
+    def get_messages_by_ids(
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, "Message"]:
+        """Load many viewable messages by id with bounded ``IN`` fan-out.
+
+        This is the set-based equivalent of calling :meth:`get_message` once
+        per id. List endpoints (e.g. the per-user bookmark listing) used to do
+        exactly that, paying a message-row query, a participant probe, a pin
+        query and an attachment query *per row*. Here each of those lookups is
+        issued once per bounded chunk of ids, and the participant gate is
+        deduplicated per conversation, so the query count grows with the
+        number of distinct conversations -- not with the number of rows.
+
+        Only messages the caller may view are returned: a row fails the gate
+        for the same reasons ``get_message`` returns ``None`` (missing row or
+        no longer a participant). The result is keyed by message id, and ids
+        with no row / no access are simply absent, so callers never receive a
+        message they did not ask for. The bound (500) is applied to every IN
+        list built here.
+        """
+        unique_ids: List[SnowflakeID] = []
+        seen = set()
+        for mid in message_ids:
+            try:
+                value = int(mid)
+            except (TypeError, ValueError):
+                continue
+            if value in seen:
+                continue
+            seen.add(value)
+            unique_ids.append(value)
+        if not unique_ids:
+            return {}
+
+        # 1. Message rows: one IN query per bounded chunk. No `deleted` filter
+        # is applied, matching ``MessageRepository.get_by_id`` used by
+        # ``get_message`` (deleted tombstones remain readable to participants).
+        rows: List[Dict[str, Any]] = []
+        for start in range(0, len(unique_ids), _BULK_ID_CHUNK):
+            rows.extend(self._repo.get_batch_by_ids(unique_ids[start : start + _BULK_ID_CHUNK]))
+        if not rows:
+            return {}
+
+        # 2. Visibility gate, deduplicated per conversation. ``is_participant``
+        # is itself cached, so distinct conversations cost one check each
+        # rather than one per message.
+        participant_cache: Dict[SnowflakeID, bool] = {}
+        accessible: List[Dict[str, Any]] = []
+        for row in rows:
+            conv_id = row.get("conversation_id")
+            if conv_id not in participant_cache:
+                try:
+                    participant_cache[conv_id] = bool(
+                        self._participant_svc.is_participant(conv_id, user_id)
+                    )
+                except Exception:
+                    # Fail closed: an error resolving access must never reveal
+                    # a message to a caller who may not view it.
+                    participant_cache[conv_id] = False
+            if participant_cache[conv_id]:
+                accessible.append(row)
+        if not accessible:
+            return {}
+
+        # 3. Pins and attachments: one batched IN query per chunk each.
+        accessible_ids = [row["id"] for row in accessible]
+        pins_map: Dict[SnowflakeID, Dict[str, Any]] = {}
+        attachments_map: Dict[SnowflakeID, List[Dict[str, Any]]] = {}
+        for start in range(0, len(accessible_ids), _BULK_ID_CHUNK):
+            chunk = accessible_ids[start : start + _BULK_ID_CHUNK]
+            pins_map.update(self._pin_repo.get_batch_by_messages(chunk))
+            attachments_map.update(self._attachment_repo.get_batch_by_messages(chunk))
+
+        # 4. Rebuild models via the shared converter so decryption/pin state
+        # is identical to the single-message path.
+        result: Dict[SnowflakeID, "Message"] = {}
+        for row in accessible:
+            mid = row["id"]
+            msg = self._repo.row_to_model(row, pins_map.get(mid))
+            msg.attachments = attachments_map.get(mid, [])
+            cache_set(f"msg:obj:{mid}", msg, ttl=3600)
+            result[mid] = msg
+        return result
 
     def get_messages(
         self,

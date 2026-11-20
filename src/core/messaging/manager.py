@@ -563,6 +563,12 @@ class MessagingManager(BaseManager):
         """Get a single message by ID."""
         return self._message_svc.get_message(user_id, message_id)
 
+    def get_messages_by_ids(
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, Message]:
+        """Batch-load viewable messages by ID (bounded IN chunks)."""
+        return self._message_svc.get_messages_by_ids(user_id, message_ids)
+
     def get_messages(
         self,
         user_id: SnowflakeID,

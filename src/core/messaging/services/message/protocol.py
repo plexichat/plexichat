@@ -102,6 +102,10 @@ class MessageServiceProtocol(Protocol):
         self, user_id: SnowflakeID, message_id: SnowflakeID
     ) -> Optional[Message]: ...
 
+    def get_messages_by_ids(
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, Message]: ...
+
     def get_messages(
         self,
         user_id: SnowflakeID,
