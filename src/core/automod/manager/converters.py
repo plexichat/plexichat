@@ -1,6 +1,9 @@
 import json
 from typing import Any
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
+from ..limits import MAX_DURATION_SECONDS
 from ..models import (
     Rule,
     RuleAction,
@@ -37,6 +40,24 @@ def _allowlisted_or_none(coerce, value: Any):
         return None
 
 
+def _bounded_duration(value: Any):
+    """Re-apply the write-time duration bound to a stored rule action.
+
+    Actions are persisted as JSON and may originate from a legacy or tampered
+    row, so create/update validation alone is not enough. Drop invalid or
+    out-of-range values (the executor then falls back to its safe default)
+    instead of letting an unbounded/negative/fractional timeout reach it.
+    """
+    if value is None:
+        return None
+    try:
+        return bounded_int(
+            value, "duration_seconds", minimum=0, maximum=MAX_DURATION_SECONDS
+        )
+    except (HardeningViolation, ValueError, TypeError):
+        return None
+
+
 def row_to_rule(row) -> Rule:
     actions_data = safe_json_loads(row["actions"], []) or []
     actions = []
@@ -49,7 +70,7 @@ def row_to_rule(row) -> Rule:
         actions.append(
             RuleAction(
                 action_type=action_type,
-                duration_seconds=entry.get("duration_seconds"),
+                duration_seconds=_bounded_duration(entry.get("duration_seconds")),
                 reason=entry.get("reason"),
                 notify_user=entry.get("notify_user", True),
                 metadata=entry.get("metadata", {}),

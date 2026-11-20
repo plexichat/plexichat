@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 import utils.logger as logger
 from src.core.base import SnowflakeID
 from src.core.security.hardening import HardeningViolation, bounded_int
+from src.core.servers.permission_utils import can_manage_member
 from ..limits import (
     MAX_DURATION_SECONDS,
     MAX_REASON_LENGTH,
@@ -211,6 +212,52 @@ class ActionMixin(AutoModProtocol):
 
         return executor.execute(action, violation, context)
 
+    def _manual_action_can_moderate(
+        self,
+        actor_id: SnowflakeID,
+        server_id: SnowflakeID,
+        target_id: SnowflakeID,
+    ) -> bool:
+        """Check role hierarchy for a manual member-targeting action.
+
+        The ban/kick/delete executors' raw-SQL fallbacks execute under a
+        system-context flag and intentionally skip the servers module's
+        ``can_manage_member`` guard. That guard is what stops a moderator from
+        sanctioning a member whose role outranks their own, and the normal
+        ``ban_member`` / ``kick_member`` / ``update_member`` paths all apply it.
+        Verify it here using the same role rows so a manual automod action is
+        not a side door around the hierarchy. Refuse when it cannot be
+        established.
+        """
+        servers = self._servers
+        if servers is None:
+            return False
+        try:
+            server = servers.get_server(server_id, actor_id)
+            if not server:
+                return False
+            owner_id = getattr(server, "owner_id", None)
+            if owner_id is None:
+                return False
+            if int(owner_id) == int(target_id):
+                return False
+            if int(owner_id) == int(actor_id):
+                return True
+
+            # Same primitive the servers handlers use: dict rows with a
+            # ``position`` key, deleted roles excluded, membership required.
+            role_rows = servers._get_member_role_rows
+            actor_roles = role_rows(server_id, actor_id)
+            target_roles = role_rows(server_id, target_id)
+            return bool(can_manage_member(actor_roles, target_roles, False, False))
+        except Exception as e:
+            logger.error(
+                f"AutoMod manual action REFUSED: hierarchy check for user "
+                f"{actor_id} targeting {target_id} in server {server_id} "
+                f"failed: {e}"
+            )
+            return False
+
     def trigger_action(
         self,
         user_id: SnowflakeID,
@@ -287,6 +334,27 @@ class ActionMixin(AutoModProtocol):
             logger.warning(
                 f"AutoMod manual action REFUSED: user {user_id} lacks "
                 f"{required} in server {server_id}"
+            )
+            return False
+
+        # A permission bit alone is not enough to sanction a member: the
+        # ban/kick/delete executors' raw-SQL fallbacks run under the
+        # system-context flag and therefore skip the servers module's
+        # can_manage_member guard. Without this check a moderator holding only
+        # members.ban/members.kick could ban, kick or time out a member whose
+        # role outranks their own. Mirror the hierarchy rule the normal
+        # ban_member/kick_member/update_member paths enforce, and fail closed.
+        if action_type in (
+            ActionType.BAN_USER,
+            ActionType.KICK_USER,
+            ActionType.TIMEOUT_USER,
+        ) and not self._manual_action_can_moderate(
+            user_id, server_id, target_user_id
+        ):
+            logger.warning(
+                f"AutoMod manual action REFUSED: user {user_id} cannot "
+                f"moderate {target_user_id} in server {server_id} "
+                f"(role hierarchy)"
             )
             return False
 
