@@ -211,10 +211,14 @@ class FeedMixin(NotificationProtocol):
             (user_id, channel_id),
         )
 
-        # Update unread counts by finding conversation_ids for this channel
-        for row in conv_rows:
-            self._decrement_mention_count(user_id, row["conversation_id"], row["total"])
-            self._decrement_unread_count(user_id, row["conversation_id"], row["total"])
+        # Decrement both counters for every affected conversation in one
+        # bounded, owner-scoped pass. The old per-conversation loop issued two
+        # SELECT + two UPDATE statements per conversation (4N queries); the
+        # two counters share a row, so a single batched read/write suffices.
+        self._decrement_unread_conversation_counts(
+            user_id,
+            {row["conversation_id"]: (row["total"], row["total"]) for row in conv_rows},
+        )
 
         self._dispatch_notification_event(
             user_id,
@@ -244,10 +248,12 @@ class FeedMixin(NotificationProtocol):
             (user_id, server_id),
         )
 
-        # Update unread counts by finding conversation_ids for this server
-        for row in conv_rows:
-            self._decrement_mention_count(user_id, row["conversation_id"], row["total"])
-            self._decrement_unread_count(user_id, row["conversation_id"], row["total"])
+        # Batched, owner-scoped decrement of both counters (see
+        # mark_channel_read): 2 queries per chunk instead of 4 per conversation.
+        self._decrement_unread_conversation_counts(
+            user_id,
+            {row["conversation_id"]: (row["total"], row["total"]) for row in conv_rows},
+        )
 
         self._dispatch_notification_event(
             user_id,
@@ -277,10 +283,12 @@ class FeedMixin(NotificationProtocol):
             (user_id, thread_id),
         )
 
-        # Update unread counts
-        for row in conv_rows:
-            self._decrement_mention_count(user_id, row["conversation_id"], row["total"])
-            self._decrement_unread_count(user_id, row["conversation_id"], row["total"])
+        # Batched, owner-scoped decrement of both counters (see
+        # mark_channel_read).
+        self._decrement_unread_conversation_counts(
+            user_id,
+            {row["conversation_id"]: (row["total"], row["total"]) for row in conv_rows},
+        )
 
         self._dispatch_notification_event(
             user_id,

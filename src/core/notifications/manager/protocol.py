@@ -125,6 +125,15 @@ class NotificationProtocol:
             user_id, conversation_id, amount
         )
 
+    def _decrement_unread_conversation_counts(
+        self,
+        user_id: SnowflakeID,
+        conversation_amounts: Dict[SnowflakeID, tuple],
+    ) -> None:
+        cast(NotificationProtocol, super())._decrement_unread_conversation_counts(
+            user_id, conversation_amounts
+        )
+
     def _get_push_manager(self):
         return cast(NotificationProtocol, super())._get_push_manager()
 

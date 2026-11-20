@@ -7,6 +7,13 @@ from ..models import UnreadCount
 from .protocol import NotificationProtocol
 
 
+# Bound the IN clause of the bulk counter decrement. A single "mark channel /
+# server / thread read" can span thousands of conversations on a busy server;
+# one bind variable per conversation would blow SQLite's variable cap (and
+# Postgres' parameter limit) just like the other bulk lookups in this codebase.
+_BULK_DECREMENT_CHUNK_SIZE = 400
+
+
 class UnreadMixin(NotificationProtocol):
     def _update_unread_count(
         self,
@@ -82,6 +89,65 @@ class UnreadMixin(NotificationProtocol):
             "UPDATE notif_unread SET unread_count = ? WHERE id = ?",
             (max(0, row["unread_count"] - amount), row["id"]),
         )
+
+    def _decrement_unread_conversation_counts(
+        self,
+        user_id: SnowflakeID,
+        conversation_amounts: Dict[SnowflakeID, tuple],
+    ) -> None:
+        """Clamp-decrement both counters for many conversations in bounded queries.
+
+        ``conversation_amounts`` maps ``conversation_id -> (mention_amount,
+        unread_amount)``. The old per-conversation loops in the mark-read paths
+        called ``_decrement_mention_count`` and ``_decrement_unread_count``, each
+        of which did its own SELECT + UPDATE: 4 statements per conversation, so
+        "mark this channel read" degraded linearly with the number of
+        conversations a recipient had unread messages in. Both counters live on
+        the same ``notif_unread`` row, so one scoped read and one batched write
+        are enough.
+
+        Ownership is enforced on BOTH sides: the SELECT restricts rows to
+        ``user_id`` (so a foreign conversation can never be read), and every
+        UPDATE carries ``AND user_id = ?`` as well as the row id (so a row
+        reassigned between the read and the write is a no-op). A caller can
+        therefore only ever adjust counts for its own conversations. Values are
+        clamped in Python, matching the single-row helpers and staying portable
+        to PostgreSQL (which rejects SQLite's two-argument ``MAX``).
+        """
+        if not conversation_amounts:
+            return
+
+        items = list(conversation_amounts.items())
+        updates = []
+        for start in range(0, len(items), _BULK_DECREMENT_CHUNK_SIZE):
+            chunk = items[start : start + _BULK_DECREMENT_CHUNK_SIZE]
+            conv_ids = [conversation_id for conversation_id, _ in chunk]
+            placeholders = ",".join("?" for _ in conv_ids)
+            rows = self._db.fetch_all(
+                "SELECT id, conversation_id, mention_count, unread_count "
+                f"FROM notif_unread WHERE user_id = ? AND conversation_id IN ({placeholders})",
+                (user_id, *conv_ids),
+            )
+            by_conversation = {row["conversation_id"]: row for row in rows}
+            for conversation_id, (mention_amount, unread_amount) in chunk:
+                row = by_conversation.get(conversation_id)
+                if row is None:
+                    continue
+                updates.append(
+                    (
+                        max(0, row["mention_count"] - mention_amount),
+                        max(0, row["unread_count"] - unread_amount),
+                        row["id"],
+                        user_id,
+                    )
+                )
+
+        if updates:
+            self._db.execute_many(
+                "UPDATE notif_unread SET mention_count = ?, unread_count = ? "
+                "WHERE id = ? AND user_id = ?",
+                updates,
+            )
 
     def get_unread_totals(
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
