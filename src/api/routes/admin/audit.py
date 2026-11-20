@@ -53,12 +53,56 @@ _MAX_AUDIT_DATE_RANGE_MS = _MAX_AUDIT_SCAN_DAYS * 24 * 60 * 60 * 1000
 _MIN_AUDIT_TIMESTAMP_MS = 0
 _MAX_AUDIT_TIMESTAMP_MS = 2**63 - 1
 
-# The stats endpoint recomputes eleven COUNT scans over admin_audit_log on
-# every poll (three totals + one per action family). Operators poll it from the
-# dashboard every few seconds, so collapse those polls into one computation for
-# a short window. The host/permission gates below run on every request, before
-# the cache is consulted, so authorization is never served from a cached value.
+# The stats endpoint summarises today's admin_audit_log rows (three totals plus
+# one count per action family). Operators poll it from the dashboard every few
+# seconds, so collapse those polls into one computation for a short window. The
+# host/permission gates below run on every request, before the cache is
+# consulted, so authorization is never served from a cached value.
 _AUDIT_STATS_TTL_SECONDS = 2.0
+
+# A cold build used to issue eleven separate COUNT scans (one for each of the
+# three totals and eight action families), re-reading the same day's rows every
+# time -- including on the UTC-midday cache-key rollover and after a TTL expiry.
+# Fold them into a single conditional-aggregation query over one scoped read.
+# This is a pure batching change: the payload, scope (created_at >= day start),
+# inclusion rule (families with count > 0 only) and fail-closed gates are
+# unchanged. The action-family patterns are bound parameters (never raw SQL),
+# and ``today_start`` stays the first placeholder so the UTC-day-boundary
+# contract in the existing regression test still holds.
+_AUDIT_STATS_FAMILIES = (
+    "login",
+    "user",
+    "admin",
+    "config",
+    "approval",
+    "security",
+    "plexijoin",
+    "license",
+)
+
+_AUDIT_STATS_SQL = """WITH scoped AS (
+    SELECT status, action FROM admin_audit_log WHERE created_at >= ?
+)
+SELECT COUNT(*) AS total_today,
+       COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success_today,
+       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_today,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_login,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_user,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_admin,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_config,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_approval,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_security,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_plexijoin,
+       COALESCE(SUM(CASE WHEN action LIKE ? THEN 1 ELSE 0 END), 0) AS fam_license
+FROM scoped"""
+
+# Ordered result aliases, used only to map positional (tuple) rows to names.
+_AUDIT_STATS_COLUMNS = (
+    "total_today",
+    "success_today",
+    "failed_today",
+    *(f"fam_{family}" for family in _AUDIT_STATS_FAMILIES),
+)
 
 # Audit rows are untrusted free text: details, actions and user agents can be
 # influenced by users whose names/values were recorded in an entry. When an
@@ -460,11 +504,15 @@ def _audit_stats_day_start() -> int:
 
 
 def _build_audit_stats(today_start: int) -> dict:
-    """Run the eleven COUNT scans that make up the audit-stats summary.
+    """Build the audit-stats summary with a single scoped query.
 
     Kept at module scope so the request path and the boot warm-up prime the
     exact same producer: a second implementation could otherwise drift and
     leave the first poll paying for a cold build the warm-up never covered.
+
+    One ``SELECT`` with conditional aggregates replaces the old eleven COUNT
+    scans, so a cold build (TTL expiry, UTC-day rollover, or a warm-up that ran
+    before the DB was ready) reads the day's rows once instead of eleven times.
     """
     try:
         import src.api as api
@@ -473,37 +521,29 @@ def _build_audit_stats(today_start: int) -> dict:
         if db is None:
             raise HTTPException(status_code=503, detail="Database not available")
 
+        params = (today_start, *(f"{family}%" for family in _AUDIT_STATS_FAMILIES))
+        row = db.fetch_one(_AUDIT_STATS_SQL, params)
+        if row is None:
+            # Fail closed: a missing row is not a valid "all zeros" summary.
+            raise RuntimeError("audit stats query returned no row")
+
+        # DB adapters may hand back a mapping (dict / sqlite3.Row) or a plain
+        # tuple. Normalise both so conditional aggregates are read by name.
+        if isinstance(row, dict):
+            values = row
+        elif hasattr(row, "keys"):
+            values = {name: row[name] for name in row.keys()}
+        else:
+            values = dict(zip(_AUDIT_STATS_COLUMNS, row))
+
         stats = {
-            "total_today": db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ?",
-                (today_start,),
-            )["count"],
-            "success_today": db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'success'",
-                (today_start,),
-            )["count"],
-            "failed_today": db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'failed'",
-                (today_start,),
-            )["count"],
+            "total_today": int(values["total_today"]),
+            "success_today": int(values["success_today"]),
+            "failed_today": int(values["failed_today"]),
             "by_action_family": {},
         }
-
-        families = [
-            "login",
-            "user",
-            "admin",
-            "config",
-            "approval",
-            "security",
-            "plexijoin",
-            "license",
-        ]
-        for family in families:
-            count = db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND action LIKE ?",
-                (today_start, f"{family}%"),
-            )["count"]
+        for family in _AUDIT_STATS_FAMILIES:
+            count = int(values[f"fam_{family}"])
             if count > 0:
                 stats["by_action_family"][family] = count
 
@@ -518,8 +558,8 @@ def _build_audit_stats(today_start: int) -> dict:
 def warm_audit_stats_cache() -> None:
     """Prime today's audit-stats summary off the request path (best-effort).
 
-    The cold hit on ``GET /admin/audit/logs/stats`` issues eleven COUNT scans
-    over ``admin_audit_log`` while a request is held open. That work is
+    The cold hit on ``GET /admin/audit/logs/stats`` runs a conditional-aggregate
+    scan over ``admin_audit_log`` while a request is held open. That work is
     request-invariant and the payload is a system-wide summary with no
     per-admin data, so it is safe to build once on the boot worker thread: the
     host and permission gates still run in the route on every request *before*

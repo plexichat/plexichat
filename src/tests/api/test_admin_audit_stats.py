@@ -34,6 +34,10 @@ class _CapturingDB:
 
     def fetch_one(self, query, params=None):
         self.seen_params.append(tuple(params or ()))
+        if "total_today" in query:
+            from src.api.routes.admin import audit as audit_routes
+
+            return {name: 0 for name in audit_routes._AUDIT_STATS_COLUMNS}
         return {"count": 0}
 
 
@@ -97,8 +101,8 @@ def test_stats_counts_bucketed_by_action_family():
         assert body["success_today"] == 0
         assert body["failed_today"] == 0
         assert body["by_action_family"] == {}
-        # 3 totals + one count per action family.
-        assert len(fake_db.seen_params) == 3 + 8
+        # One conditional-aggregate query replaces the old 11 COUNT scans.
+        assert len(fake_db.seen_params) == 1
     finally:
         for c in reversed(ctx):
             c.stop()
@@ -380,3 +384,162 @@ def test_export_escapes_action_family_like_wildcards():
     finally:
         for c in reversed(ctx):
             c.stop()
+
+
+# --- Batch the cold audit-stats build into a single scoped query -------------
+
+
+class _StatsRecordingDB:
+    """Fake DB returning one conditional-aggregate row, recording the call."""
+
+    def __init__(self, row=None):
+        self.calls = []
+        self.row = row
+
+    def fetch_one(self, query, params=None):
+        self.calls.append((query, tuple(params or ())))
+        return self.row
+
+
+def _stats_result_row(**overrides):
+    from src.api.routes.admin import audit as audit_routes
+
+    values = {name: 0 for name in audit_routes._AUDIT_STATS_COLUMNS}
+    values.update(overrides)
+    return values
+
+
+def test_audit_stats_cold_build_is_one_query_not_eleven():
+    """A cold build reads the day's rows once, not in 11 separate scans.
+
+    Before the change the producer issued three COUNT scans for the totals plus
+    eight ``LIKE 'family%'`` COUNT scans, each a separate pass over the same
+    ``created_at >= day_start`` slice. A single conditional-aggregate query must
+    return an identical payload with one round-trip.
+    """
+    from src.api.routes.admin import audit as audit_routes
+
+    today = 1_750_000_000_000
+    row = _stats_result_row(
+        total_today=100,
+        success_today=70,
+        failed_today=20,
+        fam_login=40,
+        fam_user=30,
+        # other families stay at zero and must be omitted from the payload
+    )
+    db = _StatsRecordingDB(row)
+    with patch("src.api.get_db", return_value=db):
+        stats = audit_routes._build_audit_stats(today)
+
+    assert len(db.calls) == 1, "cold build must issue exactly one query"
+    sql, params = db.calls[0]
+    # One scoped read, conditional aggregates, bound family patterns.
+    assert "created_at >= ?" in sql
+    assert "COUNT(*) AS total_today" in sql
+    assert sql.count("CASE WHEN") == len(audit_routes._AUDIT_STATS_FAMILIES) + 2
+    # today_start stays the first bound parameter; families are parameters too,
+    # never interpolated into the SQL text.
+    assert params[0] == today
+    assert params[1:] == tuple(
+        f"{family}%" for family in audit_routes._AUDIT_STATS_FAMILIES
+    )
+    for family in audit_routes._AUDIT_STATS_FAMILIES:
+        assert f"'{family}%'" not in sql
+
+    assert stats == {
+        "total_today": 100,
+        "success_today": 70,
+        "failed_today": 20,
+        "by_action_family": {"login": 40, "user": 30},
+    }
+
+
+def test_audit_stats_accepts_positional_rows_and_fails_closed():
+    """Tuple adapters map by column order; a missing row is not a zero summary."""
+    from src.api.routes.admin import audit as audit_routes
+
+    today = 1_750_000_000_000
+    ordered = [0] * len(audit_routes._AUDIT_STATS_COLUMNS)
+    ordered[audit_routes._AUDIT_STATS_COLUMNS.index("total_today")] = 7
+    ordered[audit_routes._AUDIT_STATS_COLUMNS.index("fam_security")] = 3
+
+    with patch("src.api.get_db", return_value=_StatsRecordingDB(tuple(ordered))):
+        stats = audit_routes._build_audit_stats(today)
+    assert stats == {
+        "total_today": 7,
+        "success_today": 0,
+        "failed_today": 0,
+        "by_action_family": {"security": 3},
+    }
+
+    # A missing row means the store gave us no usable answer: fail closed rather
+    # than serving a fabricated "all zeros" summary to the admin dashboard.
+    from fastapi import HTTPException
+
+    with patch("src.api.get_db", return_value=_StatsRecordingDB(None)):
+        with pytest.raises(HTTPException) as exc:
+            audit_routes._build_audit_stats(today)
+    assert exc.value.status_code == 500
+
+
+def test_audit_stats_batched_payload_matches_old_scans():
+    """Real SQLite: one aggregate query returns exactly what 11 scans did."""
+    import sqlite3
+
+    from src.api.routes.admin import audit as audit_routes
+
+    db = sqlite3.connect(":memory:")
+    db.row_factory = lambda cur, row: {
+        d[0]: row[i] for i, d in enumerate(cur.description)
+    }
+    db.execute(
+        "CREATE TABLE admin_audit_log (id INTEGER PRIMARY KEY, created_at INTEGER, "
+        "status TEXT, action TEXT)"
+    )
+    families = audit_routes._AUDIT_STATS_FAMILIES
+    rows = [
+        (
+            i,
+            1000 + (i % 100),
+            ("success", "failed", "warn")[i % 3],
+            f"{families[i % len(families)]}.evt.{i}",
+        )
+        for i in range(5000)
+    ]
+    db.executemany("INSERT INTO admin_audit_log VALUES (?,?,?,?)", rows)
+    db.commit()
+
+    day = 0
+    expected = {
+        "total_today": db.execute(
+            "SELECT COUNT(*) AS c FROM admin_audit_log WHERE created_at >= ?", (day,)
+        ).fetchone()["c"],
+        "success_today": db.execute(
+            "SELECT COUNT(*) AS c FROM admin_audit_log WHERE created_at >= ? "
+            "AND status = 'success'",
+            (day,),
+        ).fetchone()["c"],
+        "failed_today": db.execute(
+            "SELECT COUNT(*) AS c FROM admin_audit_log WHERE created_at >= ? "
+            "AND status = 'failed'",
+            (day,),
+        ).fetchone()["c"],
+        "by_action_family": {},
+    }
+    for fam in families:
+        count = db.execute(
+            "SELECT COUNT(*) AS c FROM admin_audit_log WHERE created_at >= ? "
+            "AND action LIKE ?",
+            (day, f"{fam}%"),
+        ).fetchone()["c"]
+        if count > 0:
+            expected["by_action_family"][fam] = count
+
+    class _DB:
+        def fetch_one(self, query, params=None):
+            return db.execute(query, params or ()).fetchone()
+
+    with patch("src.api.get_db", return_value=_DB()):
+        actual = audit_routes._build_audit_stats(day)
+    assert actual == expected

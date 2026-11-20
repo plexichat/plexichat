@@ -1,7 +1,7 @@
 """Regression tests for the short-TTL cache on GET /audit/logs/stats.
 
-The stats handler issues eleven COUNT scans over ``admin_audit_log`` per
-request.  Operators poll it from the dashboard every few seconds, so the
+The stats handler runs a conditional-aggregate scan over ``admin_audit_log``
+per cold build.  Operators poll it from the dashboard every few seconds, so the
 summary is cached briefly and invalidated on audit writes.  These tests pin the
 cache-hit behaviour, TTL expiry, invalidation, DB scoping and the invariant
 that authorization gates run on every request (including cache hits).
@@ -40,6 +40,8 @@ class CountingDB:
 
     def fetch_one(self, query, params=None):
         self.fetch_one_calls += 1
+        if "total_today" in query:
+            return {name: self.count for name in audit_routes._AUDIT_STATS_COLUMNS}
         return {"count": self.count}
 
     def execute(self, query, params=None):
@@ -83,31 +85,31 @@ def test_stats_cache_coalesces_polls(stats_env):
     client, db, _ = stats_env
     first = client.get(_STATS_URL)
     assert first.status_code == 200
-    assert db.fetch_one_calls == 11  # 3 totals + 8 action families
+    assert db.fetch_one_calls == 1  # one conditional-aggregate query
     expected = first.json()
 
     second = client.get(_STATS_URL)
     assert second.status_code == 200
     assert second.json() == expected
-    assert db.fetch_one_calls == 11  # zero new queries on the cache hit
+    assert db.fetch_one_calls == 1  # zero new queries on the cache hit
 
 
 def test_stats_cache_expires_and_recomputes(stats_env):
     """Once the TTL elapses the next poll recomputes the aggregate."""
     client, db, _ = stats_env
     client.get(_STATS_URL)
-    assert db.fetch_one_calls == 11
+    assert db.fetch_one_calls == 1
 
     _expire_audit_stats_entries()
     client.get(_STATS_URL)
-    assert db.fetch_one_calls == 22
+    assert db.fetch_one_calls == 2
 
 
 def test_audit_write_invalidates_stats_cache(stats_env):
     """A successful audit-log write drops the cached summary immediately."""
     client, db, _ = stats_env
     client.get(_STATS_URL)
-    assert db.fetch_one_calls == 11
+    assert db.fetch_one_calls == 1
 
     logger = AdminLogger(file_logger=None)
     written = logger.log_action(
@@ -119,21 +121,21 @@ def test_audit_write_invalidates_stats_cache(stats_env):
     assert db.executed, "the audit row should have been written"
 
     client.get(_STATS_URL)
-    assert db.fetch_one_calls == 22  # recomputed after invalidation
+    assert db.fetch_one_calls == 2  # recomputed after invalidation
 
 
 def test_cache_scoped_to_database(stats_env):
     """A different backing DB must not observe another DB's cached summary."""
     client, db, _ = stats_env
     client.get(_STATS_URL)
-    assert db.fetch_one_calls == 11
+    assert db.fetch_one_calls == 1
 
     other = CountingDB(count=9)
     with patch("src.api.get_db", return_value=other):
         resp = client.get(_STATS_URL)
     assert resp.json()["total_today"] == 9
-    assert other.fetch_one_calls == 11
-    assert db.fetch_one_calls == 11  # untouched
+    assert other.fetch_one_calls == 1
+    assert db.fetch_one_calls == 1  # untouched
 
 
 def test_authorization_gates_run_on_cache_hits(stats_env):

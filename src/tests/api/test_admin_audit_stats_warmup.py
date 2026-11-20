@@ -2,8 +2,8 @@
 
 ``get_or_compute("audit_stats", (today_start,), ...)`` is the first thing the
 frequently-polled ``GET /admin/audit/logs/stats`` does after its host and
-permission gates. On a cold process the producer issues eleven COUNT scans over
-``admin_audit_log`` while a request is held open. The summary is request-invariant
+permission gates. On a cold process the producer runs a conditional-aggregate
+scan over ``admin_audit_log`` while a request is held open. The summary is request-invariant
 (a system-wide payload with no per-admin data), so the boot warm-up primes that
 one entry on the shared config-gated worker thread and the first real poll is a
 cache hit.
@@ -41,7 +41,7 @@ class _FixedDateTime(real_datetime):
 
 
 class CountingDB:
-    """Fake DB: counts the eleven scans, with optional CPU work per scan."""
+    """Fake DB: counts the aggregate scans, with optional CPU work per scan."""
 
     def __init__(self, count=5, work=0):
         self.fetch_one_calls = 0
@@ -50,6 +50,8 @@ class CountingDB:
 
     def fetch_one(self, query, params=None):
         self.fetch_one_calls += 1
+        if "total_today" in query:
+            return {name: self.count for name in route._AUDIT_STATS_COLUMNS}
         if self.work:
             # Deterministic stand-in for a slow COUNT scan (no wall-clock sleep).
             sum(i * i for i in range(self.work))
@@ -79,13 +81,13 @@ def test_warmup_primes_cache_and_first_request_skips_cold_work():
     ):
         # Off-request warm-up pays the full cold build.
         route.warm_audit_stats_cache()
-        assert db.fetch_one_calls == 11  # 3 totals + 8 action families
+        assert db.fetch_one_calls == 1  # one conditional-aggregate query
 
         first = _client().get(_STATS_URL)
 
     assert first.status_code == 200
     assert first.json()["total_today"] == 5
-    assert db.fetch_one_calls == 11, (
+    assert db.fetch_one_calls == 1, (
         "the first request must hit the warmed entry, not rebuild the aggregate"
     )
 
@@ -111,7 +113,7 @@ def test_gates_still_run_before_the_warm_cache_read():
     assert host_gate.call_count == 2
     assert perm_gate.call_count == 2
     assert perm_gate.call_args_list[0].args[1] == "admin.audit.read"
-    assert db.fetch_one_calls == 11  # neither hit recomputed the summary
+    assert db.fetch_one_calls == 1  # neither hit recomputed the summary
 
 
 def test_warm_entry_never_serves_a_denied_request():
@@ -135,7 +137,10 @@ def test_warm_entry_never_serves_a_denied_request():
 
 
 def test_cold_build_cost_vs_warmed_read():
-    work_per_scan = 30_000  # deterministic stand-in for one slow COUNT scan
+    # Deterministic stand-in for one slow aggregate scan. With batching the
+    # cold build issues a single query, so scale the work to keep the cold/warm
+    # timing separation well above scheduler noise.
+    work_per_scan = 500_000
     day = route._audit_stats_day_start()
 
     cold_db = CountingDB(work=work_per_scan)
@@ -172,8 +177,8 @@ def test_cold_build_cost_vs_warmed_read():
         f"| warm read: {warm_ms:.3f} ms"
     )
     assert cold == warm
-    assert cold_calls == 11
-    assert warm_db.fetch_one_calls == 11  # the warm-up did all the querying
+    assert cold_calls == 1
+    assert warm_db.fetch_one_calls == 1  # the warm-up did all the querying
     assert warm_ms < cold_ms / 3
 
 
