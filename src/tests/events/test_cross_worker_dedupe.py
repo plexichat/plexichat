@@ -179,3 +179,51 @@ def test_expired_ids_are_reprocessed():
     time.sleep(0.02)
     assert cache.is_duplicate("evt-old") is False
     assert cache.metrics()["size"] == 1
+
+
+def test_metrics_counters_are_bounded_without_weakening_dedupe():
+    """Regression: observability counters must not grow without reset.
+
+    The registry's ``_seen`` set is hard-bounded, but the ``duplicates`` and
+    ``evictions`` metrics used to be plain ``int`` counters that climbed for
+    the whole process lifetime (only the test-only ``clear`` reset them).
+    They now saturate at ``max_counter`` and expose explicit ``*_saturated``
+    flags so a value is always an exact count or a documented lower bound.
+
+    Crucially, saturation must NOT weaken the dedupe check itself: duplicates
+    keep being recognised after the counter caps, and genuinely new ids are
+    still accepted on first sight.
+    """
+    cap = 5
+    cache = CrossWorkerDedupe(max_entries=4, ttl_sec=300.0, max_counter=cap)
+
+    # --- duplicate counter saturates -----------------------------------
+    assert cache.is_duplicate("evt-seen") is False  # first sight stores
+    for _ in range(50):
+        assert cache.is_duplicate("evt-seen") is True  # still a duplicate
+    dup_metrics = cache.metrics()
+    assert dup_metrics["duplicates"] == cap
+    assert dup_metrics["max_counter"] == cap
+    assert dup_metrics["duplicates_saturated"] is True
+    assert dup_metrics["evictions_saturated"] is False
+
+    # A new id is still accepted even after the duplicate counter capped.
+    assert cache.is_duplicate("evt-fresh") is False
+
+    # --- eviction counter saturates ------------------------------------
+    for i in range(100):
+        cache.remember(f"evt-{i}")
+    evict_metrics = cache.metrics()
+    assert evict_metrics["evictions"] == cap
+    assert evict_metrics["evictions_saturated"] is True
+    # The retention bound still holds exactly (no weakening of the registry).
+    assert evict_metrics["size"] == 4
+    assert evict_metrics["max"] == 4
+
+    # --- clear() resets both counters and their saturation flags -------
+    cache.clear()
+    reset = cache.metrics()
+    assert reset["duplicates"] == 0
+    assert reset["evictions"] == 0
+    assert reset["duplicates_saturated"] is False
+    assert reset["evictions_saturated"] is False

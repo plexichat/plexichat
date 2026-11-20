@@ -24,7 +24,17 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from typing import Dict
+from typing import Dict, Union
+
+#: Hard ceiling for the cumulative observability counters.  A long-lived
+#: worker can ingest billions of events; the registry's ``_seen`` set is capped
+#: by ``max_entries``/TTL, but the ``duplicates``/``evictions`` metrics kept
+#: growing for the entire process lifetime (only the test-only ``clear`` reset
+#: them).  Saturating at a fixed ceiling keeps those counters O(1) in memory
+#: while a companion ``*_saturated`` flag preserves observability: once set, a
+#: counter means "at least MAX_COUNTER" instead of an exact total.  The
+#: dedupe decisions themselves are untouched by this bound.
+MAX_COUNTER = (1 << 32) - 1
 
 
 class CrossWorkerDedupe:
@@ -37,14 +47,24 @@ class CrossWorkerDedupe:
     ids forever.
     """
 
-    def __init__(self, max_entries: int = 4096, ttl_sec: float = 300.0) -> None:
+    def __init__(
+        self,
+        max_entries: int = 4096,
+        ttl_sec: float = 300.0,
+        max_counter: int = MAX_COUNTER,
+    ) -> None:
         self._max_entries = max(1, int(max_entries))
         self._ttl_sec = float(ttl_sec)
+        self._max_counter = max(1, int(max_counter))
         self._seen: "OrderedDict[str, float]" = OrderedDict()
         self._lock = threading.Lock()
-        # Observability counters — surface via health/dashboards.
+        # Observability counters — surface via health/dashboards.  These are
+        # saturating (see ``MAX_COUNTER``) so they cannot grow without reset
+        # over a long-lived worker's lifetime.
         self._duplicates = 0
         self._evictions = 0
+        self._duplicates_saturated = False
+        self._evictions_saturated = False
 
     def remember(self, event_id: str) -> None:
         """Record ``event_id`` as seen (called by the publisher).
@@ -70,17 +90,31 @@ class CrossWorkerDedupe:
         with self._lock:
             self._sweep_expired_locked()
             if event_id in self._seen:
-                self._duplicates += 1
+                self._record_duplicate_locked()
                 return True
             self._store(event_id)
             return False
+
+    def _record_duplicate_locked(self) -> None:
+        """Bump the duplicate counter with a hard ceiling.  Lock held."""
+        if self._duplicates >= self._max_counter:
+            self._duplicates_saturated = True
+        else:
+            self._duplicates += 1
+
+    def _record_eviction_locked(self) -> None:
+        """Bump the eviction counter with a hard ceiling.  Lock held."""
+        if self._evictions >= self._max_counter:
+            self._evictions_saturated = True
+        else:
+            self._evictions += 1
 
     def _store(self, event_id: str) -> None:
         """Insert ``event_id`` and enforce the hard size bound.  Lock held."""
         self._seen[event_id] = time.monotonic()
         while len(self._seen) > self._max_entries:
             self._seen.popitem(last=False)
-            self._evictions += 1
+            self._record_eviction_locked()
 
     def _sweep_expired_locked(self) -> None:
         """Drop ids older than the TTL.  Lock held."""
@@ -88,7 +122,7 @@ class CrossWorkerDedupe:
         expired = [key for key, ts in self._seen.items() if ts < cutoff]
         for key in expired:
             self._seen.pop(key, None)
-            self._evictions += 1
+            self._record_eviction_locked()
 
     def clear(self) -> None:
         """Reset the registry to its initial state.
@@ -102,15 +136,26 @@ class CrossWorkerDedupe:
             self._seen.clear()
             self._duplicates = 0
             self._evictions = 0
+            self._duplicates_saturated = False
+            self._evictions_saturated = False
 
-    def metrics(self) -> Dict[str, int]:
-        """Return a snapshot of the dedupe cache size and counters."""
+    def metrics(self) -> Dict[str, Union[int, bool]]:
+        """Return a snapshot of the dedupe cache size and counters.
+
+        ``duplicates``/``evictions`` saturate at ``max_counter``; the matching
+        ``*_saturated`` flags tell operators when a value is a lower bound
+        rather than an exact total.  ``size``/``max`` remain exact so the hard
+        retention bound is still directly observable.
+        """
         with self._lock:
             return {
                 "size": len(self._seen),
                 "max": self._max_entries,
                 "duplicates": self._duplicates,
                 "evictions": self._evictions,
+                "duplicates_saturated": self._duplicates_saturated,
+                "evictions_saturated": self._evictions_saturated,
+                "max_counter": self._max_counter,
             }
 
 
