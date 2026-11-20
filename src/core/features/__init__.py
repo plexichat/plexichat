@@ -319,7 +319,7 @@ def get_tier_configuration() -> TierConfiguration:
 # ``get_rate_limit_multiplier`` and ``get_user_tier_limits`` resolve a tier on
 # every rate-limited request. Previously that re-read ``user_features`` config
 # and re-ran ``validate_tier_limits`` + a full ``TierLimits`` reconstruction on
-# each call (~265us of repeated work per request). The resolved table is now a
+# each call. The resolved table is now a
 # version-keyed snapshot with a short staleness ceiling:
 #
 # * *version-keyed* -- ``_tier_config_version`` folds in the config loader
@@ -370,6 +370,34 @@ def invalidate_tier_configuration_cache() -> None:
     """
     _tier_configuration_snapshot.invalidate()
     _tier_limits_snapshot.invalidate()
+
+
+def warm_tier_limits_cache() -> int:
+    """Prime both tier snapshots off the request path.
+
+    The first rate-limited request (or admin tier listing) after a restart
+    would otherwise pay the config read + ``validate_tier_limits`` + full
+    ``TierLimits`` reconstruction on the request thread. Building the resolved
+    table here moves that one-off cost to the background warm-up worker.
+
+    Idempotent and best-effort: both snapshots are single-entry, version-keyed
+    caches, so a second call within the same config version is a no-op. A bad
+    or unavailable config must never fail startup -- the request path still
+    builds on demand exactly as before -- so each step is isolated and errors
+    are only logged. Returns the elapsed milliseconds, like ``warm_once``.
+    """
+    started = time.perf_counter()
+    # Build the admin table first: its builder also resolves the per-request
+    # limits table, so the explicit lookup below is then a pure cache hit.
+    try:
+        get_tier_configuration()
+    except Exception as e:
+        logger.debug(f"Startup warm-up tier configuration skipped: {e}")
+    try:
+        get_tier_limits(get_default_tier())
+    except Exception as e:
+        logger.debug(f"Startup warm-up tier limits skipped: {e}")
+    return int((time.perf_counter() - started) * 1000.0)
 
 
 def is_alpha_registration_enabled() -> bool:
@@ -837,6 +865,7 @@ __all__ = [
     "get_tier_configuration",
     "invalidate_tier_configuration_cache",
     "invalidate_tier_limits_cache",
+    "warm_tier_limits_cache",
     "TierConfiguration",
     "get_user_features",
     "get_user_tier",

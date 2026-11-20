@@ -227,6 +227,11 @@ def warm_once(app: Any = None) -> float:
         logger.debug(f"Startup warm-up badge catalog failed: {e}")
 
     try:
+        _warm_tier_limits()
+    except Exception as e:
+        logger.debug(f"Startup warm-up tier limits failed: {e}")
+
+    try:
         _db_probe(api)
     except Exception as e:
         logger.debug(f"Startup warm-up DB probe failed: {e}")
