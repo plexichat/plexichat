@@ -40,10 +40,18 @@ class SoundResponse(BaseModel):
 
 
 class SoundUpdateRequest(BaseModel):
-    """Editable sound metadata."""
+    """Editable sound metadata.
+
+    ``emoji`` is echoed to every server member through the soundboard picker,
+    exactly like ``name``. The upload route rejects HTML metacharacters and
+    control characters in it (stored-XSS defence), but the PATCH route used to
+    accept a bare ``str`` here, so a crafted value could be persisted through
+    the update endpoint and bypass that sanitisation. Bind it to the same
+    ``UIText`` policy as ``name`` at the request boundary.
+    """
 
     name: Optional[UIText] = Field(None, min_length=1, max_length=64)
-    emoji: Optional[str] = Field(None, max_length=32)
+    emoji: Optional[UIText] = Field(None, max_length=32)
     volume: Optional[float] = Field(None, ge=0.0, le=1.0)
     cooldown: Optional[int] = Field(None, ge=0)
 
