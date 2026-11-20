@@ -48,6 +48,84 @@ from src.core.media.exceptions import (
 router = APIRouter(prefix="/media", tags=["Media"])
 
 
+# === Hash-report abuse controls ===
+#
+# ``media.report_hash`` auto-blocks a hash once ``auto_block_threshold``
+# *pending* reports exist for it (default 5, see the deduplication manager).
+# The count used to include every row from every reporter, so a single
+# authenticated account could report the same hash five times and silently
+# block that hash for the whole instance — a content-DoS primitive — and could
+# otherwise flood the moderation queue without bound. Mirror the per-user
+# throttle used by the other report routes and dedup at the trust boundary so
+# the threshold reflects *distinct* reporters.
+MAX_HASH_REPORTS_PER_MINUTE = 10
+HASH_REPORT_WINDOW_SECONDS = 60
+
+
+def _check_hash_report_rate_limit(user_id: int) -> None:
+    """Charge a per-user bucket for hash-report submissions (fail closed)."""
+    try:
+        from src.core.database import check_rate_limit
+
+        allowed, _remaining = check_rate_limit(
+            f"media:hash_report:{user_id}",
+            MAX_HASH_REPORTS_PER_MINUTE,
+            HASH_REPORT_WINDOW_SECONDS,
+        )
+    except Exception as e:
+        logger.error(f"Hash-report rate limit unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": 503,
+                    "message": "Hash reporting temporarily unavailable",
+                }
+            },
+        )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many hash reports submitted. Please slow down.",
+                }
+            },
+        )
+
+
+def _existing_pending_hash_report(user_id: int, hash_value: str):
+    """Return this reporter's pending report id for ``hash_value``, if any.
+
+    A reporter may not push a single hash past the auto-block threshold on
+    their own; the moderation signal must come from distinct accounts. The
+    database is the source of truth, and an unavailable database fails closed
+    so dedup cannot be skipped by taking the storage tier down.
+    """
+    db = api.get_db()
+    if db is None:
+        logger.error("Hash-report dedup unavailable: database not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": 503,
+                    "message": "Hash reporting temporarily unavailable",
+                }
+            },
+        )
+    row = db.fetch_one(
+        "SELECT id FROM media_hash_reports "
+        "WHERE reporter_id = ? AND hash_value = ? AND status = 'pending' "
+        "ORDER BY reported_at ASC LIMIT 1",
+        (user_id, hash_value),
+    )
+    if not row:
+        return None
+    return row["id"] if isinstance(row, dict) else row[0]
+
+
 # === Proxy request policy (parsed once per config version) ===
 
 
@@ -139,7 +217,21 @@ async def report_content_hash(
     """
     from src.core import media
 
+    # Per-user throttle and reporter-level dedup run BEFORE any moderation
+    # write. Each report would otherwise move the hash closer to the global
+    # auto-block threshold, so an unthrottled caller could block arbitrary
+    # content simply by reporting the same hash repeatedly.
+    _check_hash_report_rate_limit(user.user_id)
+
     try:
+        existing = _existing_pending_hash_report(user.user_id, report.hash_value)
+        if existing is not None:
+            return HashReportResponse(
+                success=True,
+                report_id=str(existing),
+                message="Report already submitted",
+            )
+
         report_id = media.report_hash(
             hash_value=report.hash_value,
             reporter_id=user.user_id,
@@ -161,6 +253,9 @@ async def report_content_hash(
             report_id=str(report_id),
             message="Report submitted successfully",
         )
+    except HTTPException:
+        # A fail-closed 503 from the dedup gate must not be rewrapped as a 500.
+        raise
     except Exception as e:
         logger.error(
             f"Failed to submit hash report for user {user.user_id}: {e}", exc_info=True
