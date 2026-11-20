@@ -8,14 +8,14 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeID, SnowflakeIDParam
 from src.core.database.cache.decorators import cached
 from src.core.events.snowflakes import stringify_snowflake_ids
-from src.core.profiles.manager import ProfileManager
+from src.core.profiles.manager import PROFILE_READ_CACHE_PREFIX, ProfileManager
+from src.api.routes.users.helpers import authenticated_cache_key, require_user_token
 from src.core.security.hardening import (
     HardeningViolation,
     reject_control_characters,
     require_http_url,
 )
 from .common import raise_bad_request
-from src.api.routes.users.helpers import require_user_token
 import utils.logger as logger
 
 router = APIRouter()
@@ -60,6 +60,25 @@ _LIMITED_PROFILE_FIELDS = (
 
 # Minimal public identity returned when visibility is "none"/"private".
 _PRIVATE_PROFILE_FIELDS = ("user_id", "created_at")
+
+
+# --- Bounded, per-credential cache for the profile metadata read ------------
+#
+# ``GET /users/{user_id}/profile`` resolves a ``user_profiles`` row (plus social
+# link JSON and status fields) on every view. Multiple viewers polling the same
+# profile re-run that query each time. Memoize the *raw* fetch for a short
+# window. Keys are partitioned per credential via ``authenticated_cache_key`` so
+# a bot token can never replay its owner's -- or another viewer's -- entry, and
+# a bounded process-local L1 tier keeps warm reads off the shared backend.
+#
+# The visibility/authz decision is deliberately NOT cached: it is recomputed on
+# every request (``_profile_projection_for``) *before* the cache is consulted,
+# so a revoked friend/server relationship or a visibility change is reflected
+# immediately and no view is ever served from a warm entry without re-checking
+# who is asking. ``skip_cache_if`` is defence in depth: only user tokens
+# populate the cache even if a caller reaches the loader directly.
+_PROFILE_READ_TTL_SECONDS = 60
+_PROFILE_READ_L1_TTL_SECONDS = 5
 
 
 MAX_SOCIAL_LINKS = 10
@@ -272,6 +291,52 @@ def _shares_server_with(viewer_id: int, owner_id: int) -> bool:
         return False
 
 
+@cached(
+    ttl=_PROFILE_READ_TTL_SECONDS,
+    prefix=PROFILE_READ_CACHE_PREFIX,
+    key_builder=authenticated_cache_key(PROFILE_READ_CACHE_PREFIX),
+    l1_ttl=_PROFILE_READ_L1_TTL_SECONDS,
+    skip_cache_if=lambda current_user, **kwargs: (
+        getattr(current_user, "token_type", "user") != "user"
+    ),
+)
+def _load_profile_metadata(*, user_id: int, current_user) -> dict:
+    """Cold path: fetch raw profile metadata from the database.
+
+    Authorization is resolved by ``_profile_projection_for`` on *every*
+    request before this cached function is entered (see the route below), so a
+    cached raw row can never bypass an authz decision -- only the authoritative
+    fetch is memoized, projection is always applied freshly. The credential is
+    part of the key because bot tokens share their owner's ``user_id``.
+    """
+    db = api.get_db()
+    return ProfileManager(db).get_profile(user_id) or {}
+
+
+def _profile_projection_for(current_user, owner_id: int):
+    """Resolve the visibility decision for this viewer *before* any cache hit.
+
+    Returns ``None`` for a full projection (self-read, or public/allowed scope)
+    or the tuple of field names to project for a restricted view. Keeping this
+    decision outside the cached loader means a denied/restricted view is never
+    stored and a warm entry can't serve stale authorization.
+    """
+    if owner_id == current_user.user_id:
+        return None  # self-reads are always complete
+    visibility = _get_profile_visibility(owner_id)
+    if visibility == "private":
+        return _PRIVATE_PROFILE_FIELDS
+    if visibility in ("friends", "shared-servers", _FAIL_CLOSED_VISIBILITY):
+        allowed = False
+        if visibility == "friends":
+            allowed = _is_friend_of(current_user.user_id, owner_id)
+        elif visibility == "shared-servers":
+            allowed = _shares_server_with(current_user.user_id, owner_id)
+        if not allowed:
+            return _LIMITED_PROFILE_FIELDS
+    return None
+
+
 def _project_profile(profile: dict, fields) -> dict:
     projected = {key: profile.get(key) for key in fields}
     # The default/empty shape always exposes an empty social_links list so the
@@ -331,30 +396,22 @@ async def get_user_profile(
 ) -> dict:
     uid = user_id
 
-    db = api.get_db()
+    # AUTHZ GATE -- runs on every request, before the cache lookup. The
+    # projection decision is derived live from the viewer credential and the
+    # owner's current visibility, so a revoked relationship, a visibility
+    # change, or a bot credential can never be answered from a warm entry.
+    fields = _profile_projection_for(current_user, uid)
 
-    svc = ProfileManager(db)
-
-    result = svc.get_profile(uid)
+    # Only the authoritative (and expensive) metadata fetch is cached, under a
+    # per-credential key with a bounded L1 tier. A hit still goes through the
+    # fresh projection decision above before anything is returned.
+    result = _load_profile_metadata(user_id=uid, current_user=current_user)
     if not result:
         return _profile_payload({"user_id": uid, "bio": None, "social_links": []})
 
-    # Self-reads are always complete.
-    if uid == current_user.user_id:
+    if fields is None:
         return _profile_payload(result)
-
-    visibility = _get_profile_visibility(uid)
-    if visibility == "private":
-        return _profile_payload(_project_profile(result, _PRIVATE_PROFILE_FIELDS))
-    if visibility in ("friends", "shared-servers", _FAIL_CLOSED_VISIBILITY):
-        allowed = False
-        if visibility == "friends":
-            allowed = _is_friend_of(current_user.user_id, uid)
-        elif visibility == "shared-servers":
-            allowed = _shares_server_with(current_user.user_id, uid)
-        if not allowed:
-            return _profile_payload(_project_profile(result, _LIMITED_PROFILE_FIELDS))
-    return _profile_payload(result)
+    return _profile_payload(_project_profile(result, fields))
 
 
 @router.patch(

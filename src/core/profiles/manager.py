@@ -60,6 +60,42 @@ _UNSET = _Unset.UNSET
 _INTERNAL_PROFILE_KEYS = ("_custom_status_expired",)
 
 
+# Profile metadata is resolved on every profile view (``SELECT * FROM
+# user_profiles`` plus social-link JSON decoding). The API read path memoizes
+# that raw fetch under this namespace with per-credential keys and a bounded L1
+# tier -- see ``src.api.routes.features.profiles``. Every mutation below drops
+# the affected entries so a cached projection can never outlive a write.
+PROFILE_READ_CACHE_PREFIX = "user_profile_read_api"
+
+
+def invalidate_profile_read_cache(user_id: Optional[int] = None) -> None:
+    """Drop cached profile metadata after a write.
+
+    ``@cached`` keys are partitioned per credential (the *viewer*) and per
+    target user, so a single profile write changes what every viewer sees for
+    that target: all of their entries must go. ``user_id`` scopes the drop to
+    one profile; ``None`` clears the whole namespace (bulk reaper / resets).
+
+    This is a best-effort coherence hook: failures are swallowed so a cache
+    outage can never fail an otherwise successful profile write. A missed
+    invalidation can only leave a stale entry until its short TTL expires.
+    """
+    try:
+        from src.core.database import invalidate_pattern
+
+        if user_id is None:
+            invalidate_pattern(f"{PROFILE_READ_CACHE_PREFIX}:*")
+            return
+        uid = int(user_id)
+        # User-token keys end in ``user_id:int:<uid>``; bot-token keys carry the
+        # target as ``user_id=<uid>`` (see authenticated_cache_key). Both must
+        # be cleared because a write is visible to every credential.
+        invalidate_pattern(f"{PROFILE_READ_CACHE_PREFIX}:*:user_id:int:{uid}")
+        invalidate_pattern(f"{PROFILE_READ_CACHE_PREFIX}:bot:*:user_id={uid}")
+    except Exception as e:
+        logger.debug(f"Profile read cache invalidation failed for {user_id}: {e}")
+
+
 def _strip_internal_keys(data: Dict[str, Any]) -> Dict[str, Any]:
     """Return ``data`` without internal bookkeeping keys.
 
@@ -400,6 +436,8 @@ class ProfileManager:
             )
 
         logger.debug(f"User {user_id} updated their profile")
+        # Drop every viewer's cached copy of this profile after the write.
+        invalidate_profile_read_cache(user_id)
         result = self.get_profile(user_id)
         return result if result else {}
 
@@ -473,6 +511,8 @@ class ProfileManager:
             self._db.commit()
 
         logger.debug(f"User {user_id} set custom status")
+        # The status fields are part of the cached profile projection.
+        invalidate_profile_read_cache(user_id)
         result = self.get_profile(user_id)
         return result if result is not None else self._default_profile_dict(user_id)
 
@@ -509,6 +549,8 @@ class ProfileManager:
                  AND custom_status_expires_at < ?""",
             (now, now),
         )
+        # Bulk write may have changed many profiles; drop the whole namespace.
+        invalidate_profile_read_cache(None)
         try:
             return int(getattr(result, "rowcount", 0) or 0)
         except (TypeError, ValueError):
