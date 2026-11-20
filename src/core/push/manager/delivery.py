@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
@@ -46,6 +48,63 @@ PUSH_SEND_TIMEOUT_S = DEFAULT_ITEM_TIMEOUT_S
 #: Hard ceiling on users accepted by one bulk async fan-out (backpressure).
 MAX_BULK_PUSH_USERS = 1000
 
+# A single announcement fan-out validates the SAME ``data`` mapping once per
+# recipient (``send_push`` -> ``_bounded_data``). Every value is re-encoded with
+# ``json.dumps`` just to measure its byte size, even though the six id fields
+# and the mention type are identical for all recipients of one message. Memoize
+# the derived size by the full canonical input (type + value): a changed value
+# produces a different key and can never observe a stale size. The cache is a
+# bounded LRU so a flood of distinct payloads cannot retain unbounded values,
+# and values already past the byte cap never become cache keys.
+_MAX_DATA_VALUE_SIZE_CACHE_ENTRIES = 256
+_MAX_DATA_VALUE_CACHE_KEY_CHARS = MAX_PUSH_DATA_VALUE_BYTES
+_DATA_VALUE_SIZE_CACHE: "OrderedDict[tuple, int]" = OrderedDict()
+_DATA_VALUE_SIZE_CACHE_LOCK = threading.Lock()
+_DATA_VALUE_SIZE_STATS = {"hits": 0, "misses": 0}
+
+
+def get_push_data_serialization_stats() -> Dict[str, int]:
+    """Hit/miss counters and size of the shared push-data size cache."""
+    with _DATA_VALUE_SIZE_CACHE_LOCK:
+        return {
+            "size": len(_DATA_VALUE_SIZE_CACHE),
+            "max_entries": _MAX_DATA_VALUE_SIZE_CACHE_ENTRIES,
+            "hits": _DATA_VALUE_SIZE_STATS["hits"],
+            "misses": _DATA_VALUE_SIZE_STATS["misses"],
+        }
+
+
+def _serialized_value_bytes(value: Any) -> int:
+    """Byte count of the canonical JSON encoding of one push data value.
+
+    The computation on a miss is byte-for-byte the original
+    ``json.dumps(value, sort_keys=True, separators=(",", ":"))`` call, so the
+    bound is unchanged. Only hashable, bounded scalar values are cached; every
+    other input computes directly, exactly as before.
+    """
+    key: Optional[tuple] = None
+    if value is None or isinstance(value, (bool, int, float)):
+        key = (type(value), value)
+    elif isinstance(value, str) and len(value) <= _MAX_DATA_VALUE_CACHE_KEY_CHARS:
+        key = (str, value)
+    if key is not None:
+        with _DATA_VALUE_SIZE_CACHE_LOCK:
+            cached = _DATA_VALUE_SIZE_CACHE.get(key)
+            if cached is not None:
+                _DATA_VALUE_SIZE_CACHE.move_to_end(key)
+                _DATA_VALUE_SIZE_STATS["hits"] += 1
+                return cached
+            _DATA_VALUE_SIZE_STATS["misses"] += 1
+
+    size = len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+    if key is not None:
+        with _DATA_VALUE_SIZE_CACHE_LOCK:
+            _DATA_VALUE_SIZE_CACHE[key] = size
+            if len(_DATA_VALUE_SIZE_CACHE) > _MAX_DATA_VALUE_SIZE_CACHE_ENTRIES:
+                _DATA_VALUE_SIZE_CACHE.popitem(last=False)
+    return size
+
 
 def _bounded_text(value: Any, field: str, maximum: int) -> str:
     text = str(value or "")
@@ -78,10 +137,12 @@ def _bounded_data(value: Any) -> Dict[str, Any]:
         if not key or len(key) > MAX_PUSH_DATA_KEY_LENGTH:
             raise ValueError("push data key is empty or too long")
         try:
-            encoded = json.dumps(raw_value, sort_keys=True, separators=(",", ":"))
+            # Shared id/type values are encoded once and reused across every
+            # recipient of an announcement fan-out; the bound itself is still
+            # derived from the value on every miss.
+            value_bytes = _serialized_value_bytes(raw_value)
         except (TypeError, ValueError) as exc:
             raise ValueError("push data value is not JSON serialisable") from exc
-        value_bytes = len(encoded.encode("utf-8"))
         if value_bytes > MAX_PUSH_DATA_VALUE_BYTES:
             raise ValueError(
                 f"push data value exceeds maximum size of "
