@@ -34,7 +34,15 @@ PROFILE_BULK_L1_TTL_SECONDS = 10
 
 # Observability counters for the L1 tier (also used by the query-count
 # regression tests).  Never part of the response contract.
-_profile_bulk_l1_stats = {"hits": 0, "misses": 0, "valkey_gets": 0}
+# ``valkey_gets`` counts shared-cache *keys* requested (to show how much the L1
+# tier saves); ``valkey_bulk_calls`` counts the round trips used to fetch them.
+# On a cold L1 the old code made one GET per key; now it makes a single MGET.
+_profile_bulk_l1_stats = {
+    "hits": 0,
+    "misses": 0,
+    "valkey_gets": 0,
+    "valkey_bulk_calls": 0,
+}
 
 
 def get_profile_bulk_l1_stats() -> Dict[str, int]:
@@ -323,48 +331,90 @@ class ProfileMixin(AuthManagerProtocol):
             return None
         return self.get_user(row["id"])
 
+    @staticmethod
+    def _profile_from_cache(value: Any) -> Optional[Dict[str, Any]]:
+        """Return a usable cached profile dict, or ``None`` (a miss).
+
+        A corrupt entry (unparsable JSON string, wrong shape) is discarded and
+        rebuilt from the database, exactly as on the old per-id path.
+        """
+        if not value:
+            return None
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, ValueError) as exc:
+                logger.debug(f"discarding unparsable cached profile: {exc}")
+                return None
+        if isinstance(value, dict) and "created_at" in value:
+            return value
+        return None
+
     def get_user_profiles_bulk(self, user_ids: List[int]) -> Dict[str, Any]:
         if not user_ids:
             return {}
 
-        result = {}
-        missing_ids = []
+        # De-duplicate up front so a repeated id cannot inflate L1 probes or
+        # the MGET key list. Order is preserved; callers only key on str(uid).
+        seen_ids: set = set()
+        unique_ids: List[int] = []
+        for uid in user_ids:
+            if uid not in seen_ids:
+                seen_ids.add(uid)
+                unique_ids.append(uid)
+        user_ids = unique_ids
 
-        from src.core.database import cache_get, cache_set, valkey_available
+        result: Dict[str, Any] = {}
+        missing_ids: List[int] = []
+
+        from src.core.database import cache_get_many, cache_set, valkey_available
         from src.core.database.cache.base import mem_cache_get, mem_cache_set
 
         use_valkey = valkey_available()
+
+        # Pass 1: resolve what we can from the bounded process-local L1 tier.
+        # Collect the shared-cache keys for ids the L1 missed so they can all be
+        # fetched together below. Keys are identical to the L1 keys (so the
+        # existing ``user_profile:*`` invalidation hooks clear both tiers).
+        pending_keys: List[str] = []
+        pending_uids: List[int] = []
         for uid in user_ids:
             cache_key = f"user_profile:{uid}"
-            # Bounded L1 first: same key as the shared cache so mutations clear
-            # it automatically, and a short TTL bounds cross-worker staleness.
             cached_profile = mem_cache_get(cache_key)
             if cached_profile is not None:
                 _profile_bulk_l1_stats["hits"] += 1
-            else:
-                _profile_bulk_l1_stats["misses"] += 1
-                if use_valkey:
-                    _profile_bulk_l1_stats["valkey_gets"] += 1
-                    cached_profile = cache_get(cache_key)
-                    if cached_profile is not None:
-                        mem_cache_set(
-                            cache_key, cached_profile, PROFILE_BULK_L1_TTL_SECONDS
-                        )
-
-            if cached_profile:
-                if isinstance(cached_profile, str):
-                    try:
-                        cached_profile = json.loads(cached_profile)
-                    except (TypeError, ValueError) as exc:
-                        # A corrupt cache entry is treated as a miss and rebuilt
-                        # from the database below.
-                        logger.debug(f"discarding unparsable cached profile: {exc}")
-                if isinstance(cached_profile, dict) and "created_at" in cached_profile:
-                    result[str(uid)] = cached_profile
+                usable = self._profile_from_cache(cached_profile)
+                if usable is not None:
+                    result[str(uid)] = usable
                 else:
                     missing_ids.append(uid)
+                continue
+
+            _profile_bulk_l1_stats["misses"] += 1
+            if use_valkey:
+                _profile_bulk_l1_stats["valkey_gets"] += 1
+                pending_keys.append(cache_key)
+                pending_uids.append(uid)
             else:
                 missing_ids.append(uid)
+
+        # Pass 2: one bulk MGET for every L1 miss. A message page can resolve
+        # ~100 authors, so the old one-GET-per-id loop paid that many serial
+        # round trips on every cold listing. ``cache_get_many`` issues a single
+        # Valkey MGET (and falls back to individual GETs only when no bulk
+        # backend exists), so query cost is now independent of page size.
+        if pending_keys:
+            _profile_bulk_l1_stats["valkey_bulk_calls"] += 1
+            bulk = cache_get_many(pending_keys) or {}
+            for uid, cache_key in zip(pending_uids, pending_keys):
+                usable = self._profile_from_cache(bulk.get(cache_key))
+                if usable is not None:
+                    result[str(uid)] = usable
+                    # Seed the bounded L1 under the same key as the shared cache
+                    # so the next listing resolves this id without any lookup.
+                    mem_cache_set(cache_key, usable, PROFILE_BULK_L1_TTL_SECONDS)
+                else:
+                    missing_ids.append(uid)
 
         if missing_ids:
             placeholders = ",".join("?" for _ in missing_ids)
