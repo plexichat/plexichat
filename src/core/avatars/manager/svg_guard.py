@@ -19,6 +19,7 @@ This module is the single source of truth for the avatar fail-closed policy:
 
 from __future__ import annotations
 
+import html
 import re
 
 # Content types that must never be accepted for, or served as, an avatar or
@@ -106,6 +107,23 @@ _ACTIVE_EVENT_RE = re.compile(
 _ENTITY_COLON_RE = re.compile(rb"&#(?:x0*3a|0*58);?", re.IGNORECASE)
 
 
+def _html_unescape_bytes(data: bytes) -> bytes:
+    """Decode HTML character references in a bytes buffer using Latin-1.
+
+    The serve-time classifier must see the same characters a browser does:
+    ``javascript&colon;`` and ``onload&Tab;=`` are executable to a browser
+    even though the literal ``javascript:`` / ``onload=`` markers are absent.
+    Latin-1 preserves every raw byte 1:1, so the change is limited to
+    ``&...;`` sequences. Unmappable characters are dropped (they cannot form
+    an ASCII security token). Fail closed on any error by returning the
+    original buffer -- the literal marker checks still apply to it.
+    """
+    try:
+        return html.unescape(data.decode("latin-1")).encode("latin-1", "ignore")
+    except Exception:
+        return data
+
+
 def normalize_content_type(content_type: str | None) -> str:
     """Lower-case the media type, dropping parameters (``; charset=...``)."""
     return (content_type or "").split(";")[0].strip().lower()
@@ -128,7 +146,10 @@ def _leading_head(data: bytes, limit: int = 2048) -> bytes:
         if head.startswith(bom):
             head = head[len(bom) :]
             break
-    return head.lstrip(b" \t\r\n\x0b\x0c").lower()
+    # Decode HTML references before lower-casing and whitespace stripping:
+    # entity names are case-sensitive (``&Tab;`` decodes, ``&tab;`` does not)
+    # and ``&Tab;`` itself represents leading whitespace a browser honours.
+    return _html_unescape_bytes(head).lstrip(b" \t\r\n\x0b\x0c").lower()
 
 
 def payload_looks_like_markup(data: bytes) -> bool:
@@ -155,8 +176,10 @@ def payload_carries_active_content(data: bytes) -> bool:
         return False
     try:
         head = _leading_head(data, limit=65536)
-        # Decode HTML numeric character references for ``:`` so a hidden
-        # ``javascript:``/``vbscript:``/``data:text/html`` scheme is caught.
+        # ``_leading_head`` already decoded HTML character references (named
+        # and numeric) before lower-casing, covering both javascript&colon;
+        # and the whitespace reference in ``onload&Tab;=``. Normalise numeric
+        # colons once more for defence in depth.
         head = _ENTITY_COLON_RE.sub(b":", head)
     except Exception:
         # Fail closed: an inspected payload we cannot normalise must not be

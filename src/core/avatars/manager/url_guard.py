@@ -81,8 +81,12 @@ def is_safe_media_url(url: object, *, allow_relative: bool = True) -> bool:
     if not normalized:
         return False
     # Protocol-relative URLs inherit the page's scheme/origin; treat them as
-    # unsafe rather than letting them silently point at another host.
-    if normalized.startswith("//") or normalized.startswith("/\\"):
+    # unsafe rather than letting them silently point at another host. For
+    # special schemes (http/https/file) the WHATWG parser treats a backslash
+    # exactly like a forward slash, so "\\host" and "\/host" are network-path
+    # references just as dangerous as "//host". Reject any leading pair of
+    # separators in either orientation.
+    if normalized[:1] in ("/", "\\") and normalized[1:2] in ("/", "\\"):
         return False
     scheme = url_scheme(url)
     if scheme is not None:

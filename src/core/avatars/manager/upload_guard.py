@@ -19,6 +19,7 @@ side effects.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -254,7 +255,24 @@ def normalize_mime(content_type: str | None) -> str:
 
 
 def _head(data: bytes, limit: int = _SCAN_LIMIT) -> bytes:
-    return bytes(data[:limit]).lower()
+    # Decode HTML references *before* lower-casing: entity names are
+    # case-sensitive (``&Tab;`` is valid, ``&tab;`` is not).
+    return _html_unescape_bytes(bytes(data[:limit])).lower()
+
+
+# Browsers decode HTML character references before they resolve a URL or apply
+# markup semantics. The active-content classifier therefore has to inspect a
+# *normalised* copy: ``javascript&colon;``, ``onerror&Tab;=`` and ``&lt;svg``
+# are all script-capable to a browser even though the raw bytes contain none
+# of the literal tokens below. Latin-1 maps every raw byte 1:1 to a code point
+# and back, so binary container signatures survive untouched; only ``&...;``
+# sequences are rewritten. Unmappable characters produced by an entity are
+# dropped (they cannot form any ASCII security token we scan for).
+def _html_unescape_bytes(data: bytes) -> bytes:
+    try:
+        return html.unescape(data.decode("latin-1")).encode("latin-1", "ignore")
+    except Exception:
+        return data
 
 
 def _markers_from_head(data: bytes, head: bytes) -> frozenset[str]:
