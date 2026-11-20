@@ -146,16 +146,41 @@ def _approx_cache_size(value: Any) -> int:
         return 1024
 
 
+# A full key-set comparison used to run on *every* cache write to detect direct
+# external mutation of ``_mem_cache``. Comparing two ~1000-key ``dict_keys``
+# views is O(n) and allocates a temporary set (~30us at the entry cap), and it
+# runs while holding ``_mem_cache_lock`` -- so a burst of writes serialised
+# behind that scan. In-module mutations keep the two dicts in sync by
+# construction; the external mutations callers/tests actually make are clears
+# and inserts, both of which change the length and are caught in O(1). A bounded
+# periodic full rebuild keeps the safety net for same-length key swaps (and for
+# direct value overwrites, which the old key-set check never caught) without
+# taxing the common write path.
+_MEM_CACHE_RECONCILE_INTERVAL = 128
+_mem_cache_writes_since_reconcile = 0
+_mem_cache_full_reconciles = 0
+
+
 def _reconcile_sizes_locked() -> None:
     """Rebuild size bookkeeping if code outside this module mutated the dict.
 
-    Tests (and a few callers) clear ``_mem_cache`` directly. Rebuilding on a
-    key-set mismatch keeps the byte counter correct without taxing the common
-    path, where the key sets stay in sync.
+    Fast path is O(1): a length mismatch means ``_mem_cache`` was cleared or a
+    key was added/removed outside this module, so rebuild immediately. When the
+    lengths match, rebuild at most once every ``_MEM_CACHE_RECONCILE_INTERVAL``
+    writes instead of comparing the whole key set on every write. The periodic
+    rebuild still bounds staleness after a same-length key swap or value
+    overwrite. Caller holds ``_mem_cache_lock``.
     """
-    global _mem_cache_total_bytes
-    if _mem_cache_sizes.keys() == _mem_cache.keys():
+    global _mem_cache_total_bytes, _mem_cache_writes_since_reconcile
+    global _mem_cache_full_reconciles
+    _mem_cache_writes_since_reconcile += 1
+    if (
+        len(_mem_cache_sizes) == len(_mem_cache)
+        and _mem_cache_writes_since_reconcile < _MEM_CACHE_RECONCILE_INTERVAL
+    ):
         return
+    _mem_cache_writes_since_reconcile = 0
+    _mem_cache_full_reconciles += 1
     _mem_cache_sizes.clear()
     _mem_cache_total_bytes = 0
     for key, (_, value) in _mem_cache.items():
