@@ -305,13 +305,19 @@ class GatewayDispatcher:
         # scope inside ``d``, so inferring it from data alone misclassifies a
         # guild event (no ``guild_id`` in d) as a DM, or a DM as a guild
         # event, applying the wrong intent and leaking to the wrong audience.
-        # A malformed explicit scope falls back to data inference so a partial
-        # envelope can never widen the audience beyond the legacy behaviour.
-        if (
-            scope is not _SCOPE_UNSET
-            and isinstance(scope, (list, tuple))
-            and len(scope) == 2
-        ):
+        #
+        # A *present* but malformed scope is different from a legacy payload
+        # that simply has no scope field. The latter legitimately falls back to
+        # data inference (mixed-version workers). The former is untrustworthy:
+        # its shape was tampered with or corrupted, so silently re-inferring
+        # scope from attacker-influenced ``d`` would let a crafted envelope
+        # pick a friendlier intent gate. Drop such events instead (fail closed).
+        if scope is not _SCOPE_UNSET:
+            if not (isinstance(scope, (list, tuple)) and len(scope) == 2):
+                logger.warning(
+                    "Ignoring cross-worker event %s with malformed scope", event_type
+                )
+                return 0
             server_id = _coerce_envelope_scope_id(scope[0])
             channel_id = _coerce_envelope_scope_id(scope[1])
         else:
@@ -736,25 +742,38 @@ class GatewayDispatcher:
         sent_count = 0
         tasks = []
 
-        if connections is None:
-            # SECURITY: scope the broadcast to conversation participants only.
-            # Sending ratchet rotations (conversation ID, message anchor,
-            # timing) to every connected user would leak private-conversation
-            # metadata, unlike every other event which is routed via
-            # EventRouter.get_recipients.
-            try:
-                from src.core.messaging import get_participant_ids
+        # SECURITY: the conversation's participant set is the ONE authoritative
+        # audience for a ratchet update, whether or not the caller supplied a
+        # pre-fetched connection list. Previously resolution ran only in the
+        # ``connections is None`` branch, so a caller-supplied (possibly stale
+        # or over-broad) snapshot was trusted verbatim and leaked private
+        # conversation metadata -- conversation id, message anchor and timing
+        # -- to connected users who are not participants. Always resolve and
+        # intersect, and drop the event entirely when membership cannot be
+        # determined (fail closed, like EventRouter.get_recipients).
+        try:
+            from src.core.messaging import get_participant_ids
 
-                participant_ids = set(get_participant_ids(conversation_id))
-                connections = self._session_manager.get_connections_for_users(
-                    list(participant_ids)
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to resolve participants for RATCHET_UPDATE "
-                    f"(conversation {conversation_id}): {e}"
-                )
-                connections = []
+            participant_ids = {int(pid) for pid in get_participant_ids(conversation_id)}
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve participants for RATCHET_UPDATE "
+                f"(conversation {conversation_id}): {e}"
+            )
+            return 0
+
+        if connections is None:
+            connections = self._session_manager.get_connections_for_users(
+                list(participant_ids)
+            )
+        else:
+            # Keep the caller's snapshot as an optimisation, but never let it
+            # widen the audience beyond the authoritative participant set.
+            connections = [
+                conn
+                for conn in connections
+                if getattr(conn, "user_id", None) in participant_ids
+            ]
 
         for conn in connections:
             if not conn.is_authenticated:

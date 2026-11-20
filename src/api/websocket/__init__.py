@@ -324,10 +324,22 @@ async def _handle_cross_worker_message(raw_message: str) -> None:
     # The publisher carries the authoritative routing scope in its own
     # envelope field because ``d`` is not required to duplicate it. Pass it
     # through to the dispatcher so the intent gate uses the real scope; a
-    # legacy payload without the field keeps the data-derived fallback. The
-    # scope is validated/coerced in ``dispatch_remote_event``.
-    envelope_scope = payload.get("scope")
-    has_scope = isinstance(envelope_scope, (list, tuple)) and len(envelope_scope) == 2
+    # legacy payload without the field keeps the data-derived fallback.
+    #
+    # A payload that HAS a scope field but with a malformed shape must be
+    # dropped, not silently downgraded to the legacy data fallback: that
+    # would let a crafted/partial envelope re-infer a friendlier scope from
+    # attacker-influenced ``d`` and slip past the intent gate. Absence of the
+    # field is the only condition that permits inference.
+    if "scope" in payload:
+        envelope_scope = payload["scope"]
+        if not (isinstance(envelope_scope, (list, tuple)) and len(envelope_scope) == 2):
+            logger.warning("Cross-worker: dropping event with malformed scope")
+            return
+        has_scope = True
+    else:
+        envelope_scope = None
+        has_scope = False
 
     if _dispatcher is not None:
         try:
