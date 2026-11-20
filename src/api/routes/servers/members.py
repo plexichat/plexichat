@@ -13,6 +13,7 @@ from src.api.schemas.servers import (
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.api.routes.users.helpers import authenticated_cache_key
 from src.core.database import cached, invalidate_pattern
+from src.core.security.hardening import parse_id
 
 import utils.logger as logger
 from .roles import _invalidate_roles_listing_cache
@@ -143,7 +144,7 @@ def get_server_members(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -153,7 +154,7 @@ def get_server_members(
         after_id: Optional[int] = None
         if after is not None:
             try:
-                after_id = int(after)
+                after_id = parse_id(after, "after cursor")
             except (ValueError, TypeError):
                 raise HTTPException(
                     status_code=400,
@@ -295,8 +296,8 @@ async def update_server_member(
 
     try:
         try:
-            sid = int(server_id)
-            mid = int(member_id)
+            sid = parse_id(server_id, "server ID")
+            mid = parse_id(member_id, "member ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -399,8 +400,8 @@ async def kick_member(
 
     try:
         try:
-            sid = int(server_id)
-            mid = int(member_id)
+            sid = parse_id(server_id, "server ID")
+            mid = parse_id(member_id, "member ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -474,9 +475,9 @@ async def assign_role_to_member(
 
     try:
         try:
-            sid = int(server_id)
-            mid = int(member_id)
-            rid = int(role_id)
+            sid = parse_id(server_id, "server ID")
+            mid = parse_id(member_id, "member ID")
+            rid = parse_id(role_id, "role ID")
         except ValueError:
             raise HTTPException(
                 status_code=400,
@@ -565,9 +566,9 @@ async def remove_role_from_member(
 
     try:
         try:
-            sid = int(server_id)
-            mid = int(member_id)
-            rid = int(role_id)
+            sid = parse_id(server_id, "server ID")
+            mid = parse_id(member_id, "member ID")
+            rid = parse_id(role_id, "role ID")
         except ValueError:
             raise HTTPException(
                 status_code=400,

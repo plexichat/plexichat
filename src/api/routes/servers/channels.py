@@ -15,6 +15,7 @@ from src.core.database import (
     cached,
 )
 from src.core.servers.models import ChannelType
+from src.core.security.hardening import parse_id
 
 import utils.logger as logger
 from .helpers import _channel_to_response
@@ -59,7 +60,7 @@ def get_server_channels(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -128,7 +129,7 @@ async def create_server_channel(
         )
 
     try:
-        sid = int(server_id)
+        sid = parse_id(server_id, "server ID")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -265,7 +266,7 @@ async def get_server_invites(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,

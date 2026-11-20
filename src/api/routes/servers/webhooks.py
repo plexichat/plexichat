@@ -5,6 +5,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.servers import WebhookResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse
+from src.core.security.hardening import parse_id
 
 import utils.logger as logger
 
@@ -35,7 +36,7 @@ async def get_server_webhooks(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,

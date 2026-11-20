@@ -7,6 +7,7 @@ from src.api.schemas.common import ErrorResponse
 
 import utils.logger as logger
 from src.api.request_guards import read_upload_capped
+from src.core.security.hardening import parse_id
 from .helpers import _server_to_response, _get_icon_size_limit
 
 router = APIRouter()
@@ -46,7 +47,7 @@ async def upload_server_icon(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,

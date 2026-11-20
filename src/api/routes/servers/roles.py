@@ -10,6 +10,7 @@ from src.api.schemas.servers import (
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.database import cached, invalidate_pattern
+from src.core.security.hardening import parse_id
 
 import utils.logger as logger
 from src.core.events.gateway_emit import (
@@ -86,7 +87,7 @@ async def get_server_roles(
         )
 
     try:
-        sid = int(server_id)
+        sid = parse_id(server_id, "server ID")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -153,7 +154,7 @@ async def create_role(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -244,8 +245,8 @@ async def update_role(
 
     try:
         try:
-            sid = int(server_id)
-            rid = int(role_id)
+            sid = parse_id(server_id, "server ID")
+            rid = parse_id(role_id, "role ID")
         except ValueError:
             raise HTTPException(
                 status_code=400,
@@ -327,8 +328,8 @@ async def delete_role(
 
     try:
         try:
-            sid = int(server_id)
-            rid = int(role_id)
+            sid = parse_id(server_id, "server ID")
+            rid = parse_id(role_id, "role ID")
         except ValueError:
             raise HTTPException(
                 status_code=400,

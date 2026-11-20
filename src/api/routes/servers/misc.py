@@ -5,6 +5,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from src.core.database import invalidate_user_servers
+from src.core.security.hardening import parse_id
 
 import utils.logger as logger
 from .members import _invalidate_member_access_caches
@@ -36,7 +37,7 @@ async def leave_server(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
@@ -99,7 +100,7 @@ async def get_my_permissions(
 
     try:
         try:
-            sid = int(server_id)
+            sid = parse_id(server_id, "server ID")
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=400,
