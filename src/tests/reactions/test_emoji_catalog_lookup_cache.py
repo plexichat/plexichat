@@ -66,7 +66,18 @@ class _CountingDB:
         self.calls = []
 
     def fetch_all(self, sql, params=()):
-        self.calls.append(("fetch_all", tuple(params)))
+        self.calls.append(("fetch_all", tuple(params), sql))
+        if "GROUP BY animated" in sql:
+            sid = params[0]
+            grouped = {}
+            for r in self.rows.values():
+                if r["server_id"] == sid:
+                    animated = int(r["animated"])
+                    grouped[animated] = grouped.get(animated, 0) + 1
+            return [
+                {"animated": animated, "count": count}
+                for animated, count in sorted(grouped.items())
+            ]
         sid = params[0]
         include_unavailable = "available = 1" not in sql
         rows = [
@@ -166,10 +177,51 @@ class TestQueryReduction:
             mgr.get_emoji_counts(10)
 
         # Before the cache: 2 list + 2 detail + 4 count = 8 queries.
-        # After: 1 list + 1 detail + 2 count = 4.
-        assert len(db.calls) == 4
-        assert sum(1 for c in db.calls if c[0] == "fetch_all") == 1
+        # With the cache and the single grouped COUNT: 1 list + 1 detail +
+        # 1 count = 3 (down from 4 when counts used two separate COUNTs).
+        assert len(db.calls) == 3
+        # One LIST query and one grouped COUNT query; the detail is fetch_one.
+        assert sum(1 for c in db.calls if c[0] == "fetch_all") == 2
         assert mgr._emoji_catalog_cache().stats()["hits"] == 3
+
+    def test_emoji_counts_uses_one_grouped_query(self, monkeypatch):
+        """Both quota numbers come from one grouped COUNT, not two COUNTs.
+
+        A missing category (no static or no animated rows on the server) must
+        still resolve to zero rather than raising on an absent row.
+        """
+        db = _CountingDB()
+        # One static and one animated emoji: both buckets must be reported.
+        db.rows[1] = _row(_Emoji(emoji_id=1, server_id=10))
+        animated = _Emoji(emoji_id=2, server_id=10)
+        animated.animated = True
+        db.rows[2] = _row(animated)
+        mgr = _manager(monkeypatch, db)
+
+        counts = mgr.get_emoji_counts(10)
+
+        assert counts["static"] == 1
+        assert counts["animated"] == 1
+        assert len(db.calls) == 1
+        assert db.calls[0][0] == "fetch_all"
+        assert "GROUP BY animated" in db.calls[0][2]
+
+        # A second read is served from the cache with no further SQL.
+        assert mgr.get_emoji_counts(10) == counts
+        assert len(db.calls) == 1
+
+    def test_emoji_counts_missing_category_is_zero(self, monkeypatch):
+        db = _CountingDB()
+        # Server with only static emojis: the animated bucket is absent from
+        # the GROUP BY result entirely.
+        db.rows[1] = _row(_Emoji(emoji_id=1, server_id=10))
+        mgr = _manager(monkeypatch, db)
+
+        counts = mgr.get_emoji_counts(10)
+
+        assert counts["static"] == 1
+        assert counts["animated"] == 0
+        assert len(db.calls) == 1
 
     def test_keys_are_server_and_flag_scoped(self, monkeypatch):
         db = _CountingDB()
@@ -183,9 +235,9 @@ class TestQueryReduction:
         mgr.get_emoji_counts(10)
         mgr.get_emoji_counts(11)
 
-        # Three list keys + two count keys (two COUNT queries each) -> 7
+        # Three list keys + two count keys (one grouped COUNT each) -> 5
         # cold queries; no cross-key reuse.
-        assert len(db.calls) == 7
+        assert len(db.calls) == 5
 
     def test_cache_is_per_manager_not_module_global(self, monkeypatch):
         db = _CountingDB()
@@ -212,8 +264,8 @@ class TestQueryReduction:
         assert [e.name for e in mgr.get_server_custom_emojis(10)] == ["wave"]
         assert mgr.get_emoji_counts(10)["static"] == 1
         assert mgr.get_custom_emoji(1).name == "wave"
-        # One list + two COUNTs + one detail; all three re-reads were hits.
-        assert len(db.calls) == 4
+        # One list + one grouped COUNT + one detail; all three re-reads were hits.
+        assert len(db.calls) == 3
 
     def test_mutating_a_catalog_element_cannot_poison_cache(self, monkeypatch):
         db = _CountingDB()

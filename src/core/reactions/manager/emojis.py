@@ -48,8 +48,8 @@ class EmojiOpsMixin(ReactionProtocol):
     """Custom-emoji CRUD plus a small bounded cache over its read queries.
 
     ``get_server_custom_emojis`` (a JOIN with ``auth_users``), ``get_custom_emoji``
-    and ``get_emoji_counts`` (two COUNTs) are resolved repeatedly by dispatch
-    helpers, enrichment code and direct core callers.  The cache is created
+    and ``get_emoji_counts`` (a single grouped COUNT) are resolved repeatedly by
+    dispatch helpers, enrichment code and direct core callers.  The cache is created
     lazily on the manager instance so no change to ``ReactionBase`` is needed;
     every successful mutation invalidates the entries it can affect.
 
@@ -495,17 +495,19 @@ class EmojiOpsMixin(ReactionProtocol):
         if cached is not None:
             return dict(cached)
 
-        static_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 0",
+        # One grouped COUNT replaces two separate COUNT queries over the same
+        # table.  Both quota numbers come from a single index scan on
+        # `(server_id, animated)`; a category with no rows is simply absent
+        # from the result and falls back to zero below.
+        rows = self._db.fetch_all(
+            "SELECT animated, COUNT(*) as count FROM react_custom_emoji "
+            "WHERE server_id = ? GROUP BY animated",
             (server_id,),
         )
-        animated_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 1",
-            (server_id,),
-        )
+        grouped = {int(row["animated"]): int(row["count"]) for row in rows}
         counts = {
-            "static": static_row["count"] if static_row else 0,
-            "animated": animated_row["count"] if animated_row else 0,
+            "static": grouped.get(0, 0),
+            "animated": grouped.get(1, 0),
             "max_static": self._config.get("max_emojis_per_server", 50),
             "max_animated": self._config.get("max_animated_emojis_per_server", 50),
         }

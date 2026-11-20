@@ -308,10 +308,10 @@ class TestGetEmojis:
         assert emojis[1].animated is True
 
     def test_get_emoji_counts(self, reactions_manager, mock_db):
-        """Test getting emoji counts."""
-        mock_db.fetch_one.side_effect = [
-            {"count": 25},  # static
-            {"count": 10},  # animated
+        """Test getting emoji counts from a single grouped COUNT query."""
+        mock_db.fetch_all.return_value = [
+            {"animated": 0, "count": 25},  # static
+            {"animated": 1, "count": 10},  # animated
         ]
 
         counts = reactions_manager.get_emoji_counts(server_id=1)
