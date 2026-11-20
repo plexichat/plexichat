@@ -215,6 +215,21 @@ class TestQueryReduction:
         # One list + two COUNTs + one detail; all three re-reads were hits.
         assert len(db.calls) == 4
 
+    def test_mutating_a_catalog_element_cannot_poison_cache(self, monkeypatch):
+        db = _CountingDB()
+        db.rows[1] = _row(_Emoji())
+        mgr = _manager(monkeypatch, db)
+
+        first = mgr.get_server_custom_emojis(10)
+        first[0].name = "poisoned"
+        first[0].url = "javascript:alert"
+
+        fresh = mgr.get_server_custom_emojis(10)
+        assert fresh[0].name == "wave"
+        assert fresh[0].url == "/e/1.png"
+        # The catalog query ran once; the second read was a cache hit.
+        assert len(db.calls) == 1
+
 
 class TestInvalidationOnMutation:
     def test_delete_drops_list_and_detail(self, monkeypatch):

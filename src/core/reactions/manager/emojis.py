@@ -465,7 +465,10 @@ class EmojiOpsMixin(ReactionProtocol):
         key = ("list", server_id, bool(include_unavailable))
         cached = cache.get(key, None)
         if cached is not None:
-            return list(cached)
+            # Copy the container *and* the mutable CustomEmoji rows: a caller
+            # renaming an element of the returned list must not poison the
+            # cached catalog for every other viewer.
+            return [replace(emoji) for emoji in cached]
 
         query = """
             SELECT e.*, u.username as uploader_username 
@@ -483,7 +486,7 @@ class EmojiOpsMixin(ReactionProtocol):
 
         emojis = tuple(self._row_to_custom_emoji(row) for row in rows)
         cache.set(key, emojis)
-        return list(emojis)
+        return [replace(emoji) for emoji in emojis]
 
     def get_emoji_counts(self, server_id: SnowflakeID) -> Dict[str, int]:
         cache = self._emoji_catalog_cache()
