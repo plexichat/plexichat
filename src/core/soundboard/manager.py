@@ -20,6 +20,7 @@ from src.core.avatars.manager.upload_guard import (
 )
 from src.core.avatars.manager.url_guard import is_safe_media_url
 from src.core.base import BaseManager
+from src.core.bounded_lru import BoundedLRU
 from src.core.security.hardening import clamp_finite_float
 
 from .models import (
@@ -40,6 +41,25 @@ from .exceptions import (
     PermissionDeniedError,
     ServerNotFoundError,
 )
+
+
+# A playback (and the UI's ``can_play_sound`` probe) re-checks every sound's
+# allow/deny list and the caller's role set on every single call. Both inputs
+# change only on rare admin actions, so a short-lived memo collapses a burst of
+# plays/probes into one authoritative read without weakening the gate:
+# * the key carries the FULL (user, sound, server) identity, so one user's
+#   verdict can never be served for another (no cross-user leak);
+# * the TTL is short and local mutations clear it eagerly, bounding how long a
+#   permission/role change made on another worker can stay stale (multi-node
+#   safe);
+# * the store is a bounded LRU, so a flood of distinct ids stays finite;
+# * a miss always recomputes from the authoritative database, and a DENY is
+#   cached exactly like an ALLOW, so the memo never widens access on error.
+_SOUND_USE_CACHE_TTL_SECONDS = 2.0
+_SOUND_USE_CACHE_MAX_ENTRIES = 512
+_SOUND_USE_CACHE_MAX_BYTES = 64 * 1024
+
+_CACHE_MISS = object()
 
 
 class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
@@ -70,6 +90,15 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
         # do NOT keep an in-memory cache — process restarts and
         # multi-instance deployments must see the same enforcement.
         self._client_local_cooldowns: Dict[tuple, int] = {}
+
+        # Bounded, short-TTL memo of sound-usage authorization decisions
+        # (see the module constants above). Instance-local so each manager has
+        # its own store; cleared on every local permission/role-affecting write.
+        self._sound_use_cache = BoundedLRU(
+            max_entries=_SOUND_USE_CACHE_MAX_ENTRIES,
+            max_bytes=_SOUND_USE_CACHE_MAX_BYTES,
+            ttl_seconds=_SOUND_USE_CACHE_TTL_SECONDS,
+        )
 
         logger.info("Soundboard module initialized")
 
@@ -549,6 +578,9 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
             "DELETE FROM soundboard_permissions WHERE sound_id = ?", (sound_id,)
         )
         self._db.execute("DELETE FROM soundboard_sounds WHERE id = ?", (sound_id,))
+        # The sound's allow/deny list is gone; drop any memoized verdicts so a
+        # later call recomputes from the authoritative (now empty) rows.
+        self._sound_use_cache.clear()
 
         logger.debug(f"Deleted sound {sound_id}")
         return True
@@ -609,6 +641,10 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
                 (perm_id, sound_id, role_id, 1 if can_use else 0),
             )
 
+        # A grant/deny just changed for this sound; invalidate every memoized
+        # verdict so the next play/probe sees the new allow-list immediately.
+        self._sound_use_cache.clear()
+
         return SoundPermissions(
             id=perm_id, sound_id=sound_id, role_id=role_id, can_use=can_use
         )
@@ -621,7 +657,26 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
         user needs at least one matching ``can_use`` entry and no
         matching deny entry — members whose roles match nothing are NOT
         implicitly allowed.
+
+        The decision is memoized for a short window (see the module constants).
+        The key includes ``user_id`` so one caller's verdict can never be
+        reused for another, and a sentinel distinguishes a cached ``False``
+        from a miss. Local permission mutations clear the store eagerly; the
+        short TTL bounds staleness from changes on other workers.
         """
+        cache = self._sound_use_cache
+        key = (user_id, sound_id, server_id)
+        cached = cache.get(key, _CACHE_MISS)
+        if cached is not _CACHE_MISS:
+            return cached
+        allowed = self._compute_can_use_sound(user_id, sound_id, server_id)
+        cache.set(key, allowed)
+        return allowed
+
+    def _compute_can_use_sound(
+        self, user_id: int, sound_id: int, server_id: int
+    ) -> bool:
+        """Authoritative (uncached) sound-usage decision — DB reads live."""
         perms = self._db.fetch_all(
             "SELECT role_id, can_use FROM soundboard_permissions WHERE sound_id = ?",
             (sound_id,),
