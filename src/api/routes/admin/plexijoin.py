@@ -2,18 +2,57 @@
 Admin PlexiJoin federation routes for managing inter-instance connections.
 """
 
+import json
+
 from fastapi import APIRouter, Request, HTTPException, Query
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .utils import (
     check_host_restriction,
     get_admin_from_token,  # noqa: F401 - retained for callers/tests that patch it
     require_admin_permission,
 )
+from src.api.request_guards import read_body_capped
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 import utils.logger as logger
 
 router = APIRouter()
+
+#: The client-facing ``/Join/request`` route caps its body at 64 KiB (see
+#: ``src.api.routes.join.MAX_JOIN_BODY``). ``Request.json()`` buffers the whole
+#: payload before returning, so without an endpoint-level cap a caller holding
+#: an admin token could make an admin worker allocate an arbitrary amount of
+#: memory with one POST -- no proxy size limit is guaranteed on every path.
+#: PlexiJoin envelopes carry little more than a URL and a note, so the same
+#: 64 KiB ceiling is generous here too.
+MAX_ADMIN_JOIN_BODY = 64 * 1024
+
+
+async def _read_admin_join_json(request: Request) -> Dict[str, Any]:
+    """Read and decode a bounded JSON object for a mutating admin route.
+
+    ``read_body_capped`` consumes ``request.stream()`` incrementally and fails
+    as soon as the running byte count crosses the ceiling, so a chunked body
+    (or a lying ``Content-Length``) cannot force the allocation. It caches the
+    bytes on the request exactly as ``Request.body()`` does, which also keeps
+    this route's 400 contract for malformed input.
+    """
+    try:
+        raw = await read_body_capped(request, MAX_ADMIN_JOIN_BODY)
+        body = json.loads(raw.decode("utf-8"))
+    except HTTPException:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request body"}},
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request body"}},
+        )
+    return body
 
 
 def _serialize_connection(conn) -> dict:
@@ -267,7 +306,7 @@ async def create_connection(request: Request):
     _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
-        body = await request.json()
+        body = await _read_admin_join_json(request)
 
         remote_instance_id = body.get("remote_instance_id")
         remote_url = body.get("remote_url")
