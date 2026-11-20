@@ -177,10 +177,32 @@ async def search_messages(
         # to the conversation id; coercing the raw record directly left
         # ``channel_id`` null and raised a validation error, turning every DM
         # search into a 400.
-        from src.api.routes.messages.helpers import _message_to_response
+        from src.api.routes.messages.helpers import (
+            _message_to_response,
+            batch_embed_suppressed_ids,
+        )
+
+        # Resolve embed suppression for the whole page in ONE query. Without
+        # this, `_message_to_response` falls back to a per-message
+        # `are_embeds_suppressed()` lookup, so a single 100-hit search issued
+        # 100 near-identical SQL queries just to learn that none were
+        # suppressed. The batch helper is bounded (chunked IN clauses) and
+        # falls back to the exact per-id semantics if the batch query is
+        # unavailable, so suppression can never be silently dropped.
+        # Suppression is a property of the message, not of the viewer, so
+        # folding it into the response does not weaken the (already applied)
+        # per-user search authorization or introduce a cross-user leak.
+        suppressed_ids = batch_embed_suppressed_ids(
+            [getattr(result, "id", None) for result in page.results],
+            embeds_mod=api.get_embeds(),
+        )
 
         results = [
-            _message_to_response(result, viewer_user_id=current_user.user_id)
+            _message_to_response(
+                result,
+                viewer_user_id=current_user.user_id,
+                suppress_embeds=getattr(result, "id", None) in suppressed_ids,
+            )
             for result in page.results
         ]
 
