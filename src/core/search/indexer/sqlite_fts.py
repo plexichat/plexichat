@@ -50,6 +50,17 @@ _FTS_MAX_OFFSET = 1_000_000
 # 3+ characters, which select a tiny slice of the dictionary.
 _FTS_MIN_PREFIX_TERM_CHARS = 3
 
+# Shared by the single-row and batched write paths. The batched path collapses
+# the per-message DELETE + INSERT pair into one executemany of each statement,
+# so keeping the SQL text in one place guarantees both paths write identical
+# values in identical columns.
+_DELETE_MESSAGE_SQL = "DELETE FROM search_messages_fts WHERE message_id = ?"
+_INSERT_MESSAGE_SQL = """INSERT INTO search_messages_fts
+   (message_id, content, author_id, author_username, conversation_id,
+    server_id, channel_id, created_at, has_attachments, has_embeds,
+    has_links, mentions, is_pinned, attachment_types)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
 
 def _bounded_page(limit, offset):
     """Clamp LIMIT/OFFSET to safe ranges before they reach SQLite.
@@ -208,42 +219,43 @@ class SQLiteFTS5Indexer(BaseIndexer):
         """Close the indexer."""
         self._initialized = False
 
+    @staticmethod
+    def _message_insert_params(message: IndexedMessage) -> tuple:
+        """Build the FTS5 INSERT tuple for one message.
+
+        Extracted from ``index_message`` so the single-row and batched write
+        paths convert fields (None -> "", bools -> "0"/"1", mentions ->
+        JSON, attachment types -> space-joined text) identically.
+        """
+        mentions_json = json.dumps(message.mentions) if message.mentions else "[]"
+        return (
+            str(message.message_id),
+            message.content or "",
+            str(message.author_id),
+            message.author_username or "",
+            str(message.conversation_id),
+            str(message.server_id) if message.server_id else "",
+            str(message.channel_id) if message.channel_id else "",
+            str(message.created_at),
+            "1" if message.has_attachments else "0",
+            "1" if message.has_embeds else "0",
+            "1" if message.has_links else "0",
+            mentions_json,
+            "1" if message.is_pinned else "0",
+            " ".join(message.attachment_types) if message.attachment_types else "",
+        )
+
     def index_message(self, message: IndexedMessage) -> bool:
         """Index a single message."""
         try:
             self._ensure_initialized()
 
             self._db.execute(
-                "DELETE FROM search_messages_fts WHERE message_id = ?",
+                _DELETE_MESSAGE_SQL,
                 (str(message.message_id),),
             )
-
-            mentions_json = json.dumps(message.mentions) if message.mentions else "[]"
-
             self._db.execute(
-                """INSERT INTO search_messages_fts
-                   (message_id, content, author_id, author_username, conversation_id,
-                    server_id, channel_id, created_at, has_attachments, has_embeds,
-                    has_links, mentions, is_pinned, attachment_types)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    str(message.message_id),
-                    message.content or "",
-                    str(message.author_id),
-                    message.author_username or "",
-                    str(message.conversation_id),
-                    str(message.server_id) if message.server_id else "",
-                    str(message.channel_id) if message.channel_id else "",
-                    str(message.created_at),
-                    "1" if message.has_attachments else "0",
-                    "1" if message.has_embeds else "0",
-                    "1" if message.has_links else "0",
-                    mentions_json,
-                    "1" if message.is_pinned else "0",
-                    " ".join(message.attachment_types)
-                    if message.attachment_types
-                    else "",
-                ),
+                _INSERT_MESSAGE_SQL, self._message_insert_params(message)
             )
 
             return True
@@ -254,16 +266,73 @@ class SQLiteFTS5Indexer(BaseIndexer):
                 f"Failed to index message: {e}", item_id=message.message_id
             )
 
+    def _execute_many(self, query: str, params_list) -> None:
+        """Run a batch of writes in as few DB round trips as possible.
+
+        The real ``Database`` exposes ``execute_many`` (one driver
+        ``executemany`` plus a single commit for the whole batch). Lightweight
+        DB-shaped doubles used in tests may only implement ``execute``; keep
+        working with those by falling back to a plain loop while production
+        gets the batched path.
+        """
+        execute_many = getattr(self._db, "execute_many", None)
+        if callable(execute_many):
+            execute_many(query, list(params_list))
+        else:
+            for params in params_list:
+                self._db.execute(query, params)
+
     def index_messages_batch(self, messages: List[IndexedMessage]) -> int:
-        """Index multiple messages in batch."""
-        indexed = 0
+        """Index multiple messages in as few DB round trips as possible.
+
+        ``index_message`` issues a DELETE plus an INSERT per message. Reindex
+        (the main caller) feeds it thousands of messages, so those two
+        statements per row -- each acquiring a pooled connection, being
+        monitored and committed on its own -- dominate wall time. Collapse
+        them into one batched DELETE and one batched INSERT via ``execute_many``.
+
+        Semantics are preserved:
+
+        * each id ends with exactly one row holding its latest content (a
+          duplicate id in the batch is deduplicated keeping the last document,
+          matching the old delete-then-insert-per-occurrence behaviour);
+        * the return value is the number of input messages, as before;
+        * if the backend rejects a batched statement, fall back to the original
+          per-row loop so one bad row cannot discard the whole page.
+        """
+        if not messages:
+            return 0
+
+        # Per-row indexing applied last-write-wins for repeated ids. Keep the
+        # last occurrence of each id so a batched DELETE + batched INSERT
+        # cannot leave two FTS rows for the same message.
+        latest_by_id = {}
         for message in messages:
-            try:
-                if self.index_message(message):
-                    indexed += 1
-            except SearchIndexError:
-                continue
-        return indexed
+            latest_by_id[str(message.message_id)] = message
+
+        delete_params = [(message_id,) for message_id in latest_by_id]
+        insert_params = [
+            self._message_insert_params(message) for message in latest_by_id.values()
+        ]
+
+        try:
+            self._ensure_initialized()
+            self._execute_many(_DELETE_MESSAGE_SQL, delete_params)
+            self._execute_many(_INSERT_MESSAGE_SQL, insert_params)
+            return len(messages)
+        except Exception as e:
+            logger.warning(
+                f"Batched message indexing failed ({e}); "
+                "falling back to per-message indexing"
+            )
+            indexed = 0
+            for message in messages:
+                try:
+                    if self.index_message(message):
+                        indexed += 1
+                except SearchIndexError:
+                    continue
+            return indexed
 
     def remove_message(self, message_id: int) -> bool:
         """Remove a message from the index."""
