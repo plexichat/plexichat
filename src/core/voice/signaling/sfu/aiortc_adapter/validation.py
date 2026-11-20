@@ -6,6 +6,7 @@ import os
 import re
 from typing import Any, Mapping
 
+from ...sdp import _SDP_UNICODE_CONTROL_CHARS
 from .constants import (
     MAX_DTLS_FINGERPRINTS,
     MAX_ICE_CANDIDATE_BYTES,
@@ -23,6 +24,27 @@ from .constants import (
 from .errors import SFUValidationError
 
 _ID_RE = re.compile(_ID_RE_SRC)
+
+
+def _reject_sdp_control_chars(text: str, name: str) -> None:
+    """Reject control/separator characters inside SDP lines.
+
+    SDP is CR/LF delimited. A bare CR (or NUL/DEL/unicode separator) embedded
+    in a value survives aiortc's line-oriented parser but is treated as a line
+    delimiter by some consumers, letting a caller forge extra SDP lines (e.g.
+    ``a=ice-pwd:`` / ``a=fingerprint:``). The strict signaling validator only
+    runs on offers; a client's *answer* reaches this adapter directly, so the
+    check must live here too. CRLF line endings themselves stay legal.
+    """
+    for raw_line in text.split("\n"):
+        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
+        if "\r" in line:
+            raise SFUValidationError(f"{name} contains a bare carriage return")
+        if any(
+            ord(ch) < 0x20 or ord(ch) == 0x7F or ord(ch) in _SDP_UNICODE_CONTROL_CHARS
+            for ch in line
+        ):
+            raise SFUValidationError(f"{name} contains control characters")
 
 
 def _require_str(value: Any, name: str, *, max_len: int) -> str:
@@ -66,6 +88,11 @@ def validate_sdp_payload(
     if "\r" not in text and "\n" not in text:
         # An SDP is line-oriented; a single blob is malformed.
         raise SFUValidationError(f"{name} is malformed")
+    # Reject embedded control/separator bytes before any SDP consumer sees the
+    # blob (notably the client-answer path, which skips strict signaling
+    # validation). CRLF framing is preserved; bare CR / unicode separators are
+    # not. This is fail-closed and mirrors the strict parser's SDP hygiene.
+    _reject_sdp_control_chars(text, name)
     lowered = text.lower()
     if "v=0" not in lowered or "m=" not in lowered:
         raise SFUValidationError(f"{name} is not a valid session description")

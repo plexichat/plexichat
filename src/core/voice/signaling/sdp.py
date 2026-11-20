@@ -47,6 +47,35 @@ SDP_FINGERPRINT_PATTERN = re.compile(
 SDP_ICE_UFRAG_PATTERN = re.compile(r"^[a-zA-Z0-9+/_-]{4,256}$")
 SDP_ICE_PWD_PATTERN = re.compile(r"^[a-zA-Z0-9+/_-]{22,256}$")
 
+# Unicode line/paragraph separators, bidi overrides and format/invisible chars.
+# ``ord(ch) >= 0x20`` so the ASCII control check below alone would let them
+# through, yet several SDP/WebSocket consumers treat U+2028/U+2029/U+0085 as
+# line delimiters -- a value carrying one can forge a trailing SDP line (e.g.
+# ``a=ice-pwd:...``) when it is echoed into a generated answer. Keep this set
+# in sync with ``signaling.ice._UNICODE_CONTROL_CHARS``.
+_SDP_UNICODE_CONTROL_CHARS = frozenset(
+    {
+        0x0085,  # NEXT LINE
+        0x2028,  # LINE SEPARATOR
+        0x2029,  # PARAGRAPH SEPARATOR
+        0x200B,  # ZERO WIDTH SPACE
+        0x200C,  # ZERO WIDTH NON-JOINER
+        0x200D,  # ZERO WIDTH JOINER
+        0x200E,  # LEFT-TO-RIGHT MARK
+        0x200F,  # RIGHT-TO-LEFT MARK
+        0x202A,
+        0x202B,
+        0x202C,
+        0x202D,
+        0x202E,  # bidi embedding/override
+        0x2066,
+        0x2067,
+        0x2068,
+        0x2069,  # bidi isolates
+        0xFEFF,  # ZERO WIDTH NO-BREAK SPACE / BOM
+    }
+)
+
 
 class SDPParser:
     """Parser for SDP (Session Description Protocol) messages."""
@@ -93,7 +122,12 @@ class SDPParser:
             # that treats bare CR as a line delimiter then sees attacker-chosen
             # lines (e.g. a forged a=ice-pwd:/a=fingerprint:). SDP is CR/LF
             # delimited, so no control byte may appear inside a line.
-            if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in line):
+            if any(
+                ord(ch) < 0x20
+                or ord(ch) == 0x7F
+                or ord(ch) in _SDP_UNICODE_CONTROL_CHARS
+                for ch in line
+            ):
                 raise SDPParseError(
                     "Control character in SDP line", line=line_num, detail=line[:50]
                 )
