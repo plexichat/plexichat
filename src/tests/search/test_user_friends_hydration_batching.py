@@ -100,8 +100,10 @@ def test_friend_hydration_cold_and_warm_paths_agree():
     """Bulk cache read returns exactly the same scope as the cold SQL path."""
     friends = {1: [2, 3], 2: [1], 3: []}
     cache = {
-        "user:friends:1": [2, 3],
-        "user:friends:2": [1],
+        # The authoritative relationship cache key (shared with
+        # get_friend_ids so every friend mutation invalidates it).
+        "user_friends:int:1": [2, 3],
+        "user_friends:int:2": [1],
         # user 3 deliberately absent -> must be resolved via SQL
     }
 

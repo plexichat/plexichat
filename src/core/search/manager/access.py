@@ -8,6 +8,18 @@ from .base import SearchManagerBase
 # approached; Postgres accepts far more but chunking is harmless there.
 _BIND_CHUNK = 500
 
+# ``RelationshipManager.get_friend_ids`` is ``@cached(prefix="user_friends")``
+# and every send/accept/remove/block path invalidates that prefix for the
+# users involved. Read AND write the very same key here instead of a private
+# ``user:friends:`` namespace: a parallel namespace has no invalidator, so a
+# removed/blocked friend kept counting as mutual for the full cache TTL.
+# The two caches also share the same value shape (a list of friend ids).
+_USER_FRIENDS_CACHE_PREFIX = "user_friends"
+
+
+def _user_friends_cache_key(user_id: int) -> str:
+    return f"{_USER_FRIENDS_CACHE_PREFIX}:int:{int(user_id)}"
+
 
 class AccessControlMixin(SearchManagerBase):
     @staticmethod
@@ -365,8 +377,9 @@ class AccessControlMixin(SearchManagerBase):
         result: Dict[int, set] = {}
         missing: List[int] = []
         if valkey_available():
-            # Single MGET instead of one round-trip per hydrated hit.
-            keys = [f"user:friends:{uid}" for uid in uniq]
+            # Single MGET instead of one round-trip per hydrated hit. Use the
+            # authoritative friend-set key so relationship mutations evict it.
+            keys = [_user_friends_cache_key(uid) for uid in uniq]
             bulk = cache_get_many(keys) or {}
             for uid, key in zip(uniq, keys):
                 cached = bulk.get(key)
@@ -397,7 +410,11 @@ class AccessControlMixin(SearchManagerBase):
                     result[uid].add(fid)
         if valkey_available():
             for uid in missing:
-                cache_set(f"user:friends:{uid}", list(result.get(uid, set())), ttl=300)
+                cache_set(
+                    _user_friends_cache_key(uid),
+                    list(result.get(uid, set())),
+                    ttl=300,
+                )
         # Every requested user must be present in the map, even with no
         # friends, so callers can index directly without .get()
         # fallbacks.
