@@ -17,7 +17,7 @@ import utils.logger as logger
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.core.auth.models import AccountType
-from ..admin.utils import get_admin_from_token
+from ..admin.utils import check_host_restriction, get_admin_from_token
 from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.features import (
     UserFeaturesResponse,
@@ -119,6 +119,15 @@ async def get_admin_access(
     Dependency that allows access via either a standard user token with admin permissions
     OR a dedicated admin session token.
     """
+    # These routes live under /admin/* and mutate user tiers/features, so they
+    # must enforce the same host-level perimeter as every other admin surface.
+    # Without this, a valid admin credential could be replayed from any host,
+    # bypassing the configured admin host allowlist (and the provisional-license
+    # host gate) entirely. ``require_admin_ui=False`` keeps the proxy-spoofing,
+    # licence and allowlist checks but does not require the standalone admin UI
+    # to be enabled -- these endpoints are also driven by the web client.
+    check_host_restriction(request, require_admin_ui=False)
+
     # 1. Try standard user first (from middleware state)
     user = request.scope.get("state", {}).get("user")
     if user:
