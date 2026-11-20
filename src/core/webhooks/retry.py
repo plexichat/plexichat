@@ -16,6 +16,7 @@ from typing import Optional, List, Dict, Any
 import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.webhooks.canonical import canonical_payload_bytes
 from src.core.webhooks.url_safety import validate_delivery_endpoint
 
 
@@ -147,10 +148,17 @@ class WebhookRetryQueue:
         # make every receiver reject the delivery.
         payload = stringify_snowflake_ids(payload)
 
-        # Validate payload size
-        payload_json = json.dumps(payload, sort_keys=True)
-        if len(payload_json) > self.MAX_PAYLOAD_SIZE:
+        # Serialize the shared payload ONCE per endpoint. A fan-out of one
+        # event to N endpoints used to pay for two full json.dumps calls per
+        # endpoint: one here for the stored JSON / size bound and a second
+        # inside sign_payload(). The compact canonical bytes are also the
+        # exact bytes the signature covers and what the HTTP client sends,
+        # so the size bound now agrees with the delivery-time bound instead
+        # of measuring a slightly larger, differently-spaced encoding.
+        payload_bytes = canonical_payload_bytes(payload)
+        if len(payload_bytes) > self.MAX_PAYLOAD_SIZE:
             raise ValueError("Webhook payload exceeds maximum size")
+        payload_json = payload_bytes.decode("utf-8")
 
         # Store signing headers if provided (they're ephemeral per-request,
         # but we need them for retries since timestamps change). If none
@@ -159,9 +167,18 @@ class WebhookRetryQueue:
         metadata = {}
         if not signing_headers and self._webhook_manager is not None:
             try:
-                signing_headers = self._webhook_manager.sign_payload(
-                    webhook_id, payload
+                sign_bytes = getattr(
+                    self._webhook_manager, "sign_payload_bytes", None
                 )
+                if callable(sign_bytes):
+                    # Manager supports pre-serialized bytes: no second encode.
+                    signing_headers = sign_bytes(webhook_id, payload_bytes)
+                else:
+                    # Back-compat with older/injected managers that only
+                    # expose sign_payload(webhook_id, payload).
+                    signing_headers = self._webhook_manager.sign_payload(
+                        webhook_id, payload
+                    )
             except Exception as e:  # signing is best-effort; never block delivery
                 logger.warning(f"Failed to sign webhook delivery for {webhook_id}: {e}")
                 signing_headers = None

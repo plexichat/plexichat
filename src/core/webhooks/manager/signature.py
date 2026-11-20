@@ -5,7 +5,6 @@ Webhook payload signing using Ed25519.
 import base64
 import hashlib
 import hmac
-import json
 import threading
 import time
 from typing import Dict, Any, Optional
@@ -15,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
+from src.core.webhooks.canonical import canonical_payload_bytes
 from src.core.webhooks.exceptions import (
     PermissionDeniedError,
     WebhookNotFoundError,
@@ -172,6 +172,19 @@ class SignatureMixin(WebhookManagerTrait):
             - X-Plexichat-Signature: Ed25519 signature (base64)
             - X-Plexichat-Timestamp: Unix timestamp (milliseconds)
         """
+        return self.sign_payload_bytes(webhook_id, canonical_payload_bytes(payload))
+
+    def sign_payload_bytes(
+        self, webhook_id: SnowflakeID, payload_bytes: bytes
+    ) -> Dict[str, str]:
+        """Sign an already-canonicalized payload.
+
+        ``payload_bytes`` MUST be the output of
+        :func:`src.core.webhooks.canonical.canonical_payload_bytes`. Callers
+        that fan one event out to N endpoints can serialize the shared
+        payload once and reuse these bytes for every endpoint instead of
+        paying for a full ``json.dumps`` inside :meth:`sign_payload` each time.
+        """
         row = self._db.fetch_one(
             "SELECT signing_key_private_encrypted, signing_key_public FROM webhook_webhooks WHERE id = ?",
             (webhook_id,),
@@ -192,10 +205,6 @@ class SignatureMixin(WebhookManagerTrait):
             return {}
 
         timestamp = int(time.time() * 1000)
-        payload_bytes = json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-
         signed_data = (
             f"{SIGNATURE_VERSION}.{timestamp}.".encode("utf-8") + payload_bytes
         )
@@ -349,9 +358,7 @@ class SignatureMixin(WebhookManagerTrait):
         from src.core.database.cache import cache_get, cache_set
 
         replay_key = _replay_cache_key(webhook_id, signature)
-        payload_bytes = json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        payload_bytes = canonical_payload_bytes(payload)
         signed_data = (
             f"{SIGNATURE_VERSION}.{timestamp}.".encode("utf-8") + payload_bytes
         )

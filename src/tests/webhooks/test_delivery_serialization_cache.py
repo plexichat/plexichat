@@ -149,7 +149,11 @@ class TestFewerOperations:
         due = queue.get_pending_retries()
         assert len(due) == 3
         raw_values = {r["payload_raw_json"] for r in due}
-        assert raw_values == {json.dumps(payload, sort_keys=True)}
+        # Enqueue persists the same compact canonical form that signing and
+        # delivery use, so all fan-out rows share one cache key.
+        assert raw_values == {
+            json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        }
         for row in due:
             assert row["payload"] == payload
 
