@@ -14,6 +14,7 @@ from ..models import (
 )
 
 
+from ..rules.compiled_cache import CompiledRuleCache
 from .protocol import AutoModProtocol
 
 # Chunk ``IN`` binds so SQLite's default 999-variable cap is never approached;
@@ -170,8 +171,27 @@ class EvaluationMixin(AutoModProtocol):
         if not rule_class:
             return RuleMatch(rule_id=rule.id, rule_type=rule.rule_type, matched=False)
 
-        rule_instance = rule_class(rule)
+        # Compiling a rule (regex patterns, keyword canonicalization, domain
+        # sets, ...) depends only on the rule content, never on the message.
+        # Reuse the compiled instance across messages instead of rebuilding it
+        # for every check. The cache is keyed by rule content/revision, so an
+        # edited rule is recompiled on its next evaluation.
+        cache = self._get_compiled_rule_cache()
+        rule_instance = cache.get(rule, rule_class)
         return rule_instance.check(content, user_id, channel_id, context)
+
+    def _get_compiled_rule_cache(self) -> CompiledRuleCache:
+        """Return this manager's compiled-rule cache, creating it on demand.
+
+        Lazily initialized so any construction path (including tests that
+        bypass ``AutoModManager.__init__``) gets the optimization without
+        extra wiring.
+        """
+        cache = getattr(self, "_compiled_rules", None)
+        if cache is None:
+            cache = CompiledRuleCache()
+            self._compiled_rules = cache
+        return cache
 
     def check_user(
         self, user_id: SnowflakeID, server_id: SnowflakeID

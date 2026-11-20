@@ -19,6 +19,7 @@ from ..rules import (
     RepeatedCharsRule,
     AIModerationRule,
 )
+from ..rules.compiled_cache import CompiledRuleCache
 from ..actions import (
     DeleteMessageAction,
     TimeoutUserAction,
@@ -78,6 +79,10 @@ class AutoModManager(
         self._notifications = notifications_module
         self._config = self._load_config()
         self._ai_adapters = {}
+        # Compiled rule instances are reused across message checks; a config
+        # reload drops them because some rules derive defaults from global
+        # config at construction time.
+        self._compiled_rules = CompiledRuleCache()
 
         self._init_ai_adapters()
 
@@ -118,4 +123,5 @@ class AutoModManager(
     def reload_config(self) -> None:
         self._config = self._load_config()
         self._ai_adapters = {}
+        self._compiled_rules.clear()
         self._init_ai_adapters()
