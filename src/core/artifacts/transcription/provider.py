@@ -96,7 +96,19 @@ def _require_public_https_endpoint(value: Any, field: str) -> str:
     otherwise non-global IP literals plus the usual internal hostname forms.
     """
     url = require_https_url(value, field)
-    hostname = (urlparse(url).hostname or "").lower().rstrip(".")
+    parsed = urlparse(url)
+    # A literal backslash in the authority is a parser differential. urlparse
+    # keeps it inside ``netloc``/``hostname`` while WHATWG-following clients
+    # (curl, browsers) read it as ``/``. That lets a link-local/metadata literal
+    # such as ``https://169.254.169.254\/v1`` slip past the IP check below:
+    # ``ipaddress`` cannot parse the trailing backslash and the numeric-literal
+    # regex does not match it, so the host looks like a harmless DNS name here
+    # yet the Bearer token is POSTed to the metadata address downstream. Mirror
+    # the shared SSRF gate (src.utils.security / src.core.security.outbound),
+    # both of which reject a backslash in the authority before any other check.
+    if "\\" in (parsed.netloc or ""):
+        raise HardeningViolation(f"{field} contains a backslash in the URL authority")
+    hostname = (parsed.hostname or "").lower().rstrip(".")
     if not hostname:
         raise HardeningViolation(f"{field} must include a hostname")
     if hostname in _LOCAL_ENDPOINT_HOSTS or hostname.endswith(_LOCAL_ENDPOINT_SUFFIXES):
