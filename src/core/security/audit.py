@@ -19,6 +19,16 @@ from typing import Any, Dict
 
 from src.core.security.hardening import bounded_int
 
+# Use the shared control-character rule, not a local C0+DEL-only regex. NEL
+# (U+0085), the Unicode LINE/PARAGRAPH SEPARATORs (U+2028/U+2029) and the bidi
+# format controls are all treated as line breaks or invisible direction changes
+# by log shippers, terminals and proxies. Leaving any of them in a "log-safe"
+# field lets a request value forge extra log/audit lines or render as a different
+# string than the one that was recorded. The shared primitive removes the whole
+# set (see hardening.text), so every consumer stays on the same side of that
+# parser differential.
+from src.core.security.hardening.text import strip_control_characters
+
 MAX_FIELDS = 50
 MAX_VALUE_LENGTH = 512
 REDACTED = "[REDACTED]"
@@ -46,7 +56,6 @@ _SECRET_KEYS = frozenset(
         "bypass_secret",
     }
 )
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
 # HTTP Basic carries a base64 "user:password" credential in the token position.
 # Without its own rule the generic key/value pattern below consumes only the
@@ -94,8 +103,11 @@ def bound_field(
         or max_length < 1
     ):
         raise ValueError("max_length must be a positive integer")
-    text = str(value or "")
-    text = _CONTROL.sub("", text)
+    text = strip_control_characters(value)
+    # Strip BEFORE redacting: the credential patterns use ``\s``/``\S``, which
+    # treat NEL and U+2028/U+2029 as whitespace. Removing those first keeps a
+    # secret joined into one token so the pattern can redact all of it instead
+    # of leaving the tail of a credential in the record.
     text = redact_text(text)
     if len(text) > max_length:
         text = text[:max_length] + "…[truncated]"
@@ -115,7 +127,7 @@ def sanitise_audit_entry(
         if len(result) >= bounded_fields:
             result["_truncated_fields"] = str(len(data) - bounded_fields)
             break
-        safe_key = _CONTROL.sub("", key)[:128] or "field"
+        safe_key = strip_control_characters(key)[:128] or "field"
         if _is_secret_key(safe_key):
             result[safe_key] = REDACTED
         else:
