@@ -2,8 +2,12 @@
 Admin role management routes.
 """
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
+from typing import Any
 
+import utils.logger as logger
 from fastapi import APIRouter, Request, HTTPException, Query
 from starlette.responses import Response
 from src.api.schemas.common import (
@@ -15,7 +19,12 @@ from src.api.schemas.common import (
 from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.policy_types import UIText
 from src.core.auth.privilege_cache import invalidate_privilege_caches
-from src.core.admin.read_cache import invalidate_admin_read_caches
+from src.core.admin.read_cache import (
+    ROLE_CATALOG_DEFAULT_LIMIT,
+    ROLE_CATALOG_DEFAULT_OFFSET,
+    invalidate_admin_read_caches,
+    warm_role_catalog,
+)
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -235,6 +244,69 @@ def _serialize_role_row(row) -> dict:
     }
 
 
+def _render_role_catalog(db, limit: int, offset: int) -> bytes:
+    """Build the rendered role-catalog payload from ``db``.
+
+    Shared by the request handler and the boot warm-up so the cached bytes are
+    exactly what the route would produce. No authorization belongs here: the
+    route runs its host/scope gates before consulting the cache, and the
+    warm-up calls this with no request context at all.
+    """
+    from src.core.admin.read_cache import _render_json
+
+    rows = db.fetch_all(
+        """
+        SELECT id, name, description, permissions, created_at, created_by, updated_at, is_system
+        FROM admin_roles
+        ORDER BY is_system DESC, name ASC
+        LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
+    )
+    return _render_json({"roles": [_serialize_role_row(row) for row in rows]})
+
+
+def warm_admin_permission_catalog_cache() -> None:
+    """Prime the expensive first render of the admin role/permission catalog.
+
+    The first ``GET /admin/roles`` after a restart pays for the role query and
+    the per-row serialization while holding a request open. Warming that single
+    request-invariant page moves the cost onto the boot worker thread. This is
+    strictly best-effort: no auth/host gate is skipped, nothing is synthesised
+    into a role, and a missing/broken database simply leaves the cache cold so
+    the request path builds it on demand exactly as before.
+    """
+    try:
+        import src.api as api
+
+        db = api.get_db()
+        if db is None:
+            return
+        warm_role_catalog(
+            lambda: _render_role_catalog(
+                db, ROLE_CATALOG_DEFAULT_LIMIT, ROLE_CATALOG_DEFAULT_OFFSET
+            )
+        )
+    except Exception as e:
+        logger.debug(f"Admin permission catalog warm-up skipped: {e}")
+
+
+@asynccontextmanager
+async def _role_catalog_lifespan(app: Any):
+    # Run off the event loop: the cold DB/file work must not block startup.
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, warm_admin_permission_catalog_cache
+        )
+    except Exception as e:
+        logger.debug(f"Admin permission catalog warm-up failed: {e}")
+    yield
+
+
+# Merged into the application lifespan by FastAPI's include_router().
+router.lifespan_context = _role_catalog_lifespan
+
+
 class RoleCreate(BaseModel):
     """Request to create a new admin role."""
 
@@ -271,20 +343,21 @@ async def list_roles(
     # SECURITY: bound the page so a single poll cannot render an unbounded
     # role catalog. The default preserves the previous "all roles" response for
     # any realistic deployment; larger pages are rejected, not silently widened.
-    limit: int = Query(500, ge=1, le=1000),
-    offset: int = Query(0, ge=0, le=1_000_000),
+    limit: int = Query(ROLE_CATALOG_DEFAULT_LIMIT, ge=1, le=1000),
+    offset: int = Query(ROLE_CATALOG_DEFAULT_OFFSET, ge=0, le=1_000_000),
 ):
     """
     List all available admin roles.
 
     The rendered response is cached briefly (db-scoped, gates first); role
-    mutations invalidate it so a stale privilege map is never observed.
+    mutations invalidate it so a stale privilege map is never observed. The
+    boot warm-up primes this exact default page, so the first poll is a hit.
     """
     check_host_restriction(request)
     _require_role_manager(request)
 
     import src.api as api
-    from src.core.admin.read_cache import get_or_render, _render_json
+    from src.core.admin.read_cache import get_or_render
 
     db = api.get_db()
     if db is None:
@@ -293,19 +366,9 @@ async def list_roles(
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    def _render() -> bytes:
-        rows = db.fetch_all(
-            """
-            SELECT id, name, description, permissions, created_at, created_by, updated_at, is_system
-            FROM admin_roles
-            ORDER BY is_system DESC, name ASC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        )
-        return _render_json({"roles": [_serialize_role_row(row) for row in rows]})
-
-    body = get_or_render("roles", (limit, offset), _render)
+    body = get_or_render(
+        "roles", (limit, offset), lambda: _render_role_catalog(db, limit, offset)
+    )
     return Response(content=body, media_type="application/json")
 
 

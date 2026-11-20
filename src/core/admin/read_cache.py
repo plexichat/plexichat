@@ -43,6 +43,14 @@ _MAX_ENTRIES = 256
 
 DEFAULT_TTL_SECONDS = 1.0
 
+# The role catalog is the most expensive admin permission read: rendering it
+# runs the ``admin_roles`` query and serialises up to a page of role rows (each
+# carrying its permission map). Request handlers use these same defaults, so a
+# single boot-time warm primes the entry the first poll will ask for.
+ROLE_CATALOG_NAMESPACE = "roles"
+ROLE_CATALOG_DEFAULT_LIMIT = 500
+ROLE_CATALOG_DEFAULT_OFFSET = 0
+
 
 def _db_token() -> tuple[Any, Any]:
     """Return a stable identity for the current database, with no row caching."""
@@ -98,6 +106,27 @@ def get_or_render(
                 _ENTRIES.pop(oldest, None)
         _ENTRIES[key] = (now + ttl, body)
     return body
+
+
+def warm_role_catalog(render: Callable[[], bytes]) -> bytes:
+    """Prime the default role-catalog entry if it is not already cached.
+
+    This is the cache-side counterpart of the boot warm-up. ``render`` must
+    produce byte-for-byte the same payload the role route produces for its
+    default page (the caller owns that builder), and is only invoked on a miss
+    -- a live entry is left untouched so a warm cannot extend a stale role map
+    beyond the normal TTL. Callers run it *without* an authenticated request,
+    so the host/scope gates still have to run on every real request before the
+    cached bytes can be served; the warm-up never authorises anything itself.
+
+    A ``render`` failure propagates to the caller so the warm-up can record it
+    as non-fatal and leave the request path to build the entry on demand.
+    """
+    return get_or_render(
+        ROLE_CATALOG_NAMESPACE,
+        (ROLE_CATALOG_DEFAULT_LIMIT, ROLE_CATALOG_DEFAULT_OFFSET),
+        render,
+    )
 
 
 def invalidate(namespace: str | None = None) -> None:
