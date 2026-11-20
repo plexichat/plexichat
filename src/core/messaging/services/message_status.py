@@ -17,6 +17,7 @@ from ..exceptions import (
 from .base import BaseService
 from .participant import ParticipantService
 from .user_settings import UserSettingsService
+from . import unread_cache
 from src.core.base import SnowflakeID
 
 
@@ -64,14 +65,19 @@ class MessageStatusService(BaseService):
             return None
 
     def _invalidate_unread_counts(self, user_id: SnowflakeID) -> None:
-        """Drop the cached ``GET /users/@me/unread`` entry for one user.
+        """Drop every cached unread-count view for one user.
 
-        That route is decorated ``@cached(ttl=10, prefix="unread_counts_api")``
-        and its key embeds the caller's ``TokenInfo`` as
+        The ``GET /users/@me/unread`` route is decorated
+        ``@cached(ttl=10, prefix="unread_counts_api")`` and its key embeds the
+        caller's ``TokenInfo`` as
         ``unread_counts_api:current_user:TokenInfo:<user_id>``. Every other
         read-state cache (``msg_reader_ids:*`` etc.) is invalidated when read
         state changes; without this one the unread badge kept serving the
         pre-ack count until the entry's TTL expired.
+
+        The bounded service-level aggregate (used by the uncached per-channel
+        unread endpoint) is dropped here as well so both views advance
+        together on a read-state transition.
         """
         try:
             from src.core.database import invalidate_pattern
@@ -81,6 +87,12 @@ class MessageStatusService(BaseService):
             import utils.logger as logger
 
             logger.debug(f"unread count cache invalidate failed: {cache_error}")
+        try:
+            unread_cache.invalidate_user(user_id)
+        except Exception as cache_error:
+            import utils.logger as logger
+
+            logger.debug(f"unread aggregate invalidate failed: {cache_error}")
 
     def mark_delivered(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
@@ -327,7 +339,17 @@ class MessageStatusService(BaseService):
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None
     ) -> Dict[SnowflakeID, int]:
-        """Get unread message counts (cached)."""
+        """Get unread message counts.
+
+        Unread counts are read repeatedly for the same user in a client sync
+        burst: the aggregate ``/users/@me/unread`` call plus one
+        ``/channels/{id}/messages/unread`` call per open channel. Each used to
+        run its own COUNT / GROUP BY over ``msg_participants`` joined with
+        ``msg_messages``. The bounded aggregate cache collapses those repeats
+        into a single computation while the read state is unchanged; entries
+        are invalidated eagerly on read-state writes (below) and on message
+        writes (``SendMixin.send_message``).
+        """
         if conversation_id:
             # Normalize IDs for SQLite bindings; in some call paths these can be
             # str-like SnowflakeIDs which may not match integer columns.
@@ -347,13 +369,33 @@ class MessageStatusService(BaseService):
             # IMPORTANT: Use a direct DB-backed participation check here.
             # ParticipantService.is_participant has an internal cache and also
             # server-membership logic; both can cause false negatives for DMs in
-            # isolated test flows.
+            # isolated test flows. Keep the check ahead of the cache lookup so
+            # a user removed from a conversation can never read a stale count.
             if not participant_exists():
                 return {}
+
+            cached_count = unread_cache.get_one(user_id_norm, conv_id_norm)
+            if cached_count is not None:
+                return {conv_id_norm: cached_count}
+
+            # A prior aggregate read may already hold this conversation.
+            cached_all = unread_cache.get_all(user_id_norm)
+            if cached_all is not None:
+                count = cached_all.get(conv_id_norm, 0)
+                unread_cache.put_one(user_id_norm, conv_id_norm, count)
+                return {conv_id_norm: count}
+
             count = self._repo.get_unread_count(user_id_norm, conv_id_norm)
+            unread_cache.put_one(user_id_norm, conv_id_norm, count)
             return {conv_id_norm: count}
 
-        return self._repo.get_all_unread_counts(user_id)
+        cached_all = unread_cache.get_all(user_id)
+        if cached_all is not None:
+            return cached_all
+
+        counts = self._repo.get_all_unread_counts(user_id)
+        unread_cache.put_all(user_id, counts)
+        return counts
 
     def get_message_status(
         self, user_id: SnowflakeID, message_id: SnowflakeID

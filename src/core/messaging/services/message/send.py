@@ -327,6 +327,17 @@ class SendMixin(BaseService, MessageServiceProtocol):
         except Exception as e:
             logger.debug(f"Failed to update recent messages cache: {e}")
 
+        # A new message raises the unread badge for every participant except
+        # the author. The bounded service-level aggregate is keyed by user and
+        # the author list is not resolved here, so drop the whole namespace;
+        # the next unread read recomputes from the just-committed rows.
+        try:
+            from ..unread_cache import invalidate_all as _invalidate_unread_cache
+
+            _invalidate_unread_cache()
+        except Exception as e:
+            logger.debug(f"Failed to invalidate unread aggregate cache: {e}")
+
         return msg
 
     def _dispatch_message_notifications(
@@ -612,4 +623,14 @@ class SendMixin(BaseService, MessageServiceProtocol):
         row = self._repo.get_by_id(msg_id)
         if row is None:
             raise MessageNotFoundError("Failed to create system message")
+
+        # System messages are also part of the unread aggregate. Same eager
+        # namespace drop as the regular send path.
+        try:
+            from ..unread_cache import invalidate_all as _invalidate_unread_cache
+
+            _invalidate_unread_cache()
+        except Exception as e:
+            logger.debug(f"Failed to invalidate unread aggregate cache: {e}")
+
         return self._repo.row_to_model(row)
