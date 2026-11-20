@@ -33,8 +33,14 @@ router = APIRouter(tags=["Reactions"])
 # served a still-warm body. Every reaction mutation drops the whole namespace
 # because counts are visible to all viewers of the message. The L1 copy is
 # deliberately short-lived to bound cross-worker staleness after invalidation.
+# Concurrent cold misses are coalesced (single-flight) so a burst of message
+# views cannot stampede the reaction loader, and a just-expired local copy is
+# served for at most ``_REACTION_READ_STALE_TTL`` more seconds while one refresh
+# runs in the background (bounded stale-while-revalidate). Invalidation clears
+# both the stale copy and any in-flight refresh.
 _REACTION_READ_CACHE_TTL = 10
 _REACTION_READ_L1_TTL = 2
+_REACTION_READ_STALE_TTL = 3
 _REACTION_READ_PREFIX = "reaction_read_api"
 
 
@@ -48,6 +54,9 @@ def _invalidate_reaction_read_cache() -> None:
     prefix=_REACTION_READ_PREFIX,
     key_builder=authenticated_cache_key(_REACTION_READ_PREFIX),
     l1_ttl=_REACTION_READ_L1_TTL,
+    single_flight=True,
+    stale_while_revalidate=True,
+    stale_ttl=_REACTION_READ_STALE_TTL,
 )
 async def _load_reactions(*, message_id: int, current_user: TokenInfo) -> list[dict]:
     """Cold path for GET .../reactions: hydrate and serialize the pills.

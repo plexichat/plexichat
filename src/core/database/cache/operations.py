@@ -13,14 +13,17 @@ from ..valkey_client import (
     ValkeyOperationError,
 )
 from .base import (
-    mem_cache_clear_pattern,
     mem_cache_get,
     mem_cache_set,
     mem_cache_delete,
     default_cache_ttl,
 )
 from .serialization import ensure_serializable, reconstruct_object
-from .decorators import get_cache_stats
+from .decorators import (
+    clear_flight_for_key,
+    clear_local_and_bump,
+    get_cache_stats,
+)
 
 # A single privilege/tenant invalidation can match a very large keyspace
 # (e.g. ``has_perm:*`` across every member of a large server). Passing all of
@@ -93,6 +96,9 @@ def cache_delete(key: str) -> bool:
             logger.warning(f"Cache DELETE failed for {key}: {e}")
     if mem_cache_delete(key):
         deleted = True
+    # Drop coalescing/SWR state and bump the generation so any refresh that
+    # started before this delete discards its stale write.
+    clear_flight_for_key(key)
     return deleted
 
 
@@ -142,7 +148,7 @@ def cache_get_many(keys):
 
 def invalidate_pattern(pattern: str) -> int:
     """Invalidate all cache keys matching a pattern."""
-    mem_count = mem_cache_clear_pattern(pattern)
+    mem_count = clear_local_and_bump(pattern)
 
     client = get_client()
     if not client or not is_available():
