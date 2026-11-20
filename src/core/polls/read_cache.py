@@ -111,11 +111,15 @@ class PollReadCache:
 
             # Expired-but-never-read keys would otherwise linger and consume
             # the entry/byte budget until an LRU eviction happened to reach them.
-            for expired_key, (exp, _v, sz) in list(self._data.items()):
-                if exp <= now:
-                    self._data.pop(expired_key, None)
-                    self._bytes -= sz
-                    self._expirations += 1
+            # Sweeping is O(n) and allocates a snapshot of every entry, so only
+            # pay it when a bound is breached: with spare capacity an expired
+            # key is harmless because ``get`` drops it and never serves it.
+            if len(self._data) > self._max_entries or self._bytes > self._max_bytes:
+                for expired_key, (exp, _v, sz) in list(self._data.items()):
+                    if exp <= now:
+                        self._data.pop(expired_key, None)
+                        self._bytes -= sz
+                        self._expirations += 1
 
             while self._data and (
                 len(self._data) > self._max_entries or self._bytes > self._max_bytes

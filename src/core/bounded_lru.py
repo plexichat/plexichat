@@ -119,14 +119,18 @@ class BoundedLRU:
             self._data[key] = (expires_at, value, size)
             self._bytes += size
 
-            # Drop anything already expired first so it does not consume the
-            # entry/byte budget (an expired-but-never-read key can otherwise
-            # linger forever in a plain LRU).
-            for expired_key, (exp, _v, sz) in list(self._data.items()):
-                if exp <= now:
-                    self._data.pop(expired_key, None)
-                    self._bytes -= sz
-                    self._expirations += 1
+            # Sweeping expired keys is O(n) and allocates a snapshot of every
+            # entry. Only pay that cost when a bound is actually breached: with
+            # spare capacity a stale-but-unread key is harmless -- ``get``
+            # drops it on access and never serves it, so fail-closed TTL
+            # semantics are unchanged. Under pressure we still reclaim expired
+            # keys before evicting live LRU entries.
+            if len(self._data) > self._max_entries or self._bytes > self._max_bytes:
+                for expired_key, (exp, _v, sz) in list(self._data.items()):
+                    if exp <= now:
+                        self._data.pop(expired_key, None)
+                        self._bytes -= sz
+                        self._expirations += 1
 
             while self._data and (
                 len(self._data) > self._max_entries or self._bytes > self._max_bytes
