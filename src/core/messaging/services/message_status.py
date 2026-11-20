@@ -20,6 +20,23 @@ from .user_settings import UserSettingsService
 from . import unread_cache
 from src.core.base import SnowflakeID
 
+# Bound every IN list built by the delivery-ack path. SQLite/Postgres cap
+# host parameters, and a burst must degrade to a few round trips rather than
+# one unbounded query (or the old one-query-per-message fan-out).
+_DELIVERY_BATCH_CHUNK = 500
+
+# A caller whose status is already delivered/read needs no new row. The batch
+# status lookup returns enum members; the legacy per-id probe returns the raw
+# string, so accept both shapes.
+_DONE_DELIVERY_STATUSES = frozenset(
+    {
+        MessageStatusType.DELIVERED,
+        MessageStatusType.READ,
+        MessageStatusType.DELIVERED.value,
+        MessageStatusType.READ.value,
+    }
+)
+
 
 class MessageStatusService(BaseService):
     """Service for message status operations."""
@@ -94,35 +111,157 @@ class MessageStatusService(BaseService):
 
             logger.debug(f"unread aggregate invalidate failed: {cache_error}")
 
+    def _delivery_participation(
+        self, user_id: SnowflakeID, conversation_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, bool]:
+        """Resolve the access gate once per distinct conversation.
+
+        The bulk helper mirrors ``is_participant``'s decision tree but uses
+        bounded ``IN`` queries, and writes each answer back into the same
+        per-pair cache the single check reads -- so a revoked membership can
+        never survive into a later delivery write. Both the missing-helper and
+        the error path fall back to the single check and fail closed (an
+        unresolved conversation is treated as "not a participant").
+        """
+        bulk = getattr(self._participant_svc, "are_participants_bulk", None)
+        if callable(bulk):
+            try:
+                result = bulk(conversation_ids, user_id)
+                if isinstance(result, dict):
+                    return {
+                        int(cid): bool(result.get(cid, False))
+                        for cid in conversation_ids
+                    }
+            except Exception as e:
+                import utils.logger as logger
+
+                logger.debug(f"bulk delivery participation failed: {e}")
+
+        result = {}
+        for cid in conversation_ids:
+            try:
+                result[int(cid)] = bool(
+                    self._participant_svc.is_participant(cid, user_id)
+                )
+            except Exception as e:
+                import utils.logger as logger
+
+                logger.debug(f"delivery participation check failed: {e}")
+                result[int(cid)] = False
+        return result
+
+    def _delivery_existing_statuses(
+        self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, Any]:
+        """Fetch this caller's prior statuses with bounded batch queries."""
+        existing: Dict[SnowflakeID, Any] = {}
+        for start in range(0, len(message_ids), _DELIVERY_BATCH_CHUNK):
+            chunk = message_ids[start : start + _DELIVERY_BATCH_CHUNK]
+            try:
+                batch = self._repo.get_batch_for_user(user_id, chunk)
+                if isinstance(batch, dict):
+                    for mid, status in batch.items():
+                        try:
+                            existing[int(mid)] = status
+                        except (TypeError, ValueError):
+                            continue
+                    continue
+            except Exception as e:
+                import utils.logger as logger
+
+                logger.debug(f"bulk delivery status lookup failed: {e}")
+            # Legacy/stub repo (or a failed batch): per-id probe, already
+            # scoped to this caller.
+            for mid in chunk:
+                row = self._repo.get_by_message_and_user(mid, user_id)
+                if row:
+                    existing[int(mid)] = row.get("status")
+        return existing
+
     def mark_delivered(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
     ) -> int:
-        """Mark messages as delivered (batch operation)."""
+        """Mark messages as delivered with bounded round trips.
+
+        BEFORE: one message-row SELECT, one status probe and one participation
+        probe per id -- a 3N fan-out on a delivery burst. AFTER: message rows
+        and the caller's prior statuses are each fetched with one bounded IN
+        query per chunk, and participation is resolved once per distinct
+        conversation through the shared bulk gate. Every access decision still
+        runs before a write and fails closed, so a revoked membership or a
+        status from another user can never grant or suppress a delivery.
+        """
         if not message_ids:
+            return 0
+
+        # Normalize and de-duplicate while preserving caller order. Unparsable
+        # ids can never match a row and are dropped before any query.
+        unique_ids: List[int] = []
+        seen = set()
+        for raw in message_ids:
+            try:
+                mid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if mid in seen:
+                continue
+            seen.add(mid)
+            unique_ids.append(mid)
+        if not unique_ids:
             return 0
 
         now = self._get_timestamp()
 
-        # Filter to messages user can access and didn't author
-        # Also skip system messages (author_id == 0)
-        valid_ids: List[SnowflakeID] = []
-        for msg_id in message_ids:
-            msg_row = self._message_repo.get_by_id(msg_id)
-            if not msg_row or msg_row["author_id"] == user_id:
+        # 1. Message rows: one IN query per bounded chunk.
+        rows_by_id: Dict[int, Dict[str, Any]] = {}
+        for start in range(0, len(unique_ids), _DELIVERY_BATCH_CHUNK):
+            chunk = unique_ids[start : start + _DELIVERY_BATCH_CHUNK]
+            for row in self._message_repo.get_batch_by_ids(chunk):
+                try:
+                    rows_by_id[int(row["id"])] = row
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+        # 2. Cheap local filters: existing row, not authored by caller, not a
+        # system message. The conversation gate is deferred until its ids are
+        # distinct so it is paid once, not once per message.
+        eligible: List[int] = []
+        conversation_ids: List[int] = []
+        seen_convs = set()
+        for mid in unique_ids:
+            row = rows_by_id.get(mid)
+            if not row or row["author_id"] == user_id or row["author_id"] == 0:
                 continue
-            if msg_row["author_id"] == 0:
+            eligible.append(mid)
+            try:
+                cid = int(row["conversation_id"])
+            except (KeyError, TypeError, ValueError):
                 continue
-            if not self._participant_svc.is_participant(
-                msg_row["conversation_id"], user_id
-            ):
+            if cid not in seen_convs:
+                seen_convs.add(cid)
+                conversation_ids.append(cid)
+
+        if not eligible:
+            return 0
+
+        # 3. Authorization: fail closed for any conversation we cannot resolve.
+        participation = self._delivery_participation(user_id, conversation_ids)
+
+        # 4. Skip messages this caller has already received (read wins).
+        existing = self._delivery_existing_statuses(user_id, eligible)
+
+        valid_ids = []
+        for mid in eligible:
+            row = rows_by_id[mid]
+            try:
+                cid = int(row["conversation_id"])
+            except (KeyError, TypeError, ValueError):
                 continue
-            existing = self._repo.get_by_message_and_user(msg_id, user_id)
-            if existing and existing.get("status") in (
-                MessageStatusType.DELIVERED.value,
-                MessageStatusType.READ.value,
-            ):
+            if not participation.get(cid, False):
                 continue
-            valid_ids.append(msg_id)
+            if existing.get(mid) in _DONE_DELIVERY_STATUSES:
+                continue
+            valid_ids.append(mid)
 
         if not valid_ids:
             return 0
