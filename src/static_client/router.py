@@ -20,6 +20,7 @@ treated as a client route and served ``index.html``.
 
 from __future__ import annotations
 
+import functools
 import hmac
 import mimetypes
 import re
@@ -656,7 +657,17 @@ class StaticClientMiddleware:
         return headers
 
     @staticmethod
+    @functools.lru_cache(maxsize=256)
     def _guess_content_type(path: Path) -> str:
+        """Resolve the MIME type for ``path`` (bounded LRU, see note below).
+
+        This is a pure function of the path, but ``mimetypes.guess_type`` plus
+        the fallback table below re-run on every asset request. The set of
+        hashed asset names is finite, so a small bounded cache removes that
+        repeated work without any correctness risk: the result depends only on
+        the path, which is immutable for the life of a served file. The cache
+        is process-local and per-worker -- no shared/invalidatable state.
+        """
         ctype, _ = mimetypes.guess_type(str(path))
         if ctype is None:
             ext = path.suffix.lower()
@@ -780,7 +791,11 @@ class StaticClientMiddleware:
             await self._send_not_found(send)
             return
 
-        etag = f'"{(resolved.file_path.stat().st_mtime_ns):x}-{(stat.st_size):x}"'
+        # Reuse the single stat above for both mtime and size. A second
+        # ``stat()`` here was a wasted syscall on every request (including
+        # 304 revalidations) and could observe a different snapshot if the
+        # file was rewritten between the two calls.
+        etag = f'"{(stat.st_mtime_ns):x}-{(stat.st_size):x}"'
         etag_bytes = etag.encode()
 
         if_none_match = self._header(scope, b"if-none-match")
