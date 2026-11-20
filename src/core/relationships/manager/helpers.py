@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Optional, TypeVar
 
 import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
+from src.core.bounded_lru import BoundedLRU
 
 from ..models import (
     BlockedUser,
@@ -21,6 +22,19 @@ from ..exceptions import (
 
 _TransactionResult = TypeVar("_TransactionResult")
 
+# Sentinel so a cached ``False`` (not friends) is distinguishable from a miss.
+_FRIEND_CHECK_MISS = object()
+
+# Bounds for the per-pair friendship-check cache. ``_are_friends`` is a
+# primitive consulted from several relationship paths; within one request the
+# same (viewer, other) pair is frequently probed more than once (e.g. a block
+# guard followed by a status read). Capping entries, bytes and TTL keeps that
+# dedup process-local and incapable of unbounded growth from request-derived
+# ids. TTL is only a safety net: every mutation invalidates eagerly.
+_FRIEND_CHECK_MAX_ENTRIES = 2048
+_FRIEND_CHECK_MAX_BYTES = 256 * 1024
+_FRIEND_CHECK_TTL_SECONDS = 30.0
+
 
 class RelationshipHelpersMixin(BaseManager):
     """Mixin providing shared helper methods for relationship operations."""
@@ -30,6 +44,11 @@ class RelationshipHelpersMixin(BaseManager):
     ) -> None:
         super().__init__(db, auth_module)
         self._servers = servers_module
+        self._friend_check_cache = BoundedLRU(
+            max_entries=_FRIEND_CHECK_MAX_ENTRIES,
+            max_bytes=_FRIEND_CHECK_MAX_BYTES,
+            ttl_seconds=_FRIEND_CHECK_TTL_SECONDS,
+        )
         logger.info("Relationship module initialized")
 
     def _validate_users(self, user_id: SnowflakeID, target_id: SnowflakeID) -> None:
@@ -54,12 +73,26 @@ class RelationshipHelpersMixin(BaseManager):
         return self._is_blocked(other_id, user_id)
 
     def _are_friends(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
-        """Check if two users are friends."""
+        """Check if two users are friends.
+
+        Cached per (user, other) pair so repeated checks within a request only
+        hit the database once. Both outcomes are cached: a negative answer is
+        just as authoritative as a positive one. The cache is cleared by
+        ``_invalidate_all_relationships_cache`` on every friendship/block
+        mutation, so a stale verdict cannot outlive an add or remove.
+        """
+        key = (int(user_id), int(other_id))
+        cached = self._friend_check_cache.get(key, _FRIEND_CHECK_MISS)
+        if cached is not _FRIEND_CHECK_MISS:
+            return bool(cached)
+
         row = self._db.fetch_one(
             "SELECT 1 as ok FROM rel_friends WHERE user_id = ? AND friend_id = ?",
             (user_id, other_id),
         )
-        return row is not None
+        result = row is not None
+        self._friend_check_cache.set(key, result)
+        return result
 
     def _get_pending_request(
         self, sender_id: SnowflakeID, recipient_id: SnowflakeID
@@ -98,6 +131,15 @@ class RelationshipHelpersMixin(BaseManager):
         the previous ``all_relationships:*:<uid>`` glob.
         """
         from src.core.database import invalidate_cached
+
+        # Friend-check verdicts are pair-scoped but this hook receives an
+        # arbitrary set of mutated user ids (send/accept/remove/block), not a
+        # reliable pair, so drop the whole small bounded cache. A miss simply
+        # recomputes from the authoritative DB. ``getattr`` keeps this safe for
+        # the unbound call used in the aggregate-invalidation regression test.
+        cache = getattr(self, "_friend_check_cache", None)
+        if cache is not None:
+            cache.clear()
 
         seen_ids = set()
         for user_id in user_ids:
