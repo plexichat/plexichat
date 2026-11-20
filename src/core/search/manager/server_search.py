@@ -2,11 +2,16 @@ from typing import List, Optional
 
 from .base import SearchManagerBase
 from .message_search import validate_search_query
+from .result_cache import CACHE_MISS, clear_result_caches, get_result_cache, make_key
 from ..exceptions import SearchLimitError
 from ..models import IndexedServer, ServerSearchResult, ServerSearchResultPage
 
 
 class ServerSearchMixin(SearchManagerBase):
+    def clear_cache(self) -> None:
+        super().clear_cache()
+        clear_result_caches(self)
+
     def search_servers(
         self,
         user_id: int,
@@ -32,6 +37,22 @@ class ServerSearchMixin(SearchManagerBase):
 
         self._check_rate_limit(user_id)
 
+        # Discovery searches are public_only, but the subject is still part of
+        # the authz scope: an entry memoized for one caller is never served to
+        # another, which keeps the no-cross-user-leak guarantee unconditional.
+        cache = get_result_cache(self, "servers")
+        cache_key = make_key(
+            "servers.v1",
+            (user_id,),
+            query=query,
+            category=category,
+            limit=limit,
+            offset=offset,
+        )
+        cached = cache.get(cache_key)
+        if cached is not CACHE_MISS:
+            return cached
+
         results = self._indexer.search_servers(
             query=query,
             category=category,
@@ -44,7 +65,9 @@ class ServerSearchMixin(SearchManagerBase):
 
         results = self._ranking_engine.rank_server_results(results, query)
 
-        return results[:limit]
+        final = results[:limit]
+        cache.put(cache_key, final)
+        return final
 
     def search_servers_page(
         self,
@@ -68,6 +91,19 @@ class ServerSearchMixin(SearchManagerBase):
 
         self._check_rate_limit(user_id)
 
+        cache = get_result_cache(self, "servers_page")
+        cache_key = make_key(
+            "servers_page.v1",
+            (user_id,),
+            query=query,
+            category=category,
+            limit=limit,
+            cursor=cursor,
+        )
+        cached = cache.get(cache_key)
+        if cached is not CACHE_MISS:
+            return cached
+
         results, next_cursor = self._indexer.search_servers_page(
             query=query,
             category=category,
@@ -79,7 +115,9 @@ class ServerSearchMixin(SearchManagerBase):
         results = self._enrich_server_results(results)
         results = self._ranking_engine.rank_server_results(results, query)
 
-        return ServerSearchResultPage(results=results, next_cursor=next_cursor)
+        final_page = ServerSearchResultPage(results=results, next_cursor=next_cursor)
+        cache.put(cache_key, final_page)
+        return final_page
 
     def index_server(
         self,

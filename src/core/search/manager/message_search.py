@@ -3,6 +3,7 @@ from typing import List, Optional
 from src.core.security.hardening import HardeningViolation, reject_control_characters
 
 from .base import SearchManagerBase
+from .result_cache import CACHE_MISS, clear_result_caches, get_result_cache, make_key
 from ..exceptions import InvalidQuerySyntaxError, SearchLimitError
 from ..models import MessageSearchResult, MessageSearchResultPage
 
@@ -52,6 +53,13 @@ def validate_search_query(query: str, *, has_filters: bool = False) -> None:
 
 
 class MessageSearchMixin(SearchManagerBase):
+    def clear_cache(self) -> None:
+        # Keep the inherited rate-limit counters reset and also drop the
+        # short-TTL result memos (permission/index changes must take effect
+        # immediately after an explicit invalidation).
+        super().clear_cache()
+        clear_result_caches(self)
+
     def search_messages(
         self,
         user_id: int,
@@ -89,6 +97,29 @@ class MessageSearchMixin(SearchManagerBase):
 
         if not accessible_conversations:
             return []
+
+        # Repeated identical searches collapse to one computation for the TTL
+        # window. The authz scope carries the subject (user_id) AND the set of
+        # conversations they can currently read, so a different user — or the
+        # same user after a permission change — can never reuse this entry.
+        cache = get_result_cache(self, "messages")
+        cache_key = make_key(
+            "messages.v1",
+            (user_id, tuple(sorted(accessible_conversations))),
+            query=query,
+            conversation_id=conversation_id,
+            server_id=server_id,
+            channel_id=channel_id,
+            author_id=author_id,
+            after_timestamp=after_timestamp,
+            has_attachments=has_attachments,
+            mentions_user=mentions_user,
+            limit=limit,
+            offset=offset,
+        )
+        cached = cache.get(cache_key)
+        if cached is not CACHE_MISS:
+            return cached
 
         search_text = parsed.search_text if parsed.search_terms else query
 
@@ -131,7 +162,9 @@ class MessageSearchMixin(SearchManagerBase):
             results, parsed, self._get_timestamp()
         )
 
-        return results[:limit]
+        final = results[:limit]
+        cache.put(cache_key, final)
+        return final
 
     def search_messages_page(
         self,
@@ -169,6 +202,27 @@ class MessageSearchMixin(SearchManagerBase):
 
         if not accessible_conversations:
             return MessageSearchResultPage(results=[], next_cursor=None)
+
+        # Same authz-scoped memo for the paged path. A repeated first-page
+        # request (cursor=None) otherwise replays the whole multi-page scan.
+        cache = get_result_cache(self, "messages_page")
+        cache_key = make_key(
+            "messages_page.v1",
+            (user_id, tuple(sorted(accessible_conversations))),
+            query=query,
+            conversation_id=conversation_id,
+            server_id=server_id,
+            channel_id=channel_id,
+            author_id=author_id,
+            after_timestamp=after_timestamp,
+            has_attachments=has_attachments,
+            mentions_user=mentions_user,
+            limit=limit,
+            cursor=cursor,
+        )
+        cached = cache.get(cache_key)
+        if cached is not CACHE_MISS:
+            return cached
 
         search_text = parsed.search_text if parsed.search_terms else query
 
@@ -247,9 +301,11 @@ class MessageSearchMixin(SearchManagerBase):
                 break
             page_cursor = page_next_cursor
 
-        return MessageSearchResultPage(
+        final_page = MessageSearchResultPage(
             results=collected[:limit], next_cursor=next_cursor
         )
+        cache.put(cache_key, final_page)
+        return final_page
 
     def search_server_messages(
         self,
