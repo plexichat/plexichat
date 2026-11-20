@@ -5,15 +5,36 @@ from ..models import VoiceState
 from ..exceptions import UserNotInChannelError
 
 
+from .cache import _MISS
 from .protocol import VoiceProtocol
 
 
 class StateMixin(VoiceProtocol):
-    def get_voice_state(self, user_id: SnowflakeID) -> Optional[VoiceState]:
+    def _load_voice_state(self, user_id: SnowflakeID) -> Optional[VoiceState]:
+        """Authoritative, uncached read of a user's voice state row."""
         row = self._db.fetch_one(
             "SELECT * FROM voice_states WHERE user_id = ?", (user_id,)
         )
         return self._row_to_voice_state(row) if row else None
+
+    def get_voice_state(self, user_id: SnowflakeID) -> Optional[VoiceState]:
+        """Return a user's voice state, memoized for a short bounded window.
+
+        ``VOICE_SPEAKING`` frames call this on every frame for the active
+        speaker; the state is read-only there, so the cache collapses a burst
+        into a single query.  All state mutations invalidate the user's entry
+        before their read-after-write, so a write never observes its own stale
+        value.  Returned instances must be treated as immutable (current
+        callers only read fields).
+        """
+        cache = self._get_voice_lookup_cache()
+        key = cache.state_key(user_id)
+        cached = cache.get(key)
+        if cached is not _MISS:
+            return cached  # VoiceState is treated as immutable by all callers
+        state = self._load_voice_state(user_id)
+        cache.set(key, state)
+        return state
 
     def set_self_mute(self, user_id: SnowflakeID, muted: bool) -> VoiceState:
         state = self.get_voice_state(user_id)
@@ -25,6 +46,7 @@ class StateMixin(VoiceProtocol):
             "UPDATE voice_states SET self_mute = ?, last_activity = ? WHERE user_id = ?",
             (1 if muted else 0, now, user_id),
         )
+        self._invalidate_voice_state(user_id)
 
         result = self.get_voice_state(user_id)
         assert result is not None
@@ -41,6 +63,7 @@ class StateMixin(VoiceProtocol):
             "UPDATE voice_states SET self_deaf = ?, self_mute = ?, last_activity = ? WHERE user_id = ?",
             (1 if deafened else 0, mute_val, now, user_id),
         )
+        self._invalidate_voice_state(user_id)
 
         result = self.get_voice_state(user_id)
         assert result is not None
@@ -56,6 +79,7 @@ class StateMixin(VoiceProtocol):
             "UPDATE voice_states SET streaming = ?, last_activity = ? WHERE user_id = ?",
             (1 if streaming else 0, now, user_id),
         )
+        self._invalidate_voice_state(user_id)
 
         result = self.get_voice_state(user_id)
         assert result is not None
@@ -71,6 +95,7 @@ class StateMixin(VoiceProtocol):
             "UPDATE voice_states SET video = ?, last_activity = ? WHERE user_id = ?",
             (1 if video else 0, now, user_id),
         )
+        self._invalidate_voice_state(user_id)
 
         result = self.get_voice_state(user_id)
         assert result is not None
@@ -155,6 +180,8 @@ class StateMixin(VoiceProtocol):
                         "UPDATE voice_states SET video = ?, last_activity = ? WHERE user_id = ?",
                         (params[i], now, user_id),
                     )
+
+            self._invalidate_voice_state(user_id)
 
         result = self.get_voice_state(user_id)
         assert result is not None

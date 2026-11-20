@@ -37,6 +37,7 @@ from .stages import StageOpsMixin
 from .settings import SettingsMixin
 from .afk import AfkMixin
 from .calls import CallLifecycleMixin
+from .cache import VoiceLookupCache, _MISS
 
 
 # ``get_voice_channels`` resolves channel settings for every visible channel.
@@ -99,17 +100,53 @@ class VoiceManager(
 
     # === Shared Helpers ===
 
+    def _get_voice_lookup_cache(self) -> VoiceLookupCache:
+        """Return this manager's bounded lookup cache (lazily created).
+
+        Lazy creation keeps managers built via ``object.__new__`` (used by a
+        number of unit tests) working without an explicit ``__init__`` call.
+        """
+        cache = self.__dict__.get("_voice_lookup_cache")
+        if cache is None:
+            cache = VoiceLookupCache()
+            self.__dict__["_voice_lookup_cache"] = cache
+        return cache
+
+    def _invalidate_voice_state(self, user_id: SnowflakeID) -> None:
+        """Drop a user's cached state after a ``voice_states`` write."""
+        self._get_voice_lookup_cache().invalidate_state(user_id)
+
+    def _invalidate_channel_lookup(self, channel_id: SnowflakeID) -> None:
+        """Drop cached channel metadata/settings after a channel write."""
+        self._get_voice_lookup_cache().invalidate_channel(channel_id)
+
+    def _invalidate_all_lookups(self) -> None:
+        """Full cache invalidation, used when a write touches many users."""
+        self._get_voice_lookup_cache().clear()
+
+    def clear_voice_lookup_cache(self) -> None:
+        """Public invalidation hook for setup/deploy code and diagnostics."""
+        self._invalidate_all_lookups()
+
     def _validate_user(self, user_id: SnowflakeID) -> None:
         if not self._user_exists(user_id):
             raise UserNotFoundError(f"User {user_id} not found")
 
     def _get_server_channel(self, channel_id: SnowflakeID) -> Optional[Dict[str, Any]]:
+        cache = self._get_voice_lookup_cache()
+        key = cache.channel_key(channel_id)
+        cached = cache.get(key)
+        if cached is not _MISS:
+            return dict(cached) if cached is not None else None
         if self._servers:
             row = self._db.fetch_one(
                 "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
             )
-            return dict(row) if row else None
-        return None
+            result: Optional[Dict[str, Any]] = dict(row) if row else None
+        else:
+            result = None
+        cache.set(key, result)
+        return dict(result) if result is not None else None
 
     def _is_voice_channel(self, channel_type: str) -> bool:
         return channel_type in ("voice", "stage")
@@ -195,12 +232,17 @@ class VoiceManager(
         }
 
     def _get_channel_settings(self, channel_id: SnowflakeID) -> Dict[str, Any]:
+        cache = self._get_voice_lookup_cache()
+        key = cache.settings_key(channel_id)
+        cached = cache.get(key)
+        if cached is not _MISS:
+            return dict(cached)
         row = self._db.fetch_one(
             "SELECT * FROM voice_channel_settings WHERE channel_id = ?", (channel_id,)
         )
-        if row:
-            return dict(row)
-        return self._default_channel_settings(channel_id)
+        result = dict(row) if row else self._default_channel_settings(channel_id)
+        cache.set(key, result)
+        return dict(result)
 
     def _get_channel_settings_bulk(
         self, channel_ids: List[SnowflakeID]
@@ -234,6 +276,9 @@ class VoiceManager(
         self._db.insert_or_ignore(
             "voice_channel_settings", ["channel_id"], (channel_id,)
         )
+        # A freshly inserted default row must not be shadowed by a previously
+        # cached "no settings" default.
+        self._invalidate_channel_lookup(channel_id)
 
     def _row_to_voice_state(self, row: Dict[str, Any]) -> VoiceState:
         return VoiceState(

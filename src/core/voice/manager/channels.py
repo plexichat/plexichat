@@ -19,6 +19,10 @@ class ChannelOpsMixin(VoiceProtocol):
     def join_channel(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> VoiceState:
         self._validate_user(user_id)
 
+        # The pre-join membership check must be authoritative: drop any cached
+        # state so a stale "not in voice" entry cannot mask an existing row.
+        self._invalidate_voice_state(user_id)
+
         channel = self._get_server_channel(channel_id)
         if not channel:
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
@@ -98,6 +102,7 @@ class ChannelOpsMixin(VoiceProtocol):
 
         logger.debug(f"User {user_id} joined voice channel {channel_id}")
 
+        self._invalidate_voice_state(user_id)
         result = self.get_voice_state(user_id)
         assert result is not None
 
@@ -106,6 +111,9 @@ class ChannelOpsMixin(VoiceProtocol):
         return result
 
     def leave_channel(self, user_id: SnowflakeID) -> bool:
+        # Authoritative pre-check: a cached state must not decide membership
+        # for a write (a user may have been moved by another process).
+        self._invalidate_voice_state(user_id)
         state = self.get_voice_state(user_id)
         if not state:
             raise UserNotInChannelError(f"User {user_id} is not in a voice channel")
@@ -117,6 +125,7 @@ class ChannelOpsMixin(VoiceProtocol):
         )
 
         self._db.execute("DELETE FROM voice_states WHERE user_id = ?", (user_id,))
+        self._invalidate_voice_state(user_id)
 
         logger.debug(f"User {user_id} left voice channel {channel_id}")
 

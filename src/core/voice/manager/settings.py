@@ -41,6 +41,7 @@ class SettingsMixin(VoiceProtocol):
             "UPDATE voice_channel_settings SET user_limit = ? WHERE channel_id = ?",
             (clamp_user_limit(limit), channel_id),
         )
+        self._invalidate_channel_lookup(channel_id)
 
         result = self.get_voice_channel(channel_id, user_id)
         assert result is not None
@@ -71,6 +72,7 @@ class SettingsMixin(VoiceProtocol):
             "UPDATE voice_channel_settings SET bitrate = ? WHERE channel_id = ?",
             (bitrate, channel_id),
         )
+        self._invalidate_channel_lookup(channel_id)
 
         result = self.get_voice_channel(channel_id, user_id)
         assert result is not None
@@ -104,6 +106,7 @@ class SettingsMixin(VoiceProtocol):
             "UPDATE voice_channel_settings SET region_id = ? WHERE channel_id = ?",
             (region_id, channel_id),
         )
+        self._invalidate_channel_lookup(channel_id)
 
         result = self.get_voice_channel(channel_id, user_id)
         assert result is not None

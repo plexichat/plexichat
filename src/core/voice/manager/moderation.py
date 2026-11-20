@@ -95,6 +95,7 @@ class ModerationMixin(VoiceProtocol):
             "UPDATE voice_states SET server_mute = 1, last_activity = ? WHERE user_id = ?",
             (now, target_user_id),
         )
+        self._invalidate_voice_state(target_user_id)
 
         logger.debug(f"User {target_user_id} server muted by {moderator_id}")
 
@@ -128,6 +129,7 @@ class ModerationMixin(VoiceProtocol):
             "UPDATE voice_states SET server_mute = 0, last_activity = ? WHERE user_id = ?",
             (now, target_user_id),
         )
+        self._invalidate_voice_state(target_user_id)
 
         result = self.get_voice_state(target_user_id)
         assert result is not None
@@ -159,6 +161,7 @@ class ModerationMixin(VoiceProtocol):
             "UPDATE voice_states SET server_deaf = 1, server_mute = 1, last_activity = ? WHERE user_id = ?",
             (now, target_user_id),
         )
+        self._invalidate_voice_state(target_user_id)
 
         logger.debug(f"User {target_user_id} server deafened by {moderator_id}")
 
@@ -192,6 +195,7 @@ class ModerationMixin(VoiceProtocol):
             "UPDATE voice_states SET server_deaf = 0, last_activity = ? WHERE user_id = ?",
             (now, target_user_id),
         )
+        self._invalidate_voice_state(target_user_id)
 
         result = self.get_voice_state(target_user_id)
         assert result is not None
@@ -268,6 +272,7 @@ class ModerationMixin(VoiceProtocol):
                WHERE user_id = ?""",
             (channel_id, server_id, 1 if suppress else 0, now, target_user_id),
         )
+        self._invalidate_voice_state(target_user_id)
 
         # A moderation move is a leave+join: fire the same call-lifecycle
         # hooks so the old channel's call is ended (and its participant
@@ -313,6 +318,7 @@ class ModerationMixin(VoiceProtocol):
         self._db.execute(
             "DELETE FROM voice_states WHERE user_id = ?", (target_user_id,)
         )
+        self._invalidate_voice_state(target_user_id)
 
         # Mirror leave_channel: without this the moderation teardown skips the
         # call-lifecycle hook, so disconnecting the last member left the

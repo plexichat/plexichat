@@ -80,6 +80,10 @@ class AfkMixin(VoiceProtocol):
         return settings.get("afk_timeout", 300)
 
     def check_afk_timeout(self, user_id: SnowflakeID) -> Optional[VoiceState]:
+        # This decision hinges on ``last_activity``, which advances on every
+        # speaking/activity frame. Read authoritatively so a cached snapshot
+        # cannot move a user to AFK (or skip the move) on stale timing data.
+        self._invalidate_voice_state(user_id)
         state = self.get_voice_state(user_id)
         if not state:
             return None
@@ -110,6 +114,7 @@ class AfkMixin(VoiceProtocol):
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (user_id, settings["afk_channel_id"], state.server_id, 1, now2, now2),
             )
+            self._invalidate_voice_state(user_id)
             return self.get_voice_state(user_id)
 
         return None

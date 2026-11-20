@@ -66,6 +66,22 @@ class VoiceProtocol:
     def _ensure_channel_settings(self, channel_id: SnowflakeID) -> None:
         pass
 
+    def _get_voice_lookup_cache(self):
+        """Return the manager's bounded voice lookup cache."""
+        raise NotImplementedError
+
+    def _invalidate_voice_state(self, user_id: SnowflakeID) -> None:
+        """Drop a user's cached voice state after a write."""
+        raise NotImplementedError
+
+    def _invalidate_channel_lookup(self, channel_id: SnowflakeID) -> None:
+        """Drop cached channel metadata/settings after a write."""
+        raise NotImplementedError
+
+    def _invalidate_all_lookups(self) -> None:
+        """Drop every cached lookup."""
+        raise NotImplementedError
+
     def _row_to_voice_state(self, row: Dict[str, Any]) -> VoiceState:
         raise NotImplementedError
 

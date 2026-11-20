@@ -62,6 +62,7 @@ class StageOpsMixin(VoiceProtocol):
                 "UPDATE voice_states SET suppress = 0, last_activity = ? WHERE user_id = ?",
                 (now, user_id),
             )
+            self._invalidate_voice_state(user_id)
 
         logger.debug(f"Stage started in channel {channel_id} by user {user_id}")
 
@@ -100,6 +101,9 @@ class StageOpsMixin(VoiceProtocol):
             "UPDATE voice_states SET suppress = 1, last_activity = ? WHERE channel_id = ?",
             (now, channel_id),
         )
+        # This UPDATE touches every member of the channel, not one known user.
+        # Drop all cached states rather than try to enumerate affected ids.
+        self._invalidate_all_lookups()
 
         self._db.execute(
             "DELETE FROM voice_stage_instances WHERE channel_id = ?", (channel_id,)
@@ -245,6 +249,7 @@ class StageOpsMixin(VoiceProtocol):
             "UPDATE voice_states SET suppress = 0, last_activity = ? WHERE user_id = ?",
             (now, target_user_id),
         )
+        self._invalidate_voice_state(target_user_id)
 
         logger.debug(f"User {target_user_id} invited to speak by {moderator_id}")
 
@@ -300,6 +305,7 @@ class StageOpsMixin(VoiceProtocol):
             "UPDATE voice_states SET suppress = 1, last_activity = ? WHERE user_id = ?",
             (now, target_user_id),
         )
+        self._invalidate_voice_state(target_user_id)
 
         logger.debug(f"User {target_user_id} moved to audience by {moderator_id}")
 
