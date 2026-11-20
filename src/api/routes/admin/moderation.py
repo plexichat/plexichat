@@ -53,6 +53,91 @@ router = APIRouter()
 # caller without the matching read scope.
 _REPORTS_TTL_SECONDS = 2.0
 
+# A page of reports references several user ids per row (reporter, reported
+# user, assignee, reviewer). Resolving those with one ``SELECT ... WHERE id = ?``
+# per report is the classic N+1 read. Bind at most this many ids per ``IN``
+# statement so a large page costs a bounded number of round trips and never
+# trips SQLite/Postgres parameter ceilings.
+_BULK_USER_ID_CHUNK_SIZE = 500
+
+
+def _iter_id_chunks(ids: List[int]):
+    """Yield ``ids`` in bounded slices for ``IN (?, ...)`` binding."""
+    for start in range(0, len(ids), _BULK_USER_ID_CHUNK_SIZE):
+        yield ids[start : start + _BULK_USER_ID_CHUNK_SIZE]
+
+
+def _bulk_usernames(db, ids: List[int]) -> Dict[int, Optional[str]]:
+    """Resolve ``auth_users.id -> username`` in bounded ``IN`` chunks.
+
+    The id set is built exclusively from user ids already present on the
+    *authorized* report page, so this never widens the data a caller can see:
+    the ``reports.read`` scope gate has already run before this helper is
+    reached. Missing/deleted users are simply absent from the mapping. Any DB
+    failure is swallowed so username enrichment can never fail an otherwise
+    valid report listing.
+    """
+    unique_ids = sorted({int(value) for value in ids if value is not None})
+    if not unique_ids:
+        return {}
+    mapping: Dict[int, Optional[str]] = {}
+    for chunk in _iter_id_chunks(unique_ids):
+        try:
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = db.fetch_all(
+                f"SELECT id, username FROM auth_users WHERE id IN ({placeholders})",
+                tuple(chunk),
+            )
+        except Exception:  # pragma: no cover - enrichment is best effort
+            continue
+        for row in rows or []:
+            if isinstance(row, dict):
+                uid = row.get("id")
+                username = row.get("username")
+            else:
+                uid = row[0] if len(row) > 0 else None
+                username = row[1] if len(row) > 1 else None
+            if uid is not None:
+                mapping[int(uid)] = username
+    return mapping
+
+
+def _enrich_report_users(db, items: List[Dict[str, Any]]) -> None:
+    """Attach username fields to a report page with O(ceil(n/500)) queries.
+
+    Mutates only the freshly-built response dicts (never the cached DB rows).
+    Each field is populated only when the corresponding id column exists on the
+    row, so a legacy row shape is left untouched.
+    """
+    fields = (
+        ("reporter_id", "reporter_username"),
+        ("reported_user_id", "reported_username"),
+        ("assigned_to", "assigned_to_username"),
+        ("reviewed_by", "reviewed_by_username"),
+    )
+    ids: List[int] = []
+    for item in items:
+        for id_key, _ in fields:
+            if id_key in item and item[id_key] is not None:
+                try:
+                    ids.append(int(item[id_key]))
+                except (TypeError, ValueError):
+                    continue
+    if not ids:
+        return
+    usernames = _bulk_usernames(db, ids)
+    for item in items:
+        for id_key, name_key in fields:
+            raw = item.get(id_key)
+            if raw is None:
+                continue
+            try:
+                uid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if uid in usernames:
+                item[name_key] = usernames[uid]
+
 
 def _safe_label(value: Any) -> Any:
     """Strip control chars from a free-text status/category label."""
@@ -427,6 +512,11 @@ async def get_enhanced_reports(
                 item["status"] = _safe_label(item["status"])
             if "category" in item:
                 item["category"] = _safe_label(item["category"])
+        # Resolve the user ids referenced by this authorized page in bounded
+        # IN chunks instead of one lookup per report (N+1). The scope gate has
+        # already run; only ids from this page are queried, so no other
+        # caller's data can be pulled in.
+        _enrich_report_users(db, items)
         return {
             "items": items,
             "total": total,
