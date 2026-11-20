@@ -93,6 +93,21 @@ class LocalStorage(StorageBackendBase):
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
         return os.open(full_path, flags, 0o600)
 
+    @staticmethod
+    def _open_for_read(full_path: str) -> int:
+        """Open ``full_path`` for reading without following a final symlink.
+
+        The read paths validate containment by *resolving* the path, but then
+        operate on the original (unresolved) path. Without ``O_NOFOLLOW`` an
+        in-base symlink can redirect the read to a different object, and a
+        symlink planted between the containment check and the ``open`` (TOCTOU)
+        can escape the base entirely. ``O_NOFOLLOW`` closes that window on the
+        last component; interior symlinks are rejected by
+        :meth:`_reject_symlink_components`.
+        """
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        return os.open(full_path, flags)
+
     def store(self, file_data: bytes, path: str, content_type: str) -> str:
         """Store file data at the specified path."""
         full_path = self._full_path(path)
@@ -147,10 +162,14 @@ class LocalStorage(StorageBackendBase):
         full_path = self._full_path(path)
 
         try:
-            with open(full_path, "rb") as f:
+            self._reject_symlink_components(path)
+            fd = self._open_for_read(full_path)
+            with os.fdopen(fd, "rb") as f:
                 data = f.read()
             logger.debug(f"Retrieved file from {full_path} ({len(data)} bytes)")
             return data
+        except StorageError:
+            raise
         except FileNotFoundError:
             raise StorageReadError(f"File not found: {path}", "local")
         except OSError as e:
@@ -162,9 +181,22 @@ class LocalStorage(StorageBackendBase):
         full_path = self._full_path(path)
 
         try:
-            size = os.path.getsize(full_path)
-            stream = open(full_path, "rb")
+            self._reject_symlink_components(path)
+            fd = self._open_for_read(full_path)
+            try:
+                size = os.fstat(fd).st_size
+                stream = os.fdopen(fd, "rb")
+            except Exception:
+                # fdopen took ownership of fd on success; on failure the fd is
+                # still ours to close.
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
             return stream, size
+        except StorageError:
+            raise
         except FileNotFoundError:
             raise StorageReadError(f"File not found: {path}", "local")
         except OSError as e:
@@ -176,11 +208,14 @@ class LocalStorage(StorageBackendBase):
         full_path = self._full_path(path)
 
         try:
+            self._reject_symlink_components(path)
             if os.path.exists(full_path):
                 os.remove(full_path)
                 logger.debug(f"Deleted file at {full_path}")
                 return True
             return False
+        except StorageError:
+            raise
         except OSError as e:
             logger.error(f"Failed to delete file at {full_path}: {e}")
             raise StorageDeleteError(f"Failed to delete file: {e}", "local")
@@ -188,6 +223,7 @@ class LocalStorage(StorageBackendBase):
     def exists(self, path: str) -> bool:
         """Check if file exists in storage."""
         full_path = self._full_path(path)
+        self._reject_symlink_components(path)
         return os.path.isfile(full_path)
 
     def get_url(self, path: str) -> str:
@@ -200,7 +236,10 @@ class LocalStorage(StorageBackendBase):
         full_path = self._full_path(path)
 
         try:
+            self._reject_symlink_components(path)
             return os.path.getsize(full_path)
+        except StorageError:
+            raise
         except OSError:
             return 0
 
@@ -211,6 +250,7 @@ class LocalStorage(StorageBackendBase):
     def get_metadata(self, path: str) -> dict:
         """Get file metadata."""
         full_path = self._full_path(path)
+        self._reject_symlink_components(path)
 
         metadata = {
             "path": path,
@@ -229,6 +269,7 @@ class LocalStorage(StorageBackendBase):
     def cleanup_empty_dirs(self, path: str):
         """Remove empty directories up to base path."""
         full_path = self._full_path(path)
+        self._reject_symlink_components(path)
         dir_path = os.path.dirname(full_path)
 
         while dir_path != self._base_path and dir_path.startswith(self._base_path):
