@@ -159,19 +159,27 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
             ),
         )
 
-        for i, field in enumerate(sanitized.get("fields", [])):
-            field_id = self._generate_id()
-            self._db.execute(
+        # Build every field row up front and hand the batch to the database in
+        # one statement. The old per-field loop issued one INSERT per field
+        # (up to MAX_FIELDS=25 round trips per create). execute_many shares a
+        # single prepare/connection round trip and keeps the exact row values
+        # and positional ordering the loop produced.
+        field_rows = [
+            (
+                self._generate_id(),
+                embed_id,
+                field["name"],
+                field["value"],
+                1 if field.get("inline") else 0,
+                i,
+            )
+            for i, field in enumerate(sanitized.get("fields", []))
+        ]
+        if field_rows:
+            self._db.execute_many(
                 """INSERT INTO embed_fields (id, embed_id, name, value, inline, position)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    field_id,
-                    embed_id,
-                    field["name"],
-                    field["value"],
-                    1 if field.get("inline") else 0,
-                    i,
-                ),
+                field_rows,
             )
 
         logger.debug(f"Embed {embed_id} created by user {user_id}")
@@ -384,19 +392,24 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
 
         self._db.execute("DELETE FROM embed_fields WHERE embed_id = ?", (embed_id,))
 
-        for i, field in enumerate(sanitized.get("fields", [])):
-            field_id = self._generate_id()
-            self._db.execute(
+        # Same batched insert as create_embed: one statement instead of one
+        # INSERT per field (see the create path for the rationale).
+        field_rows = [
+            (
+                self._generate_id(),
+                embed_id,
+                field["name"],
+                field["value"],
+                1 if field.get("inline") else 0,
+                i,
+            )
+            for i, field in enumerate(sanitized.get("fields", []))
+        ]
+        if field_rows:
+            self._db.execute_many(
                 """INSERT INTO embed_fields (id, embed_id, name, value, inline, position)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    field_id,
-                    embed_id,
-                    field["name"],
-                    field["value"],
-                    1 if field.get("inline") else 0,
-                    i,
-                ),
+                field_rows,
             )
 
         logger.debug(f"Embed {embed_id} updated by user {user_id}")
