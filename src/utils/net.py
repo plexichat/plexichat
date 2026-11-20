@@ -103,13 +103,27 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     # Get headers from scope
     headers = scope.get("headers", [])
 
-    # Function to get header value from ASGI list of tuples
-    def get_header(name: str) -> Optional[str]:
+    # ASGI permits the same header name to appear more than once. Reading only
+    # the first X-Forwarded-For let a client hide a spoofed value in an earlier
+    # duplicate while a trusted proxy appended the real client address in a
+    # later one: the attacker's header won and the IP used for rate limiting,
+    # IP bans, audit logs and the admin host-restriction gate was forged.
+    # Collecting every value in wire order and feeding them all to the
+    # rightmost-untrusted-hop walk below keeps the proxy-appended entry last,
+    # where the walk starts, so the client-controlled duplicates are ignored.
+    #
+    # latin-1 is the ASGI-native byte-to-text mapping; it never raises on
+    # arbitrary header bytes. ``bytes.decode()`` (UTF-8) turned one 0xFF in a
+    # header into an unhandled exception on this security-critical path.
+    def get_headers(name: str) -> List[str]:
         name_bytes = name.lower().encode()
-        for k, v in headers:
-            if k.lower() == name_bytes:
-                return v.decode()
-        return None
+        return [v.decode("latin-1") for k, v in headers if k.lower() == name_bytes]
+
+    def get_header(name: str) -> Optional[str]:
+        values = get_headers(name)
+        # For single-value hints (CF-Connecting-IP) the proxy-inserted value is
+        # the last one; prefer it over an earlier client-supplied duplicate.
+        return values[-1] if values else None
 
     trusted_proxies: List[str] = []
     try:
@@ -121,7 +135,12 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     # Only consider X-Forwarded-For if the direct peer is a trusted proxy.
     client_ip = direct_ip
     if direct_ip and _ip_matches_trusted(direct_ip, trusted_proxies):
-        forwarded = get_header("X-Forwarded-For")
+        # Every X-Forwarded-For header, in wire order, is one logical list.
+        # A trusted reverse proxy appends the observed peer to the right, so
+        # concatenating in this order preserves the invariant the walk below
+        # relies on: the rightmost entry is the one our infrastructure added.
+        forwarded_entries = get_headers("X-Forwarded-For")
+        forwarded = ",".join(forwarded_entries) if forwarded_entries else None
         if forwarded:
             parts = [p.strip() for p in forwarded.split(",") if p.strip()]
             if parts:
