@@ -272,7 +272,27 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         return self._is_blocked(blocker_id, blocked_id)
 
     def is_blocked_by_either(self, user_id: SnowflakeID, other_id: SnowflakeID) -> bool:
-        """Check if either user has blocked the other."""
-        return self._is_blocked(user_id, other_id) or self._is_blocked(
-            other_id, user_id
+        """Check if either user has blocked the other, in one bounded lookup.
+
+        The old implementation issued two sequential ``fetch_one`` probes
+        (``user_id -> other_id`` then ``other_id -> user_id``), so the common
+        "no block" case paid two authoritative DB round trips on every call.
+        This gate sits on several hot paths - DM create/send, presence - and is
+        also called once per other participant by DM fan-out, so the duplicate
+        round trip multiplied across the whole participant set.
+
+        A single OR predicate is exactly equivalent (``EXISTS(A) OR
+        EXISTS(B)``) and keeps the same fail-closed contract: the query is
+        scoped to only these two user ids - no cross-user rows can satisfy it -
+        and a DB error still propagates to the caller instead of resolving to
+        "not blocked". The existing indexes on ``rel_blocked.blocker_id`` and
+        ``rel_blocked.blocked_id`` serve the two arms.
+        """
+        row = self._db.fetch_one(
+            """SELECT 1 AS ok FROM rel_blocked
+               WHERE (blocker_id = ? AND blocked_id = ?)
+                  OR (blocker_id = ? AND blocked_id = ?)
+               LIMIT 1""",
+            (int(user_id), int(other_id), int(other_id), int(user_id)),
         )
+        return row is not None
