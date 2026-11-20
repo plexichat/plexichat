@@ -80,6 +80,11 @@ class TestFeatureSettingsBoundaries:
             UpdateFeaturesRequest(
                 rate_limit_tier="bad tier!", expires_at=None, notes=None
             ),
+            # ``$`` matches before a trailing newline, so a ``match``-based
+            # tier check accepted a control-character-laden tier name.
+            UpdateFeaturesRequest(
+                rate_limit_tier="gold\n", expires_at=None, notes=None
+            ),
             UpdateFeaturesRequest(
                 rate_limit_tier=None, expires_at=None, notes="a\x00b"
             ),

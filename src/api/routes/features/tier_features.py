@@ -66,11 +66,23 @@ def _validate_feature_settings(body: UpdateFeaturesRequest) -> None:
     """Constrain the keys/values of a raw feature-settings update payload."""
     if body.rate_limit_tier is not None:
         tier = str(body.rate_limit_tier)
-        if len(tier) > _MAX_TIER_NAME_LENGTH or not _TIER_NAME.match(tier):
+        # ``$`` matches just before a trailing newline in Python, so
+        # ``_TIER_NAME.match("gold\n")`` used to pass and persist a tier name
+        # carrying a control character into feature config and log lines.
+        # Require a full match and run the shared control-character guard, the
+        # same defence ``notes`` already gets below.
+        if len(tier) > _MAX_TIER_NAME_LENGTH or not _TIER_NAME.fullmatch(tier):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"error": {"code": 400, "message": "Invalid rate limit tier"}},
             )
+        try:
+            reject_control_characters(tier, "rate limit tier")
+        except HardeningViolation as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": str(exc)}},
+            ) from exc
     if body.notes is not None:
         notes = str(body.notes)
         if len(notes) > _MAX_FEATURE_NOTES_LENGTH:

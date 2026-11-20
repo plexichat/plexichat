@@ -143,7 +143,20 @@ class TestInviteBoundaries:
         from src.api.routes.channels.helpers import require_invite_code
 
         assert require_invite_code("aB3_-xyz") == "aB3_-xyz"
-        for bad in ("", None, "a" * 65, "../etc/passwd", "has space", "x\x00y"):
+        for bad in (
+            "",
+            None,
+            "a" * 65,
+            "../etc/passwd",
+            "has space",
+            "x\x00y",
+            # ``$`` matches before a trailing newline, so the old ``match``
+            # check let these through into storage lookups and log lines.
+            "abc\n",
+            "abc\r\n",
+            "abc\x1b",
+            "abc\u202e",
+        ):
             with pytest.raises(HTTPException) as exc:
                 require_invite_code(bad)
             assert exc.value.status_code == 400

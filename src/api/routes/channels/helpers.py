@@ -9,6 +9,7 @@ import utils.logger as logger
 from src.api.schemas.servers import ChannelResponse
 from src.api.schemas.common import SnowflakeID
 from src.core.security.hardening import (
+    HardeningViolation,
     bounded_int,
     parse_id,
     reject_control_characters,
@@ -156,8 +157,20 @@ INVITE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 def require_invite_code(value: Any) -> str:
     """Validate an invite code before it reaches a storage lookup."""
-    code = str(value or "")
-    if not INVITE_CODE_PATTERN.match(code):
+    # Invite codes are echoed into error log lines by the join handlers, so a
+    # trailing CR/LF (or any other control character) must never survive this
+    # gate. The earlier ``match`` + ``$`` check accepted ``"abc\n"``: in Python
+    # ``$`` also matches just before a final newline, so the control character
+    # reached both the storage lookup and the log line. Reject controls first,
+    # then require the pattern to cover the entire string with ``fullmatch``.
+    try:
+        code = reject_control_characters(value, "invite code")
+    except (HardeningViolation, ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid invite code"}},
+        ) from exc
+    if not INVITE_CODE_PATTERN.fullmatch(code):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid invite code"}},
