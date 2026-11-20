@@ -70,16 +70,30 @@ def test_missing_binding_context_is_denied(
             test_user_with_token["username"], test_user_with_token["password"]
         )
 
-    # No IP / UA at all -> denied.
+    # The session was created with no IP/UA, so it has no stored binding
+    # indices. With token binding enabled that is a fail-closed denial: a
+    # missing stored binding must never silently disable the check and let a
+    # stolen token be replayed from any context.
     with pytest.raises(TokenInvalidError):
         auth_manager.verify_token(result.token)
-    # IP but no UA -> still denied (binding requires a complete context).
     with pytest.raises(TokenInvalidError):
         auth_manager.verify_token(result.token, ip_address="203.0.113.10")
-    # With a full context the same token verifies.
-    assert (
+    with pytest.raises(TokenInvalidError):
         auth_manager.verify_token(
             result.token, ip_address="203.0.113.10", user_agent="test-agent/1.0"
+        )
+
+    # A session that DID record its binding context still verifies from that
+    # exact context (the check is hardened, not removed).
+    bound = auth_manager.login(
+        test_user_with_token["username"],
+        test_user_with_token["password"],
+        ip_address="203.0.113.10",
+        user_agent="test-agent/1.0",
+    )
+    assert (
+        auth_manager.verify_token(
+            bound.token, ip_address="203.0.113.10", user_agent="test-agent/1.0"
         ).valid
         is True
     )
