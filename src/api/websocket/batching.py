@@ -13,10 +13,14 @@ After: an opt-in :class:`OutboundFrameBatcher` collects frames in a bounded
 ``asyncio.Queue``. A single background task drains up to ``max_batch`` frames
 per flush and writes them through one writer (one lock acquisition) on a fixed
 flush interval, waking early when the first frame of an idle period arrives.
-When the queue is full, new frames are shed and counted instead of growing
-memory without bound. Coalescing removes per-frame scheduling/lock overhead
-without changing the wire protocol: each queued frame is still an independent
-WebSocket message, written in enqueue order.
+On wakeup the task waits a short, bounded *gather window* so frames arriving in
+nearby event-loop turns join the same batch instead of each paying for its own
+writer call (the original eager-wakeup path flushed one frame at a time for
+traffic spread across loop turns). When the queue is full, new frames are shed
+and counted instead of growing memory without bound. Coalescing removes
+per-frame scheduling/lock overhead without changing the wire protocol: each
+queued frame is still an independent WebSocket message, written in enqueue
+order.
 """
 
 from __future__ import annotations
@@ -32,6 +36,13 @@ DEFAULT_QUEUE_SIZE = 256
 #: How long the flush task waits for the first frame of an idle period. Bounds
 #: the added latency of batching; a burst is flushed as soon as it is enqueued.
 DEFAULT_FLUSH_INTERVAL_S = 0.01
+
+#: Ceiling on the "gather window": after the first frame wakes an idle flush
+#: task, it waits up to this long for nearby frames to arrive before writing.
+#: Bounded and short so the added latency is always below the flush interval;
+#: without it, frames delivered on consecutive event-loop turns were each
+#: flushed in their own writer call (measured: 40 frames -> 40 flushes).
+DEFAULT_GATHER_WINDOW_S = 0.002
 
 #: Most frames written by a single writer call (flush). Bounds the time spent
 #: in one flush so a large backlog cannot starve other loop work.
@@ -77,6 +88,10 @@ class OutboundFrameBatcher:
         self._writer = writer
         self._flush_interval = max(0.001, float(flush_interval))
         self._max_batch = max(1, int(max_batch))
+        # Never gather longer than the interval itself: for callers that set a
+        # very small interval the periodic tick is already the coalescing
+        # boundary, and a larger gather would only add needless latency.
+        self._gather_window = min(self._flush_interval, DEFAULT_GATHER_WINDOW_S)
         self._wakeup = asyncio.Event()
 
         # Back-pressure / throughput counters (cumulative since construction).
@@ -207,7 +222,15 @@ class OutboundFrameBatcher:
             total += written
 
     async def run(self) -> None:
-        """Background loop: flush on the interval or on the first queued frame."""
+        """Background loop: coalesce a short gather window, then flush a batch.
+
+        The first frame of an idle period still wakes the loop immediately
+        (bounded latency). Instead of writing that single frame at once, the
+        loop waits a short bounded gather window so frames delivered on nearby
+        event-loop turns join the same batch. The periodic interval remains a
+        fallback that drains anything that never woke the loop, so no accepted
+        frame can be stranded.
+        """
         try:
             while True:
                 try:
@@ -217,6 +240,16 @@ class OutboundFrameBatcher:
                 except asyncio.TimeoutError:
                     pass
                 self._wakeup.clear()
+                if self._queue.empty():
+                    # Spurious wakeup (e.g. a frame drained by a concurrent
+                    # flush_outbound): do not pay for an empty gather.
+                    continue
+                if self._gather_window:
+                    # Sleep, not wakeup.wait(): a steady trickle of frames would
+                    # otherwise keep re-triggering the wait and defeat the
+                    # coalescing window. Frames arriving during the sleep set
+                    # the event again and are picked up by this same flush.
+                    await asyncio.sleep(self._gather_window)
                 await self.flush_once()
         except asyncio.CancelledError:
             # Best-effort final drain so a clean shutdown does not strand

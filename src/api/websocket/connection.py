@@ -24,6 +24,14 @@ from .rendering import PayloadRenderCache
 from src.core.events.snowflakes import stringify_snowflake_ids
 
 
+#: Upper bound on the per-connection cache of JSON-serialized frame bytes.
+#: Frames rendered by ``PayloadRenderCache`` are shared objects, so repeated
+#: identical payloads (typing re-asserts, presence updates) reuse the same dict
+#: and only need to be serialized once. The cache is a bounded FIFO and is
+#: keyed by object identity (with an identity check on lookup) to stay correct.
+MAX_SERIALIZE_CACHE_ENTRIES = 16
+
+
 class ConnectionState(Enum):
     """Connection lifecycle states."""
 
@@ -81,6 +89,12 @@ class Connection:
     # Observable back-pressure counter: writes abandoned because the peer did
     # not accept a frame within ``_send_timeout``.
     _send_timeouts: int = field(default=0, repr=False)
+    # Bounded FIFO cache: id(frame) -> (frame, serialized_utf8_bytes). Avoids
+    # re-running json.dumps for the same rendered frame object on compressed
+    # sends. Holding a strong ref to the frame prevents id() reuse; the identity
+    # check on lookup is a second guard. Frames are treated as immutable once
+    # enqueued (the render cache already relies on that).
+    _serialize_cache: Dict[int, tuple] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         if self.compress and self._zlib_context is None:
@@ -164,6 +178,30 @@ class Connection:
 
         return await self._write_frames([data])
 
+    def _serialize_frame(self, frame: Dict[str, Any]) -> bytes:
+        """Return the UTF-8 JSON bytes for ``frame``, caching shared objects.
+
+        Compressed frames are serialized per message (each still needs its own
+        zlib sync-flush boundary), but the JSON encoding itself is pure. Rendered
+        gateway frames are shared objects, so a burst of identical payloads
+        would otherwise run ``json.dumps`` once per frame. Cache by identity in
+        a bounded FIFO; the cache holds a strong reference so ``id()`` cannot be
+        recycled while an entry lives, and the identity check guards lookup.
+        """
+        import json
+
+        key = id(frame)
+        cached = self._serialize_cache.get(key)
+        if cached is not None and cached[0] is frame:
+            return cached[1]
+
+        encoded = json.dumps(frame).encode("utf-8")
+        if len(self._serialize_cache) >= MAX_SERIALIZE_CACHE_ENTRIES:
+            # dict preserves insertion order: drop the oldest entry.
+            self._serialize_cache.pop(next(iter(self._serialize_cache)))
+        self._serialize_cache[key] = (frame, encoded)
+        return encoded
+
     async def _write_frames(self, frames: List[Dict[str, Any]]) -> bool:
         """Write a batch of frames in order under one send-lock acquisition.
 
@@ -179,9 +217,7 @@ class Connection:
                 for index, data in enumerate(frames):
                     try:
                         if self.compress and self._zlib_context:
-                            import json
-
-                            json_bytes = json.dumps(data).encode("utf-8")
+                            json_bytes = self._serialize_frame(data)
                             compressed = self._zlib_context.compress(json_bytes)
                             compressed += self._zlib_context.flush(zlib.Z_SYNC_FLUSH)
                             await asyncio.wait_for(
