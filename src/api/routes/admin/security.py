@@ -34,6 +34,15 @@ import utils.logger as logger
 
 router = APIRouter()
 
+# These three lists sit on attacker-growable tables: any holder of the matching
+# security scope can create rows without a server-side cap. Serving the whole
+# table in one request let a single admin turn a bloated table into an
+# unbounded allocation (and, for blocked IPs, an unbounded per-row decrypt
+# pass) that stalls a worker. Bound both the page size and how far it may
+# paginate -- the same contract the other admin listing routes already use.
+_MAX_SECURITY_LIST_LIMIT = 500
+_MAX_SECURITY_LIST_OFFSET = 1_000_000
+
 
 def _serialize_access_token(token) -> AccessTokenResponse:
     return AccessTokenResponse(
@@ -78,9 +87,13 @@ def _serialize_access_token_scope(scope) -> AccessTokenScopeResponse:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_blocked_ips(request: Request):
+async def get_blocked_ips(
+    request: Request,
+    limit: int = Query(200, ge=1, le=_MAX_SECURITY_LIST_LIMIT),
+    offset: int = Query(0, ge=0, le=_MAX_SECURITY_LIST_OFFSET),
+):
     """
-    Retrieve a list of all currently blocked IP addresses.
+    Retrieve a bounded page of currently blocked IP addresses.
     """
     check_host_restriction(request)
     require_admin_permission(request, "admin.security.ipblock")
@@ -97,7 +110,7 @@ async def get_blocked_ips(request: Request):
                 ),
             }
         )
-        for ip in auth.get_blocked_ips()
+        for ip in auth.get_blocked_ips(limit=limit, offset=offset)
     ]
 
 
@@ -131,15 +144,22 @@ async def block_ip(request: Request, body: IPBlockRequest):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def list_access_tokens(request: Request, include_revoked: bool = True):
+async def list_access_tokens(
+    request: Request,
+    include_revoked: bool = True,
+    limit: int = Query(200, ge=1, le=_MAX_SECURITY_LIST_LIMIT),
+    offset: int = Query(0, ge=0, le=_MAX_SECURITY_LIST_OFFSET),
+):
     """
-    List all API access tokens created by administrators.
+    List a bounded page of API access tokens created by administrators.
     """
     check_host_restriction(request)
     require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
-    tokens = auth.list_api_access_tokens(include_revoked=include_revoked)
+    tokens = auth.list_api_access_tokens(
+        include_revoked=include_revoked, limit=limit, offset=offset
+    )
     return [_serialize_access_token(t) for t in tokens]
 
 
@@ -556,9 +576,13 @@ async def unblock_ip(request: Request, ip_address: str):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_banned_usernames(request: Request):
+async def get_banned_usernames(
+    request: Request,
+    limit: int = Query(200, ge=1, le=_MAX_SECURITY_LIST_LIMIT),
+    offset: int = Query(0, ge=0, le=_MAX_SECURITY_LIST_OFFSET),
+):
     """
-    Retrieve the list of patterns used to ban specific usernames.
+    Retrieve a bounded page of banned username patterns.
     """
     check_host_restriction(request)
     require_admin_permission(request, "admin.security.usernames")
@@ -566,7 +590,7 @@ async def get_banned_usernames(request: Request):
 
     return [
         BannedUsernameResponse(**p.__dict__) if hasattr(p, "__dict__") else p
-        for p in admin.get_banned_usernames()
+        for p in admin.get_banned_usernames(limit=limit, offset=offset)
     ]
 
 

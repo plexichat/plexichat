@@ -278,8 +278,12 @@ def create_api_access_token(
     )
 
 
-def list_api_access_tokens(include_revoked: bool = True) -> List[AccessToken]:
-    return _get_auth_manager().get_instance().list_api_access_tokens(include_revoked)
+def list_api_access_tokens(
+    include_revoked: bool = True, limit: int = 200, offset: int = 0
+) -> List[AccessToken]:
+    return _get_auth_manager().get_instance().list_api_access_tokens(
+        include_revoked, limit, offset
+    )
 
 
 def get_api_access_token(token_id: int) -> Optional[AccessToken]:

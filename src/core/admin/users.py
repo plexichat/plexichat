@@ -235,9 +235,16 @@ def force_username_change(db: Any, user_id: int, forced: bool = True) -> bool:
     return True
 
 
-def get_banned_usernames(db: Any) -> List[AdminBannedUsername]:
-    """Get list of banned username patterns."""
-    rows = db.fetch_all("SELECT * FROM username_blacklist ORDER BY created_at DESC")
+def get_banned_usernames(
+    db: Any, limit: int = 200, offset: int = 0
+) -> List[AdminBannedUsername]:
+    """Get a bounded page of banned username patterns."""
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, min(int(offset), 1_000_000))
+    rows = db.fetch_all(
+        "SELECT * FROM username_blacklist ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    )
     result = []
     for row in rows:
         if isinstance(row, dict):

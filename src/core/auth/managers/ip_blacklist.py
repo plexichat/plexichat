@@ -91,9 +91,17 @@ class IpBlacklistMixin(AuthManagerProtocol):
             )
             return False
 
-    def get_blocked_ips(self) -> List[Dict[str, Any]]:
+    def get_blocked_ips(
+        self, limit: int = 200, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        # Bounded, deterministic page: the admin route passes validated
+        # values; callers that omit them keep a sane default instead of an
+        # unbounded decrypt+serialize pass over an attacker-growable table.
+        limit = max(1, min(int(limit), 500))
+        offset = max(0, min(int(offset), 1_000_000))
         rows = self._db.fetch_all(
-            "SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC"
+            "SELECT * FROM auth_ip_blacklist ORDER BY blocked_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         )
         for r in rows:
             try:

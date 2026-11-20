@@ -232,9 +232,11 @@ def force_username_change(user_id: int, forced: bool = True) -> bool:
     return users.force_username_change(_get_db(), user_id, forced)
 
 
-def get_banned_usernames() -> List[AdminBannedUsername]:
-    """Retrieve the list of banned username patterns."""
-    return users.get_banned_usernames(_get_db())
+def get_banned_usernames(
+    limit: int = 200, offset: int = 0
+) -> List[AdminBannedUsername]:
+    """Retrieve a bounded page of banned username patterns."""
+    return users.get_banned_usernames(_get_db(), limit, offset)
 
 
 def add_banned_username(

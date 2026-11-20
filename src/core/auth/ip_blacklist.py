@@ -32,9 +32,9 @@ def is_ip_blocked(ip_address: str) -> bool:
     return _get_auth_manager().get_instance().is_ip_blocked(ip_address)
 
 
-def get_blocked_ips() -> List[Dict[str, Any]]:
-    """Get all blocked IPs."""
-    return _get_auth_manager().get_instance().get_blocked_ips()
+def get_blocked_ips(limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
+    """Get a bounded page of blocked IPs."""
+    return _get_auth_manager().get_instance().get_blocked_ips(limit, offset)
 
 
 __all__ = [

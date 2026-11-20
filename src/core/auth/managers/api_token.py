@@ -121,18 +121,25 @@ class ApiTokenMixin(AuthManagerProtocol):
         access_token.token = token
         return access_token
 
-    def list_api_access_tokens(self, include_revoked: bool = True) -> List[AccessToken]:
+    def list_api_access_tokens(
+        self, include_revoked: bool = True, limit: int = 200, offset: int = 0
+    ) -> List[AccessToken]:
+        # The token table is growable by any admin holding the token scope;
+        # clamp the page so one listing cannot materialise the whole table.
+        limit = max(1, min(int(limit), 500))
+        offset = max(0, min(int(offset), 1_000_000))
         now = self._get_timestamp()
         if include_revoked:
             rows = self._db.fetch_all(
-                "SELECT * FROM auth_api_access_tokens ORDER BY created_at DESC"
+                "SELECT * FROM auth_api_access_tokens ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
             )
         else:
             rows = self._db.fetch_all(
                 """SELECT * FROM auth_api_access_tokens
                    WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > ?)
-                   ORDER BY created_at DESC""",
-                (now,),
+                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                (now, limit, offset),
             )
         return [self._row_to_access_token(row) for row in rows]
 
