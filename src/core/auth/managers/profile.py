@@ -19,6 +19,35 @@ from .protocol import AuthManagerProtocol
 from .registration import MAX_EMAIL_LENGTH
 
 
+# ``get_user_profiles_bulk`` is the shared username/display-name resolver for
+# every listing (message pages, member lists, search results, DMs, ban/grant
+# lists, ...).  Before this tier it re-read the shared cache once per user on
+# every page -- and skipped the cache entirely when Valkey was unavailable,
+# re-querying ``auth_users`` for every listing request.  A short-TTL,
+# process-local L1 keeps warm ids off both paths.  The entry lives under the
+# SAME ``user_profile:{uid}`` key as the shared cache, so every existing
+# ``cache_delete`` / ``invalidate_pattern("user_profile:*")`` mutation hook
+# (profile edit, deletion, feature/badge change, admin edit) clears it too.
+# ``src.core.database.cache.base`` already bounds that tier by entry count and
+# bytes; the short TTL additionally bounds cross-worker staleness.
+PROFILE_BULK_L1_TTL_SECONDS = 10
+
+# Observability counters for the L1 tier (also used by the query-count
+# regression tests).  Never part of the response contract.
+_profile_bulk_l1_stats = {"hits": 0, "misses": 0, "valkey_gets": 0}
+
+
+def get_profile_bulk_l1_stats() -> Dict[str, int]:
+    """Return a copy of the process-local profile L1 counters."""
+    return dict(_profile_bulk_l1_stats)
+
+
+def reset_profile_bulk_l1_stats() -> None:
+    """Zero the L1 counters (test/telemetry helper)."""
+    for key in _profile_bulk_l1_stats:
+        _profile_bulk_l1_stats[key] = 0
+
+
 class ProfileMixin(AuthManagerProtocol):
     def update_user(
         self,
@@ -302,10 +331,25 @@ class ProfileMixin(AuthManagerProtocol):
         missing_ids = []
 
         from src.core.database import cache_get, cache_set, valkey_available
+        from src.core.database.cache.base import mem_cache_get, mem_cache_set
 
+        use_valkey = valkey_available()
         for uid in user_ids:
             cache_key = f"user_profile:{uid}"
-            cached_profile = cache_get(cache_key) if valkey_available() else None
+            # Bounded L1 first: same key as the shared cache so mutations clear
+            # it automatically, and a short TTL bounds cross-worker staleness.
+            cached_profile = mem_cache_get(cache_key)
+            if cached_profile is not None:
+                _profile_bulk_l1_stats["hits"] += 1
+            else:
+                _profile_bulk_l1_stats["misses"] += 1
+                if use_valkey:
+                    _profile_bulk_l1_stats["valkey_gets"] += 1
+                    cached_profile = cache_get(cache_key)
+                    if cached_profile is not None:
+                        mem_cache_set(
+                            cache_key, cached_profile, PROFILE_BULK_L1_TTL_SECONDS
+                        )
 
             if cached_profile:
                 if isinstance(cached_profile, str):
@@ -358,8 +402,13 @@ class ProfileMixin(AuthManagerProtocol):
                 }
                 result[str(user_id)] = profile
 
-                if valkey_available():
-                    cache_set(f"user_profile:{user_id}", profile, ttl=300)
+                cache_key = f"user_profile:{user_id}"
+                # Seed the bounded L1 under the same key as the shared cache so
+                # the next listing resolves this username without a Valkey GET
+                # or a database query.
+                mem_cache_set(cache_key, profile, PROFILE_BULK_L1_TTL_SECONDS)
+                if use_valkey:
+                    cache_set(cache_key, profile, ttl=300)
 
         return result
 
