@@ -1,6 +1,7 @@
 """Login, session creation, throttling and failed-login bookkeeping."""
 
 import datetime
+import ipaddress
 from typing import Dict, Optional
 
 import utils.logger as logger
@@ -29,7 +30,45 @@ _GLOBAL_IP_SENTINEL_USER_ID = -1
 DEFAULT_CREDENTIAL_STUFFING_IP_LIMIT = 50
 
 
+def _canonical_source_ip(ip_address: Optional[str]) -> Optional[str]:
+    """Return one stable textual form for a source address.
+
+    ``blind_index`` hashes the raw string (after lower/strip), so equivalent
+    IPv6 spellings of a single address would each get a separate failure row.
+    A client behind a trusted proxy controls the X-Forwarded-For spelling, so
+    that let one source rotate spellings to reset both its per-user and global
+    failure budgets, and to inflate ``COUNT(DISTINCT ip_index)`` past
+    ``lockout_min_distinct_ips`` and lock an arbitrary account from one host.
+    Canonicalising here makes every spelling share one budget. Unparseable
+    values are passed through so they remain attributable (and rate-limited)
+    rather than being silently dropped.
+    """
+    if not ip_address:
+        return None
+    text = ip_address.strip()
+    try:
+        parsed = ipaddress.ip_address(text)
+        # An IPv4 peer may surface as ::ffff:a.b.c.d from a dual-stack socket
+        # but as a.b.c.d in an X-Forwarded-For header. Fold the mapped form so
+        # both spellings of the same peer share a failure budget too.
+        if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+            return str(parsed.ipv4_mapped)
+        return str(parsed)
+    except ValueError:
+        return text
+
+
 class LoginMixin(AuthManagerProtocol):
+    def _failure_ip_index(self, ip_address: Optional[str]) -> Optional[str]:
+        """Blind index of the canonical source IP for failure bookkeeping.
+
+        All per-IP/per-(user, IP) rows in ``auth_failed_logins`` must use this
+        helper so throttling, lockout and the global credential-stuffing budget
+        agree on what constitutes one source.
+        """
+        canonical = _canonical_source_ip(ip_address)
+        return self.crypto.blind_index(canonical, "ip_address") if canonical else None
+
     def create_session_for_user(
         self,
         user_id: int,
@@ -127,9 +166,7 @@ class LoginMixin(AuthManagerProtocol):
         # subsequent attempt from that source fail uniformly. It is checked
         # before the account lookup so a throttled source cannot enumerate
         # usernames either. Does not touch account state (no lockout DoS).
-        ip_index_for_budget = (
-            self.crypto.blind_index(ip_address, "ip_address") if ip_address else None
-        )
+        ip_index_for_budget = self._failure_ip_index(ip_address)
         if ip_index_for_budget:
             self._ensure_failed_logins_table()
             if self._global_ip_throttle_active(ip_index_for_budget):
@@ -163,7 +200,7 @@ class LoginMixin(AuthManagerProtocol):
         # other IPs — only a distributed pattern triggers the account lock.
         self._ensure_failed_logins_table()
         if ip_address:
-            ip_index = self.crypto.blind_index(ip_address, "ip_address")
+            ip_index = self._failure_ip_index(ip_address)
             if self._ip_throttle_active(user_id, ip_index):
                 self.crypto.verify_password(password, self._dummy_password_hash)
                 logger.warning(
@@ -384,7 +421,7 @@ class LoginMixin(AuthManagerProtocol):
     def _record_global_ip_failure(self, ip_address: str) -> None:
         """Increment the cross-account failure budget for one source IP."""
         self._ensure_failed_logins_table()
-        ip_index = self.crypto.blind_index(ip_address, "ip_address")
+        ip_index = self._failure_ip_index(ip_address)
         now = self._get_timestamp()
         try:
             self._db.execute(
@@ -462,7 +499,7 @@ class LoginMixin(AuthManagerProtocol):
         distinct_ips = 0
         now = self._get_timestamp()
         if ip_address:
-            ip_index = self.crypto.blind_index(ip_address, "ip_address")
+            ip_index = self._failure_ip_index(ip_address)
             row = self._db.fetch_one(
                 "SELECT attempts FROM auth_failed_logins WHERE user_id = ? AND ip_index = ?",
                 (user_id, ip_index),
