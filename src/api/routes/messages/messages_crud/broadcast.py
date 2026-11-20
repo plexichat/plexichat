@@ -60,10 +60,18 @@ def _resolve_recipients(
             is_server_channel = True
             server_id = int(server_id_hint)
         if is_server_channel and server_id:
-            try:
-                members = servers_mod.get_member_user_ids(server_id)
-            except Exception:
-                members = []
+            # The member listing is the expensive part of fanout: a burst of
+            # messages to one channel re-runs the same ``srv_members`` query
+            # for every send. Memoize it in a bounded, short-TTL cache that is
+            # invalidated on every membership write. The ``channels.view``
+            # check below still runs per member on every broadcast, so a
+            # permission change takes effect immediately without extra
+            # invalidation.
+            from src.core.servers.manager.channel_audience_cache import (
+                get_cached_channel_members,
+            )
+
+            members = get_cached_channel_members(servers_mod, server_id)
             has_permission = getattr(servers_mod, "has_permission", None)
             for member_id in members:
                 if has_permission is None:
