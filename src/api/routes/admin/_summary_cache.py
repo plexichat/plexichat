@@ -6,11 +6,20 @@ seconds, so the same summary is recomputed over and over.  This module stores
 the finished response for a short window and collapses those polls into a
 single computation.
 
+Concurrent identical polls *on a cold cache* are collapsed further by
+per-key single-flight: the first caller computes while the rest wait on one
+shared outcome instead of each running the whole dozen-query batch.  This is a
+process-local tier, so a fleet of N workers computes at most N times per burst
+(one leader per worker), not N x pollers.  In-flight bookkeeping is bounded so
+a hostile stream of distinct keys cannot grow it without limit.
+
 Two invariants make the cache safe:
 
 * The key is scoped to the backing database (object identity + configured
   path), so a re-pointed test database or a freshly opened production file can
-  never observe another database's cached summary.
+  never observe another database's cached summary.  The single-flight key is
+  *that same key*, so two scopes can never share an in-flight computation or
+  its result.
 * Callers perform the host gate and the permission-scope gate **before**
   consulting the cache.  A cached value is therefore only ever returned to a
   caller who has already been authorized on this request, and the cached
@@ -28,6 +37,36 @@ from typing import Any, Callable, Hashable
 _LOCK = threading.Lock()
 _ENTRIES: dict[tuple[Any, ...], tuple[float, Any]] = {}
 _MAX_ENTRIES = 128
+
+# Per-key single-flight state.  A leader publishes its outcome (value or
+# exception) on ``_InFlight`` and wakes every waiter through the event; the
+# entry is removed as soon as the outcome is published.  The registry is
+# capped so a burst of distinct keys falls back to independent computes rather
+# than growing waiter state without bound.
+_MAX_INFLIGHT = 64
+
+
+class _InFlight:
+    """One shared outcome for a set of concurrent identical callers."""
+
+    __slots__ = ("event", "value", "error")
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.value: Any = None
+        self.error: BaseException | None = None
+
+
+_INFLIGHT: dict[tuple[Any, ...], _InFlight] = {}
+
+_STATS = {
+    "hits": 0,
+    "misses": 0,
+    "computes": 0,
+    "coalesced": 0,
+    "inflight_rejected": 0,
+    "inflight_peak": 0,
+}
 
 # A monotonic token per live DB object.  Using ``id(db)`` alone is unsafe in a
 # test suite: once a fake DB is collected CPython may hand its id to a new DB,
@@ -74,23 +113,76 @@ def get_or_compute(
     producer: Callable[[], Any],
     ttl: float = DEFAULT_TTL_SECONDS,
 ) -> Any:
-    """Return a cached summary or compute (and cache) it once.
+    """Return a cached summary, computing it at most once per live key.
 
-    ``producer`` is called outside the lock so a slow DB query never blocks
-    unrelated cache lookups.  A concurrent duplicate computation is harmless:
-    the last writer's value wins and both callers observe an equivalent,
-    freshly computed summary.
+    A cache hit is served immediately.  On a miss the first caller becomes the
+    leader and runs ``producer`` outside the lock (so a slow query never blocks
+    unrelated keys); concurrent callers for the *same key* wait on one shared
+    outcome instead of each repeating the dozen-query batch.  Waiters receive
+    the leader's exact value, or the exact same exception if it failed -- a
+    failed compute is never cached, so the next call retries.
+
+    The in-flight registry is bounded: past ``_MAX_INFLIGHT`` distinct keys a
+    caller computes independently rather than adding unbounded waiter state.
+    Callers still run the host/permission gates before reaching this function,
+    and the key already carries the DB/authz scope, so coalescing can never
+    cross a scope boundary.
     """
     key = _make_key(namespace, params)
     now = time.monotonic()
+    leader = False
+    flight: _InFlight | None = None
+
     with _LOCK:
         entry = _ENTRIES.get(key)
         if entry is not None and entry[0] > now:
+            _STATS["hits"] += 1
             return entry[1]
 
-    value = producer()
+        flight = _INFLIGHT.get(key)
+        if flight is None:
+            if len(_INFLIGHT) >= _MAX_INFLIGHT:
+                # Bounded fallback: compute on our own rather than letting a
+                # key flood grow the waiter registry without limit.
+                _STATS["inflight_rejected"] += 1
+                leader = True
+                flight = None
+            else:
+                flight = _InFlight()
+                _INFLIGHT[key] = flight
+                leader = True
+                _STATS["misses"] += 1
+                _STATS["inflight_peak"] = max(
+                    _STATS["inflight_peak"], len(_INFLIGHT)
+                )
+        else:
+            _STATS["coalesced"] += 1
+
+    if not leader:
+        # Wait on the leader's outcome; it is always published (success or
+        # error) because the leader sets the event in a finally-style path.
+        assert flight is not None  # guaranteed: only non-leaders wait
+        flight.event.wait()
+        if flight.error is not None:
+            raise flight.error
+        return flight.value
+
+    try:
+        value = producer()
+    except BaseException as exc:
+        if flight is not None:
+            with _LOCK:
+                flight.error = exc
+                if _INFLIGHT.get(key) is flight:
+                    _INFLIGHT.pop(key, None)
+            flight.event.set()
+        raise
 
     with _LOCK:
+        if flight is not None:
+            flight.value = value
+            if _INFLIGHT.get(key) is flight:
+                _INFLIGHT.pop(key, None)
         if len(_ENTRIES) >= _MAX_ENTRIES:
             for stale in [k for k, (exp, _) in _ENTRIES.items() if exp <= now]:
                 _ENTRIES.pop(stale, None)
@@ -98,7 +190,26 @@ def get_or_compute(
                 oldest = min(_ENTRIES, key=lambda k: _ENTRIES[k][0])
                 _ENTRIES.pop(oldest, None)
         _ENTRIES[key] = (now + ttl, value)
+        _STATS["computes"] += 1
+    if flight is not None:
+        flight.event.set()
     return value
+
+
+def stats() -> dict:
+    """Snapshot of coalescing counters and current registry sizes."""
+    with _LOCK:
+        result = dict(_STATS)
+        result["size"] = len(_ENTRIES)
+        result["inflight"] = len(_INFLIGHT)
+        return result
+
+
+def reset_stats() -> None:
+    """Zero the counters without disturbing cached entries."""
+    with _LOCK:
+        for key in _STATS:
+            _STATS[key] = 0
 
 
 def warm(
