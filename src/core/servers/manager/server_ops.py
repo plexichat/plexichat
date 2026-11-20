@@ -31,6 +31,7 @@ from src.core.servers.validation import (
     validate_server_media_url,
 )
 from .converters import _row_to_server, _server_to_dict, _dict_to_server
+from .member_count_cache import prime_member_counts, invalidate_member_count_cache
 from .protocol import ServerProtocol
 
 
@@ -180,6 +181,10 @@ class ServerOpsMixin(ServerProtocol):
         self._cache_invalidate(
             self._permission_cache_prefix, f"{owner_id}:{server_id}:"
         )
+        # Creating a server inserts its owner as the first member; no cached
+        # count for this brand-new id can exist, but clear defensively so a
+        # listing primed from a stale id can never serve an old value.
+        invalidate_member_count_cache()
 
         if valkey_available():
             cache_delete(f"user_servers:{owner_id}")
@@ -284,9 +289,15 @@ class ServerOpsMixin(ServerProtocol):
         # the (server_id) indexes directly and membership is an EXISTS, so
         # each server contributes exactly one row regardless of how many
         # channels/roles/members it has.
+        #
+        # The member count is intentionally NOT a correlated COUNT(*) here:
+        # the same server appears in many users' lists and on every refresh of
+        # one user's list, so that subquery re-counted srv_members on each call.
+        # It now comes from a bounded, short-TTL per-server cache (see
+        # member_count_cache) whose misses are resolved in one batched query;
+        # join/leave mutations invalidate it. channel/role counts stay inline.
         query = """
             SELECT s.*,
-                   (SELECT COUNT(*) FROM srv_members WHERE server_id = s.id) as member_count,
                    (SELECT COUNT(*) FROM srv_channels WHERE server_id = s.id AND deleted = 0) as channel_count,
                    (SELECT COUNT(*) FROM srv_roles WHERE server_id = s.id AND deleted = 0) as role_count
             FROM srv_servers s
@@ -299,8 +310,16 @@ class ServerOpsMixin(ServerProtocol):
             LIMIT ?
         """
         rows = self._db.fetch_all(query, (user_id, limit))
+        if not rows:
+            return []
 
-        return [_row_to_server(row, self._encrypt_descriptions) for row in rows]
+        member_counts = prime_member_counts(self._db, [row["id"] for row in rows])
+        servers = []
+        for row in rows:
+            data = dict(row)
+            data["member_count"] = member_counts[int(row["id"])]
+            servers.append(_row_to_server(data, self._encrypt_descriptions))
+        return servers
 
     def server_exists(self, server_id: SnowflakeID) -> bool:
         """Check if a server exists by ID (without permission check)."""
