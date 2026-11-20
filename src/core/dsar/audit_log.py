@@ -456,7 +456,20 @@ class DSARLog:
                         # Legacy unkeyed entries remain verifiable verbatim.
                         calculated_checksum = hashlib.sha256(data).hexdigest()
 
-                    if calculated_checksum != stored_checksum:
+                    # Constant-time comparison of the chain checksum. A plain
+                    # ``!=`` short-circuits on the first differing byte, so a
+                    # tamperer with repeated verification access could walk the
+                    # HMAC digest byte-by-byte and forge an appended entry.
+                    # ``compare_digest`` removes that timing oracle; the
+                    # isinstance guard makes a missing/non-string checksum fail
+                    # closed instead of raising a TypeError out of verify_chain.
+                    checksum_matches = isinstance(
+                        stored_checksum, str
+                    ) and hmac.compare_digest(
+                        calculated_checksum.encode("utf-8"),
+                        stored_checksum.encode("utf-8"),
+                    )
+                    if not checksum_matches:
                         return (
                             False,
                             count,
