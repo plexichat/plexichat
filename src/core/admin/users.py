@@ -268,20 +268,29 @@ def add_banned_username(
     db: Any, pattern: str, reason: str, admin_id: int, is_regex: bool = False
 ) -> bool:
     """Add a pattern to the username blacklist."""
+    from src.core.auth.blacklist import invalidate_all_plans
+
     try:
         db.execute(
             "INSERT INTO username_blacklist (pattern, is_regex, reason, created_by) VALUES (?, ?, ?, ?)",
             (pattern, is_regex, reason, admin_id),
         )
-        return True
     except Exception as e:
         logger.error(f"Failed to ban username pattern: {e}")
         return False
+    # The auth manager reads the table into a short-lived derived plan.
+    # Drop local plans so a freshly banned name is rejected immediately,
+    # not after the plan's cross-node TTL expires.
+    invalidate_all_plans()
+    return True
 
 
 def remove_banned_username(db: Any, pattern_id: int) -> bool:
     """Remove a pattern from the username blacklist."""
     db.execute("DELETE FROM username_blacklist WHERE id = ?", (pattern_id,))
+    from src.core.auth.blacklist import invalidate_all_plans
+
+    invalidate_all_plans()
     return True
 
 
