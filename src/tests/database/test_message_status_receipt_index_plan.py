@@ -1,4 +1,4 @@
-"""Query-plan and result-parity guards for the message-status receipt index (012).
+"""Query-plan and result-parity guards for the message-status receipt index (013).
 
 An index is only useful if the planner actually picks it. These tests apply the
 real migration to an in-memory SQLite database and read ``EXPLAIN QUERY PLAN``
@@ -167,7 +167,7 @@ class TestMessageStatusReceiptIndex:
         ],
     )
     def test_baseline_sorts_without_composite_index(self, query, params):
-        # Before migration 012 the single-column message_id index finds the
+        # Before migration 013 the single-column message_id index finds the
         # rows but the planner materialises a temporary B-tree to order them.
         conn = _make_db(with_indexes=False)
         try:
