@@ -48,14 +48,18 @@ def test_literal_backslash_in_authority_is_refused(endpoint):
         _require_public_endpoint(endpoint)
 
 
-def test_literal_backslash_is_refused_even_after_https_check():
-    # Non-credential form passes require_https_url (it is a well-formed HTTPS
-    # URL with a host), so the rejection must come from the endpoint gate.
-    endpoint = require_https_url(
-        "https://169.254.169.254\\push.example/ep", "Web Push endpoint"
-    )
+def test_literal_backslash_is_refused_at_both_gates():
+    # The shared HTTPS shape helper now refuses a literal backslash in the
+    # authority itself, so this URL can never reach the endpoint gate through
+    # the normal registration path.
+    with pytest.raises(HardeningViolation, match="backslash"):
+        require_https_url(
+            "https://169.254.169.254\\push.example/ep", "Web Push endpoint"
+        )
+    # The endpoint gate still refuses it on a direct call, so removing or
+    # bypassing the shape check cannot re-open the SSRF path.
     with pytest.raises(ValueError, match="backslash"):
-        _require_public_endpoint(endpoint)
+        _require_public_endpoint("https://169.254.169.254\\push.example/ep")
 
 
 @pytest.mark.parametrize(

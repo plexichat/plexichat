@@ -26,7 +26,7 @@ Both must refuse a literal backslash in the authority. Percent-encoded
 import pytest
 
 from src.api.routes.features.reports import _is_safe_url
-from src.core.profiles.manager import _validate_profile_url
+from src.core.profiles.manager import _ssrf_guard_url, _validate_profile_url
 from src.core.security.errors import OutboundUrlRejected
 from src.core.security.hardening import HardeningViolation
 
@@ -58,10 +58,14 @@ def test_profile_url_gate_rejects_backslash_authority(url):
 
 
 def test_profile_host_gate_names_backslash_on_non_credential_form():
-    # This URL passes require_http_url (well-formed https, no credentials), so
-    # the refusal must come from the host gate's authority-backslash check.
-    with pytest.raises(OutboundUrlRejected, match="backslash"):
+    # The shared shape helper now refuses the URL before the profile host gate
+    # is reached, so the stored-link path is closed at the earliest boundary.
+    with pytest.raises((OutboundUrlRejected, HardeningViolation), match="backslash"):
         _validate_profile_url("https://8.8.8.8\\public.example/x", "banner_url")
+    # The host gate still refuses it on a direct call, so a caller that skips
+    # the shape helper cannot re-open the browser-side SSRF/open-redirect path.
+    with pytest.raises(OutboundUrlRejected, match="backslash"):
+        _ssrf_guard_url("https://8.8.8.8\\public.example/x", "banner_url")
 
 
 @pytest.mark.parametrize(
