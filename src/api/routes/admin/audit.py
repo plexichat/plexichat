@@ -3,10 +3,12 @@ Admin audit log routes for querying and exporting audit records.
 """
 
 from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from typing import Optional, Annotated
 from datetime import datetime, timezone
 import csv
 import io
+import json
 import time
 
 from pydantic import BeforeValidator
@@ -24,6 +26,14 @@ router = APIRouter()
 # window (a year of logs is well under this); cap the read so a single request
 # cannot turn an unbounded table scan into an unbounded allocation.
 _MAX_AUDIT_EXPORT_ROWS = 10_000
+
+# The database layer only exposes ``fetch_all`` (no server-side cursors), so a
+# single query still had to materialise every exported row at once. Reads are
+# now advanced with keyset pagination in bounded pages of this size: peak
+# resident rows are O(page size) instead of O(export size). ``id`` is the
+# INTEGER PRIMARY KEY and ``created_at`` is indexed, so each seek uses the index
+# and the id tiebreaker keeps ordering stable when many events share a ms.
+_AUDIT_EXPORT_CHUNK_SIZE = 500
 
 # A filtered query still has to be bounded: the deepest reachable page is
 # capped and the widest date window is one retention year. Without an indexed
@@ -64,6 +74,113 @@ def _csv_cell(value) -> str:
     if text[0] in _CSV_FORMULA_LEADS or (probe and probe[0] in _CSV_FORMULA_LEADS):
         return "'" + text
     return text
+
+
+_CSV_EXPORT_HEADER = [
+    "ID",
+    "Admin ID",
+    "Action",
+    "Target Type",
+    "Target ID",
+    "Details",
+    "IP Address",
+    "User Agent",
+    "Status",
+    "Timestamp",
+]
+
+# Snowflake columns stringified in the JSON export, matching the list endpoint
+# (a JS Number would round a 64-bit id past 2**53).
+_JSON_SNOWFLAKE_COLUMNS = ("admin_id", "target_id", "target_user_id")
+
+
+def _iter_audit_export_rows(db, first_page, conditions, params, page_size, max_rows):
+    """Yield audit rows in bounded, keyset-paginated pages.
+
+    ``first_page`` is fetched eagerly by the caller so a small export still
+    issues exactly one data query and DB errors surface before the response
+    starts streaming. Later pages advance on ``(created_at, id)`` rather than
+    OFFSET: the index on ``created_at`` keeps each seek bounded and the numeric
+    primary key breaks ties between events sharing a millisecond.
+    """
+    page = first_page
+    emitted = 0
+    while page:
+        for row in page:
+            if emitted >= max_rows:
+                return
+            emitted += 1
+            yield row
+        if len(page) < page_size or emitted >= max_rows:
+            return
+        last = page[-1]
+        keyset = "(created_at < ? OR (created_at = ? AND id < ?))"
+        where = " AND ".join([*conditions, keyset]) if conditions else keyset
+        page = db.fetch_all(
+            "SELECT * FROM admin_audit_log WHERE "
+            + where
+            + " ORDER BY created_at DESC, id DESC LIMIT ?",
+            (
+                *params,
+                last["created_at"],
+                last["created_at"],
+                last["id"],
+                page_size,
+            ),
+        )
+
+
+def _iter_audit_csv(rows):
+    """Stream CSV one row at a time; never buffer the whole file in memory."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(_CSV_EXPORT_HEADER)
+    yield buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    for log in rows:
+        timestamp = (
+            datetime.fromtimestamp(
+                log["created_at"] / 1000, tz=timezone.utc
+            ).isoformat()
+            if log.get("created_at")
+            else ""
+        )
+        writer.writerow(
+            [
+                _csv_cell(redact_secrets(log["id"])),
+                _csv_cell(redact_secrets(log["admin_id"])),
+                _csv_cell(redact_secrets(log["action"])),
+                _csv_cell(redact_secrets(log.get("target_type", ""))),
+                _csv_cell(redact_secrets(log.get("target_id", ""))),
+                _csv_cell(redact_secrets(log.get("details", ""))),
+                _csv_cell(redact_secrets(log.get("ip_address", ""))),
+                _csv_cell(redact_secrets(log.get("user_agent", ""))),
+                _csv_cell(redact_secrets(log["status"])),
+                _csv_cell(timestamp),
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+def _iter_audit_json(rows):
+    """Stream a JSON array one object at a time (bounded memory)."""
+    yield '{"logs":['
+    first = True
+    for log in rows:
+        row = dict(log)
+        for key in _JSON_SNOWFLAKE_COLUMNS:
+            if row.get(key) is not None:
+                row[key] = str(row[key])
+        payload = {key: redact_secrets(value) for key, value in row.items()}
+        if not first:
+            yield ","
+        yield json.dumps(payload, default=str, ensure_ascii=False)
+        first = False
+    yield "]}"
 
 
 def _audit_config() -> dict:
@@ -460,83 +577,34 @@ async def export_audit_logs(
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        query += " ORDER BY created_at DESC"
+        # Keyset ordering (numeric primary key as tiebreaker) makes bounded
+        # pagination stable even when many events share a millisecond.
+        query += " ORDER BY created_at DESC, id DESC"
 
-        # Hard row cap: an export may never materialise more than
-        # _MAX_AUDIT_EXPORT_ROWS rows, regardless of the filters supplied.
-        params.append(_MAX_AUDIT_EXPORT_ROWS)
-        query += " LIMIT ?"
-
-        logs = db.fetch_all(query, params)
+        page_size = _AUDIT_EXPORT_CHUNK_SIZE
+        # Fetch the first page eagerly: small exports still issue a single data
+        # query and DB errors surface before the response starts. The remaining
+        # pages are pulled lazily in bounded slices while the overall number of
+        # exported rows stays capped at _MAX_AUDIT_EXPORT_ROWS.
+        first_page = db.fetch_all(query + " LIMIT ?", (*params, page_size))
+        rows = _iter_audit_export_rows(
+            db,
+            first_page,
+            list(conditions),
+            tuple(params),
+            page_size,
+            _MAX_AUDIT_EXPORT_ROWS,
+        )
 
         if format == "json":
-            from fastapi.responses import JSONResponse
-
-            # Snowflake columns (the acting admin and the entity target) are
-            # stringified in the JSON export too, matching the list endpoint.
-            export_rows = []
-            for log in logs:
-                row = dict(log)
-                for key in ("admin_id", "target_id", "target_user_id"):
-                    if row.get(key) is not None:
-                        row[key] = str(row[key])
-                # Every exported column is untrusted free text; scrub the whole
-                # row so a token in details/UA cannot leave via the JSON export.
-                export_rows.append(
-                    {key: redact_secrets(value) for key, value in row.items()}
-                )
-
-            return JSONResponse(
-                content={"logs": export_rows},
+            return StreamingResponse(
+                _iter_audit_json(rows),
+                media_type="application/json",
                 headers={"Content-Disposition": content_disposition("audit_logs.json")},
             )
 
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(
-            [
-                "ID",
-                "Admin ID",
-                "Action",
-                "Target Type",
-                "Target ID",
-                "Details",
-                "IP Address",
-                "User Agent",
-                "Status",
-                "Timestamp",
-            ]
-        )
-
-        for log in logs:
-            timestamp = (
-                datetime.fromtimestamp(
-                    log["created_at"] / 1000, tz=timezone.utc
-                ).isoformat()
-                if log.get("created_at")
-                else ""
-            )
-            writer.writerow(
-                [
-                    _csv_cell(redact_secrets(log["id"])),
-                    _csv_cell(redact_secrets(log["admin_id"])),
-                    _csv_cell(redact_secrets(log["action"])),
-                    _csv_cell(redact_secrets(log.get("target_type", ""))),
-                    _csv_cell(redact_secrets(log.get("target_id", ""))),
-                    _csv_cell(redact_secrets(log.get("details", ""))),
-                    _csv_cell(redact_secrets(log.get("ip_address", ""))),
-                    _csv_cell(redact_secrets(log.get("user_agent", ""))),
-                    _csv_cell(redact_secrets(log["status"])),
-                    _csv_cell(timestamp),
-                ]
-            )
-
-        output.seek(0)
-
-        from fastapi.responses import StreamingResponse
-
         return StreamingResponse(
-            iter([output.getvalue()]),
+            _iter_audit_csv(rows),
             media_type="text/csv",
             headers={"Content-Disposition": content_disposition("audit_logs.csv")},
         )

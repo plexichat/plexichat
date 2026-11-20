@@ -84,8 +84,13 @@ class TestAuditScansAreBounded:
                 ).status_code
                 == 200
             )
+            from src.api.routes.admin import audit as audit_routes
+
             export_sql, export_params = db.calls[0]
-            assert export_params == (0, 10_000)
+            # The first read is now a bounded page, not the whole 10k cap;
+            # later pages are keyset-fetched lazily while streaming.
+            assert export_params == (0, audit_routes._AUDIT_EXPORT_CHUNK_SIZE)
+            assert audit_routes._AUDIT_EXPORT_CHUNK_SIZE <= 10_000
             literals = [int(x) for x in re.findall(r"created_at >= (\d+)", export_sql)]
             assert literals
             low, high = _retention_cutoff_bounds()
