@@ -2,12 +2,45 @@
 Event routing - Logic for determining which users receive which events.
 """
 
-from typing import Callable, Mapping, Optional, List, Set
+from typing import Callable, Dict, Mapping, Optional, List, Set
 
 import utils.logger as logger
 
+from .recipient_cache import RecipientResolutionCache
 from .types import EventType, GatewayIntent
 from .models import Event
+
+
+# Presence updates are the highest-frequency scoped event: every status tick
+# re-resolves the subject's whole audience (friend graph + the member list of
+# every server they are in + a block filter). Memoize the resolved audience for
+# a short epoch so a burst pays for one walk. The cache is bounded, copy-safe
+# and keyed by the complete resolution identity -- see
+# ``EventRouter._get_presence_recipients`` -- so one user's audience can never
+# be served for another's, and a source/router swap always re-resolves.
+_presence_audience_cache = RecipientResolutionCache()
+
+
+def clear_presence_audience_cache() -> None:
+    """Invalidate all cached presence audiences (setup, membership changes, tests)."""
+    _presence_audience_cache.clear()
+
+
+def get_presence_audience_cache_stats() -> Dict[str, int]:
+    """Expose hit/miss/size counters for observability and regression tests."""
+    return _presence_audience_cache.stats()
+
+
+def _scope_id(value):
+    """Normalize a scope id for the presence cache key without accepting bools."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        # Cache keys must be hashable; stringify unexpected id types so a
+        # malformed id can never raise out of the routing hot path.
+        return str(value)
 
 
 # Hard ceiling on the number of recipients one event may resolve to. The
@@ -381,7 +414,35 @@ class EventRouter:
         return [pid for pid in participants if pid not in excluded]
 
     def _get_presence_recipients(self, user_id: int) -> List[int]:
-        """Get users who should receive presence updates for a user."""
+        """Get users who should receive presence updates for a user.
+
+        Presence is emitted on every status change, so this audience -- the
+        subject's friends plus the full member list of each server they are in,
+        minus blocked users -- was being rebuilt for every single event. A user
+        in several large servers turns that into thousands of member lookups
+        per burst. The result is memoized in a bounded, short-TTL cache keyed by
+        the *complete* resolution identity:
+
+        * the subject user id (two users never share an audience);
+        * the identities of the relationships and servers sources (a re-setup
+          of either cannot replay a stale audience);
+        * this router's identity (a fresh router from ``events.setup()`` starts
+          with a fresh namespace).
+
+        The cache returns lists by value, so a caller mutating its copy cannot
+        corrupt a later reuse. Fail-closed results (empty audiences) are cached
+        too: withholding for one TTL window is safer than widening an audience.
+        """
+        cache_key = (
+            _scope_id(user_id),
+            id(self._relationships),
+            id(self._servers),
+            id(self),
+        )
+        cached = _presence_audience_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         recipients: Set[int] = set()
 
         if self._relationships:
@@ -403,4 +464,6 @@ class EventRouter:
             for bid in blocked_ids:
                 recipients.discard(bid)
 
-        return list(recipients)
+        result = list(recipients)
+        _presence_audience_cache.put(cache_key, result)
+        return result
