@@ -238,6 +238,15 @@ def mem_cache_set(key: str, value: Any, ttl: int) -> None:
 def mem_cache_delete(key: str) -> bool:
     """Delete a key from the in-memory cache."""
     global _mem_cache_total_bytes
+    # ``cache_delete`` routes through here on every path. Drop any coalesced
+    # copy in the current request scope so a same-request read cannot serve a
+    # value that was just invalidated. Lazy import avoids a module cycle.
+    try:
+        from .request_local import invalidate_request_key
+
+        invalidate_request_key(key)
+    except Exception:  # coalescing is an optimisation, never a delete failure
+        pass
     with _mem_cache_lock:
         if key in _mem_cache:
             _mem_cache.pop(key, None)

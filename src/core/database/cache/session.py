@@ -14,8 +14,9 @@ from ..valkey_client import (
     is_available,
     ValkeyOperationError,
 )
-from .operations import cache_get, cache_delete, cache_set, invalidate_pattern
+from .operations import cache_delete, cache_set, invalidate_pattern
 from .base import default_ttl, mem_cache_delete, mem_cache_get, mem_cache_matching_keys
+from .request_local import coalesced_cache_get, invalidate_request_key
 
 
 def _glob_safe_id(value: Any) -> Optional[str]:
@@ -66,7 +67,11 @@ def cache_session(
 
     try:
         session_ttl = ttl if ttl is not None else default_ttl("session")
-        stored = cache_set(f"session:{session_id}", session_data, ttl=session_ttl)
+        session_key = f"session:{session_id}"
+        stored = cache_set(session_key, session_data, ttl=session_ttl)
+        # A write in this request must not be masked by an earlier coalesced
+        # read of the same key. (Deletes are cleared via mem_cache_delete.)
+        invalidate_request_key(session_key)
         client = get_client()
         if client and is_available():
             client.sadd(f"user_sessions:{user_id}", session_id)
@@ -78,8 +83,12 @@ def cache_session(
 
 
 def get_cached_session(session_id: str) -> Optional[Dict[str, Any]]:
-    """Get a cached session."""
-    return cache_get(f"session:{session_id}")
+    """Get a cached session.
+
+    Repeated lookups of the same session inside one request are coalesced into
+    a single backing read; the empty result of a miss is coalesced as well.
+    """
+    return coalesced_cache_get(f"session:{session_id}")
 
 
 def invalidate_session(session_id: str, user_id: Optional[int] = None) -> bool:

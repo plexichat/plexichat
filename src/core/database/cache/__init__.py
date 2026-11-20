@@ -39,6 +39,11 @@ from .presence import (
     get_bulk_presence,
 )
 from .rate_limit import check_rate_limit, reset_rate_limit
+from .request_local import (
+    coalesced_cache_get,
+    invalidate_request_key,
+    request_cache_scope,
+)
 
 __all__ = [
     "CacheError",
@@ -64,4 +69,7 @@ __all__ = [
     "get_bulk_presence",
     "check_rate_limit",
     "reset_rate_limit",
+    "coalesced_cache_get",
+    "invalidate_request_key",
+    "request_cache_scope",
 ]

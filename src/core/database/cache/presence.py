@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
 from .base import default_ttl
-from .operations import cache_get, cache_set, cache_get_many
+from .operations import cache_set, cache_get_many
+from .request_local import coalesced_cache_get, invalidate_request_key
 
 
 def cache_presence(
@@ -34,18 +35,25 @@ def cache_presence(
         "current_server_id": None,
     }
 
+    presence_key = f"presence:{user_id}"
     try:
-        return cache_set(
-            f"presence:{user_id}", presence_data, ttl=default_ttl("presence")
-        )
+        stored = cache_set(presence_key, presence_data, ttl=default_ttl("presence"))
+        # A same-request write must invalidate an earlier coalesced read of
+        # this presence key so the next read observes the new value.
+        invalidate_request_key(presence_key)
+        return stored
     except Exception as e:
         logger.warning(f"Failed to cache presence for user {user_id}: {e}")
         return False
 
 
 def get_cached_presence(user_id: int) -> Optional[Dict[str, Any]]:
-    """Get cached user presence."""
-    return cache_get(f"presence:{user_id}")
+    """Get cached user presence.
+
+    Rendering one request often resolves the same user's presence from several
+    layers; those identical lookups are coalesced into one backing read here.
+    """
+    return coalesced_cache_get(f"presence:{user_id}")
 
 
 def get_bulk_presence(user_ids: List[int]) -> Dict[int, Dict[str, Any]]:
