@@ -230,38 +230,78 @@ def ensure_serializable(obj: Any) -> Any:
     return obj
 
 
+# ``typing.get_type_hints`` resolves every annotation (including forward
+# references) in a class's module namespace and is comparatively expensive.
+# ``reconstruct_object`` runs on every cache hit, so for a cached dataclass
+# (Message/Channel/User/...) this work was repeated once per reconstructed
+# object. The result is pure type metadata: it is immutable for a given class
+# definition, carries no request/user data, and is identical on every node, so
+# it is safe to memoize process-locally. The map is keyed by the class object
+# itself and is therefore bounded by the finite set of reconstructable
+# dataclasses (never by user input).
+_enum_fields_cache: Dict[type, Dict[str, type]] = {}
+
+
+def _enum_fields_for_type(cls: type) -> Dict[str, type]:
+    """Return ``{field_name: enum_class}`` for a dataclass, computed once.
+
+    The expensive ``get_type_hints`` resolution and the Optional/Union unwrap
+    happen only on the first reconstruction of a given class; every later call
+    reads the memoized mapping. If hints cannot be resolved, an empty mapping
+    is cached and values are left untouched (fail closed, matching the old
+    behaviour).
+    """
+    cached = _enum_fields_cache.get(cls)
+    if cached is not None:
+        return cached
+
+    enum_fields: Dict[str, type] = {}
+    try:
+        hints = typing.get_type_hints(cls)
+        for field in dataclasses.fields(cls):
+            ftype = hints.get(field.name)
+            # Unwrap Optional[Enum]/Union[..., None]
+            for candidate in typing.get_args(ftype) or (ftype,):
+                if isinstance(candidate, type) and issubclass(candidate, Enum):
+                    enum_fields[field.name] = candidate
+                    break
+    except Exception:
+        enum_fields = {}
+    _enum_fields_cache[cls] = enum_fields
+    return enum_fields
+
+
+def reset_type_hints_cache_internal() -> None:
+    """Test helper: drop memoized enum-field metadata."""
+    _enum_fields_cache.clear()
+
+
 def _coerce_dataclass_enum_fields(cls: type, params: Dict[str, Any]) -> Dict[str, Any]:
     """Coerce plain values back into Enum members for dataclass fields.
 
     Enums serialize to their raw value (a JSON-friendly string), so a cached
     dataclass such as Channel (``channel_type: ChannelType``) reconstructs
     with a bare string unless the declared field type is honoured here.
-    Handles direct and Optional[...] Enum fields.
+    Handles direct and Optional[...] Enum fields. The field-to-enum map is
+    memoized per class so this hot path does not re-resolve type hints on every
+    cache hit.
     """
     if not dataclasses.is_dataclass(cls):
         return params
-    try:
-        hints = typing.get_type_hints(cls)
-    except Exception:
+    enum_fields = _enum_fields_for_type(cls)
+    if not enum_fields:
         return params
 
-    for field in dataclasses.fields(cls):
-        if field.name not in params:
+    for field_name, enum_cls in enum_fields.items():
+        if field_name not in params:
             continue
-        value = params[field.name]
-        ftype = hints.get(field.name)
-        # Unwrap Optional[Enum]/Union[..., None]
-        enum_cls = None
-        for candidate in typing.get_args(ftype) or (ftype,):
-            if isinstance(candidate, type) and issubclass(candidate, Enum):
-                enum_cls = candidate
-                break
-        if enum_cls is not None and not isinstance(value, enum_cls):
+        value = params[field_name]
+        if not isinstance(value, enum_cls):
             try:
-                params[field.name] = enum_cls(value)
+                params[field_name] = enum_cls(value)
             except Exception:
                 logger.debug(
-                    f"Could not coerce field {cls.__name__}.{field.name} "
+                    f"Could not coerce field {cls.__name__}.{field_name} "
                     f"to {enum_cls.__name__} from {value!r}"
                 )
     return params
