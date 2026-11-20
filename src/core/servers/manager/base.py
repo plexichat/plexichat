@@ -217,6 +217,10 @@ class ServerManager(
             server_id, user_id, action, target_type, target_id, changes, reason
         )
 
+    def _buffered_audit(self, capacity: int = 256):
+        """Batch the audit writes emitted in a bulk operation into bounded flushes."""
+        return self.audit_handler.buffered(capacity=capacity)
+
     # === Channel Operations ===
 
     def create_channel(
