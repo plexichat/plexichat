@@ -30,6 +30,12 @@ from src.utils.url_validation_cache import (
 # carrier-grade NAT range that must never be reachable via SSRF.
 _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 _NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
+# Deprecated IPv6 site-local space (RFC 3513 fec0::/10). It is non-global and
+# routes only inside a site, but ``ipaddress`` does not flag it as private,
+# reserved or link-local, so a literal or DNS answer in that range would sail
+# through the SSRF gate and let a caller reach internal infrastructure. Check
+# it explicitly; the range is narrow enough that no public address is caught.
+_SITE_LOCAL_NETWORK = ipaddress.ip_network("fec0::/10")
 
 
 def bracket_ip_literal(host: str) -> str:
@@ -325,6 +331,10 @@ class URLValidator:
         if addr.version == 4:
             return addr in _CGNAT_NETWORK
         if isinstance(addr, ipaddress.IPv6Address):
+            # Deprecated site-local (fec0::/10) is non-global but not flagged
+            # by any of the standard ipaddress predicates above.
+            if addr in _SITE_LOCAL_NETWORK:
+                return True
             # NAT64 transition range (64:ff9b::/96) embeds an IPv4 address in
             # the low 32 bits; on NAT64-capable hosts it routes to that IPv4
             # address, so private targets must be rejected.

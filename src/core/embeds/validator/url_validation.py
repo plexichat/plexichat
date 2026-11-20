@@ -208,6 +208,13 @@ def validate_url(url: str, field_name: str = "url") -> str:
                     or ip.is_reserved
                     or ip.is_multicast
                     or ip.is_unspecified
+                    # Deprecated site-local fec0::/10 is non-global but not
+                    # flagged by ipaddress; keep the fallback in lockstep with
+                    # URLValidator.is_private_ip.
+                    or (
+                        isinstance(ip, ipaddress.IPv6Address)
+                        and ip in ipaddress.ip_network("fec0::/10")
+                    )
                 ):
                     raise InvalidUrlError(
                         f"Private/reserved IP literal not allowed in {field_name}",
