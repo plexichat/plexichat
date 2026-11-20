@@ -152,6 +152,13 @@ class VersionedConfigSnapshot(Generic[_T]):
         miss.  A cheap version check is performed on every access unless a
         ``max_age`` ceiling is active, in which case the check itself is
         throttled to at most once per ceiling window.
+
+        Loading is fail-closed: if the loader raises, the cached value and the
+        check timestamp are dropped and the exception is re-raised.  Without
+        that, a failed rebuild would leave the previous value cached with a
+        freshly advanced timestamp, and the staleness ceiling would keep
+        serving that stale value (possibly authz/routing config) for the whole
+        window instead of retrying.
         """
         with self._lock:
             now = time.monotonic()
@@ -159,9 +166,7 @@ class VersionedConfigSnapshot(Generic[_T]):
                 # The staleness ceiling lets the hot path skip even the
                 # version check (which stats the config file) for a short
                 # window.  Version identity still governs rebuilds once we
-                # do check; the ceiling only bounds how often we pay for it
-                # and guarantees a periodic refresh even if the token misses
-                # an in-place mutation of the source.
+                # do check; the ceiling only bounds how often we pay for it.
                 within_ceiling = (
                     self._max_age is not None
                     and self._version_checked_at is not None
@@ -173,20 +178,32 @@ class VersionedConfigSnapshot(Generic[_T]):
 
                 self._version_checks += 1
                 version = self._current_version()
-                self._version_checked_at = now
                 if version == self._version:
                     # Ceiling elapsed but nothing changed: refresh the check
                     # timestamp, keep the value, do not run the loader.
+                    self._version_checked_at = now
                     self._hits += 1
                     return self._value
             else:
                 self._version_checks += 1
                 version = self._current_version()
-                self._version_checked_at = now
 
+            # Do not commit the check timestamp until a value has been
+            # produced: on failure there is no fresh value to serve, so the
+            # ceiling must not suppress further attempts.
+            try:
+                value = self._loader()
+            except BaseException:
+                # Fail closed — a stale value must never survive a failed
+                # rebuild, especially for config that gates authorization.
+                self._value = None
+                self._version = None
+                self._version_checked_at = None
+                raise
             self._misses += 1
-            self._value = self._loader()
+            self._value = value
             self._version = version
+            self._version_checked_at = now
             self._rebuilds += 1
             return self._value
 
