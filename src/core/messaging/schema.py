@@ -276,6 +276,11 @@ CREATE INDEX IF NOT EXISTS idx_msg_messages_reply ON msg_messages(reply_to_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_status_message ON msg_message_status(message_id);
 CREATE INDEX IF NOT EXISTS idx_msg_status_user ON msg_message_status(user_id);
+-- A message's receipts are listed ordered by timestamp on every status view.
+-- The single-column message_id index finds the rows but leaves the planner
+-- sorting them into a temporary B-tree; this composite serves the ordered
+-- scan directly (the read-receipt reads also filter status = 'read').
+CREATE INDEX IF NOT EXISTS idx_msg_status_message_timestamp ON msg_message_status(message_id, timestamp);
 
 CREATE INDEX IF NOT EXISTS idx_msg_pinned_conv ON msg_pinned(conversation_id);
 
