@@ -2,7 +2,7 @@
 Participant service - Business logic for conversation participants.
 """
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..models import Participant, ParticipantRole
 from ..repositories.participant import ParticipantRepository
@@ -220,6 +220,166 @@ class ParticipantService(BaseService):
         )
         self._cache_set(cache_key, False)
         return False
+
+    # Every IN clause below is built from at most this many ids.  The list
+    # endpoints that use this helper are page-capped (well under the limit),
+    # but the bound keeps the method safe for any future caller.
+    _BULK_PARTICIPATION_CHUNK = 256
+
+    def are_participants_bulk(
+        self, conversation_ids, user_id: SnowflakeID
+    ) -> Dict[int, bool]:
+        """Bulk counterpart of :meth:`is_participant` for list endpoints.
+
+        The single-participant check resolves a conversation in up to four
+        round trips (direct row, conversation metadata, ``srv_channels``
+        fallback, server membership). ``get_recent_chats`` used to call it once
+        per row, so a ten-row page cost ten independent rounds from a cold
+        cache. This method mirrors that decision tree but collapses it into a
+        bounded number of ``IN`` queries, and writes every result back into the
+        same per-pair cache so a later single check cannot disagree with it.
+
+        Only the *data shape* of the answer differs: a mapping of conversation
+        id to the same yes/no decision ``is_participant`` would return. Callers
+        that cannot supply a checker still fall back to the original per-row
+        path, so no authorization decision is skipped when this helper is not
+        available.
+        """
+        unique: List[int] = []
+        seen = set()
+        for value in conversation_ids:
+            try:
+                cid = int(value)
+            except (TypeError, ValueError):
+                continue
+            if cid not in seen:
+                seen.add(cid)
+                unique.append(cid)
+        if not unique:
+            return {}
+
+        allowed: Dict[int, bool] = {}
+        pending: List[int] = []
+        for cid in unique:
+            cached = self._cache_get((cid, user_id))
+            if cached is not None:
+                allowed[cid] = bool(cached)
+            else:
+                pending.append(cid)
+
+        for start in range(0, len(pending), self._BULK_PARTICIPATION_CHUNK):
+            chunk = pending[start : start + self._BULK_PARTICIPATION_CHUNK]
+            in_clause, params = self._repo._build_in_clause(chunk)
+            rows = self._repo._fetch_all(
+                "SELECT conversation_id FROM msg_participants "
+                f"WHERE user_id = ? AND conversation_id IN {in_clause}",
+                (user_id, *params),
+            )
+            direct = set()
+            for row in rows:
+                try:
+                    direct.add(int(row["conversation_id"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+            remaining: List[int] = []
+            for cid in chunk:
+                if cid in direct:
+                    allowed[cid] = True
+                    self._cache_set((cid, user_id), True)
+                else:
+                    remaining.append(cid)
+            if not remaining:
+                continue
+
+            # Same server-membership fallback as is_participant, batched.
+            # Conversation metadata wins where present; srv_channels is only
+            # consulted for conversations whose metadata has no server_id.
+            in_clause, params = self._repo._build_in_clause(remaining)
+            meta_rows = self._repo._fetch_all(
+                f"SELECT id, metadata FROM msg_conversations WHERE id IN {in_clause}",
+                params,
+            )
+            meta_by_conv: Dict[int, Dict[str, Any]] = {}
+            for row in meta_rows:
+                meta = self._repo._json_loads(row.get("metadata"))
+                if not isinstance(meta, dict):
+                    continue
+                try:
+                    meta_by_conv[int(row["id"])] = meta
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+            missing_meta = [
+                cid
+                for cid in remaining
+                if not (meta_by_conv.get(cid) or {}).get("server_id")
+            ]
+            by_channel_id: Dict[int, int] = {}
+            by_conversation_id: Dict[int, int] = {}
+            if missing_meta:
+                in_clause, params = self._repo._build_in_clause(missing_meta)
+                channel_rows = self._repo._fetch_all(
+                    "SELECT id, conversation_id, server_id FROM srv_channels "
+                    f"WHERE conversation_id IN {in_clause} OR id IN {in_clause}",
+                    params + params,
+                )
+                for row in channel_rows:
+                    raw_server_id = row.get("server_id")
+                    if not raw_server_id:
+                        continue
+                    try:
+                        server_id = int(raw_server_id)
+                    except (TypeError, ValueError):
+                        continue
+                    for column, target in (
+                        ("id", by_channel_id),
+                        ("conversation_id", by_conversation_id),
+                    ):
+                        try:
+                            target.setdefault(int(row[column]), server_id)
+                        except (KeyError, TypeError, ValueError):
+                            continue
+
+            server_by_conv: Dict[int, int] = {}
+            server_ids = set()
+            for cid in remaining:
+                meta = meta_by_conv.get(cid) or {}
+                server_id = (
+                    meta.get("server_id")
+                    or by_channel_id.get(cid)
+                    or by_conversation_id.get(cid)
+                )
+                if not server_id:
+                    continue
+                try:
+                    server_by_conv[cid] = int(server_id)
+                    server_ids.add(int(server_id))
+                except (TypeError, ValueError):
+                    # A non-numeric server id can never match a membership row;
+                    # is_participant also denies in this case.
+                    continue
+
+            member_servers = set()
+            if server_ids:
+                in_clause, params = self._repo._build_in_clause(sorted(server_ids))
+                member_rows = self._repo._fetch_all(
+                    f"SELECT server_id FROM srv_members WHERE user_id = ? "
+                    f"AND server_id IN {in_clause}",
+                    (user_id, *params),
+                )
+                for row in member_rows:
+                    try:
+                        member_servers.add(int(row["server_id"]))
+                    except (KeyError, TypeError, ValueError):
+                        continue
+
+            for cid in remaining:
+                permitted = server_by_conv.get(cid) in member_servers
+                allowed[cid] = permitted
+                self._cache_set((cid, user_id), permitted)
+
+        return allowed
 
     def update_role(
         self,

@@ -250,13 +250,40 @@ class LastChatService:
             (user_id, limit),
         )
 
+        # Resolve participation for the whole page in one bounded batch.  The
+        # old loop issued a separate is_participant call per row, so the query
+        # count grew with ``limit`` even though the page is capped at ten.  The
+        # bulk helper preserves is_participant's full decision tree (direct
+        # row, metadata / srv_channels server fallback, server membership) and
+        # writes the same per-pair cache entries, so this is a pure batching
+        # change with no relaxation of the authz gate.  Test doubles and older
+        # manager implementations that only expose is_participant keep the
+        # original per-row path.
+        normalized = [_recent_chat_row_to_dict(row) for row in rows]
+        checker = self._participant_svc
+        bulk_check = (
+            getattr(checker, "are_participants_bulk", None) if checker else None
+        )
+        if bulk_check:
+            allowed = bulk_check(
+                [data.get("conversation_id") for data in normalized], user_id
+            )
+        else:
+            allowed = None
+
         results = []
-        for row in rows:
-            data = _recent_chat_row_to_dict(row)
+        for data in normalized:
             # Verify user is still a participant
             conv_id = data.get("conversation_id")
-            if conv_id and self._participant_svc:
-                if not self._participant_svc.is_participant(conv_id, user_id):
+            if conv_id and checker:
+                if bulk_check is not None:
+                    try:
+                        permitted = allowed.get(int(conv_id), False)
+                    except (TypeError, ValueError):
+                        permitted = False
+                else:
+                    permitted = checker.is_participant(conv_id, user_id)
+                if not permitted:
                     continue
             results.append(data)
 
