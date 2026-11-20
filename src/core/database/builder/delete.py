@@ -4,7 +4,8 @@ from typing import Any, List, Optional
 
 from .base import TableQuery, Parameter
 from .sql_safety import sql_identifier
-from .where import build_where_clause
+from .statement_cache import compiled_sql
+from .where import assemble_where_clause, build_where_shape, where_params
 
 _DELETE_FROM = "DELETE FROM {table}"
 
@@ -28,22 +29,27 @@ class DeleteQuery(TableQuery):
         return self
 
     def build(self) -> tuple[str, list]:
-        """Build the DELETE query."""
+        """Build the DELETE query (text cached by shape, values always bound)."""
         if not self._where_conditions:
             raise ValueError(
                 "DELETE requires at least one WHERE condition (safety feature)"
             )
 
-        # The statement template keeps the SQL out of an f-string; the name is
-        # still funnelled through the shared identifier rule before it lands.
-        sql = _DELETE_FROM.format(table=sql_identifier(self.table_name, "table name"))
-        params: List[Parameter] = []
-
-        # Add WHERE conditions using shared builder
-        where_clause, where_params = build_where_clause(
+        where_shape = build_where_shape(
             self._where_conditions, self.schema_registry, self.table_name
         )
-        sql += where_clause
-        params.extend(where_params)
 
+        shape = ("DELETE", self.table_name, where_shape)
+
+        def compile_sql() -> str:
+            # The statement template keeps the SQL out of an f-string; the name
+            # is funnelled through the shared identifier rule before it lands.
+            sql = _DELETE_FROM.format(
+                table=sql_identifier(self.table_name, "table name")
+            )
+            sql += assemble_where_clause(where_shape)
+            return sql
+
+        sql = compiled_sql(shape, compile_sql)
+        params: List[Parameter] = where_params(self._where_conditions)
         return sql, params

@@ -8,7 +8,8 @@ import utils.logger as logger
 
 from .base import TableQuery, Parameter
 from .sql_safety import sql_assignments, sql_identifier
-from .where import build_where_clause
+from .statement_cache import compiled_sql
+from .where import assemble_where_clause, build_where_shape, where_params
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -45,29 +46,52 @@ class UpdateQuery(TableQuery):
         return self
 
     def build(self) -> tuple[str, list]:
-        """Build the UPDATE query."""
+        """Build the UPDATE query.
+
+        SET column order comes from the data dict's key order, so the ordered
+        column tuple is part of the shape key: two dicts with the same keys in a
+        different order produce different (correctly cached) SQL text.
+        """
         if not self._where_conditions:
             raise ValueError(
                 "UPDATE requires at least one WHERE condition (safety feature)"
             )
 
         columns = list(self.data.keys())
-        validated_columns = self._validate_identifiers_list(columns, "column")
+        validated_columns = tuple(
+            self._validate_identifiers_list(columns, "column")
+        )
 
         if self.schema_registry:
-            self.schema_registry.validate_columns(self.table_name, validated_columns)
+            self.schema_registry.validate_columns(
+                self.table_name, list(validated_columns)
+            )
 
-        assignments = sql_assignments(validated_columns)
-        sql = (
-            f"UPDATE {sql_identifier(self.table_name, 'table name')} SET {assignments}"
-        )
-        params: List[Parameter] = [Parameter(self.data[col]) for col in columns]
-
-        # Add WHERE conditions using shared builder
-        where_clause, where_params = build_where_clause(
+        where_shape = build_where_shape(
             self._where_conditions, self.schema_registry, self.table_name
         )
-        sql += where_clause
-        params.extend(where_params)
+
+        shape = (
+            "UPDATE",
+            self.table_name,
+            validated_columns,
+            where_shape,
+        )
+
+        def compile_sql() -> str:
+            assignments = sql_assignments(validated_columns)
+            sql = (
+                f"UPDATE {sql_identifier(self.table_name, 'table name')} "
+                f"SET {assignments}"
+            )
+            sql += assemble_where_clause(where_shape)
+            return sql
+
+        sql = compiled_sql(shape, compile_sql)
+
+        # SET values first (in dict key order), then WHERE values -- all rebuilt
+        # from live values so reused SQL never reuses a stale parameter.
+        params: List[Parameter] = [Parameter(self.data[col]) for col in columns]
+        params.extend(where_params(self._where_conditions))
 
         return sql, params

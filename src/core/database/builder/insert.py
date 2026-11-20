@@ -12,6 +12,7 @@ from .base import (
     Parameter,
 )
 from .sql_safety import sql_identifier, sql_identifier_list, sql_placeholders
+from .statement_cache import compiled_sql
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -31,21 +32,34 @@ class InsertQuery(TableQuery):
         self.data = data
 
     def build(self) -> tuple[str, list]:
-        """Build the INSERT query."""
+        """Build the INSERT query.
+
+        The ordered key tuple is part of the shape so distinct dict key orders
+        compile to their own (cached) statement text; values are never cached.
+        """
         columns = list(self.data.keys())
-        validated_columns = self._validate_identifiers_list(columns, "column")
+        validated_columns = tuple(
+            self._validate_identifiers_list(columns, "column")
+        )
 
         if self.schema_registry:
-            self.schema_registry.validate_columns(self.table_name, validated_columns)
+            self.schema_registry.validate_columns(
+                self.table_name, list(validated_columns)
+            )
 
-        placeholders = sql_placeholders(len(columns))
-        columns_str = sql_identifier_list(validated_columns)
-        sql = (
-            f"INSERT INTO {sql_identifier(self.table_name, 'table name')} "
-            f"({columns_str}) VALUES ({placeholders})"
-        )
+        shape = ("INSERT", self.table_name, validated_columns)
+
+        def compile_sql() -> str:
+            placeholders = sql_placeholders(len(validated_columns))
+            columns_str = sql_identifier_list(validated_columns)
+            sql = (
+                f"INSERT INTO {sql_identifier(self.table_name, 'table name')} "
+                f"({columns_str}) VALUES ({placeholders})"
+            )
+            return sql
+
+        sql = compiled_sql(shape, compile_sql)
         params = [Parameter(self.data[col]) for col in columns]
-
         return sql, params
 
     def validate(self, model: Type[T]) -> "InsertQuery":
