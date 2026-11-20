@@ -6,6 +6,7 @@ Includes replay attack prevention and DoS mitigation for backup codes.
 """
 
 import os
+import re
 import time
 import hashlib
 import hmac
@@ -34,6 +35,17 @@ from src.utils.encryption import (
 # pyotp for TOTP
 import pyotp
 import utils.logger as logger
+
+
+# Authenticators emit plain ASCII decimal digits. ``str.isdigit()`` also accepts
+# Unicode decimal digits (fullwidth "５", Arabic-Indic "٥", ...), and pyotp's
+# verifier accepts some of those spellings as the same numeric code. That is a
+# replay bypass: the replay-cache key is built from the raw code text, so a code
+# claimed as "123456" and the very same code submitted as "１２３４５６" land in
+# different buckets and the second is accepted. Pin the grammar to ASCII digits
+# so every spelling that can verify shares one canonical replay key, and reject
+# non-canonical input fail-closed at this trust boundary.
+_ASCII_DIGITS_RE = re.compile(r"[0-9]+")
 
 
 class TOTPReplayCache:
@@ -367,7 +379,10 @@ def verify_totp_code(
     Returns:
         True if code is valid and not a replay
     """
-    if not isinstance(code, str) or not code.isdigit():
+    # ASCII-only gate, NOT ``str.isdigit()``: the latter accepts Unicode digit
+    # homoglyphs that pyotp may still verify, which would claim a fresh replay
+    # key and let an already-used one-time code through a second time.
+    if not isinstance(code, str) or not _ASCII_DIGITS_RE.fullmatch(code):
         return False
 
     totp_config = get_totp_config()
