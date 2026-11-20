@@ -1,9 +1,11 @@
 import secrets
 import ipaddress
 import hmac
+import hashlib
 from typing import Optional, List, Dict, Any, Tuple
 
 import utils.logger as logger
+from src.core.bounded_lru import BoundedLRU
 from src.core.database import cached, invalidate_pattern
 
 from ..models import AccessToken, AuditEventType
@@ -11,6 +13,63 @@ from ..exceptions import UserNotFoundError
 
 
 from .protocol import AuthManagerProtocol
+
+
+# ---- Bounded, short-TTL API-token verification cache ------------------------
+# ``verify_api_access_token`` runs on every authenticated request (auth
+# middleware). Each call used to re-derive the blind index, issue a SELECT for
+# the token row, decrypt/constant-time-compare the secret, and issue a second
+# SELECT for its scopes. None of that work depends on the request path/method,
+# so repeated verification of the same credential paid for it over and over.
+#
+# The cache below memoises only that *read-only introspection* (a small verdict
+# dict). The mutable side effects -- last-used/use-count updates and the usage
+# event INSERT -- deliberately stay OUTSIDE the cache and still run on every
+# call, so usage accounting and auditing are unchanged.
+#
+# Security properties are preserved:
+#   * the key is a SHA-256 digest of the exact credential, never the token;
+#   * the presented IP/User-Agent are folded in as a second digest, so a verdict
+#     resolved for one network context is never replayed in another (scope/IP
+#     binding);
+#   * every revocation/revoke/update/scope mutation clears the cache eagerly,
+#     and the short TTL is a backstop so no verdict outlives a state change;
+#   * expiry is re-evaluated against the current clock on EVERY call, including
+#     a cache hit, so a token cannot ride a warm verdict past its expiry.
+_API_TOKEN_VERIFY_MAX_ENTRIES = 2048
+_API_TOKEN_VERIFY_MAX_BYTES = 256 * 1024
+_API_TOKEN_VERIFY_TTL_SECONDS = 10.0
+
+_API_TOKEN_VERIFY_CACHE = BoundedLRU(
+    max_entries=_API_TOKEN_VERIFY_MAX_ENTRIES,
+    max_bytes=_API_TOKEN_VERIFY_MAX_BYTES,
+    ttl_seconds=_API_TOKEN_VERIFY_TTL_SECONDS,
+)
+# Distinct from any possible verdict (always a dict) so a cached ``False``-like
+# verdict is not confused with a miss.
+_API_TOKEN_VERIFY_MISS = object()
+
+
+def _api_token_verify_key(token: str, ip_address, user_agent) -> Tuple[str, str]:
+    """Hash-only cache key scoped to the exact credential and binding context.
+
+    Raw tokens, IPs and user agents never enter the keyspace; only fixed-width
+    SHA-256 digests are retained, so cache visibility cannot recover a live
+    credential or a caller's network context.
+    """
+    token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    binding = f"{ip_address or ''}\x00{user_agent or ''}"
+    binding_digest = hashlib.sha256(binding.encode("utf-8")).hexdigest()
+    return token_digest, binding_digest
+
+
+def _invalidate_api_token_verify_cache() -> None:
+    """Drop every cached verification verdict (full invalidation hook).
+
+    Called after any mutation that can change a verdict -- revocation,
+    update, rotation or scope changes -- so a stale decision cannot survive.
+    """
+    _API_TOKEN_VERIFY_CACHE.clear()
 
 
 class ApiTokenMixin(AuthManagerProtocol):
@@ -54,6 +113,7 @@ class ApiTokenMixin(AuthManagerProtocol):
             ),
         )
         invalidate_pattern("access_token_required*")
+        _invalidate_api_token_verify_cache()
         row = self._db.fetch_one(
             "SELECT * FROM auth_api_access_tokens WHERE id = ?", (token_id,)
         )
@@ -134,6 +194,7 @@ class ApiTokenMixin(AuthManagerProtocol):
             tuple(params),
         )
         invalidate_pattern("access_token_required*")
+        _invalidate_api_token_verify_cache()
         self._log_audit(
             AuditEventType.SECURITY_SETTINGS_UPDATED,
             None,
@@ -168,6 +229,7 @@ class ApiTokenMixin(AuthManagerProtocol):
         )
         if cursor.rowcount > 0:
             invalidate_pattern("access_token_required*")
+            _invalidate_api_token_verify_cache()
             self._log_audit(
                 AuditEventType.SECURITY_SETTINGS_UPDATED,
                 None,
@@ -200,6 +262,7 @@ class ApiTokenMixin(AuthManagerProtocol):
         )
         if cursor.rowcount > 0:
             invalidate_pattern("access_token_required*")
+            _invalidate_api_token_verify_cache()
             self._log_audit(
                 AuditEventType.SECURITY_SETTINGS_UPDATED,
                 None,
@@ -313,6 +376,7 @@ class ApiTokenMixin(AuthManagerProtocol):
         )
         if not row:
             raise ValueError("Failed to create token scope")
+        _invalidate_api_token_verify_cache()
         return dict(row)
 
     def remove_api_access_token_scope(self, token_id: int, scope_id: int) -> bool:
@@ -320,6 +384,8 @@ class ApiTokenMixin(AuthManagerProtocol):
             "DELETE FROM auth_api_access_token_scopes WHERE id = ? AND token_id = ?",
             (scope_id, token_id),
         )
+        if cursor.rowcount > 0:
+            _invalidate_api_token_verify_cache()
         return cursor.rowcount > 0
 
     def list_api_access_token_scopes(self, token_id: int) -> List[Dict[str, Any]]:
@@ -428,16 +494,28 @@ class ApiTokenMixin(AuthManagerProtocol):
             "denied_count_total": int(summary.get("denied_count_total") or 0),
         }
 
-    def verify_api_access_token(
-        self,
-        token: str,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        path: Optional[str] = None,
-        method: Optional[str] = None,
-    ) -> bool:
-        if not token:
-            return False
+    def _introspect_api_access_token(
+        self, token: str, ip_address: Optional[str]
+    ) -> Dict[str, Any]:
+        """Read-only, cacheable introspection of an API access token.
+
+        Resolves the token row, proves possession of the *exact* secret and
+        computes the scope/IP binding decision. Nothing is written here, so the
+        small verdict is safe to memoise. Expiry is deliberately NOT decided in
+        this method: the caller re-checks it against the live clock on every
+        invocation (including a cache hit), so a warm verdict cannot keep an
+        expired credential alive.
+        """
+        verdict: Dict[str, Any] = {
+            "authentic": False,
+            "token_id": None,
+            "expires_at": None,
+            "scope_mode": "none",
+            "scope_match": None,
+            "has_scopes": False,
+            "last_used_at": 0,
+            "first_used_at": None,
+        }
         token_index = self.crypto.fast_blind_index(token, "api_access_token")
         legacy_index = self.crypto.legacy_fast_blind_index(token, "api_access_token")
 
@@ -446,7 +524,7 @@ class ApiTokenMixin(AuthManagerProtocol):
             (token_index, legacy_index, legacy_index),
         )
         if not row or row["revoked"]:
-            return False
+            return verdict
         row = dict(row)
 
         # The blind index is a *search* structure, not a credential check.
@@ -465,16 +543,60 @@ class ApiTokenMixin(AuthManagerProtocol):
             )
         except Exception as exc:
             logger.debug(f"api token verify: stored secret undecryptable: {exc}")
-            return False
+            return verdict
         if not isinstance(stored_token, str) or not isinstance(token, str):
-            return False
+            return verdict
         if not hmac.compare_digest(token, stored_token):
+            return verdict
+
+        scopes = self.list_api_access_token_scopes(int(row["id"]))
+        verdict.update(
+            {
+                "authentic": True,
+                "token_id": int(row["id"]),
+                "expires_at": row.get("expires_at"),
+                "scope_mode": self._normalize_access_token_scope_mode(
+                    row.get("scope_mode") or "none"
+                ),
+                "scope_match": self._match_api_access_token_scope(ip_address, scopes),
+                "has_scopes": bool(scopes),
+                "last_used_at": row.get("last_used_at") or 0,
+                "first_used_at": row.get("first_used_at"),
+            }
+        )
+        return verdict
+
+    def verify_api_access_token(
+        self,
+        token: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        path: Optional[str] = None,
+        method: Optional[str] = None,
+    ) -> bool:
+        if not token or not isinstance(token, str):
             return False
 
+        # Cache key is a digest of the exact credential plus a digest of the
+        # presented binding context; the raw value never enters the keyspace.
+        key = _api_token_verify_key(token, ip_address, user_agent)
+        verdict = _API_TOKEN_VERIFY_CACHE.get(key, _API_TOKEN_VERIFY_MISS)
+        if verdict is _API_TOKEN_VERIFY_MISS:
+            verdict = self._introspect_api_access_token(token, ip_address)
+            _API_TOKEN_VERIFY_CACHE.set(key, verdict)
+
+        if not verdict["authentic"]:
+            return False
+
+        token_id = verdict["token_id"]
         now = self._get_timestamp()
-        if row.get("expires_at") and int(row["expires_at"]) <= now:
+
+        # Revocation/binding are enforced by eager invalidation + the short TTL
+        # (see the cache docstring); expiry is re-checked here even on a hit.
+        expires_at = verdict.get("expires_at")
+        if expires_at and int(expires_at) <= now:
             self._record_api_access_token_event(
-                token_id=int(row["id"]),
+                token_id=int(token_id),
                 ip_address=ip_address,
                 user_agent=user_agent,
                 path=path,
@@ -485,14 +607,14 @@ class ApiTokenMixin(AuthManagerProtocol):
             )
             return False
 
-        scope_mode = self._normalize_access_token_scope_mode(
-            row.get("scope_mode") or "none"
-        )
-        scopes = self.list_api_access_token_scopes(int(row["id"]))
-        scope_match = self._match_api_access_token_scope(ip_address, scopes)
-        if scopes and scope_mode == "enforce" and not scope_match:
+        scope_match = verdict["scope_match"]
+        if (
+            verdict["has_scopes"]
+            and verdict["scope_mode"] == "enforce"
+            and not scope_match
+        ):
             self._record_api_access_token_event(
-                token_id=int(row["id"]),
+                token_id=int(token_id),
                 ip_address=ip_address,
                 user_agent=user_agent,
                 path=path,
@@ -503,8 +625,9 @@ class ApiTokenMixin(AuthManagerProtocol):
             )
             return False
 
-        now = self._get_timestamp()
-        last_used = row.get("last_used_at") or 0
+        # Mutable side effects stay OUTSIDE the cache: usage accounting and
+        # auditing must reflect every request, not just cache misses.
+        last_used = verdict["last_used_at"]
         updates = [
             "last_used_at = ?",
             "ua_index = ?",
@@ -515,10 +638,10 @@ class ApiTokenMixin(AuthManagerProtocol):
         params: List[Any] = [
             now,
             self._ua_index(user_agent),
-            self._encrypt_ua(user_agent, str(row["id"])),
+            self._encrypt_ua(user_agent, str(token_id)),
             path,
         ]
-        if not row.get("first_used_at"):
+        if not verdict.get("first_used_at"):
             updates.append("first_used_at = ?")
             params.append(now)
         if ip_address:
@@ -527,10 +650,10 @@ class ApiTokenMixin(AuthManagerProtocol):
             params.extend(
                 [
                     self.crypto.fast_blind_index(ip_address, "ip_address"),
-                    self.crypto.encrypt_data(ip_address, context=str(row["id"])),
+                    self.crypto.encrypt_data(ip_address, context=str(token_id)),
                 ]
             )
-        params.append(row["id"])
+        params.append(token_id)
         self._db.execute(
             f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
@@ -538,10 +661,10 @@ class ApiTokenMixin(AuthManagerProtocol):
         if now - int(last_used) > 60000:
             self._db.execute(
                 "UPDATE auth_api_access_tokens SET last_used_at = ? WHERE id = ?",
-                (now, row["id"]),
+                (now, token_id),
             )
         self._record_api_access_token_event(
-            token_id=int(row["id"]),
+            token_id=int(token_id),
             ip_address=ip_address,
             user_agent=user_agent,
             path=path,
