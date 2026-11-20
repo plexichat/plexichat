@@ -59,6 +59,27 @@ def _resolve_recipients(
             # as the filter domain — recipients are still verified per member.
             is_server_channel = True
             server_id = int(server_id_hint)
+        else:
+            # FAIL CLOSED on an unresolved channel. ``get_channel`` returns
+            # None for several distinct reasons: the id is a DM/group id, the
+            # actor is no longer a member, the actor lost ``channels.view``,
+            # the channel was deleted, or the lookup itself failed. Treating
+            # every None as "DM" and falling through to the raw conversation
+            # participant list reintroduces the audience leak this helper
+            # exists to prevent — a server channel whose viewer walk failed
+            # would be delivered to every participant via the DM fallback.
+            # Probe membership-agnostically: if the id names a server channel
+            # at all, keep it in the server-channel path (user_ids stays empty
+            # when no server_id could be resolved, so no event is broadcast).
+            channel_exists = getattr(servers_mod, "channel_exists", None)
+            if callable(channel_exists):
+                try:
+                    if channel_exists(channel_id):
+                        is_server_channel = True
+                except Exception:
+                    # If we cannot even prove the id is NOT a server channel,
+                    # fail closed rather than risk a server-wide leak.
+                    is_server_channel = True
         if is_server_channel and server_id:
             # The member listing is the expensive part of fanout: a burst of
             # messages to one channel re-runs the same ``srv_members`` query

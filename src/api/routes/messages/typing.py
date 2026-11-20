@@ -92,40 +92,67 @@ async def trigger_typing(
 
         channel = None
         user_ids = []
+        is_server_channel = False
 
         # Try server channel first
         if servers_mod:
             try:
                 channel = servers_mod.get_channel(cid, current_user.user_id)
-                if channel:
-                    # Check if this is a voice channel - voice channels don't have typing indicators
-                    channel_type = getattr(channel, "channel_type", None)
-                    channel_type_str = (
-                        channel_type.value
-                        if channel_type and hasattr(channel_type, "value")
-                        else str(channel_type)
+            except Exception:
+                channel = None
+            if channel is not None:
+                is_server_channel = True
+                # Check if this is a voice channel - voice channels don't have typing indicators
+                channel_type = getattr(channel, "channel_type", None)
+                channel_type_str = (
+                    channel_type.value
+                    if channel_type and hasattr(channel_type, "value")
+                    else str(channel_type)
+                )
+                if channel_type_str in ("voice", "stage"):
+                    # Voice channels don't support typing - return success silently
+                    return SuccessResponse(success=True, message=None)
+
+                server_id = getattr(channel, "server_id", None)
+                if server_id:
+                    # Use channel-access-filtered recipients to avoid leaking
+                    # typing indicators to users who can't view the channel.
+                    # A failure here must leave the audience EMPTY, not fall
+                    # through to the unfiltered DM participant list below.
+                    from starlette.concurrency import run_in_threadpool
+                    from src.api.websocket.handlers.presence import (
+                        _get_channel_recipients,
                     )
-                    if channel_type_str in ("voice", "stage"):
-                        # Voice channels don't support typing - return success silently
-                        return SuccessResponse(success=True, message=None)
 
-                    server_id = getattr(channel, "server_id", None)
-                    if server_id:
-                        # Use channel-access-filtered recipients to avoid leaking
-                        # typing indicators to users who can't view the channel
-                        from starlette.concurrency import run_in_threadpool
-                        from src.api.websocket.handlers.presence import (
-                            _get_channel_recipients,
-                        )
-
+                    try:
                         user_ids, _ = await run_in_threadpool(
                             _get_channel_recipients, current_user.user_id, cid
                         )
-            except Exception:
-                channel = None
+                    except Exception as recipient_error:
+                        logger.debug(
+                            f"typing channel audience lookup failed for {cid}: "
+                            f"{recipient_error}"
+                        )
+                        user_ids = []
+
+        if servers_mod and not is_server_channel:
+            # ``get_channel`` also returns None when the actor lost access or
+            # the lookup errored. Probe membership-agnostically before treating
+            # the id as a DM: a server channel whose viewer-filtered audience
+            # walk failed must broadcast to nobody, never to the raw
+            # conversation participants (the exact audience leak the
+            # channels.view filter exists to prevent).
+            channel_exists = getattr(servers_mod, "channel_exists", None)
+            if callable(channel_exists):
+                try:
+                    if channel_exists(cid):
+                        is_server_channel = True
+                except Exception:
+                    # Cannot prove it is NOT a server channel -> fail closed.
+                    is_server_channel = True
 
         # If not a server channel, try as DM conversation
-        if not channel and messaging:
+        if not is_server_channel and messaging:
             try:
                 participants = messaging.get_participants(current_user.user_id, cid)
                 if participants:
