@@ -3,8 +3,11 @@ import re
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
 
-from src.api.schemas.common import SnowflakeID, _reject_ui_text_chars
-from src.api.schemas.policy_types import reject_unsafe_unicode
+from src.api.schemas.common import (
+    SnowflakeID,
+    _reject_ui_text_chars,
+    require_hex_digest,
+)
 from src.api.schemas.url_types import HttpUrl
 from src.core.security.outbound import resolve_outbound_url
 
@@ -54,16 +57,17 @@ class HashReportRequest(BaseModel):
 
     @field_validator("hash_value")
     @classmethod
-    def _no_hash_control_chars(cls, value: str) -> str:
-        """Keep control/bidi characters out of a persisted hash and its queries.
+    def _hash_value_is_hex(cls, value: str) -> str:
+        """Keep non-digest text out of a persisted hash and its queries.
 
         ``hash_value`` is stored in ``media_hash_reports``, used as a lookup key
-        in ``is_hash_blocked`` / ``block_hash`` and interpolated into log lines.
-        Plain hex digests (and any other control-char-free value within the
-        declared length bounds) are unaffected; C0/C1 controls, bidi overrides
-        and invisible format characters are not.
+        in ``is_hash_blocked`` / ``block_hash`` and rendered in admin review
+        views. Control/bidi characters alone are not enough to reject: a value
+        such as ``"xx<img src=x onerror=...>"`` is control-char clean but still
+        a valid-looking "hash" to the rest of the pipeline. Require an anchored
+        hex token; real SHA-256 and perceptual digests are unaffected.
         """
-        return reject_unsafe_unicode(value, "hash_value")
+        return require_hex_digest(value, "hash_value")
 
     @field_validator("phash_value")
     @classmethod
@@ -72,7 +76,9 @@ class HashReportRequest(BaseModel):
         if not value:
             return value
         if not _PHASH_HEX_RE.fullmatch(value):
-            raise ValueError("phash_value must be an anchored hex string of at most 64 characters")
+            raise ValueError(
+                "phash_value must be an anchored hex string of at most 64 characters"
+            )
         return value
 
     @field_validator("attachment_url")

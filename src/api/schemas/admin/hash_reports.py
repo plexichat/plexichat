@@ -3,7 +3,9 @@ Hash report schemas.
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+
+from ..common import require_hex_digest
 
 
 class HashReportReviewRequest(BaseModel):
@@ -23,8 +25,18 @@ class ManualBlockHashRequest(BaseModel):
     # SHA-256 is 64 hex chars; perceptual hashes are shorter (typically
     # 16-32 hex chars). The route validates the exact format for the selected
     # hash type after parsing this request.
+    # This is the schema for the endpoint that writes the moderation blocklist.
+    # The route checks for hex after parsing, but the boundary must not accept
+    # control characters or non-digest text in the first place: the value is a
+    # lookup key in ``is_hash_blocked`` and is stored verbatim in
+    # ``media_blocked_hashes``.
     hash_value: str = Field(..., min_length=16, max_length=128)
     reason: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("hash_value")
+    @classmethod
+    def _hash_value_is_hex(cls, value: str) -> str:
+        return require_hex_digest(value, "hash_value")
 
 
 class BlockedHashResponse(BaseModel):

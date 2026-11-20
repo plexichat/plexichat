@@ -5,8 +5,7 @@ Message schemas - Request/response models for message endpoints.
 from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
-from .common import SnowflakeID
-from .policy_types import reject_unsafe_unicode
+from .common import SnowflakeID, require_hex_digest
 from .url_types import HttpUrl
 from .reactions import ReactionResponse
 from .polls import PollInlineCreateRequest, PollResponse, PollResultsResponse
@@ -71,18 +70,16 @@ class AttachmentRequest(BaseModel):
 
     @field_validator("hash")
     @classmethod
-    def _no_hash_control_chars(cls, value: Optional[str], info) -> Optional[str]:
-        """Reject control characters and bidi/invisible overrides in the hash.
+    def _hash_is_hex(cls, value: Optional[str], info) -> Optional[str]:
+        """Require an anchored hex digest for the persisted attachment checksum.
 
         The neighbouring attachment fields only gate C0 controls, but this
         value is a machine-readable digest that is stored as the attachment
-        checksum and used in hash lookups; it must contain none of the
-        C1/bidi/format characters that ``reject_unsafe_unicode`` covers either.
-        A plain hex digest is unaffected.
+        checksum and used in hash/dedup lookups. A length cap and a control-char
+        check still admit arbitrary markup/whitespace as a "hash"; require the
+        canonical hex token instead. A plain SHA-256 digest is unaffected.
         """
-        if value is None:
-            return value
-        return reject_unsafe_unicode(value, info.field_name)
+        return require_hex_digest(value, info.field_name)
 
 
 class MessageCreateRequest(BaseModel):

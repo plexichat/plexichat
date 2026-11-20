@@ -2,10 +2,10 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .policy_types import UIText
 
-from .common import SnowflakeID
+from .common import SnowflakeID, require_hex_digest
 
 
 class StashItemCreateRequest(BaseModel):
@@ -89,6 +89,12 @@ class StashVersionCreateRequest(BaseModel):
     content_type: Optional[str] = Field(None, max_length=255)
     size_bytes: Optional[int] = Field(None, ge=0)
     checksum: Optional[str] = Field(None, max_length=128)
+
+    @field_validator("checksum")
+    @classmethod
+    def _checksum_is_hex(cls, value: Optional[str]) -> Optional[str]:
+        """A checksum is a digest, not free text: keep markup/controls out."""
+        return require_hex_digest(value, "checksum")
 
 
 class StashVersionResponse(BaseModel):

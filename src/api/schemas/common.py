@@ -3,6 +3,7 @@ Common schemas - Shared Pydantic models.
 """
 
 import json
+import re
 from functools import partial
 from typing import Optional, List, Any, Generic, TypeVar, Annotated
 
@@ -332,6 +333,33 @@ def _reject_ui_text_chars(value: str, field_name: str) -> str:
     ``except ValueError`` handlers keep working.
     """
     return _UI_TEXT_POLICY.check(value, field_name)
+
+
+# A content digest is a machine value: it is persisted verbatim (attachment
+# ``checksum``, hash-report keys, blocklist keys) and reused as a lookup key in
+# dedup/hash queries. A length ceiling alone still lets quotes, markup or
+# whitespace through -- exactly the values that make a "hash" field an attack
+# vector once it is echoed in an admin view or compared with a stored digest.
+# Require the canonical hex token at the boundary; the field's own min/max
+# length constraints stay authoritative for its size range.
+_HASH_HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+
+
+def require_hex_digest(value: Optional[str], field: str) -> Optional[str]:
+    """Reject control/bidi characters and any non-hex text in a digest field.
+
+    ``None`` and the empty string pass through unchanged so optional and
+    "clear" semantics are preserved. Every other value must be an *anchored*
+    run of hex digits: a substring search for hex would happily accept
+    ``"prefix-<b>..."`` and defeat the purpose. The shared unicode rule runs
+    first, so the existing C0/C1/bidi rejection is kept, not weakened.
+    """
+    if value is None or value == "":
+        return value
+    checked = reject_unsafe_unicode(value, field)
+    if not _HASH_HEX_RE.fullmatch(checked):
+        raise ValueError(f"{field} must be a hexadecimal digest")
+    return checked
 
 
 def reject_unsafe_ui_text(value: str, field_name: str) -> str:
