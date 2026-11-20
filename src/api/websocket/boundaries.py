@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+from collections import OrderedDict
 
-from typing import Any
+from typing import Any, Dict
 
 from .opcodes import GatewayOpcode
 from src.core.security.hardening import (
@@ -151,17 +153,206 @@ MAX_REPLAY_EVENT_BYTES = 256 * 1024
 MAX_SESSION_REPLAY_BYTES = 8 * 1024 * 1024
 
 
+# --- Bounded memo of expensive payload serialization sizes -----------------
+# ``payload_size`` is the byte guard for every replay frame. During session
+# hydration/resume the SAME rendered event is measured once per session it is
+# restored into (a broadcast frame lands in many sessions, and a reconnecting
+# client's buffer is re-measured whenever its local cache is invalidated).
+# Re-serializing a 48 KiB frame with ``json.dumps`` costs ~180 us; a bounded
+# memo of the measured size collapses the Nth repeat to a fingerprint check.
+#
+# The memo NEVER replaces the real computation: a miss still runs the original
+# ``json.dumps`` byte-for-byte, so the security bound is unchanged. Two guards
+# keep it fail-closed:
+#   * the entry is keyed by the measured object's identity, so a different
+#     object can never inherit another's size; and
+#   * a hit is served only when a cheap structural fingerprint proves the
+#     object still serializes to exactly the same bytes (in-place mutation is
+#     detected). Values the fingerprint cannot prove (custom objects routed
+#     through ``default=str``, tuples, non-string keys, oversized keys) are
+#     never memoized. Cheap payloads below ``PAYLOAD_SIZE_MEMO_MIN_BYTES`` are
+#     always re-measured: validating them costs more than the serialization.
+MAX_PAYLOAD_SIZE_CACHE_ENTRIES = 128
+PAYLOAD_SIZE_MEMO_MIN_BYTES = 2048
+#: Cap the characters retained by one fingerprint. A single replay frame is
+#: already bounded by ``MAX_REPLAY_EVENT_BYTES``; matching that ceiling lets
+#: every admissible frame be memoized while bounding key memory/hash cost.
+MAX_PAYLOAD_SIZE_KEY_CHARS = MAX_REPLAY_EVENT_BYTES
+
+_UNCACHEABLE_SIZE_KEY = object()
+_MEMO_MISSING = object()
+
+
+def _size_cache_key(value: Any):
+    """Return ``(fingerprint, cost)`` or ``(_UNCACHEABLE_SIZE_KEY, 0)``.
+
+    Two values with equal fingerprints serialize to identical JSON bytes under
+    ``payload_size`` (same types, keys, string contents and container order),
+    so a cached size stays valid. Strings are held by reference, not copied:
+    comparing an unchanged key is O(1) per string thanks to CPython's identity
+    shortcut. Anything whose serialization the fingerprint cannot prove is
+    reported uncacheable so the real measurement is always used.
+    """
+    if value is None:
+        return ("null",), 0
+    kind = type(value)
+    if kind is bool:
+        return ("bool", value), 0
+    if kind is int:
+        return ("int", value), 0
+    if kind is float:
+        # NaN never compares equal, so it naturally misses the cache; Infinity
+        # compares equal and serializes identically, so it is safe to cache.
+        return ("float", value), 0
+    if kind is str:
+        cost = len(value)
+        if cost > MAX_PAYLOAD_SIZE_KEY_CHARS:
+            return _UNCACHEABLE_SIZE_KEY, 0
+        return ("str", value), cost
+    if kind is dict:
+        parts = []
+        cost = 0
+        for key, item in value.items():
+            # json.dumps coerces non-string keys; refusing them here keeps the
+            # fingerprint an exact statement about the serialized bytes.
+            if type(key) is not str:
+                return _UNCACHEABLE_SIZE_KEY, 0
+            sub, sub_cost = _size_cache_key(item)
+            if sub is _UNCACHEABLE_SIZE_KEY:
+                return _UNCACHEABLE_SIZE_KEY, 0
+            cost += len(key) + sub_cost
+            if cost > MAX_PAYLOAD_SIZE_KEY_CHARS:
+                return _UNCACHEABLE_SIZE_KEY, 0
+            parts.append((key, sub))
+        return ("dict", tuple(parts)), cost
+    if kind is list:
+        parts = []
+        cost = 0
+        for item in value:
+            sub, sub_cost = _size_cache_key(item)
+            if sub is _UNCACHEABLE_SIZE_KEY:
+                return _UNCACHEABLE_SIZE_KEY, 0
+            cost += sub_cost
+            if cost > MAX_PAYLOAD_SIZE_KEY_CHARS:
+                return _UNCACHEABLE_SIZE_KEY, 0
+            parts.append(sub)
+        return ("list", tuple(parts)), cost
+    # Tuples, sets, custom objects (default=str), etc. cannot be proven cheaply.
+    return _UNCACHEABLE_SIZE_KEY, 0
+
+
+class _PayloadSizeMemo:
+    """Thread-safe bounded LRU of ``id(value) -> (value, size, fingerprint)``.
+
+    The strong reference pins the identity (so ``id()`` cannot be recycled) and
+    is checked on lookup. Only expensive, provably-JSON values carry a
+    fingerprint and can be served from the memo.
+    """
+
+    def __init__(self, max_entries: int = MAX_PAYLOAD_SIZE_CACHE_ENTRIES) -> None:
+        self._max_entries = max(1, int(max_entries))
+        self._entries: "OrderedDict[int, tuple]" = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._lock = threading.Lock()
+
+    def lookup(self, value: Any) -> Any:
+        """Return the live entry for ``value`` (or ``None``), counting a miss."""
+        with self._lock:
+            entry = self._entries.get(id(value), _MEMO_MISSING)
+            if entry is _MEMO_MISSING or entry[0] is not value:
+                self._misses += 1
+                return None
+            self._entries.move_to_end(id(value))
+            return entry
+
+    def store(self, value: Any, size: int, fingerprint: Any) -> None:
+        with self._lock:
+            self._entries[id(value)] = (value, size, fingerprint)
+            self._entries.move_to_end(id(value))
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def record_hit(self) -> None:
+        with self._lock:
+            self._hits += 1
+            self._misses -= 1  # lookup counted this call as a miss
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._hits = 0
+            self._misses = 0
+
+    def stats(self) -> Dict[str, int]:
+        with self._lock:
+            return {
+                "size": len(self._entries),
+                "max_entries": self._max_entries,
+                "hits": self._hits,
+                "misses": self._misses,
+            }
+
+
+_payload_size_memo = _PayloadSizeMemo()
+
+
+def get_payload_size_cache_stats() -> Dict[str, int]:
+    """Expose hit/miss/size counters for observability and regression tests."""
+    return _payload_size_memo.stats()
+
+
+def clear_payload_size_cache() -> None:
+    """Drop every memoized size (test isolation / config change)."""
+    _payload_size_memo.clear()
+
+
+def _measure_payload_size(value: object) -> int:
+    """The original, unmodified byte computation (the security guard)."""
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    except (TypeError, ValueError, RecursionError):
+        return MAX_OP_PAYLOAD_BYTES + 1
+
+
+def _safe_size_key(value: object):
+    """Fingerprint or the uncacheable sentinel; never propagate a walk error.
+
+    A pathologically nested payload makes both ``json.dumps`` and the recursive
+    walk fail. The old code failed closed with an oversized size; keep that
+    behaviour instead of turning the memo into a new exception source.
+    """
+    try:
+        key, _ = _size_cache_key(value)
+        return key
+    except (TypeError, ValueError, RecursionError):
+        return _UNCACHEABLE_SIZE_KEY
+
+
 def payload_size(value: object) -> int:
     """Serialized byte size of a payload; oversized/unserializable -> too big.
 
     Uses ``default=str`` so an unusual but JSON-friendly object is still
     measurable; anything that cannot be serialized is treated as exceeding
-    the cap rather than allowed through.
+    the cap rather than allowed through. Expensive serializations reuse a
+    bounded memo after a structural validation; on a miss the original
+    computation runs in full, so the byte guard is never weakened.
     """
-    try:
-        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
-    except (TypeError, ValueError, RecursionError):
-        return MAX_OP_PAYLOAD_BYTES + 1
+    entry = _payload_size_memo.lookup(value)
+    if entry is not None:
+        _, size, fingerprint = entry
+        if size > PAYLOAD_SIZE_MEMO_MIN_BYTES and fingerprint is not None:
+            key = _safe_size_key(value)
+            if key is not _UNCACHEABLE_SIZE_KEY and key == fingerprint:
+                _payload_size_memo.record_hit()
+                return size
+
+    size = _measure_payload_size(value)
+    if size > PAYLOAD_SIZE_MEMO_MIN_BYTES:
+        key = _safe_size_key(value)
+        if key is not _UNCACHEABLE_SIZE_KEY:
+            _payload_size_memo.store(value, size, key)
+    return size
 
 
 def bounded_batch(value: object, default: int = MAX_OP_BATCH) -> int:
