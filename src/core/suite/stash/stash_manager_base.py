@@ -31,6 +31,12 @@ MAX_METADATA_DEPTH = 10
 MAX_METADATA_CONTAINER_ITEMS = 100
 MAX_METADATA_STRING_LENGTH = 10_000
 
+# Bind-variable budget for the batched inherited-grant lookup below. A deep
+# collection chain must not turn one authorization check into one SELECT per
+# ancestor, but the IN-list still has to stay inside SQLite's bind cap. Chunks
+# are bounded at 500 ids; anything deeper is simply read in more rounds.
+_COLLECTION_GRANT_LOOKUP_CHUNK = 500
+
 # DNS names are validated syntactically here; the actual resolution/fetch is the
 # link-preview/thumbnail boundary's job. Single-label names, localhost and any
 # non-global IP literal are rejected so a stored link cannot point a future
@@ -402,23 +408,38 @@ class StashManagerBase(StashManagerProtocol):
     def _collection_grant_permissions(
         self, item: Dict[str, Any], user_id: int
     ) -> List[str]:
-        """Return the permissions inherited from the item's collection chain."""
+        """Return the permissions inherited from the item's collection chain.
+
+        The grant rows for the whole ancestor chain are read in one bounded
+        IN query instead of one SELECT per ancestor. The lookup stays scoped
+        to ``subject_id = str(user_id)``, so a batched read can never surface
+        a different principal's grant. Expired rows are still filtered here
+        and a backend error propagates (fail-closed) rather than being treated
+        as "no grant". ``_collection_ancestors`` already de-duplicates a
+        cyclic chain, so each grant can be read at most once.
+        """
         collection_id = item.get("collection_id")
         if collection_id is None:
             return []
+        ancestors = self._collection_ancestors(int(collection_id))
+        if not ancestors:
+            return []
         now = int(time.time() * 1000)
         permissions: set = set()
-        for ancestor in self._collection_ancestors(int(collection_id)):
-            row = self._db.fetch_one(
-                "SELECT permissions_json, expires_at FROM stash_collection_grants "
-                "WHERE collection_id = ? AND subject_id = ? AND revoked_at IS NULL",
-                (ancestor, str(user_id)),
+        for start in range(0, len(ancestors), _COLLECTION_GRANT_LOOKUP_CHUNK):
+            chunk = ancestors[start : start + _COLLECTION_GRANT_LOOKUP_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                "SELECT collection_id, permissions_json, expires_at "
+                "FROM stash_collection_grants "
+                f"WHERE collection_id IN ({placeholders}) "
+                "AND subject_id = ? AND revoked_at IS NULL",
+                (*chunk, str(user_id)),
             )
-            if not row:
-                continue
-            if row.get("expires_at") is not None and int(row["expires_at"]) <= now:
-                continue
-            permissions.update(self._decode(row.get("permissions_json"), []))
+            for row in rows:
+                if row.get("expires_at") is not None and int(row["expires_at"]) <= now:
+                    continue
+                permissions.update(self._decode(row.get("permissions_json"), []))
         return list(permissions)
 
     def _collection_granted(
