@@ -124,6 +124,12 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_action_created ON admin_audit_log(act
 CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_status ON admin_audit_log(status);
+-- The stats counts seek a UTC-midnight created_at range and then filter by
+-- status or an action-family LIKE. With only the single-column indexes each
+-- family count fetched every candidate row from the table to evaluate the LIKE.
+-- A composite index with created_at leading keeps the range seek and lets the
+-- status/action predicates be evaluated index-only (covering).
+CREATE INDEX IF NOT EXISTS idx_admin_audit_created_status_action ON admin_audit_log(created_at, status, action);
 
 -- Admin approvals table
 CREATE TABLE IF NOT EXISTS admin_approvals (
