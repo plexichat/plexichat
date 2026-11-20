@@ -21,10 +21,7 @@ from src.core.reactions.exceptions import EmojiLimitError
 
 pytestmark = pytest.mark.unit
 
-_SOURCE = (
-    Path(__file__).resolve().parents[2]
-    / "core/reactions/manager/emojis.py"
-)
+_SOURCE = Path(__file__).resolve().parents[2] / "core/reactions/manager/emojis.py"
 
 
 def _count(reactions, server_id, animated=0):

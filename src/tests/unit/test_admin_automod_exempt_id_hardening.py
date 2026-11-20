@@ -67,7 +67,9 @@ def test_valid_snowflake_exempt_ids_are_accepted_as_ints(builder, field):
     # is an int alias), so exemption set-membership keeps working.
     model = builder(field, [1, "123", str(SNOWFLAKE_MAX)])
     assert getattr(model, field) == [1, 123, SNOWFLAKE_MAX]
-    assert all(isinstance(v, int) and not isinstance(v, bool) for v in getattr(model, field))
+    assert all(
+        isinstance(v, int) and not isinstance(v, bool) for v in getattr(model, field)
+    )
 
 
 @pytest.mark.parametrize("builder", [_create, _update])

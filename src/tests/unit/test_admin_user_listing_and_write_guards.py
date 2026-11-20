@@ -212,7 +212,11 @@ class TestAdminUserMutationWriteGuards:
         guards = [c for c in db.execute_calls if "SET id = id" in c[0]]
         assert len(guards) == 1
         assert "SELECT COALESCE(MAX(r.position), 0)" in guards[0][0]
-        asserts = [c for c in db.execute_calls if c[0].startswith("INSERT INTO admin_role_assignments")]
+        asserts = [
+            c
+            for c in db.execute_calls
+            if c[0].startswith("INSERT INTO admin_role_assignments")
+        ]
         assert len(asserts) == 1
         # Guard precedes the privilege-changing write.
         assert db.execute_calls.index(guards[0]) < db.execute_calls.index(asserts[0])

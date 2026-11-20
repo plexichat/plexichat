@@ -63,7 +63,10 @@ FAIL_CLOSED_SURFACES = (
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -86,9 +89,8 @@ def _is_bare_svc(node) -> bool:
     A negated operand (``not svc``) is an ``UnaryOp`` and deliberately does not
     match, so the fail-closed ``if not svc or ...`` shape is never flagged.
     """
-    return (
-        isinstance(node, (ast.Name, ast.Attribute))
-        and ast.unparse(node).endswith("participant_svc")
+    return isinstance(node, (ast.Name, ast.Attribute)) and ast.unparse(node).endswith(
+        "participant_svc"
     )
 
 
@@ -174,9 +176,7 @@ def _scan_tree():
         files += 1
         calls += sum(1 for node in ast.walk(tree) if _has_is_participant(node))
         for lineno in _fail_open_violations(tree):
-            fail_open.append(
-                f"{path.relative_to(ROOT)}:{lineno}"
-            )
+            fail_open.append(f"{path.relative_to(ROOT)}:{lineno}")
     return surfaces, fail_open, files, calls
 
 
@@ -227,7 +227,9 @@ def test_detector_flags_fail_open_but_accepts_both_fail_closed_shapes():
     )
 
     assert len(_fail_open_violations(fail_open)) == 1, "fail-open shape was not flagged"
-    assert _fail_open_violations(explicit) == [], "explicit guard misflagged as fail-open"
+    assert _fail_open_violations(explicit) == [], (
+        "explicit guard misflagged as fail-open"
+    )
     assert _fail_open_violations(short_circuit_or) == [], "fail-closed 'or' misflagged"
 
     fn = _find_function(explicit, "write")
@@ -238,9 +240,7 @@ def test_detector_flags_fail_open_but_accepts_both_fail_closed_shapes():
 
 
 def test_scan_is_not_vacuous():
-    missing = [
-        f"{rel}:{method}" for rel, method, _, fn in _SURFACES if fn is None
-    ]
+    missing = [f"{rel}:{method}" for rel, method, _, fn in _SURFACES if fn is None]
     assert not missing, f"hardened write methods dropped out of the scan: {missing}"
     assert len(_SURFACES) == len(FAIL_CLOSED_SURFACES)
     # The package scan really sees both the guards and the calls they protect.

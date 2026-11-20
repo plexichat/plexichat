@@ -88,8 +88,7 @@ def test_concurrent_create_respects_active_invite_cap(
     assert len(limit_errors) == worker_count - limit, outcomes
 
     active = servers.db.fetch_one(
-        "SELECT COUNT(*) AS c FROM srv_invites "
-        "WHERE inviter_id = ? AND revoked = 0",
+        "SELECT COUNT(*) AS c FROM srv_invites WHERE inviter_id = ? AND revoked = 0",
         (owner.id,),
     )
     assert active["c"] == limit

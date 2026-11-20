@@ -425,7 +425,7 @@ def test_optional_heavy_services_declare_cpu_limits(
 
 
 def test_every_long_running_daemon_declares_resource_limits(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     """Every daemon must be capped; deriving the set keeps this fail-closed.
 
@@ -442,7 +442,7 @@ def test_every_long_running_daemon_declares_resource_limits(
 
 
 def test_shared_env_is_scoped_to_services_that_need_it(
-    services: dict[str, dict[str, Any]]
+    services: dict[str, dict[str, Any]],
 ) -> None:
     """Optional third-party services must not inherit every shared secret.
 

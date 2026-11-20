@@ -104,6 +104,24 @@ def test_cached_response_is_identical_and_skips_rebuild(tmp_path, monkeypatch):
     # Performance: the expensive builder ran once; the cached poll skipped it.
     assert len(build_calls) == 1
     assert manager.get_migration_status.call_count == 1
+
+    # The cached poll must also be materially cheaper. Each side keeps its best
+    # run: the point is that 20ms of work is skipped, so one preemption on a
+    # loaded CI worker must not decide the comparison.
+    def _best(fn, reps=5):
+        best = float("inf")
+        for _ in range(reps):
+            start = time.perf_counter()
+            fn()
+            best = min(best, time.perf_counter() - start)
+        return best
+
+    def _cold():
+        route._clear_migration_list_cache()
+        _response(manager)
+
+    cold_elapsed = _best(_cold)
+    warm_elapsed = _best(lambda: _response(manager))
     assert warm_elapsed < cold_elapsed / 2
 
 

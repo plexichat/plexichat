@@ -9,7 +9,6 @@ serialise that blob again. These regressions pin the new pre-fan-out gate.
 
 import pytest
 
-import src.core.push.manager.delivery as delivery
 from src.core.push.manager.delivery import (
     MAX_PUSH_DATA_KEYS,
     MAX_PUSH_DATA_VALUE_BYTES,

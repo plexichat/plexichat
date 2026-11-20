@@ -64,16 +64,16 @@ class TestRecipientPrivacyFailClosed:
         handler._invalidate_relationship_list_cache = MagicMock()
 
         with (
-            patch.object(
-                fr_route.api, "get_relationships", return_value=relationships
-            ),
+            patch.object(fr_route.api, "get_relationships", return_value=relationships),
             patch.object(fr_route.api, "get_auth", return_value=None),
             patch.object(
                 fr_route.api,
                 "get_settings",
                 side_effect=RuntimeError("settings down"),
             ),
-            patch.object(fr_route, "_check_friend_request_rate_limit", return_value=None),
+            patch.object(
+                fr_route, "_check_friend_request_rate_limit", return_value=None
+            ),
             pytest.raises(HTTPException) as exc_info,
         ):
             import asyncio

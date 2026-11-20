@@ -48,9 +48,7 @@ class _FakeDB:
                 if cid in self.counts
             ]
         if "FROM voice_channel_settings" in sql:
-            return [
-                dict(self.settings[cid]) for cid in params if cid in self.settings
-            ]
+            return [dict(self.settings[cid]) for cid in params if cid in self.settings]
         raise AssertionError(f"unexpected fetch_all SQL: {sql}")
 
     def fetch_one(self, sql, params):

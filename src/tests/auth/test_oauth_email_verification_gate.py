@@ -29,7 +29,9 @@ def test_oauth_login_rejects_unverified_email(auth_manager, db):
     try:
         email = "oauth_gate_unverified@example.com"
         user = auth_manager.register("oauth_gate_unverified", email, "TestPass123!")
-        row = db.fetch_one("SELECT email_verified FROM auth_users WHERE id = ?", (user.id,))
+        row = db.fetch_one(
+            "SELECT email_verified FROM auth_users WHERE id = ?", (user.id,)
+        )
         assert not row["email_verified"]
 
         with pytest.raises(EmailNotVerifiedError):
@@ -53,9 +55,7 @@ def test_oauth_login_allows_verified_email(auth_manager, db):
     try:
         email = "oauth_gate_verified@example.com"
         user = auth_manager.register("oauth_gate_verified", email, "TestPass123!")
-        db.execute(
-            "UPDATE auth_users SET email_verified = 1 WHERE id = ?", (user.id,)
-        )
+        db.execute("UPDATE auth_users SET email_verified = 1 WHERE id = ?", (user.id,))
 
         result = auth_manager.oauth_login(
             provider="google",

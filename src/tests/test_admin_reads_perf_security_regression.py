@@ -94,22 +94,62 @@ def test_log_cold_read_is_fast_relative_to_scan(tmp_path, monkeypatch):
 
     log = _seed_log(tmp_path, count=4000)
     monkeypatch.setattr(admin_logs, "get_log_dir", lambda: tmp_path)
-    raws = log.read_text().splitlines()
 
-    # Cost of the *old* behaviour: scrub every scanned line. Measured in the
-    # same process so CPU contention (e.g. parallel CI workers) cancels out.
-    t0 = time.perf_counter()
-    for raw in raws:
-        scrub_control_characters(redact_secrets(raw))
-    old_cost = time.perf_counter() - t0
+    def _elapsed(fn):
+        t0 = time.perf_counter()
+        outcome = fn()
+        return time.perf_counter() - t0, outcome
 
-    t0 = time.perf_counter()
-    result = admin_logs.read_log_lines("latest.log", limit=10, offset=0)
-    new_cost = time.perf_counter() - t0
+    def _old_read():
+        # What the previous implementation did: read the whole file *and* scrub
+        # every scanned line before slicing out the requested page.
+        with open(log, "r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle.read().splitlines():
+                scrub_control_characters(redact_secrets(raw))
+
+    def _cold_read():
+        admin_logs.clear_log_filter_index()
+        return admin_logs.read_log_lines("latest.log", limit=10, offset=0)
+
+    # Measured in the same process so CPU contention (e.g. parallel CI workers)
+    # cancels out. The two sides are interleaved so a burst of load lands on
+    # both, and each keeps its fastest run: the comparison is about the work
+    # that is skipped, so scheduling noise must not decide it.
+    old_cost = float("inf")
+    new_cost = float("inf")
+    result = None
+    for _ in range(5):
+        elapsed, _ = _elapsed(_old_read)
+        old_cost = min(old_cost, elapsed)
+        elapsed, result = _elapsed(_cold_read)
+        new_cost = min(new_cost, elapsed)
 
     assert result["total_lines"] == 4000
     # Only the ten returned lines are scrubbed, not all 4000 scanned lines.
     assert new_cost < old_cost / 3
+
+    # The ratio above is machine-dependent, so pin the invariant itself: the
+    # scrubber sees two calls (message + raw) per *returned* line and nothing
+    # for the 3990 lines that were only scanned.
+    calls = {"redact": 0, "scrub": 0}
+    real_redact = admin_logs.redact_secrets
+    real_scrub = admin_logs.scrub_control_characters
+
+    def counting_redact(value, **kwargs):
+        calls["redact"] += 1
+        return real_redact(value, **kwargs)
+
+    def counting_scrub(value, **kwargs):
+        calls["scrub"] += 1
+        return real_scrub(value, **kwargs)
+
+    monkeypatch.setattr(admin_logs, "redact_secrets", counting_redact)
+    monkeypatch.setattr(admin_logs, "scrub_control_characters", counting_scrub)
+    admin_logs.clear_log_filter_index()
+    again = admin_logs.read_log_lines("latest.log", limit=10, offset=0)
+
+    assert again["lines"] == result["lines"]
+    assert calls == {"redact": 2 * 10, "scrub": 2 * 10}
 
 
 # --------------------------------------------------------------------------- #

@@ -26,12 +26,12 @@ from src.core.security.hardening import parse_id
 # Concrete bypass tokens: each is parsed as a valid positive integer by the
 # old ``int(text)`` code but is not a plain ASCII decimal id.
 HOMOGLYPH_AND_SEPARATOR_IDS = [
-    "١٢٣",   # Arabic-Indic digits -> int() == 123
+    "١٢٣",  # Arabic-Indic digits -> int() == 123
     "１２３",  # fullwidth digits    -> int() == 123
-    "٤٢",   # Arabic-Indic 42      -> int() == 42
-    "1_2",   # PEP 515 underscore  -> int() == 12
+    "٤٢",  # Arabic-Indic 42      -> int() == 42
+    "1_2",  # PEP 515 underscore  -> int() == 12
     "+1_2",  # sign + underscore   -> int() == 12
-    "2_2",   # underscore inside   -> int() == 22
+    "2_2",  # underscore inside   -> int() == 22
 ]
 
 

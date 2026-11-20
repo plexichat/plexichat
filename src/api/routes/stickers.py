@@ -75,6 +75,7 @@ def _parse_sticker_id(value: object, field: str, message: str) -> int:
     except (HardeningViolation, ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=message) from exc
 
+
 # BEFORE: hydrating a server's sticker packs called ``get_pack_stickers`` once
 # per pack. Each call re-ran ``get_pack`` (JOIN + membership probe) and issued
 # its own sticker query, so a server with N packs cost 1 + 3N round trips.

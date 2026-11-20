@@ -19,7 +19,9 @@ def test_unreadable_common_password_list_rejects_candidate():
     _clear_cache()
     strong = "X9#vL2!qP7@zR4&kM"
     with (
-        patch.object(pwd_module, "get_password_config", return_value={"min_length": 12}),
+        patch.object(
+            pwd_module, "get_password_config", return_value={"min_length": 12}
+        ),
         patch("pathlib.Path.read_text", side_effect=OSError("disk error")),
     ):
         try:
@@ -28,9 +30,7 @@ def test_unreadable_common_password_list_rejects_candidate():
             _clear_cache()
 
     assert result.valid is False
-    assert any(
-        "policy is temporarily unavailable" in issue for issue in result.issues
-    )
+    assert any("policy is temporarily unavailable" in issue for issue in result.issues)
 
 
 def test_readable_common_password_list_still_flags_common_password():
