@@ -505,7 +505,21 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         if not msg_row:
             raise MessageNotFoundError("Message not found")
 
-        can_delete = msg_row["author_id"] == user_id
+        # Authorship is not a standing write grant. A user who authored a
+        # message but was later removed from the conversation (kick/ban/group
+        # leave) must not keep deleting messages in a conversation they can no
+        # longer view, including hard-deleting them. Every sibling write path
+        # (edit_message/update_message_metadata/pin/...) re-checks membership;
+        # the author branch of delete failed open. Fail closed with the same
+        # MessageNotFoundError oracle as edit/metadata so a removed author
+        # cannot probe message existence through the delete path.
+        is_author = msg_row["author_id"] == user_id
+        if is_author and not self._participant_svc.is_participant(
+            msg_row["conversation_id"], user_id
+        ):
+            raise MessageNotFoundError("Message not found")
+
+        can_delete = is_author
         if not can_delete:
             participant = self._participant_svc.get_participant(
                 msg_row["conversation_id"], user_id
@@ -633,6 +647,13 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                     continue
 
                 can_delete = msg_row["author_id"] == user_id
+                if can_delete and not self._participant_svc.is_participant(
+                    msg_row["conversation_id"], user_id
+                ):
+                    # A removed author keeps no bulk-delete handle either;
+                    # mirror delete_message and report the id as failed.
+                    failed_ids.append(message_id)
+                    continue
                 if not can_delete:
                     participant = self._participant_svc.get_participant(
                         msg_row["conversation_id"], user_id
