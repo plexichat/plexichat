@@ -64,9 +64,12 @@ Usage:
     badges = features.get_user_badges(user_id)
 """
 
+import itertools
 import json
 import threading
 import time
+import weakref
+from collections import OrderedDict
 from typing import Optional, List, Any
 
 import utils.logger as logger
@@ -104,10 +107,57 @@ _setup_complete = False
 # TTL cache in front of the DB read. Grants with an expiry are deliberately not
 # cached so the time-based checks in ``get_user_tier``/``has_feature`` stay
 # authoritative. Every mutation path invalidates the affected user.
+#
+# The store is an LRU rather than a plain dict with "clear everything when
+# full" eviction. With more active users than the cap, a full flush on every
+# overflow dropped every hot entry at once: the next request for each of those
+# users re-queried the DB, turning the cap into a periodic stampede. Evicting a
+# single least-recently-used key keeps hot users cached and bounds the store.
 _FEATURES_CACHE_TTL = 5.0
 _FEATURES_CACHE_MAX = 1024
-_features_cache: dict[tuple[int, int], tuple[float, Optional[UserFeatures]]] = {}
+_features_cache: "OrderedDict[tuple[Any, int], tuple[float, Optional[UserFeatures]]]" = (
+    OrderedDict()
+)
 _features_cache_lock = threading.Lock()
+_FEATURES_CACHE_STATS = {"hits": 0, "misses": 0, "evictions": 0}
+
+# A monotonic, weak token identifies the backing database. ``id(db)`` alone is
+# recyclable: once a db object is collected a new one can reuse its address and
+# observe a stale feature row cached for a different database. The same
+# WeakKeyDictionary pattern is used by the admin caches. A non-weakrefable
+# double falls back to its identity plus its configured path.
+_DB_TOKENS: "weakref.WeakKeyDictionary[Any, tuple[int, Any]]" = (
+    weakref.WeakKeyDictionary()
+)
+_DB_TOKENS_LOCK = threading.Lock()
+_DB_TOKEN_COUNTER = itertools.count(1)
+
+
+def _features_db_token(db: Any) -> tuple:
+    """Stable, non-recycled identity for ``db`` without caching any rows."""
+    cfg = getattr(db, "config", None)
+    path = cfg.get("path") if isinstance(cfg, dict) else None
+    try:
+        with _DB_TOKENS_LOCK:
+            token = _DB_TOKENS.get(db)
+            if token is None:
+                token = (next(_DB_TOKEN_COUNTER), path)
+                _DB_TOKENS[db] = token
+            return token
+    except TypeError:
+        # Unhashable / non-weakrefable double: keep distinct objects distinct
+        # using their identity (plus the path) as the fallback key.
+        return (-1, id(db), path)
+
+
+def get_features_cache_stats() -> dict:
+    """Snapshot of the user-features cache counters and current size."""
+    with _features_cache_lock:
+        return {
+            **_FEATURES_CACHE_STATS,
+            "size": len(_features_cache),
+            "max_entries": _FEATURES_CACHE_MAX,
+        }
 
 
 def _invalidate_user_features_cache(user_id: int) -> None:
@@ -481,14 +531,20 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
     """
     db = _get_db()
 
-    # Key on the DB identity as well as the user so re-setup with a fresh
-    # database can never serve a row cached from the previous one.
-    cache_key = (id(db), user_id)
+    # Key on a non-recycled DB token as well as the user so re-setup with a
+    # fresh database can never serve a row cached from the previous one.
+    cache_key = (_features_db_token(db), user_id)
     now = time.monotonic()
     with _features_cache_lock:
         cached = _features_cache.get(cache_key)
         if cached is not None and cached[0] > now:
+            _features_cache.move_to_end(cache_key)
+            _FEATURES_CACHE_STATS["hits"] += 1
             return cached[1]
+        if cached is not None:
+            # Expired entries must never be served; drop them on access.
+            _features_cache.pop(cache_key, None)
+        _FEATURES_CACHE_STATS["misses"] += 1
 
     row = db.fetch_one(
         """SELECT id, user_id, rate_limit_tier, badges,
@@ -522,10 +578,15 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
     # each read, so a cached object could otherwise keep a grant alive past
     # its expiry for the length of the TTL.
     if result is None or result.expires_at is None:
+        # Start the TTL after the read so a slow DB call cannot shorten the
+        # window in which the row is reused.
+        expires = time.monotonic() + _FEATURES_CACHE_TTL
         with _features_cache_lock:
-            if len(_features_cache) >= _FEATURES_CACHE_MAX:
-                _features_cache.clear()
-            _features_cache[cache_key] = (now + _FEATURES_CACHE_TTL, result)
+            _features_cache[cache_key] = (expires, result)
+            _features_cache.move_to_end(cache_key)
+            while len(_features_cache) > _FEATURES_CACHE_MAX:
+                _features_cache.popitem(last=False)
+                _FEATURES_CACHE_STATS["evictions"] += 1
     return result
 
 
@@ -868,6 +929,7 @@ __all__ = [
     "warm_tier_limits_cache",
     "TierConfiguration",
     "get_user_features",
+    "get_features_cache_stats",
     "get_user_tier",
     "get_user_tier_limits",
     "has_feature",
