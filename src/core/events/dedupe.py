@@ -110,18 +110,36 @@ class CrossWorkerDedupe:
             self._evictions += 1
 
     def _store(self, event_id: str) -> None:
-        """Insert ``event_id`` and enforce the hard size bound.  Lock held."""
+        """Insert ``event_id`` and enforce the hard size bound.  Lock held.
+
+        Re-storing an id (a publisher retrying a burst with the same envelope
+        id) deletes then reinserts it so it moves to the end with a fresh
+        timestamp.  That keeps ``_seen`` ordered oldest-first by insertion
+        time, which is the invariant ``_sweep_expired_locked`` relies on to
+        stop at the first live entry instead of scanning the whole registry.
+        """
+        if event_id in self._seen:
+            del self._seen[event_id]
         self._seen[event_id] = time.monotonic()
         while len(self._seen) > self._max_entries:
             self._seen.popitem(last=False)
             self._record_eviction_locked()
 
     def _sweep_expired_locked(self) -> None:
-        """Drop ids older than the TTL.  Lock held."""
+        """Drop ids older than the TTL.  Lock held.
+
+        ``_store`` keeps the registry ordered by time (oldest first), so every
+        expired id forms a prefix.  Walk only that prefix and stop at the first
+        live entry: the common case (nothing expired yet) is one O(1) check
+        rather than an O(max_entries) scan plus a throwaway list allocation on
+        every single event ingestion on the cross-worker hot path.
+        """
         cutoff = time.monotonic() - self._ttl_sec
-        expired = [key for key, ts in self._seen.items() if ts < cutoff]
-        for key in expired:
-            self._seen.pop(key, None)
+        while self._seen:
+            event_id = next(iter(self._seen))
+            if self._seen[event_id] >= cutoff:
+                break
+            self._seen.popitem(last=False)
             self._record_eviction_locked()
 
     def clear(self) -> None:
