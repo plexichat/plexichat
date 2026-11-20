@@ -8,8 +8,46 @@ from ..exceptions import (
     ServerNotFoundError,
     OwnerCannotLeaveError,
     MemberNotFoundError,
+    ServerAccessDeniedError,
 )
 from .protocol import ServerProtocol
+
+# The per-viewer roster page is one of the hottest member reads: presence,
+# gateway fan-out, websocket handlers and REST all page the same server roster
+# many times in a single request.  Memoise that page briefly, with a key that
+# is explicitly partitioned by the requesting credential.
+#
+# Three invariants shape this cache (pinned by
+# tests/servers/test_core_roster_read_cache.py):
+#  * the membership gate runs on EVERY call, OUTSIDE and BEFORE the cached
+#    loader.  A warm (even poisoned) page can never turn a would-be denial
+#    into a 200 for a user who is not a member.
+#  * the key carries ``user_id`` as its own bounded segment, so one viewer's
+#    page is never replayed to another credential.
+#  * every roster-changing mutation drops this namespace immediately through
+#    ``CacheOpsMixin._invalidate_roster_caches`` instead of waiting out the
+#    short TTL.
+_ROSTER_CACHE_PREFIX = "srv_roster"
+_ROSTER_CACHE_TTL = 20
+
+
+def _roster_cache_key(
+    _self: "MemberOpsMixin",
+    user_id: SnowflakeID,
+    server_id: SnowflakeID,
+    limit: int = 100,
+    after_id: Optional[SnowflakeID] = None,
+) -> str:
+    """Build a bounded, credential-partitioned key for a roster page.
+
+    The ``@cached`` decorator passes the bound instance first to custom
+    builders; ``self`` is intentionally ignored so entries are shared across
+    manager instances (the credential lives in ``user_id``, not the object).
+    """
+    return (
+        f"{_ROSTER_CACHE_PREFIX}:{int(user_id)}:{int(server_id)}:"
+        f"{int(limit)}:{int(after_id) if after_id else 0}"
+    )
 
 
 class MemberOpsMixin(ServerProtocol):
@@ -22,7 +60,6 @@ class MemberOpsMixin(ServerProtocol):
         )
         return row is not None
 
-    @cached(ttl=30, prefix="server_members")
     def get_members(
         self,
         user_id: SnowflakeID,
@@ -30,11 +67,29 @@ class MemberOpsMixin(ServerProtocol):
         limit: int = 100,
         after_id: Optional[SnowflakeID] = None,
     ) -> List[Member]:
+        """Return a page of the server roster to an authorized member.
+
+        The membership check is deliberately OUTSIDE the cached loader: it is
+        an authorization boundary and must run on every call before any cache
+        tier is consulted.  A cached page therefore cannot keep granting roster
+        access to a user who has since left or been removed from the server.
+        """
         if not self._is_member(server_id, user_id):
-            from ..exceptions import ServerAccessDeniedError
-
             raise ServerAccessDeniedError("Not a member of this server")
+        return self._get_members_cached(user_id, server_id, limit, after_id)
 
+    @cached(
+        ttl=_ROSTER_CACHE_TTL,
+        prefix=_ROSTER_CACHE_PREFIX,
+        key_builder=_roster_cache_key,
+    )
+    def _get_members_cached(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        limit: int,
+        after_id: Optional[SnowflakeID],
+    ) -> List[Member]:
         # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
         # negative limit would bypass the page cap and dump the whole list.
         limit = max(0, min(limit, 999))

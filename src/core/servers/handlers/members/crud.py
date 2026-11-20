@@ -389,6 +389,9 @@ class MemberCrudMixin:
         # a member update must evict every cached member-list page; otherwise
         # viewers keep the pre-update roster until its 30s TTL expires.
         invalidate_pattern("server_members_api:*")
+        # The core per-viewer roster page (srv_roster:*) is a separate tier and
+        # embeds the fields changed above, so evict it for every viewer too.
+        self.manager._invalidate_roster_caches(server_id)
         # Timeout (and other member state) feeds permission computation, so the
         # user's cached permission snapshots must be dropped across all tiers.
         self.manager._invalidate_permission_caches(server_id, member_user_id)
@@ -485,38 +488,42 @@ class MemberCrudMixin:
             (user_id,),
         )
         revoked: List[SnowflakeID] = []
-        for row in rows or []:
-            member_id = row["member_id"]
-            server_id = row["server_id"]
+        # A disconnect can revoke many temporary memberships at once.  Buffer
+        # the per-revocation audit writes for the whole loop; the bounded
+        # buffer flushes on exit (also on error) so no audit row is lost.
+        with self.manager._buffered_audit():
+            for row in rows or []:
+                member_id = row["member_id"]
+                server_id = row["server_id"]
 
-            # A role other than the server's default makes the membership
-            # permanent (the member contributed/participated).
-            earned = self.db.fetch_one(
-                "SELECT 1 FROM srv_member_roles mr "
-                "JOIN srv_roles r ON r.id = mr.role_id "
-                "WHERE mr.member_id = ? AND r.is_default = 0",
-                (member_id,),
-            )
-            if earned:
-                self.db.execute(
-                    "UPDATE srv_members SET is_temporary = 0 WHERE id = ?",
+                # A role other than the server's default makes the membership
+                # permanent (the member contributed/participated).
+                earned = self.db.fetch_one(
+                    "SELECT 1 FROM srv_member_roles mr "
+                    "JOIN srv_roles r ON r.id = mr.role_id "
+                    "WHERE mr.member_id = ? AND r.is_default = 0",
                     (member_id,),
                 )
-                continue
+                if earned:
+                    self.db.execute(
+                        "UPDATE srv_members SET is_temporary = 0 WHERE id = ?",
+                        (member_id,),
+                    )
+                    continue
 
-            self.db.execute(
-                "DELETE FROM srv_member_roles WHERE member_id = ?", (member_id,)
-            )
-            self.db.execute("DELETE FROM srv_members WHERE id = ?", (member_id,))
-            self.manager._invalidate_member_caches(server_id, user_id)
-            self.manager._log_audit(
-                server_id,
-                user_id,
-                AuditLogAction.MEMBER_LEAVE,
-                "member",
-                user_id,
-            )
-            revoked.append(server_id)
+                self.db.execute(
+                    "DELETE FROM srv_member_roles WHERE member_id = ?", (member_id,)
+                )
+                self.db.execute("DELETE FROM srv_members WHERE id = ?", (member_id,))
+                self.manager._invalidate_member_caches(server_id, user_id)
+                self.manager._log_audit(
+                    server_id,
+                    user_id,
+                    AuditLogAction.MEMBER_LEAVE,
+                    "member",
+                    user_id,
+                )
+                revoked.append(server_id)
 
         if revoked:
             logger.info(
