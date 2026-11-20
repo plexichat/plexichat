@@ -349,34 +349,52 @@ class AccessControlMixin(SearchManagerBase):
         return {row["friend_id"] for row in rows}
 
     def _get_user_friends_map(self, user_ids: List[int]) -> Dict[int, set]:
-        from src.core.database import cache_get, cache_set, valkey_available
+        # N+1 FIX: hydrate every hit user's friend set with one bulk cache
+        # read (MGET) and chunked ``WHERE user_id IN (...)`` SQL queries,
+        # instead of one cache GET + one SQL SELECT per result.  This mirrors
+        # the batching already done by ``_get_user_servers_map``.  The external
+        # contract is unchanged: a map keyed by exactly the requested ids,
+        # each value the direct friend ids of that user (empty set on misses).
+        from src.core.database import (
+            cache_get_many,
+            cache_set,
+            valkey_available,
+        )
 
         uniq = sorted({int(uid) for uid in user_ids if uid})
         result: Dict[int, set] = {}
         missing: List[int] = []
         if valkey_available():
-            for uid in uniq:
-                cached = cache_get(f"user:friends:{uid}")
+            # Single MGET instead of one round-trip per hydrated hit.
+            keys = [f"user:friends:{uid}" for uid in uniq]
+            bulk = cache_get_many(keys) or {}
+            for uid, key in zip(uniq, keys):
+                cached = bulk.get(key)
                 if isinstance(cached, list):
                     result[uid] = {int(x) for x in cached}
                 else:
                     missing.append(uid)
         else:
             missing = uniq
+
         if missing:
-            friend_rows = []
-            for uid in missing:
-                rows = self._db.fetch_all(
-                    "SELECT user_id, friend_id FROM rel_friends WHERE user_id = ?",
-                    (uid,),
+            # Bounded IN (...) batches replace the per-user SELECT loop.
+            # Chunk by the raw missing list (not the id-coercing helper) so
+            # every requested key keeps the exact scope it had before.
+            for start in range(0, len(missing), _BIND_CHUNK):
+                chunk = missing[start : start + _BIND_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                friend_rows = self._db.fetch_all(
+                    "SELECT user_id, friend_id FROM rel_friends "
+                    f"WHERE user_id IN ({placeholders})",
+                    tuple(chunk),
                 )
-                friend_rows.extend(rows)
-            for row in friend_rows:
-                uid = int(row["user_id"])
-                fid = int(row["friend_id"])
-                if uid not in result:
-                    result[uid] = set()
-                result[uid].add(fid)
+                for row in friend_rows:
+                    uid = int(row["user_id"])
+                    fid = int(row["friend_id"])
+                    if uid not in result:
+                        result[uid] = set()
+                    result[uid].add(fid)
         if valkey_available():
             for uid in missing:
                 cache_set(f"user:friends:{uid}", list(result.get(uid, set())), ttl=300)
