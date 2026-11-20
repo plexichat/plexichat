@@ -14,6 +14,7 @@ from src.api.schemas.admin import (
     AdminBackupCodesResponse,
 )
 from src.api.schemas.common import SuccessResponse, ErrorResponse
+from src.core.security.hardening import HardeningViolation, parse_id
 from .utils import (
     check_host_restriction,
     get_admin_from_token,
@@ -247,8 +248,15 @@ async def admin_force_password_change(request: Request, target_admin_id: str):
         from src.core import admin
 
         try:
-            target_id_int = int(target_admin_id)
-        except (TypeError, ValueError):
+            # Route the caller-controlled id through the same ASCII-only,
+            # 64-bit-bounded snowflake gate every other id boundary uses.
+            # Bare ``int()`` accepted Unicode decimal homoglyphs ("١٢٣",
+            # "１２３"), PEP 515 underscores ("1_2" -> 12), signs and values
+            # past 2**63-1, so the id that reached the force-password-change
+            # lookup could differ from the one an ASCII-only validator (proxy,
+            # WAF, log/audit pipeline) read from the same bytes.
+            target_id_int = parse_id(target_admin_id, "admin ID")
+        except (HardeningViolation, TypeError, ValueError):
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid admin ID"}},
