@@ -11,9 +11,10 @@ Exports turn two pieces of untrusted input into powerful side effects:
   ``http(s)://`` URL is not safe: loopback, link-local and cloud metadata
   addresses turn the exporter into an SSRF proxy.
 
-The helpers here are dependency free so routes, workers and CLI tools can all
-share the same checks. They fail closed: every function either returns a value
-that is safe to use verbatim or raises a specific ``ValueError`` subclass.
+The helpers here avoid third-party dependencies so routes, workers and CLI
+tools can all share the same checks. They fail closed: every function either
+returns a value that is safe to use verbatim or raises a specific ``ValueError``
+subclass. The IP policy intentionally reuses the central ``URLValidator``.
 """
 
 from __future__ import annotations
@@ -193,18 +194,21 @@ def bounded_chunks(
 
 
 def _address_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Fail closed for every address class usable for SSRF."""
-    if not ip.is_global:
+    """Fail closed for every address class usable for SSRF.
+
+    The IP policy comes from the central ``URLValidator`` so this hand-rolled
+    gate cannot drift from every other outbound boundary. ``ipaddress`` alone
+    is not enough: ``ipaddress.is_global`` does not flag deprecated IPv6
+    site-local space (``fec0::/10``) or every NAT64 transition address. An
+    export source URL naming such an address
+    used to be vetted as public and fetched from inside the site. If the central
+    gate cannot be imported, fail closed rather than vetting an unverified IP.
+    """
+    try:
+        from src.utils.security import URLValidator
+    except Exception:
         return False
-    if ip.is_multicast or ip.is_unspecified or ip.is_reserved:
-        return False
-    # Only IPv6 addresses can carry an IPv4-mapped address. Judging the mapped
-    # IPv4 address directly is what stops ``::ffff:10.0.0.1`` from passing on
-    # the IPv6 object's own flags.
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        mapped = ip.ipv4_mapped
-        return bool(mapped.is_global and not mapped.is_private)
-    return True
+    return not URLValidator().is_private_ip(str(ip))
 
 
 def _host_matches_allowlist(host: str, allowed_hosts: Iterable[str] | None) -> bool:

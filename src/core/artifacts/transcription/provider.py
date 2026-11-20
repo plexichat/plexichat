@@ -113,25 +113,32 @@ def _require_public_https_endpoint(value: Any, field: str) -> str:
         raise HardeningViolation(f"{field} must include a hostname")
     if hostname in _LOCAL_ENDPOINT_HOSTS or hostname.endswith(_LOCAL_ENDPOINT_SUFFIXES):
         raise HardeningViolation(f"{field} must not target a local/internal host")
+    validator = URLValidator()
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
         # The OS resolver also accepts legacy numeric forms (0x7f000001,
         # 2130706433, 0177.0.0.1) that ``ipaddress`` rejects but that still
-        # reach loopback. Check those without performing DNS.
+        # reach loopback. Check those without performing DNS. Delegate the IP
+        # policy to the central validator so numeric literals cannot bypass a
+        # rule (CGNAT, site-local, NAT64) that ``is_global`` misses.
         if re.fullmatch(r"[0-9a-fA-FxX.]+", hostname):
             try:
                 packed = socket.inet_aton(hostname)
             except OSError:
                 return url
-            if not ipaddress.ip_address(packed).is_global:
+            if validator.is_private_ip(str(ipaddress.ip_address(packed))):
                 raise HardeningViolation(
                     f"{field} must not target a private IP address"
                 )
         # A DNS name: allowed through here; the outbound transport is
         # responsible for resolving and pinning the address it connects to.
         return url
-    if not address.is_global:
+    # ``is_global`` misses deprecated IPv6 site-local (fec0::/10), NAT64
+    # addresses embedding a private IPv4 and other non-global ranges. Use the
+    # same IP gate every other outbound boundary uses before sending the API
+    # key to this endpoint.
+    if validator.is_private_ip(str(address)):
         raise HardeningViolation(f"{field} must not target a private IP address")
     return url
 
