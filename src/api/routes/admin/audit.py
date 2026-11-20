@@ -14,6 +14,7 @@ import time
 from pydantic import BeforeValidator
 
 from .utils import check_host_restriction, require_admin_permission
+from ._summary_cache import get_or_compute
 from src.api.schemas.common import ErrorResponse, NullableSnowflakeIDParam
 from src.core.security.hardening import content_disposition
 from src.core.telemetry.scrubbing import redact_secrets
@@ -50,6 +51,13 @@ _MAX_AUDIT_DATE_RANGE_MS = _MAX_AUDIT_SCAN_DAYS * 24 * 60 * 60 * 1000
 # value stored in a signed 64-bit column, so reject anything outside that range.
 _MIN_AUDIT_TIMESTAMP_MS = 0
 _MAX_AUDIT_TIMESTAMP_MS = 2**63 - 1
+
+# The stats endpoint recomputes eleven COUNT scans over admin_audit_log on
+# every poll (three totals + one per action family). Operators poll it from the
+# dashboard every few seconds, so collapse those polls into one computation for
+# a short window. The host/permission gates below run on every request, before
+# the cache is consulted, so authorization is never served from a cached value.
+_AUDIT_STATS_TTL_SECONDS = 2.0
 
 # Audit rows are untrusted free text: details, actions and user agents can be
 # influenced by users whose names/values were recorded in an entry. When an
@@ -442,62 +450,69 @@ async def get_audit_stats(request: Request):
     check_host_restriction(request)
     require_admin_permission(request, "admin.audit.read")
 
-    try:
-        import src.api as api
+    # created_at is stored as UTC millis (time.time() * 1000), so the
+    # day boundary must also be UTC midnight, not server-local midnight.
+    # Compute it here so the cache key rolls over at midnight rather than
+    # serving yesterday's totals for the remainder of the TTL window.
+    today_start = int(
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
+        * 1000
+    )
 
-        db = api.get_db()
-        if db is None:
-            raise HTTPException(status_code=503, detail="Database not available")
+    def _load() -> dict:
+        try:
+            import src.api as api
 
-        # created_at is stored as UTC millis (time.time() * 1000), so the
-        # day boundary must also be UTC midnight, not server-local midnight.
-        today_start = int(
-            datetime.now(timezone.utc)
-            .replace(hour=0, minute=0, second=0, microsecond=0)
-            .timestamp()
-            * 1000
-        )
+            db = api.get_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database not available")
 
-        stats = {
-            "total_today": db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ?",
-                (today_start,),
-            )["count"],
-            "success_today": db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'success'",
-                (today_start,),
-            )["count"],
-            "failed_today": db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'failed'",
-                (today_start,),
-            )["count"],
-            "by_action_family": {},
-        }
+            stats = {
+                "total_today": db.fetch_one(
+                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ?",
+                    (today_start,),
+                )["count"],
+                "success_today": db.fetch_one(
+                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'success'",
+                    (today_start,),
+                )["count"],
+                "failed_today": db.fetch_one(
+                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'failed'",
+                    (today_start,),
+                )["count"],
+                "by_action_family": {},
+            }
 
-        families = [
-            "login",
-            "user",
-            "admin",
-            "config",
-            "approval",
-            "security",
-            "plexijoin",
-            "license",
-        ]
-        for family in families:
-            count = db.fetch_one(
-                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND action LIKE ?",
-                (today_start, f"{family}%"),
-            )["count"]
-            if count > 0:
-                stats["by_action_family"][family] = count
+            families = [
+                "login",
+                "user",
+                "admin",
+                "config",
+                "approval",
+                "security",
+                "plexijoin",
+                "license",
+            ]
+            for family in families:
+                count = db.fetch_one(
+                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND action LIKE ?",
+                    (today_start, f"{family}%"),
+                )["count"]
+                if count > 0:
+                    stats["by_action_family"][family] = count
 
-        return stats
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Audit stats retrieval error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+            return stats
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Audit stats retrieval error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    return get_or_compute(
+        "audit_stats", (today_start,), _load, _AUDIT_STATS_TTL_SECONDS
+    )
 
 
 @router.get(

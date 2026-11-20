@@ -192,6 +192,19 @@ class AdminLogger:
                 ),
             )
 
+        # A successful write changes "today's" audit totals. Drop the short-TTL
+        # summary so the next dashboard poll recomputes immediately instead of
+        # serving stale counts for the rest of the window. Best-effort: a missed
+        # invalidation only delays freshness by the cache TTL (and never affects
+        # whether the audit row itself was written). Imported lazily to avoid a
+        # core -> api import cycle at module load time.
+        try:
+            from src.api.routes.admin._summary_cache import clear as _clear_summary
+
+            _clear_summary("audit_stats")
+        except Exception:
+            pass
+
     def log_login(
         self,
         db: Any,
