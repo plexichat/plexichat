@@ -451,10 +451,35 @@ class EventRouter:
                 recipients.update(friend_ids)
 
         if self._servers:
-            server_ids = self._servers.get_user_server_ids(user_id)
-            for sid in server_ids or []:
-                member_ids = self._get_server_member_ids(sid)
-                recipients.update(member_ids)
+            # The shared members of every server the subject belongs to are
+            # exactly the union of each server's member list. Walking the
+            # server ids and issuing one SELECT per server was an N+1 that
+            # grew with the subject's server count on every cold resolution.
+            # The manager exposes one indexed self-join for that union; use it
+            # when available and keep the loop only as a fallback for legacy
+            # sources that do not implement the helper.
+            bulk_lookup: Optional[Callable[[int], List[int]]] = getattr(
+                self._servers, "get_all_shared_member_ids", None
+            )
+            if callable(bulk_lookup):
+                try:
+                    recipients.update(bulk_lookup(user_id) or [])
+                except Exception as e:
+                    # Fail closed: without the authoritative shared-member set
+                    # we cannot prove the audience is complete, so withhold the
+                    # event rather than widening it to friends only. Cache the
+                    # empty result too, like every other fail-closed resolution.
+                    logger.debug(
+                        f"Failed bulk shared-member lookup for user {user_id}: {e}"
+                    )
+                    result: List[int] = []
+                    _presence_audience_cache.put(cache_key, result)
+                    return result
+            else:
+                server_ids = self._servers.get_user_server_ids(user_id)
+                for sid in server_ids or []:
+                    member_ids = self._get_server_member_ids(sid)
+                    recipients.update(member_ids)
 
         recipients.discard(user_id)
 
