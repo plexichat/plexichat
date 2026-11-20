@@ -832,19 +832,36 @@ class SessionManager:
         """
         Get all connections for a list of users.
 
+        Duplicate ids are collapsed before lookup, and a connection is returned
+        at most once even if it appears under more than one requested user.
+        Direct dispatcher callers (gateway opcodes, typing/presence relays)
+        bypass ``EventRouter``'s recipient dedupe, so without this guard a
+        repeated user id fanned the same frame out to the same socket more
+        than once: extra sequence numbers, duplicate replay entries and wasted
+        serialization/send work for every recipient. First-seen order is kept
+        so fan-out remains deterministic.
+
         Args:
             user_ids: List of user IDs
 
         Returns:
-            List of connections
+            List of distinct authenticated connections
         """
-        connections = []
+        connections: List[Connection] = []
+        seen_users: Set[int] = set()
+        seen_connections: Set[str] = set()
         with self._lock:
             for user_id in user_ids:
+                if user_id in seen_users:
+                    continue
+                seen_users.add(user_id)
                 conn_ids = self._user_connections.get(user_id, set())
                 for cid in conn_ids:
+                    if cid in seen_connections:
+                        continue
                     conn = self._connections.get(cid)
                     if conn and conn.is_authenticated:
+                        seen_connections.add(cid)
                         connections.append(conn)
         return connections
 

@@ -7,6 +7,7 @@ not flake on a busy CI worker.
 """
 
 import asyncio
+import threading
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -210,6 +211,52 @@ async def test_identical_presence_burst_renders_once(monkeypatch):
 
     assert len(render_calls) == 1
     assert len(cast(AsyncMock, conn.websocket.send_json).await_args_list) == 500
+
+
+@pytest.mark.asyncio
+async def test_duplicate_user_ids_do_not_duplicate_fanout():
+    """A repeated user id must not deliver the same frame to one socket twice.
+
+    Direct dispatcher callers bypass ``EventRouter``'s recipient dedupe, so
+    ``[123, 123, 123]`` reaches the connection lookup verbatim. Before the
+    lookup deduped, that produced three frames, three sequence numbers and
+    three serialization/send passes on a single connection.
+    """
+    from src.api.websocket.session import SessionManager
+
+    # Build without __init__ so the test never touches Valkey.
+    session_manager = object.__new__(SessionManager)
+    session_manager._connections = {}
+    session_manager._user_connections = {}
+    session_manager._lock = threading.Lock()
+
+    conn = Connection(
+        websocket=AsyncMock(), connection_id="dup", intents=ALL_INTENTS
+    )
+    conn.state = ConnectionState.READY
+    conn.user_id = 123
+    conn.is_selftest = True
+    session_manager._connections[conn.connection_id] = conn
+    session_manager._user_connections[123] = {conn.connection_id}
+
+    # Dedupe at the lookup boundary, preserving first-seen order.
+    assert session_manager.get_connections_for_users([123, 123, 123]) == [conn]
+
+    dispatcher = GatewayDispatcher(cast(SessionManager, session_manager))
+    event = Event(
+        event_type=EventType.MESSAGE_CREATE,
+        data={"message_id": 1, "content": "once"},
+    )
+    sent = await dispatcher.dispatch_event(event, [123, 123, 123])
+
+    assert sent == 1
+    assert conn.sequence == 1
+    frames = [
+        call.args[0]
+        for call in cast(AsyncMock, conn.websocket.send_json).await_args_list
+    ]
+    assert len(frames) == 1
+    assert frames[0]["s"] == 1
 
 
 @pytest.mark.asyncio
