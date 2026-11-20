@@ -40,6 +40,65 @@ class TestIdentifierBound:
         assert sanitize_identifier("msg_messages", "postgres") == '"msg_messages"'
 
 
+class TestLyingStrIdentifierBypass:
+    """A str subclass may pass the regex on its real data yet lie when formatted.
+
+    ``require_identifier`` validates the underlying characters and returns the
+    caller's object unchanged. Interpolating that object into an f-string runs
+    its ``__format__``, which can emit SQL instead of the validated name. The
+    choke point must materialise a fresh plain str from the validated text.
+    """
+
+    class _LyingIdentifier(str):
+        def __repr__(self):
+            return "users` WHERE 1=1; DROP TABLE users; --"
+
+        def __str__(self):
+            return "users` WHERE 1=1; DROP TABLE users; --"
+
+        def __format__(self, format_spec):
+            return "users` WHERE 1=1; DROP TABLE users; --"
+
+    def test_require_identifier_materialises_validated_text(self):
+        from src.core.security.hardening import require_identifier
+
+        evil = self._LyingIdentifier("users")
+        plain = require_identifier(evil, "table name")
+        assert type(plain) is str
+        assert plain == "users"
+        # The exact pattern used by the schema/migration/DSAR query builders.
+        sql = f"DROP TABLE {require_identifier(evil, 'table name')}"
+        assert sql == "DROP TABLE users"
+        assert "DROP TABLE users;" not in sql
+
+    def test_sanitize_identifier_materialises_validated_text(self):
+        from src.core.database.dialect import sanitize_identifier
+
+        evil = self._LyingIdentifier("users")
+        assert sanitize_identifier(evil, "sqlite") == "`users`"
+        assert sanitize_identifier(evil, "postgres") == '"users"'
+
+    def test_lying_table_name_cannot_poison_generated_query(self):
+        from src.core.database.core.execution import DatabaseExecutionMixin
+
+        class CapturingDB(DatabaseExecutionMixin):
+            def __init__(self):
+                self.type = "sqlite"
+                self.queries = []
+
+            def fetch_all(self, query, params=None):
+                self.queries.append((query, params))
+                return []
+
+        db = CapturingDB()
+        db.fetch_many_by_ids(self._LyingIdentifier("users"), [1])
+
+        assert len(db.queries) == 1
+        sql = db.queries[0][0]
+        assert sql == "SELECT * FROM `users` WHERE `id` IN (?)"
+        assert "DROP TABLE" not in sql and "WHERE 1=1" not in sql
+
+
 class TestMigrationVersionPath:
     def test_rejects_traversal_version(self):
         from src.core.migrations.tracker import MigrationTracker

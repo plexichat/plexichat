@@ -109,11 +109,23 @@ def sanitize_identifier(identifier: str, db_type: str) -> str:
     still produced a valid-looking (but planner-hostile) statement. Delegate
     to the shared rule so the 63-character bound and the single definition of
     "safe identifier" are enforced everywhere.
+
+    ``require_identifier`` checks the *underlying characters* of ``identifier``
+    but returns the caller's object unchanged. A ``str`` subclass can therefore
+    pass the regex on its real data while lying in ``__format__``/``__str__``;
+    the f-strings below would splice that lie (SQL) straight into the statement.
+    Rebuild a fresh plain ``str`` from the validated text before quoting, the
+    same way the query builder's ``sql_identifier`` does.
     """
-    require_identifier(identifier, "database identifier")
+    validated = require_identifier(identifier, "database identifier")
+    # ``str.join`` reads each item's real Unicode buffer rather than any
+    # overridden dunder, so this is an exact copy of the text that was checked
+    # -- and a plain ``str``, not the caller's subclass. No lying
+    # ``__format__``/``__str__`` can reach the statement from here on.
+    safe = "".join((validated,))
 
     if db_type == "postgres":
-        return f'"{identifier}"'
+        return '"' + safe + '"'
     else:
         # SQLite uses backticks
-        return f"`{identifier}`"
+        return "`" + safe + "`"

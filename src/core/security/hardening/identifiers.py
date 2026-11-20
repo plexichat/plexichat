@@ -27,7 +27,22 @@ def is_identifier(value: Any) -> bool:
 
 
 def require_identifier(value: Any, field: str = "identifier") -> str:
-    """Return ``value`` if it is a safe SQL object name, else raise."""
+    """Return a plain ``str`` copy of ``value`` if it is a safe SQL name.
+
+    Validation reads the object's real Unicode buffer, but the old implementation
+    returned the caller's object unchanged. Callers interpolate that result into
+    SQL f-strings, so a ``str`` subclass could pass the regex on its real data
+    while lying in ``__format__``/``__str__`` and splice SQL into the statement::
+
+        class Lying(str):
+            def __format__(self, _): return "users`; DROP TABLE users; --"
+        db.execute(f"DROP TABLE {require_identifier(Lying('users'))}")
+
+    ``str.join`` reads each item's underlying characters rather than any
+    overridden dunder and always returns a fresh plain ``str``, so the returned
+    text is exactly the bytes that were validated. This closes the bypass at the
+    single choke point all dynamic-identifier call sites share.
+    """
     if not is_identifier(value):
         raise HardeningViolation(f"{field} is not a valid SQL identifier")
-    return value
+    return "".join((value,))
