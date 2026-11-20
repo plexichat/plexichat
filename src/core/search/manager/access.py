@@ -316,14 +316,25 @@ class AccessControlMixin(SearchManagerBase):
         return set(server_ids)
 
     def _get_user_servers_map(self, user_ids: List[int]) -> Dict[int, set]:
-        from src.core.database import cache_get, cache_set, valkey_available
+        # N+1 FIX: hydrate every hit user's server set with one bulk cache
+        # read (MGET) and chunked ``WHERE user_id IN (...)`` SQL queries,
+        # instead of one cache GET + one unbounded SQL SELECT per result. This
+        # mirrors the batching already done by ``_get_user_friends_map``. The
+        # external contract is unchanged: a map keyed by exactly the requested
+        # ids, each value that user's server ids (empty set on misses).
+        from src.core.database import cache_get_many, cache_set, valkey_available
 
         uniq = sorted({int(uid) for uid in user_ids if uid})
         result: Dict[int, set] = {}
         missing: List[int] = []
         if valkey_available():
-            for uid in uniq:
-                cached = cache_get(f"user:servers:{uid}")
+            # One MGET instead of one Valkey round-trip per hydrated hit. Use
+            # the authoritative key that cache_ops invalidates on membership
+            # changes so a removed server cannot keep counting for the TTL.
+            keys = [f"user:servers:{uid}" for uid in uniq]
+            bulk = cache_get_many(keys) or {}
+            for uid, key in zip(uniq, keys):
+                cached = bulk.get(key)
                 if isinstance(cached, list):
                     result[uid] = {int(x) for x in cached}
                 else:
@@ -331,18 +342,23 @@ class AccessControlMixin(SearchManagerBase):
         else:
             missing = uniq
         if missing:
-            member_rows = self._db.fetch_all(
-                "SELECT user_id, server_id FROM srv_members WHERE user_id IN ({})".format(
-                    ",".join(["?"] * len(missing))
-                ),
-                tuple(missing),
-            )
-            for row in member_rows:
-                uid = int(row["user_id"])
-                sid = int(row["server_id"])
-                if uid not in result:
-                    result[uid] = set()
-                result[uid].add(sid)
+            # Bounded IN (...) batches replace the old single unbounded bind
+            # list (which could exceed SQLite's variable cap) and keep SQL
+            # cost at ceil(N / _BIND_CHUNK) queries rather than N.
+            for start in range(0, len(missing), _BIND_CHUNK):
+                chunk = missing[start : start + _BIND_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                member_rows = self._db.fetch_all(
+                    "SELECT user_id, server_id FROM srv_members "
+                    f"WHERE user_id IN ({placeholders})",
+                    tuple(chunk),
+                )
+                for row in member_rows:
+                    uid = int(row["user_id"])
+                    sid = int(row["server_id"])
+                    if uid not in result:
+                        result[uid] = set()
+                    result[uid].add(sid)
         if valkey_available():
             for uid in missing:
                 cache_set(f"user:servers:{uid}", list(result.get(uid, set())), ttl=300)
