@@ -131,6 +131,10 @@ class RelationshipMixinProtocol(Protocol):
 
     def get_friend_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]: ...
 
+    def get_friend_ids_bulk(
+        self, user_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]: ...
+
     def remove_friend(self, user_id: SnowflakeID, friend_id: SnowflakeID) -> bool: ...
 
     # === Block operations ===
@@ -191,6 +195,10 @@ class RelationshipMixinProtocol(Protocol):
     def get_mutual_servers(
         self, user_id: SnowflakeID, target_id: SnowflakeID
     ) -> List[SnowflakeID]: ...
+
+    def get_mutual_servers_bulk(
+        self, user_id: SnowflakeID, target_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]: ...
 
     def get_mutual_server_count(
         self, user_id: SnowflakeID, target_id: SnowflakeID

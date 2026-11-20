@@ -281,8 +281,11 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
 
     Mirrors the router's semantics for a known actor: a participant that
     blocked the actor, and any participant the actor blocked, are excluded.
-    When the relationship source is unavailable the existing audience is kept
-    (the same fallback the router uses), so this never silences DM traffic.
+    When no relationship module is wired the existing audience is kept (the
+    same fallback the router uses), so this never silences DM traffic. When a
+    module IS wired but its authoritative block lookup fails, the audience is
+    dropped entirely (fail closed) rather than delivered to a possibly blocked
+    pair.
     """
     if actor_id is None:
         return list(participants)
@@ -314,22 +317,47 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
             participant_ids.append(pid)
 
     excluded: set = set()
+
+    # Resolve every participant's two-way block set in ONE batched call. The
+    # old loop issued a cached lookup per participant on this gateway hot path
+    # (typing, read receipts, reactions): an N+1 fan-out on cold caches and a
+    # burst of Valkey GETs even when warm. The relationship manager's bounded,
+    # chunked helper returns the very same sets; fall back to per-id lookups
+    # only for lightweight stubs that do not implement it.
+    bulk_lookup = getattr(relationships, "get_all_blocked_ids_bulk", None)
+    if callable(bulk_lookup):
+        try:
+            blocked_by_id = {
+                int(uid): values
+                for uid, values in bulk_lookup(participant_ids).items()
+            }
+        except Exception as e:
+            logger.debug(f"bulk blocked-id lookup failed for DM audience: {e}")
+            # Fail closed: without authoritative sets no participant can be
+            # proven safe to receive this actor's events.
+            return []
+    else:
+        blocked_by_id = {}
+        # Include the actor: their own block set drives the "users I blocked"
+        # exclusion below. Skipping them here would silently drop that rule.
+        for pid in participant_ids:
+            try:
+                blocked_by_id[pid] = relationships.get_all_blocked_ids(pid) or []
+            except Exception as e:
+                logger.debug(f"blocked-id lookup failed for {pid}: {e}")
+                # Same fail-closed rule on the compatibility path.
+                return []
+
     for pid in participant_ids:
         if pid == actor:
             continue
-        try:
-            blocked = relationships.get_all_blocked_ids(pid) or []
-        except Exception:
-            continue
         # A participant that blocked the actor must not see the actor's events.
-        if any(_as_id(bid) == actor for bid in blocked):
+        if any(_as_id(bid) == actor for bid in blocked_by_id.get(pid) or []):
             excluded.add(pid)
-    # Users the actor blocked must not see the actor's events either.
-    try:
-        actor_blocked = relationships.get_all_blocked_ids(actor) or []
-    except Exception:
-        actor_blocked = []
-    for value in actor_blocked:
+
+    # Users the actor blocked must not see the actor's events either. The bulk
+    # response already contains the actor's own two-way set.
+    for value in blocked_by_id.get(actor) or []:
         bid = _as_id(value)
         if bid is not None:
             excluded.add(bid)

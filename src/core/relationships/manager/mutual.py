@@ -2,12 +2,24 @@
 Mutual information operations mixin for the RelationshipManager.
 """
 
-from typing import List
+from typing import Dict, List
 
 from src.core.base import SnowflakeID
 
 from ..models import MutualInfo
 from .helpers import RelationshipHelpersMixin
+
+
+# Chunk size for the bulk shared-server lookup. The viewer id is bound once per
+# execution and each chunk binds at most this many target ids to the IN clause,
+# so the widest statement carries 1 + 500 = 501 binds (below SQLite's ceiling).
+_BULK_SERVER_ID_CHUNK_SIZE = 500
+
+
+def _server_id_chunks(items: List[int]):
+    """Yield bounded slices of ``items`` for IN-clause binding."""
+    for start in range(0, len(items), _BULK_SERVER_ID_CHUNK_SIZE):
+        yield items[start : start + _BULK_SERVER_ID_CHUNK_SIZE]
 
 
 class MutualInfoMixin(RelationshipHelpersMixin):
@@ -68,6 +80,53 @@ class MutualInfoMixin(RelationshipHelpersMixin):
             (user_id, target_id),
         )
         return row["count"] if row else 0
+
+    def get_mutual_servers_bulk(
+        self, user_id: SnowflakeID, target_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, List[SnowflakeID]]:
+        """Resolve shared-server sets between one user and many targets.
+
+        Mirrors :meth:`get_mutual_servers` (the server ids both users are
+        members of) but replaces the per-target fan-out with bounded, chunked
+        ``IN`` queries. Deliberately not cached: server membership changes are
+        owned by the servers module and have no invalidation hook into this
+        manager, so a cache here could outlive a join/leave and over- or
+        under-state a shared server. A fresh batched query is authoritative.
+
+        Fail-closed contract: every requested target is present in the mapping,
+        with an empty set when no server is shared (or no servers module is
+        wired, matching the single lookup). A failed DB lookup raises rather
+        than returning a partial answer, so callers can deny instead of
+        treating an unknown target as sharing a server. Rows for targets that
+        were not requested are ignored, so one user's memberships can never
+        leak into another user's set.
+        """
+        viewer = int(user_id)
+        targets = list(dict.fromkeys(int(tid) for tid in target_ids))
+        result: Dict[SnowflakeID, List[SnowflakeID]] = {
+            tid: [] for tid in targets
+        }
+        if not targets or not self._servers:
+            return result
+
+        for chunk in _server_id_chunks(targets):
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                f"""SELECT m1.user_id AS target_id, m1.server_id
+                    FROM srv_members m1
+                    INNER JOIN srv_members m2 ON m1.server_id = m2.server_id
+                    WHERE m2.user_id = ? AND m1.user_id IN ({placeholders})""",
+                (viewer, *chunk),
+            )
+            servers_for: Dict[int, set] = {tid: set() for tid in chunk}
+            for row in rows:
+                target = int(row["target_id"])
+                if target in servers_for:
+                    servers_for[target].add(int(row["server_id"]))
+            for tid, values in servers_for.items():
+                result[tid] = sorted(values)
+
+        return result
 
     def get_mutual_info(
         self, user_id: SnowflakeID, target_id: SnowflakeID

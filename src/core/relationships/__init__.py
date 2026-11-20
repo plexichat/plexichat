@@ -74,6 +74,7 @@ __all__ = [
     # Friends operations
     "get_friends",
     "get_friend_ids",
+    "get_friend_ids_bulk",
     "remove_friend",
     # Block operations
     "block_user",
@@ -91,6 +92,7 @@ __all__ = [
     "get_mutual_friends",
     "get_mutual_friend_count",
     "get_mutual_servers",
+    "get_mutual_servers_bulk",
     "get_mutual_server_count",
     "get_mutual_info",
 ]
@@ -195,6 +197,11 @@ def get_friend_ids(user_id: int) -> List[int]:
     return _get_manager().get_friend_ids(user_id)
 
 
+def get_friend_ids_bulk(user_ids: List[int]) -> Dict[int, List[int]]:
+    """Get batched per-user friend sets with fail-closed semantics."""
+    return _get_manager().get_friend_ids_bulk(user_ids)
+
+
 def remove_friend(user_id: int, friend_id: int) -> bool:
     """Remove a friend (unfriend)."""
     return _get_manager().remove_friend(user_id, friend_id)
@@ -274,6 +281,11 @@ def get_mutual_friend_count(user_id: int, target_id: int) -> int:
 def get_mutual_servers(user_id: int, target_id: int) -> List[int]:
     """Get list of mutual server IDs between two users."""
     return _get_manager().get_mutual_servers(user_id, target_id)
+
+
+def get_mutual_servers_bulk(user_id: int, target_ids: List[int]) -> Dict[int, List[int]]:
+    """Get batched shared-server sets between one viewer and many targets."""
+    return _get_manager().get_mutual_servers_bulk(user_id, target_ids)
 
 
 def get_mutual_server_count(user_id: int, target_id: int) -> int:
