@@ -7,7 +7,7 @@ from typing import Optional
 
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,
+    get_admin_from_token,  # noqa: F401 - retained for callers/tests that patch it
     require_admin_permission,
 )
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
@@ -409,7 +409,10 @@ async def list_requests(
 ):
     """List inbound federation requests."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    # Scope gate: inbound requests carry remote URLs, notes and requesting-peer
+    # identities. Authentication alone must not expose them to an admin who
+    # lacks the federation permission (IDOR-style read).
+    require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -535,7 +538,7 @@ async def deny_request(request: Request, request_id: SnowflakeIDParam):
 async def get_status(request: Request):
     """Get federation health summary."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -568,7 +571,7 @@ async def get_traffic(
 ):
     """Get traffic data for the specified hours."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)

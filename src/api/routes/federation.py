@@ -389,6 +389,40 @@ def _get_plexijoin_manager():
     )
 
 
+# The x-plexijoin-* headers are the ONLY credential on the inbound federation
+# routes (there is no local JWT). They must therefore be checked to a canonical
+# shape before they reach signature verification: ``hmac.compare_digest`` raises
+# ``TypeError`` on a non-ASCII str and ``str.encode('ascii')`` raises
+# ``UnicodeEncodeError`` on one, both of which used to escape as a 500 on a
+# public endpoint instead of a clean 401. Accepting non-canonical spellings
+# (leading zeros, PEP 515 underscores, uppercase hex) also let one logical
+# envelope have several byte-level representations in the HMAC material and the
+# replay-nonce key. Pin every value to the exact grammar the transports emit.
+_SIGNATURE_RE = re.compile(r"[0-9a-f]{64}")
+_TIMESTAMP_RE = re.compile(r"[0-9]{1,10}")
+_NONCE_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
+_MAX_FEDERATION_TIMESTAMP = 4_102_444_800
+
+
+def _valid_signature_headers(
+    signature: Optional[str],
+    timestamp: Optional[str],
+    nonce: Optional[str],
+) -> bool:
+    """Only canonical signature envelopes reach the HMAC and replay gates."""
+    if not signature or not timestamp or not nonce:
+        return False
+    if not isinstance(signature, str) or not _SIGNATURE_RE.fullmatch(signature):
+        return False
+    if not isinstance(timestamp, str) or not _TIMESTAMP_RE.fullmatch(timestamp):
+        return False
+    if int(timestamp) > _MAX_FEDERATION_TIMESTAMP:
+        return False
+    if not isinstance(nonce, str) or not _NONCE_RE.fullmatch(nonce):
+        return False
+    return True
+
+
 def _authenticate(
     manager,
     body: bytes,
@@ -404,12 +438,10 @@ def _authenticate(
     """
     from src.core.artifacts.federation import verify_payload_signature
 
-    if not signature or not timestamp or not nonce:
+    if not _valid_signature_headers(signature, timestamp, nonce):
         return None
-    try:
-        timestamp_int = int(timestamp)
-    except (TypeError, ValueError):
-        return None
+    # Header shapes are pinned above, so these conversions cannot raise.
+    timestamp_int = int(timestamp)
     for status in statuses:
         try:
             result = manager.list_connections(status=status)
