@@ -20,6 +20,20 @@ from .base import PresenceManagerBase
 from ..models import Presence, UserStatus, CustomStatus, Activity, ActivityType
 
 
+# Every ``IN (...)`` statement built by the bulk presence path binds one
+# placeholder per user id. Large rosters (and fan-out audiences) can exceed the
+# backend's 500-id budget and, on SQLite, the hard bound-variable cap. Chunking
+# keeps each statement at or below that budget while preserving the caller's
+# ordering in the returned list.
+_PRESENCE_BULK_CHUNK_SIZE = 500
+
+
+def _chunk_user_ids(user_ids: List[int]):
+    """Yield bounded slices of ``user_ids``, preserving first-seen order."""
+    for start in range(0, len(user_ids), _PRESENCE_BULK_CHUNK_SIZE):
+        yield user_ids[start : start + _PRESENCE_BULK_CHUNK_SIZE]
+
+
 class PresenceMixin(PresenceManagerBase):
     """Mixin providing presence query, batch, and focus operations."""
 
@@ -181,94 +195,99 @@ class PresenceMixin(PresenceManagerBase):
         if not missing_ids:
             return [results_map[uid] for uid in user_ids]
 
-        placeholders = ",".join("?" * len(missing_ids))
-        presence_rows = self._db.fetch_all(
-            f"SELECT * FROM pres_presence WHERE user_id IN ({placeholders})",
-            tuple(missing_ids),
-        )
-        presence_map = {row["user_id"]: row for row in presence_rows}
+        # Resolve the cache misses with bounded ``IN (...)`` batches. One query
+        # per chunk per backing table keeps the statement size constant even
+        # for a roster larger than the 500-id budget; the alternative (one
+        # ``get_presence`` call per member) cost several round trips per user.
+        for chunk in _chunk_user_ids(missing_ids):
+            placeholders = ",".join("?" * len(chunk))
+            presence_rows = self._db.fetch_all(
+                f"SELECT * FROM pres_presence WHERE user_id IN ({placeholders})",
+                tuple(chunk),
+            )
+            presence_map = {row["user_id"]: row for row in presence_rows}
 
-        self._cleanup_expired_custom_status_batch(missing_ids)
-        custom_rows = self._db.fetch_all(
-            f"SELECT * FROM pres_custom_status WHERE user_id IN ({placeholders})",
-            tuple(missing_ids),
-        )
-        custom_map = {row["user_id"]: row for row in custom_rows}
+            self._cleanup_expired_custom_status_batch(chunk)
+            custom_rows = self._db.fetch_all(
+                f"SELECT * FROM pres_custom_status WHERE user_id IN ({placeholders})",
+                tuple(chunk),
+            )
+            custom_map = {row["user_id"]: row for row in custom_rows}
 
-        activity_rows = self._db.fetch_all(
-            f"SELECT * FROM pres_activity WHERE user_id IN ({placeholders})",
-            tuple(missing_ids),
-        )
-        activity_map = {row["user_id"]: row for row in activity_rows}
+            activity_rows = self._db.fetch_all(
+                f"SELECT * FROM pres_activity WHERE user_id IN ({placeholders})",
+                tuple(chunk),
+            )
+            activity_map = {row["user_id"]: row for row in activity_rows}
 
-        for uid in missing_ids:
-            pres_row = presence_map.get(uid)
-            if not pres_row:
-                presence = Presence(
-                    user_id=uid,
-                    status=UserStatus.OFFLINE,
-                    custom_status=None,
-                    activity=None,
-                    last_seen=0,
-                    updated_at=0,
-                )
-            else:
-                cust_row = custom_map.get(uid)
-                custom_status = (
-                    CustomStatus(
-                        text=cust_row["text"],
-                        emoji=cust_row["emoji"],
-                        expires_at=cust_row["expires_at"],
+            for uid in chunk:
+                pres_row = presence_map.get(uid)
+                if not pres_row:
+                    presence = Presence(
+                        user_id=uid,
+                        status=UserStatus.OFFLINE,
+                        custom_status=None,
+                        activity=None,
+                        last_seen=0,
+                        updated_at=0,
                     )
-                    if cust_row
-                    else None
-                )
-
-                act_row = activity_map.get(uid)
-                activity = (
-                    Activity(
-                        activity_type=ActivityType(act_row["activity_type"]),
-                        name=act_row["name"],
-                        details=act_row["details"],
-                        url=act_row["url"],
-                        state=act_row["state"],
-                        start_timestamp=act_row["start_timestamp"],
-                        end_timestamp=act_row["end_timestamp"],
-                        large_image=act_row["large_image"],
-                        large_text=act_row["large_text"],
-                        small_image=act_row["small_image"],
-                        small_text=act_row["small_text"],
-                        created_at=act_row["created_at"],
+                else:
+                    cust_row = custom_map.get(uid)
+                    custom_status = (
+                        CustomStatus(
+                            text=cust_row["text"],
+                            emoji=cust_row["emoji"],
+                            expires_at=cust_row["expires_at"],
+                        )
+                        if cust_row
+                        else None
                     )
-                    if act_row
-                    else None
-                )
 
-                presence = Presence(
-                    user_id=uid,
-                    status=UserStatus(pres_row["status"]),
-                    custom_status=custom_status,
-                    activity=activity,
-                    last_seen=pres_row["last_seen"],
-                    updated_at=pres_row["updated_at"],
-                )
+                    act_row = activity_map.get(uid)
+                    activity = (
+                        Activity(
+                            activity_type=ActivityType(act_row["activity_type"]),
+                            name=act_row["name"],
+                            details=act_row["details"],
+                            url=act_row["url"],
+                            state=act_row["state"],
+                            start_timestamp=act_row["start_timestamp"],
+                            end_timestamp=act_row["end_timestamp"],
+                            large_image=act_row["large_image"],
+                            large_text=act_row["large_text"],
+                            small_image=act_row["small_image"],
+                            small_text=act_row["small_text"],
+                            created_at=act_row["created_at"],
+                        )
+                        if act_row
+                        else None
+                    )
 
-            # CORRECTNESS FIX: merge the transient focused-channel state into
-            # each bulk result so the cached dict is schema-identical to the
-            # one written by ``get_presence`` (focused channel/server would
-            # otherwise be silently dropped from the cache).
-            presence = self._apply_focus(presence, uid)
+                    presence = Presence(
+                        user_id=uid,
+                        status=UserStatus(pres_row["status"]),
+                        custom_status=custom_status,
+                        activity=activity,
+                        last_seen=pres_row["last_seen"],
+                        updated_at=pres_row["updated_at"],
+                    )
 
-            results_map[uid] = presence
+                # CORRECTNESS FIX: merge the transient focused-channel state into
+                # each bulk result so the cached dict is schema-identical to the
+                # one written by ``get_presence`` (focused channel/server would
+                # otherwise be silently dropped from the cache).
+                presence = self._apply_focus(presence, uid)
 
-            try:
-                cache_set(
-                    f"presence:{uid}",
-                    self._presence_to_dict(presence),
-                    ttl=self._presence_timeout_ms // 1000,
-                )
-            except Exception as cache_error:
-                logger.debug(f"presence online-set add failed: {cache_error}")
+                results_map[uid] = presence
+
+                try:
+                    cache_set(
+                        f"presence:{uid}",
+                        self._presence_to_dict(presence),
+                        ttl=self._presence_timeout_ms // 1000,
+                    )
+                except Exception as cache_error:
+                    logger.debug(f"presence online-set add failed: {cache_error}")
 
         return [results_map[uid] for uid in user_ids]
 
@@ -277,11 +296,12 @@ class PresenceMixin(PresenceManagerBase):
         if not user_ids:
             return
         now = self._get_timestamp()
-        placeholders = ",".join("?" * len(user_ids))
-        self._db.execute(
-            f"DELETE FROM pres_custom_status WHERE user_id IN ({placeholders}) AND expires_at IS NOT NULL AND expires_at < ?",
-            tuple(user_ids) + (now,),
-        )
+        for chunk in _chunk_user_ids(user_ids):
+            placeholders = ",".join("?" * len(chunk))
+            self._db.execute(
+                f"DELETE FROM pres_custom_status WHERE user_id IN ({placeholders}) AND expires_at IS NOT NULL AND expires_at < ?",
+                tuple(chunk) + (now,),
+            )
 
     def update_last_seen(self, user_id: int) -> Presence:
         """Update user's last seen timestamp, throttled to once per 30s."""
