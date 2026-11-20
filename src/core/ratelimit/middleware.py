@@ -6,6 +6,7 @@ import hashlib
 import re
 import threading
 import time
+from functools import lru_cache
 from typing import Optional, Dict, Callable, Any
 
 from fastapi import Request
@@ -352,6 +353,38 @@ def extract_route_info(path: str, method: str) -> tuple:
     return _register_unknown_route(candidate, method), resource_id, webhook_id
 
 
+# ``extract_route_info`` scans the whole compiled-route table (and, for unknown
+# paths, contends on the process-wide unknown-route lock). The ASGI middleware
+# used to pay that cost on *every* request even though the answer is a pure
+# function of (path, method, api_prefix). The manager boundary already memoizes
+# its own re-canonicalization (``route_keys``); this is the missing first half.
+#
+# The raw ASGI path is attacker-controlled and embeds ids/query strings, so the
+# memo is bounded -- a crafted flood of distinct paths can never grow it past
+# ``ROUTE_INFO_CACHE_MAXSIZE``. The effective API prefix participates in the key
+# so a renamed prefix is observed on the next check rather than serving a route
+# derived from the old one. The returned tuple is immutable (str/int/None) and
+# holds no user/credential data, so sharing it across requests leaks nothing.
+ROUTE_INFO_CACHE_MAXSIZE = 4096
+
+
+@lru_cache(maxsize=ROUTE_INFO_CACHE_MAXSIZE)
+def _extract_route_info_cached(path: str, method: str, api_prefix: str) -> tuple:
+    # ``api_prefix`` is key-only: extract_route_info resolves its own prefix,
+    # so the two can never disagree on the value used to build the route.
+    return extract_route_info(path, method)
+
+
+def route_info_for_request(path: str, method: str) -> tuple:
+    """Resolve (route, resource_id, webhook_id) for one request, memoized."""
+    return _extract_route_info_cached(path, method, _resolve_api_prefix())
+
+
+def clear_route_info_cache() -> None:
+    """Drop memoized request route info (tests / config-reload callers)."""
+    _extract_route_info_cached.cache_clear()
+
+
 class RateLimitMiddlewareASGI:
     """Pure ASGI middleware for rate limiting."""
 
@@ -455,7 +488,7 @@ class RateLimitMiddlewareASGI:
             elif getattr(request.state, "is_internal", False):
                 user_info["is_internal"] = True
 
-        route, resource_id, webhook_id = extract_route_info(path, method)
+        route, resource_id, webhook_id = route_info_for_request(path, method)
         if webhook_id is not None:
             user_info["is_webhook"] = True
             user_info["webhook_id"] = webhook_id
