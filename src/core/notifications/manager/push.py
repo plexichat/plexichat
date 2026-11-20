@@ -9,6 +9,18 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from .protocol import NotificationProtocol
 
 
+# Bound the IN clauses used to resolve a whole push batch at once. One bind
+# variable per notification would cross SQLite's variable cap for a large
+# @everyone fan-out; this is the same chunk size the notification settings
+# bulk lookups use.
+_PUSH_BULK_CHUNK_SIZE = 500
+
+
+def _push_id_chunks(ids):
+    for start in range(0, len(ids), _PUSH_BULK_CHUNK_SIZE):
+        yield ids[start : start + _PUSH_BULK_CHUNK_SIZE]
+
+
 # Push-token at-rest cryptography.
 #
 # SECURITY: FCM and APNs device tokens MUST NOT be stored in
@@ -140,20 +152,35 @@ class PushMixin(NotificationProtocol):
     def deliver_push_notifications(self, notifications) -> int:
         """Best-effort mobile/web push delivery for created notifications.
 
-        Builds each payload via :meth:`prepare_push_payload` and feeds it
-        into ``PushManager.send_push``. Every failure is logged, never
-        raised — push must not affect the message-send path.
+        Enrichment (author name + unread badge) used to be resolved inside
+        ``prepare_push_payload`` once per notification: a batch of N rows cost
+        2N reads. Resolve those two lookups once for the whole batch instead,
+        keyed strictly by the ids present in it. Every failure below is still
+        logged and never raised — push must not affect the message-send path.
         """
         manager = self._get_push_manager()
         if manager is None:
             return 0
 
+        batch = [
+            n for n in list(notifications)[: self.PUSH_DELIVERY_BATCH_LIMIT] if n is not None
+        ]
+        if not batch:
+            return 0
+
+        sender_names = self._get_push_sender_names(n.author_id for n in batch)
+        unread_mentions = self._get_push_unread_mention_counts(
+            n.user_id for n in batch
+        )
+
         sent = 0
-        for notification in notifications[: self.PUSH_DELIVERY_BATCH_LIMIT]:
+        for notification in batch:
             try:
-                if notification is None:
-                    continue
-                payload = self.prepare_push_payload(notification)
+                payload = self._build_push_payload(
+                    notification,
+                    sender_name=sender_names.get(notification.author_id, "Someone"),
+                    badge_count=unread_mentions.get(notification.user_id, 0),
+                )
                 if payload is None:
                     continue
                 sent += manager.send_push(
@@ -171,6 +198,40 @@ class PushMixin(NotificationProtocol):
                     f"{getattr(notification, 'id', '?')}: {e}"
                 )
         return sent
+
+    def _get_push_sender_names(self, author_ids) -> dict:
+        """Resolve author display names for a batch in bounded IN reads."""
+        names = {}
+        ids = list(dict.fromkeys(a for a in author_ids if a is not None))
+        for chunk in _push_id_chunks(ids):
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                f"SELECT id, username FROM auth_users WHERE id IN ({placeholders})",
+                tuple(chunk),
+            )
+            for row in rows or []:
+                names[row["id"]] = row["username"]
+        return names
+
+    def _get_push_unread_mention_counts(self, user_ids) -> dict:
+        """Resolve unread mention badges for a batch in bounded IN reads.
+
+        Grouping by ``user_id`` keeps every badge user-scoped and derived from
+        exactly the same read-state counters the single-item path uses, so a
+        batched payload cannot pick up another user's badge.
+        """
+        counts = {}
+        ids = list(dict.fromkeys(u for u in user_ids if u is not None))
+        for chunk in _push_id_chunks(ids):
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                "SELECT user_id, COALESCE(SUM(mention_count), 0) AS mentions "
+                f"FROM notif_unread WHERE user_id IN ({placeholders}) GROUP BY user_id",
+                tuple(chunk),
+            )
+            for row in rows or []:
+                counts[row["user_id"]] = row["mentions"]
+        return counts
 
     def _deliver_push_safely(self, notifications) -> None:
         try:
@@ -233,13 +294,25 @@ class PushMixin(NotificationProtocol):
             logger.debug(f"Push delivery shutdown drain failed: {e}")
 
     def prepare_push_payload(self, notification: Notification) -> PushPayload:
-        sender_name = "Someone"
-        row = self._db.fetch_one(
-            "SELECT username FROM auth_users WHERE id = ?", (notification.author_id,)
-        )
-        if row:
-            sender_name = row["username"]
+        """Build one payload, resolving its enrichment with scoped lookups.
 
+        Direct callers keep the historical two-read behaviour. Batch delivery
+        uses :meth:`_build_push_payload` with preloaded values instead so it
+        does not pay those reads once per notification.
+        """
+        sender_names = self._get_push_sender_names([notification.author_id])
+        unread_mentions = self._get_push_unread_mention_counts(
+            [notification.user_id]
+        )
+        return self._build_push_payload(
+            notification,
+            sender_name=sender_names.get(notification.author_id, "Someone"),
+            badge_count=unread_mentions.get(notification.user_id, 0),
+        )
+
+    def _build_push_payload(
+        self, notification: Notification, *, sender_name: str, badge_count: int
+    ) -> PushPayload:
         if notification.mention_type == MentionType.USER:
             title = f"{sender_name} mentioned you"
         elif notification.mention_type == MentionType.ROLE:
@@ -250,8 +323,6 @@ class PushMixin(NotificationProtocol):
             title = f"{sender_name} mentioned @here"
         else:
             title = f"New mention from {sender_name}"
-
-        unread = self.get_unread_count(notification.user_id)
 
         # Ids must cross to the device as decimal strings. FCM and APNs
         # coerce ``data`` values with ``str(...)``, but the Web Push path
@@ -275,7 +346,7 @@ class PushMixin(NotificationProtocol):
                     "mention_type": notification.mention_type.value,
                 }
             ),
-            badge_count=unread.mention_count,
+            badge_count=badge_count,
             sound="default",
             priority="high",
         )

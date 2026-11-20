@@ -80,6 +80,7 @@ __all__ = [
     "delete_notification",
     # Unread counts
     "get_unread_count",
+    "get_unread_totals",
     "get_unread_counts",
     "get_mention_count",
     # Notification feed
@@ -238,6 +239,13 @@ def delete_notification(user_id: int, notification_id: int) -> bool:
 def get_unread_count(user_id: int, server_id: Optional[int] = None) -> UnreadCount:
     """Get unread count for a user, optionally filtered by server."""
     return _get_manager().get_unread_count(user_id, server_id)
+
+
+def get_unread_totals(
+    user_id: int, server_id: Optional[int] = None
+) -> UnreadCount:
+    """Get unread and mention totals in a single user-scoped read."""
+    return _get_manager().get_unread_totals(user_id, server_id)
 
 
 def get_unread_counts(user_id: int) -> Dict[int, UnreadCount]:

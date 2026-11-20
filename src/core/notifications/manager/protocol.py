@@ -84,6 +84,11 @@ class NotificationProtocol:
     ) -> UnreadCount:
         return cast(NotificationProtocol, super()).get_unread_count(user_id, server_id)
 
+    def get_unread_totals(
+        self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
+    ) -> UnreadCount:
+        return cast(NotificationProtocol, super()).get_unread_totals(user_id, server_id)
+
     def _dispatch_notification_event(
         self,
         user_id: SnowflakeID,

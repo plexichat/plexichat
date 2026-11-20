@@ -83,9 +83,18 @@ class UnreadMixin(NotificationProtocol):
             (max(0, row["unread_count"] - amount), row["id"]),
         )
 
-    def get_unread_count(
+    def get_unread_totals(
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
     ) -> UnreadCount:
+        """Return both user-scoped unread aggregates in a single read.
+
+        Listing callers historically fetched the mention counter and the
+        unread counter with two near-identical queries against ``notif_unread``.
+        Both aggregates are user-scoped (optionally server-scoped) and encode
+        the same read-state counters, so one grouped SELECT is enough. Keeping
+        the scope predicate identical to the legacy helpers is what prevents a
+        batched read from leaking another user's counters.
+        """
         if server_id:
             row = self._db.fetch_one(
                 """SELECT COALESCE(SUM(unread_count), 0) as total, COALESCE(SUM(mention_count), 0) as mentions
@@ -106,6 +115,11 @@ class UnreadMixin(NotificationProtocol):
             mention_count=row["mentions"] if row else 0,
             server_id=server_id,
         )
+
+    def get_unread_count(
+        self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
+    ) -> UnreadCount:
+        return self.get_unread_totals(user_id, server_id)
 
     def get_unread_counts(self, user_id: SnowflakeID) -> Dict[SnowflakeID, UnreadCount]:
         rows = self._db.fetch_all(
@@ -131,15 +145,4 @@ class UnreadMixin(NotificationProtocol):
     def get_mention_count(
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
     ) -> int:
-        if server_id:
-            row = self._db.fetch_one(
-                "SELECT COALESCE(SUM(mention_count), 0) as count FROM notif_unread WHERE user_id = ? AND server_id = ?",
-                (user_id, server_id),
-            )
-        else:
-            row = self._db.fetch_one(
-                "SELECT COALESCE(SUM(mention_count), 0) as count FROM notif_unread WHERE user_id = ?",
-                (user_id,),
-            )
-
-        return row["count"] if row else 0
+        return self.get_unread_totals(user_id, server_id).mention_count
