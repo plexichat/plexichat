@@ -1,7 +1,10 @@
 import hmac
 import json
+import sys
+import threading
 import time
-from typing import Optional, List
+from collections import OrderedDict
+from typing import Any, Dict, List, Optional, Tuple
 
 import utils.logger as logger
 
@@ -34,10 +37,143 @@ from src.core.database import invalidate_pattern
 from .protocol import AuthManagerProtocol
 
 
+# Process-wide in-process fallback for the 2FA confirm limiter. It is only used
+# when no Valkey backend is configured (single-worker deployments and tests),
+# but it is keyed by user id and used to live for the whole process: every
+# account that ever typed a wrong code left a bucket behind for ever. It is now
+# a bounded LRU with an entry cap, an approximate byte cap and an idle TTL.
+#
+# SECURITY -- eviction must not weaken the brute-force guard. This dict *is*
+# the TOTP guessing limiter when Valkey is down; dropping a live bucket resets
+# that user's attempt count. Three rules keep the guard intact:
+#   * buckets are LRU-ordered and a bucket with more live attempts is treated
+#     as hotter than one with fewer, so an attacker actively guessing is never
+#     chosen as the victim while colder/idle buckets are available;
+#   * the bucket being updated is removed before the caps are enforced and
+#     re-inserted as the most-recently-used entry in the same lock hold, so it
+#     can never be evicted in the middle of its own update;
+#   * a bucket's expiry is never earlier than ``last_seen + window_seconds``,
+#     so idle reclamation cannot shorten a caller's configured limiter window.
+_TWOFA_ATTEMPTS_MAX_ENTRIES = 4096
+_TWOFA_ATTEMPTS_MAX_BYTES = 4 * 1024 * 1024
+_TWOFA_ATTEMPTS_IDLE_TTL_SECONDS = 24 * 60 * 60
+_TWOFA_ATTEMPTS_NODE_OVERHEAD = 128
+_TWOFA_ATTEMPTS_SAMPLE_ITEMS = 64
+
+_TWOFA_ATTEMPTS: "OrderedDict[int, List[float]]" = OrderedDict()
+# user id -> (last_seen_monotonic, expires_at_monotonic, approx_bytes)
+_TWOFA_ATTEMPTS_META: "Dict[int, Tuple[float, float, int]]" = {}
+_TWOFA_ATTEMPTS_BYTES = 0
+_TWOFA_ATTEMPTS_LOCK = threading.Lock()
+
+
+def _twofa_attempts_bytes(user_id: Any, stamps: List[float]) -> int:
+    """Bounded-work, conservative estimate of one bucket's retained bytes."""
+    try:
+        sample = stamps[:_TWOFA_ATTEMPTS_SAMPLE_ITEMS]
+        largest = max((sys.getsizeof(t) for t in sample), default=32)
+        return (
+            sys.getsizeof(user_id)
+            + sys.getsizeof(stamps)
+            + sum(sys.getsizeof(t) for t in sample)
+            + largest * max(0, len(stamps) - len(sample))
+            + _TWOFA_ATTEMPTS_NODE_OVERHEAD
+        )
+    except Exception:  # pragma: no cover - fail closed on a hostile __sizeof__
+        return 1024
+
+
+def _reconcile_twofa_attempts_locked() -> None:
+    """Rebuild bookkeeping if a test/caller cleared the registry directly."""
+    global _TWOFA_ATTEMPTS_BYTES
+    if _TWOFA_ATTEMPTS_META.keys() == _TWOFA_ATTEMPTS.keys():
+        return
+    now = time.monotonic()
+    _TWOFA_ATTEMPTS_META.clear()
+    _TWOFA_ATTEMPTS_BYTES = 0
+    for uid, stamps in _TWOFA_ATTEMPTS.items():
+        size = _twofa_attempts_bytes(uid, stamps)
+        # Externally inserted buckets get the maximum idle lifetime so a test
+        # double is never silently dropped as "expired".
+        _TWOFA_ATTEMPTS_META[uid] = (
+            now,
+            now + max(_TWOFA_ATTEMPTS_IDLE_TTL_SECONDS, 1),
+            size,
+        )
+        _TWOFA_ATTEMPTS_BYTES += size
+
+
+def _drop_twofa_attempts_locked(uid: Any) -> None:
+    """Remove one bucket, keeping the byte counter in sync."""
+    global _TWOFA_ATTEMPTS_BYTES
+    _TWOFA_ATTEMPTS.pop(uid, None)
+    meta = _TWOFA_ATTEMPTS_META.pop(uid, None)
+    if meta is not None:
+        _TWOFA_ATTEMPTS_BYTES -= meta[2]
+    if _TWOFA_ATTEMPTS_BYTES < 0:  # defensive: external mutation
+        _TWOFA_ATTEMPTS_BYTES = 0
+
+
+def _store_twofa_attempts_locked(
+    uid: Any, stamps: List[float], now: float, window_seconds: int
+) -> None:
+    """Insert/replace a bucket as MRU with a window-safe expiry."""
+    global _TWOFA_ATTEMPTS_BYTES
+    old_meta = _TWOFA_ATTEMPTS_META.pop(uid, None)
+    if old_meta is not None:
+        _TWOFA_ATTEMPTS_BYTES -= old_meta[2]
+    size = _twofa_attempts_bytes(uid, stamps)
+    _TWOFA_ATTEMPTS[uid] = stamps
+    _TWOFA_ATTEMPTS.move_to_end(uid)
+    _TWOFA_ATTEMPTS_META[uid] = (
+        now,
+        now + max(window_seconds, _TWOFA_ATTEMPTS_IDLE_TTL_SECONDS),
+        size,
+    )
+    _TWOFA_ATTEMPTS_BYTES += size
+
+
+def _prune_twofa_attempts_locked(now: float) -> None:
+    """Drop idle buckets; the TTL is the caller's window or the idle floor."""
+    for uid in [k for k, meta in _TWOFA_ATTEMPTS_META.items() if meta[1] <= now]:
+        _drop_twofa_attempts_locked(uid)
+
+
+def _evict_twofa_attempts_locked(extra_bytes: int) -> None:
+    """Enforce the entry and byte caps without dropping the bucket in hand."""
+    global _TWOFA_ATTEMPTS_BYTES
+    while _TWOFA_ATTEMPTS and (
+        len(_TWOFA_ATTEMPTS) >= _TWOFA_ATTEMPTS_MAX_ENTRIES
+        or _TWOFA_ATTEMPTS_BYTES + extra_bytes > _TWOFA_ATTEMPTS_MAX_BYTES
+    ):
+        # Coldest first: fewest live attempts, then least recently seen. A hot
+        # guessing budget is never sacrificed to make room for idle buckets.
+        candidates = [
+            (len(stamps), meta[0], uid)
+            for uid, stamps in _TWOFA_ATTEMPTS.items()
+            if (meta := _TWOFA_ATTEMPTS_META.get(uid)) is not None
+        ]
+        if not candidates:  # no metadata (never happens after reconcile)
+            break
+        victim = min(candidates)[2]
+        _drop_twofa_attempts_locked(victim)
+    if _TWOFA_ATTEMPTS_BYTES < 0:  # defensive: external mutation
+        _TWOFA_ATTEMPTS_BYTES = 0
+
+
+def clear_twofa_attempts() -> None:
+    """Drop every in-process attempt bucket (tests / config reload)."""
+    global _TWOFA_ATTEMPTS_BYTES
+    with _TWOFA_ATTEMPTS_LOCK:
+        _TWOFA_ATTEMPTS.clear()
+        _TWOFA_ATTEMPTS_META.clear()
+        _TWOFA_ATTEMPTS_BYTES = 0
+
+
 class TwoFactorMixin(AuthManagerProtocol):
-    # In-process sliding-window fallback used only when no Valkey backend is
-    # configured (single-worker deployments and tests).
-    _2fa_verify_attempts_local: dict = {}
+    # Backwards-compatible alias: the process-wide store is the module-level
+    # bounded LRU above. ``.clear()`` (used by the test suite) still works.
+    _2fa_verify_attempts_local = _TWOFA_ATTEMPTS
 
     # Expired 2FA challenges are otherwise never removed: every login by a
     # 2FA-enabled account inserts a row that lives forever, so an attacker
@@ -74,6 +210,11 @@ class TwoFactorMixin(AuthManagerProtocol):
         all workers in a horizontally scaled deployment. SECURITY: this limiter
         fails CLOSED — if the cache backend errors while it is supposed to be
         available, attempts are refused rather than waved through.
+
+        The in-process fallback is a bounded LRU (see module constants). A
+        bucket's idle expiry is ``max(window_seconds, idle floor)``, so idle
+        reclamation never shortens the configured guessing window, and the
+        bucket being updated is pinned against eviction for its whole update.
         """
         from src.core.database.valkey_client import (
             get_client,
@@ -97,14 +238,28 @@ class TwoFactorMixin(AuthManagerProtocol):
                 )
                 raise TwoFactorInvalidError("Too many attempts; try again later")
 
-        # No cache backend configured: in-process sliding window.
+        # No cache backend configured: bounded in-process sliding window.
         now = time.monotonic()
-        attempts = TwoFactorMixin._2fa_verify_attempts_local.get(user_id, [])
-        attempts = [t for t in attempts if now - t < window_seconds]
-        if len(attempts) >= max_attempts:
-            raise TwoFactorInvalidError("Too many attempts; try again later")
-        attempts.append(now)
-        TwoFactorMixin._2fa_verify_attempts_local[user_id] = attempts
+        with _TWOFA_ATTEMPTS_LOCK:
+            _reconcile_twofa_attempts_locked()
+            _prune_twofa_attempts_locked(now)
+
+            # Recompute live attempts from the stored bucket (not a shared
+            # mutable list) so a held reference cannot mutate the registry.
+            previous = _TWOFA_ATTEMPTS.get(user_id, [])
+            attempts = [t for t in previous if now - t < window_seconds]
+            if len(attempts) >= max_attempts:
+                # Even a denied attempt refreshes "last seen": an attacker
+                # hammering a budget must not look cold and be evicted.
+                _store_twofa_attempts_locked(user_id, attempts, now, window_seconds)
+                raise TwoFactorInvalidError("Too many attempts; try again later")
+
+            # Take the bucket out before enforcing the caps so it can never be
+            # evicted in the middle of its own update.
+            _drop_twofa_attempts_locked(user_id)
+            attempts.append(now)
+            _evict_twofa_attempts_locked(_twofa_attempts_bytes(user_id, attempts))
+            _store_twofa_attempts_locked(user_id, attempts, now, window_seconds)
 
     def _create_2fa_challenge(
         self,
