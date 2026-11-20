@@ -29,6 +29,14 @@ from src.core.base import SnowflakeID
 # drive path construction (traversal) or probe bookkeeping.
 _EXPORT_ID_RE = re.compile(r"^export_[A-Za-z0-9_-]{16,}$")
 
+# The only formats the generators emit. An unrecognised value falls back to
+# JSON for the *content*, so the same normalised value MUST drive the output
+# filename too: otherwise a caller that bypasses the route's allowlist can put
+# traversal/path text in ``export_format`` and have the JSON artifact written
+# outside the private session directory (the fallback only sanitised content,
+# not the path built from the raw string).
+_EXPORT_FORMATS = frozenset({"json", "csv", "txt", "html"})
+
 # Message content is untrusted free text: any user can author a message whose
 # text begins with a spreadsheet formula trigger. A CSV transcript opened in
 # Excel/Sheets evaluates a cell starting with one of these characters
@@ -269,15 +277,22 @@ class TranscriptExportService(BaseService):
                 timezone,
             )
 
-            if export_format == "json":
+            # Normalise once. Any value outside the emitted-format set resolves
+            # to "json", and that same value is used for the path and the
+            # persisted record so content, filename and metadata cannot drift
+            # apart (a raw string here used to reach os.path.join below).
+            effective_format = (
+                export_format if export_format in _EXPORT_FORMATS else "json"
+            )
+            if effective_format == "json":
                 content, mime = self._generate_json(messages, user_id)
-            elif export_format == "csv":
+            elif effective_format == "csv":
                 content, mime = self._generate_csv(messages, user_id)
-            elif export_format == "txt":
+            elif effective_format == "txt":
                 content, mime = self._generate_txt(messages, user_id)
-            elif export_format == "html":
+            elif effective_format == "html":
                 content, mime = self._generate_html(messages, user_id)
-            else:
+            else:  # pragma: no cover - effective_format is always allowlisted
                 content, mime = self._generate_json(messages, user_id)
 
             # Store in a private (0700) directory under the app data dir;
@@ -290,7 +305,7 @@ class TranscriptExportService(BaseService):
                 os.chmod(session_dir, 0o700)
             except OSError:
                 pass
-            file_path = os.path.join(session_dir, f"{export_id}.{export_format}")
+            file_path = os.path.join(session_dir, f"{export_id}.{effective_format}")
 
             self._write_private_file(file_path, content)
 
@@ -308,7 +323,7 @@ class TranscriptExportService(BaseService):
                 "expires_at": expiry,
                 "created_at": time.time(),
                 "mime_type": mime,
-                "format": export_format,
+                "format": effective_format,
             }
             with self._lock:
                 self._exports[export_id] = export_info

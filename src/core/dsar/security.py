@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from src.core.security.hardening import HardeningViolation, parse_id
+
 MAX_SNOWFLAKE_ID = 2**63 - 1
 
 # Hard ceiling on rows returned per collector category. Configured export
@@ -35,18 +37,27 @@ class InvalidExportInput(ValueError):
 
 
 def validate_export_id(value: Any, label: str = "request id") -> int:
-    """Return ``value`` as a bounded positive snowflake or fail closed."""
+    """Return ``value`` as a bounded positive snowflake or fail closed.
+
+    Parsing goes through the shared ASCII-only snowflake gate, never a bare
+    ``int()``. ``int()`` accepts Unicode decimal homoglyphs (``"١٢٣"``,
+    ``"１２３"``) and PEP 515 separators (``"1_0"``) that every other id
+    boundary on the request path (``SnowflakeIDParam``, ``parse_id``) rejects.
+    Accepting them here is a parser differential: the value this helper
+    normalises for the storage/object name can differ from the raw string a
+    caller carries into a subsequent lookup or audit record. Routing through
+    :func:`parse_id` keeps validation and consumption on the same
+    interpretation of the token; non-ASCII or separator-bearing forms are
+    refused.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         # A float would be lossy for 64-bit snowflakes; reject any other
         # type outright rather than coercing it into a valid-looking id.
         raise InvalidExportInput(f"Invalid {label}")
     try:
-        parsed = int(value)
-    except (TypeError, ValueError, OverflowError) as exc:
+        return parse_id(value, label)
+    except (HardeningViolation, ValueError, TypeError, OverflowError) as exc:
         raise InvalidExportInput(f"Invalid {label}") from exc
-    if parsed <= 0 or parsed > MAX_SNOWFLAKE_ID:
-        raise InvalidExportInput(f"Invalid {label}")
-    return parsed
 
 
 def safe_export_filename(request_id: Any, export_format: Any) -> str:
