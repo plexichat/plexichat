@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
 from src.core.database import cached
 
+from ...channel_access_cache import get_channel_access_cache
 from ...permission_utils import (
     calculate_base_permissions,
     apply_channel_overrides,
@@ -245,6 +246,17 @@ class RolePermissionMixin(RoleHandlerProtocol):
         return result
 
     @cached(ttl=10, prefix="has_perm")
+    def _compute_has_permission(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        permission: str,
+        channel_id: Optional[SnowflakeID] = None,
+    ) -> bool:
+        """Resolve a permission from the authoritative snapshot (cached tier)."""
+        permissions = self.get_permissions(user_id, server_id, channel_id)
+        return check_permission(permissions, permission)
+
     def has_permission(
         self,
         user_id: SnowflakeID,
@@ -252,6 +264,46 @@ class RolePermissionMixin(RoleHandlerProtocol):
         permission: str,
         channel_id: Optional[SnowflakeID] = None,
     ) -> bool:
-        """Check if a user has a permission in a server/channel."""
-        permissions = self.get_permissions(user_id, server_id, channel_id)
-        return check_permission(permissions, permission)
+        """Check if a user has a permission in a server/channel.
+
+        Channel-scoped checks are the hot path: message-list hydration, poll
+        hydration, event-audience resolution and notification fan-out all ask
+        the same ``(user, channel, permission)`` question repeatedly. Answer it
+        from a bounded, role-version-keyed L1 memo so a burst pays for one
+        authoritative resolution. The memo is invalidated the instant any
+        role/membership/override change bumps the scope's epoch (see
+        ``channel_access_cache``), so a revoked permission can never be served
+        from a stale grant. Server-scoped checks (no channel) keep using the
+        underlying cached resolver directly.
+
+        Any cache error degrades to the authoritative computation, which alone
+        decides grant-vs-deny: a broken memo can never synthesize a grant.
+        """
+        if channel_id is None:
+            return self._compute_has_permission(
+                user_id, server_id, permission, None
+            )
+
+        cache = get_channel_access_cache()
+        try:
+            cached = cache.get(
+                int(server_id), int(user_id), int(channel_id), permission
+            )
+            if cached is not None:
+                return cached
+        except Exception:
+            # Fail closed to the authoritative resolver; never infer a grant.
+            pass
+
+        decision = bool(
+            self._compute_has_permission(
+                user_id, server_id, permission, channel_id
+            )
+        )
+        try:
+            cache.put(
+                int(server_id), int(user_id), int(channel_id), permission, decision
+            )
+        except Exception:
+            pass
+        return decision

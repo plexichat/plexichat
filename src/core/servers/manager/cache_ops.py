@@ -20,6 +20,25 @@ class CacheOpsMixin(ServerProtocol):
     _channel_cache_prefix: str = "srv_channel:"
     _server_owner_cache_prefix: str = "srv_owner:"
     _member_roles_cache_prefix: str = "srv_member_roles:"
+    _roster_cache_prefix: str = "srv_roster"
+
+    def _invalidate_roster_caches(
+        self, server_id: Optional[SnowflakeID] = None
+    ) -> None:
+        """Drop cached per-viewer roster pages.
+
+        A roster page embeds each member's nickname, role ids and timeout
+        state, so every membership or member-field mutation must evict it for
+        all viewers immediately rather than leaving stale data for the short
+        ``srv_roster`` TTL.  Pass ``server_id`` to narrow the clear to one
+        server; omit it to drop the whole namespace.
+        """
+        from src.core.database import invalidate_pattern
+
+        if server_id is None:
+            invalidate_pattern(f"{self._roster_cache_prefix}:*")
+        else:
+            invalidate_pattern(f"{self._roster_cache_prefix}:*:{int(server_id)}:*")
 
     def _cache_get(self, prefix: str, key: Any, default: Any = None) -> Any:
         cache_key = f"{prefix}{key}"
@@ -60,11 +79,16 @@ class CacheOpsMixin(ServerProtocol):
         """
         from src.core.database import invalidate_pattern
 
+        from ..channel_access_cache import get_channel_access_cache
+
         server_id = int(server_id)
         user_id = int(user_id)
         invalidate_pattern(f"perms:{user_id}:{server_id}:*")
         invalidate_pattern(f"srv_permission:perms:{user_id}:{server_id}:*")
         invalidate_pattern("has_perm:*")
+        # Bump the bounded L1 epoch so no cached channel-view decision from the
+        # old permission snapshot can be replayed after this change.
+        get_channel_access_cache().bump(server_id, user_id)
 
     def _invalidate_server_permission_caches(self, server_id: SnowflakeID) -> None:
         """Drop every permission result cached for *server_id*.
@@ -76,10 +100,15 @@ class CacheOpsMixin(ServerProtocol):
         """
         from src.core.database import invalidate_pattern
 
+        from ..channel_access_cache import get_channel_access_cache
+
         server_id = int(server_id)
         invalidate_pattern(f"perms:*:{server_id}:*")
         invalidate_pattern(f"srv_permission:perms:*:{server_id}:*")
         invalidate_pattern("has_perm:*")
+        # A role-wide change invalidates every member's channel-view decision
+        # in the server; advancing the server epoch retires them all at once.
+        get_channel_access_cache().bump(server_id)
 
     def _invalidate_owner_cache(self, server_id: SnowflakeID) -> None:
         """Drop cached ownership so an ownership transfer takes effect now.
@@ -92,9 +121,14 @@ class CacheOpsMixin(ServerProtocol):
         """
         from src.core.database import cache_delete
 
+        from ..channel_access_cache import get_channel_access_cache
+
         server_id = int(server_id)
         cache_delete(f"srv_owner:{server_id}")
         cache_delete(f"server_owner:{server_id}")
+        # Ownership changes alter administrator/role decisions for the whole
+        # server; retire every cached channel-view verdict for that scope.
+        get_channel_access_cache().bump(server_id)
 
     def _invalidate_member_caches(
         self, server_id: SnowflakeID, user_id: SnowflakeID
@@ -108,9 +142,14 @@ class CacheOpsMixin(ServerProtocol):
         treated as a member — or a new member denied — for the cache TTL.
         """
         from src.core.database import cache_delete, invalidate_pattern
+        from .member_count_cache import invalidate_member_count_cache
 
         server_id = int(server_id)
         user_id = int(user_id)
+        # The server-list member count is a per-server value that changes on
+        # every join/kick/leave/ban/reap. Drop it here so no listing can serve
+        # a stale count after this mutation (see member_count_cache).
+        invalidate_member_count_cache()
         cache_delete(f"is_member:{server_id}:{user_id}")
         cache_delete(f"srv_member:is_member:{server_id}:{user_id}")
         invalidate_pattern(f"member_data:*{user_id}*")
@@ -119,6 +158,18 @@ class CacheOpsMixin(ServerProtocol):
         # for every viewer, so evict every cached member-list page here too.
         invalidate_pattern("server_members_api:*")
         cache_delete(f"user_servers:{user_id}")
+        # The search layer memoizes each target user's *set of server ids*
+        # under a separate key (SearchAccessMixin._get_user_servers_map) so it
+        # can compute mutual-server counts without one query per hit. That
+        # memo is authorization-adjacent: after a kick/ban/leave it must not
+        # keep claiming the removed member still shares a server for the
+        # whole cache TTL. No other membership mutation helper clears it, so
+        # drop it here alongside the authoritative ``user_servers`` entry.
+        cache_delete(f"user:servers:{user_id}")
+        # The core per-viewer roster read (srv_roster:*) is a separate tier
+        # from the HTTP one above; a join/kick/ban/leave changes it for every
+        # viewer, so drop it here too.
+        self._invalidate_roster_caches(server_id)
         self._invalidate_permission_caches(server_id, user_id)
 
     def _validate_server_name(self, name: str) -> str:

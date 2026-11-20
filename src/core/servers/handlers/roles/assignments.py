@@ -5,6 +5,7 @@ from typing import List
 
 from src.core.base import SnowflakeID
 
+from ...channel_access_cache import get_channel_access_cache
 from ...models import Role, AuditLogAction
 from ...manager.converters import _row_to_role
 from ...exceptions import (
@@ -136,6 +137,12 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
         invalidate_pattern("has_perm:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
+        # Retire the target member's cached channel-view decisions; a newly
+        # assigned role can immediately widen (and later revoke) channel access.
+        get_channel_access_cache().bump(server_id, member_user_id)
+        # The cached roster page embeds role ids, so a role change must evict
+        # it for every viewer of this server.
+        self.manager._invalidate_roster_caches(server_id)
 
         self.manager._log_audit(
             server_id,
@@ -193,6 +200,12 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
         invalidate_pattern("has_perm:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
+        # Retire the target member's cached channel-view decisions so a removed
+        # role's access is revoked on the very next check (no stale grant).
+        get_channel_access_cache().bump(server_id, member_user_id)
+        # The cached roster page embeds role ids, so a role change must evict
+        # it for every viewer of this server.
+        self.manager._invalidate_roster_caches(server_id)
 
         self.manager._log_audit(
             server_id,
@@ -231,64 +244,69 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         now = self.manager._get_timestamp()
         assigned: List[SnowflakeID] = []
 
-        for role_id in role_ids:
-            if role_id not in allowed:
-                continue
-            row = self.db.fetch_one(
-                "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
-                (role_id,),
-            )
-            if not row or row["server_id"] != server_id:
-                continue
-            if row["is_default"]:
-                continue
-
-            permissions = row["permissions"]
-            if isinstance(permissions, str):
-                try:
-                    permissions = json.loads(permissions) if permissions else {}
-                except (TypeError, ValueError):
-                    # A corrupt/legacy permission blob must never be treated as
-                    # a harmless empty grant on a self-service path.
+        # One audit INSERT per assigned role used to cost one INSERT plus one
+        # autocommit each.  Buffer them for the duration of the loop; the
+        # context manager flushes on exit (including on error), so every
+        # accepted audit row still reaches srv_audit_log.
+        with self.manager._buffered_audit():
+            for role_id in role_ids:
+                if role_id not in allowed:
                     continue
-            if not isinstance(permissions, dict):
-                continue
-            try:
-                # Wildcards ("*", "namespace.*") expand to full grants in
-                # has_permission(). They are forbidden in freshly-written
-                # roles, but a legacy/imported row could still carry one; such
-                # a role is never safe to hand out through self-service.
-                validate_permission_dict(permissions)
-            except ValueError:
-                continue
-            # Checking the literal ``administrator`` key alone missed a role
-            # whose permissions contain a truthy ``*`` wildcard, which grants
-            # every permission (including roles.manage) on lookup.
-            if has_permission(permissions, "administrator"):
-                continue
+                row = self.db.fetch_one(
+                    "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
+                    (role_id,),
+                )
+                if not row or row["server_id"] != server_id:
+                    continue
+                if row["is_default"]:
+                    continue
 
-            existing = self.db.fetch_one(
-                "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
-                (member.id, role_id),
-            )
-            if existing:
+                permissions = row["permissions"]
+                if isinstance(permissions, str):
+                    try:
+                        permissions = json.loads(permissions) if permissions else {}
+                    except (TypeError, ValueError):
+                        # A corrupt/legacy permission blob must never be treated as
+                        # a harmless empty grant on a self-service path.
+                        continue
+                if not isinstance(permissions, dict):
+                    continue
+                try:
+                    # Wildcards ("*", "namespace.*") expand to full grants in
+                    # has_permission(). They are forbidden in freshly-written
+                    # roles, but a legacy/imported row could still carry one; such
+                    # a role is never safe to hand out through self-service.
+                    validate_permission_dict(permissions)
+                except ValueError:
+                    continue
+                # Checking the literal ``administrator`` key alone missed a role
+                # whose permissions contain a truthy ``*`` wildcard, which grants
+                # every permission (including roles.manage) on lookup.
+                if has_permission(permissions, "administrator"):
+                    continue
+
+                existing = self.db.fetch_one(
+                    "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
+                    (member.id, role_id),
+                )
+                if existing:
+                    assigned.append(role_id)
+                    continue
+
+                self.db.execute(
+                    """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (self.manager._generate_id(), member.id, role_id, now, user_id),
+                )
+                self.manager._log_audit(
+                    server_id,
+                    user_id,
+                    AuditLogAction.MEMBER_ROLE_ADD,
+                    "member",
+                    user_id,
+                    {"role_id": role_id},
+                )
                 assigned.append(role_id)
-                continue
-
-            self.db.execute(
-                """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (self.manager._generate_id(), member.id, role_id, now, user_id),
-            )
-            self.manager._log_audit(
-                server_id,
-                user_id,
-                AuditLogAction.MEMBER_ROLE_ADD,
-                "member",
-                user_id,
-                {"role_id": role_id},
-            )
-            assigned.append(role_id)
 
         if assigned:
             from src.core.database import invalidate_pattern
@@ -297,5 +315,7 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
             invalidate_pattern(f"perms:{user_id}:{server_id}:*")
             invalidate_pattern("has_perm:*")
             invalidate_pattern(f"member_data:*{user_id}*")
+            get_channel_access_cache().bump(server_id, user_id)
+            self.manager._invalidate_roster_caches(server_id)
 
         return assigned

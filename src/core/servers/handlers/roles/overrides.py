@@ -5,6 +5,7 @@ from typing import Optional, Dict
 
 from src.core.base import SnowflakeID
 
+from ...channel_access_cache import get_channel_access_cache
 from ...models import ChannelOverride, AuditLogAction
 from ...manager.converters import _row_to_override
 from ...exceptions import (
@@ -185,6 +186,10 @@ class RoleOverrideMixin(RoleHandlerProtocol):
             # For simplicity, we invalidate all permissions for this server/channel
             invalidate_pattern(f"perms:*:{channel.server_id}:{channel_id}")
         invalidate_pattern("has_perm:*")
+        # Overrides can widen or revoke channel access. A role override affects
+        # every member of the server, so bump the whole server epoch; this also
+        # covers the member-target case. No stale grant may survive.
+        get_channel_access_cache().bump(channel.server_id)
 
         result = self.get_channel_override(channel_id, target_type, target_id)
         assert result is not None
@@ -234,5 +239,8 @@ class RoleOverrideMixin(RoleHandlerProtocol):
         else:
             invalidate_pattern(f"perms:*:{channel.server_id}:{channel_id}")
         invalidate_pattern("has_perm:*")
+        # Removing an override can revoke channel access; retire every cached
+        # decision in the server so the change is visible immediately.
+        get_channel_access_cache().bump(channel.server_id)
 
         return True
