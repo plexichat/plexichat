@@ -653,9 +653,18 @@ class ExternalProxy:
         if not peek:
             return peek, gen
 
-        stripped = peek.lstrip(b"\xef\xbb\xbf \t\r\n")
-        head = stripped[:9].lower()
-        if head.startswith(self.SVG_SNIFF_PREFIXES):
+        # DEEP: inspect the whole sniff window, not just its first nine bytes.
+        # The old ``stripped[:9]`` check only recognised a marker sitting at the
+        # very start of the body, so a script-bearing SVG hidden behind any
+        # other prefix (an XML comment, a DOCTYPE with attributes, whitespace
+        # outside the small strip set, or — most importantly — valid raster
+        # magic bytes followed by ``<svg onload=...>``) slipped past and was
+        # cached and served. The upload boundary already rejects exactly those
+        # polyglots via ``contains_active_markup``; a proxy must not be the
+        # weaker boundary just because the bytes arrive over HTTP. Scanning the
+        # already-bounded ``peek`` window keeps the check cheap and fail-closed.
+        lowered = peek.lower()
+        if any(prefix in lowered for prefix in self.SVG_SNIFF_PREFIXES):
             raise ProxyFetchError("SVG content is blocked (can contain scripts)", url)
 
         if content_type in self.IMAGE_MAGIC_BYTES:
