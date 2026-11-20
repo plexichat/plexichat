@@ -4,6 +4,7 @@ Search routes - Unified search and discovery endpoints.
 
 import copy
 import time
+from collections import OrderedDict
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -56,9 +57,14 @@ def _parse_search_id(raw: str, field: str) -> int:
 # repeatedly within seconds. Each miss runs a filter scan plus a GROUP BY over
 # the user's search history. Memoize recent answers for a short TTL to bound
 # that work; the cache is size-capped and keyed only on the request inputs.
+# Keys carry the authenticated user id, so one credential can never read
+# another's suggestions, and the route runs its auth gate plus the per-user
+# rate limit before consulting the cache.
 _SUGGESTION_CACHE_TTL_SECONDS = 2.0
 _SUGGESTION_CACHE_MAX_ENTRIES = 256
-_suggestion_cache: Dict[Tuple[int, str, int], Tuple[float, List[str]]] = {}
+_suggestion_cache: "OrderedDict[Tuple[int, str, int], Tuple[float, List[str]]]" = (
+    OrderedDict()
+)
 
 
 def _clear_suggestion_cache() -> None:
@@ -93,20 +99,39 @@ def _check_suggestion_rate_limit(user_id: int) -> None:
 
 
 def _suggestions(search_mod, user_id: int, q: str, limit: int) -> List[str]:
-    """Return suggestions, computing at most once per key per TTL window."""
+    """Return suggestions, computing at most once per key per TTL window.
+
+    The backing store is a bounded LRU. Reaching the cap evicts only the
+    least-recently-used key and expired keys are pruned first, so a burst of
+    distinct prefixes does not discard every other user's still-fresh answer
+    and force a fresh GROUP BY for each of them.
+    """
     key = (user_id, q, limit)
     now = time.monotonic()
     cached = _suggestion_cache.get(key)
-    if cached is not None and (now - cached[0]) < _SUGGESTION_CACHE_TTL_SECONDS:
-        return cached[1]
+    if cached is not None:
+        if (now - cached[0]) < _SUGGESTION_CACHE_TTL_SECONDS:
+            _suggestion_cache.move_to_end(key)
+            return cached[1]
+        # Expired entries are never served; drop this one before recomputing.
+        _suggestion_cache.pop(key, None)
 
     suggestions = search_mod.get_search_suggestions(
         user_id=user_id,
         partial_query=q,
         limit=limit,
     )
-    if len(_suggestion_cache) >= _SUGGESTION_CACHE_MAX_ENTRIES:
-        _suggestion_cache.clear()
+
+    # Reclaim expired keys before any live entry so staleness cannot consume
+    # the capacity reserved for hot answers. TTLs are short (seconds), so there
+    # are at most a few hundred entries to inspect.
+    for stale in [k for k, (stored, _) in _suggestion_cache.items()
+                  if (now - stored) >= _SUGGESTION_CACHE_TTL_SECONDS]:
+        _suggestion_cache.pop(stale, None)
+    # One-at-a-time LRU eviction keeps the rest of the working set warm.
+    while len(_suggestion_cache) >= _SUGGESTION_CACHE_MAX_ENTRIES:
+        _suggestion_cache.popitem(last=False)
+
     _suggestion_cache[key] = (now, suggestions)
     return suggestions
 
