@@ -22,7 +22,7 @@ value they hold, not by remembering a single grab-bag module name.
 from .errors import HardeningViolation
 from .filenames import content_disposition, sanitize_header_filename
 from .identifiers import is_identifier, require_identifier
-from .numbers import SNOWFLAKE_MAX, bounded_int, parse_id
+from .numbers import SNOWFLAKE_MAX, bounded_int, clamp_finite_float, parse_id
 from .paths import safe_join
 from .text import reject_control_characters
 from .urls import require_http_url, require_https_url, require_ws_url
@@ -31,6 +31,7 @@ __all__ = [
     "HardeningViolation",
     "SNOWFLAKE_MAX",
     "bounded_int",
+    "clamp_finite_float",
     "content_disposition",
     "is_identifier",
     "parse_id",

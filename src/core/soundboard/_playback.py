@@ -12,7 +12,11 @@ from typing import Any, Callable, List, Optional
 import utils.config as config
 import utils.logger as logger
 
-from src.core.security.hardening import HardeningViolation, bounded_int
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    clamp_finite_float,
+)
 
 from .models import Sound, SoundPlayback
 from .exceptions import (
@@ -421,7 +425,9 @@ class SoundboardPlaybackMixin(_PlaybackContract):
         # Honour volume override by clamping the playback's per-user
         # multiplier, if provided.
         if volume is not None:
-            sound.volume = max(0.0, min(1.0, float(volume)))
+            # Per-play override: a non-finite value must never become full
+            # volume in the playback response/event sent to the channel.
+            sound.volume = clamp_finite_float(volume, 0.0, 1.0, default=0.0)
 
         self._db.execute(
             """INSERT INTO soundboard_usage (id, sound_id, user_id, channel_id, used_at)

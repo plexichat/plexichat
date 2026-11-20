@@ -91,3 +91,32 @@ def parse_id(value: Any, field: str = "id") -> int:
     range.
     """
     return bounded_int(value, field, minimum=1, maximum=SNOWFLAKE_MAX)
+
+
+def clamp_finite_float(
+    value: Any,
+    minimum: float,
+    maximum: float,
+    *,
+    default: float,
+) -> float:
+    """Clamp a numeric value into ``[minimum, maximum]``, failing *safe*.
+
+    The idiomatic ``max(minimum, min(maximum, float(value)))`` is not safe for
+    non-finite input: every comparison against ``NaN`` is False, so
+    ``min(maximum, nan)`` returns ``maximum`` and the loudest possible value
+    (e.g. full volume) is silently produced from garbage. ``-inf``/``inf``
+    and overflowing integers are mishandled the same way, and the naive form
+    also accepts ``bool`` as ``1``/``0``. Values that are not finite numbers
+    instead degrade to ``default`` here, which callers pick as the quiet/safe
+    end of their range.
+    """
+    if isinstance(value, bool):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return max(minimum, min(number, maximum))

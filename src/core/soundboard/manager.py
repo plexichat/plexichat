@@ -5,6 +5,7 @@ Handles sound upload, permissions, cooldowns, and playback triggering
 with proper validation and permission checks.
 """
 
+import math
 import re
 
 from typing import Optional, List, Dict, Any
@@ -19,6 +20,7 @@ from src.core.avatars.manager.upload_guard import (
 )
 from src.core.avatars.manager.url_guard import is_safe_media_url
 from src.core.base import BaseManager
+from src.core.security.hardening import clamp_finite_float
 
 from .models import (
     Sound,
@@ -420,15 +422,20 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
             )
 
         max_duration = self._config.get("max_sound_duration_seconds", 5)
-        if duration_seconds > max_duration:
+        # NaN compares False against every bound, so the naive check let a
+        # non-finite duration through into storage. A stored NaN then makes
+        # every JSON response for this server's sounds unserializable
+        # (allow_nan=False) -- a persistent listing outage. Reject it here.
+        if not math.isfinite(duration_seconds) or duration_seconds > max_duration:
             raise SoundTooLongError(
                 f"Sound exceeds maximum duration of {max_duration} seconds",
                 max_duration,
                 duration_seconds,
             )
 
-        if volume < 0.0 or volume > 1.0:
-            volume = max(0.0, min(1.0, volume))
+        # clamp_finite_float also covers NaN/inf, which the old
+        # ``volume < 0.0 or volume > 1.0`` guard let through unchanged.
+        volume = clamp_finite_float(volume, 0.0, 1.0, default=0.0)
 
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM soundboard_sounds WHERE server_id = ?",
@@ -675,7 +682,9 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
             updates["emoji"] = emoji
             params.append(emoji)
         if volume is not None:
-            v = max(0.0, min(1.0, float(volume)))
+            # Fail safe on NaN/inf: the old max/min idiom silently stored NaN
+            # as full volume (1.0) and let a non-finite value reach clients.
+            v = clamp_finite_float(volume, 0.0, 1.0, default=0.0)
             updates["volume"] = v
             params.append(v)
         if url is not None:

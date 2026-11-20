@@ -9,7 +9,12 @@ bytes are validated and stored through the shared media pipeline.
 from src.api.request_guards import MAX_SOUND_UPLOAD, read_upload_capped
 
 from src.core.avatars.manager.upload_guard import sanitize_upload_filename
-from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    clamp_finite_float,
+    parse_id,
+)
 
 from typing import Annotated, List, Optional
 
@@ -410,7 +415,10 @@ async def upload_sound(
             content_type=file.content_type,
             duration_seconds=duration_seconds,
             emoji=emoji,
-            volume=max(0.0, min(1.0, float(volume))),
+            # ``volume`` is an unconstrained Form float; "nan"/"inf" parse to
+            # non-finite floats. The old max/min clamp turned NaN into 1.0
+            # (loudest) instead of failing safe.
+            volume=clamp_finite_float(volume, 0.0, 1.0, default=0.0),
         )
         invalidate_pattern(f"{_SOUNDS_LIST_CACHE_PREFIX}:*")
         return _sound_to_response(sound)
