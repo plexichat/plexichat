@@ -1,8 +1,15 @@
 from typing import Optional, List, Dict
+from dataclasses import replace
 from io import BytesIO
 from PIL import Image
 import utils.logger as logger
 from src.core.base import SnowflakeID
+from .emoji_lookup_cache import (
+    EmojiCatalogCache,
+    DEFAULT_EMOJI_TTL_SECONDS,
+    DEFAULT_EMOJI_MAX_ENTRIES,
+    DEFAULT_EMOJI_MAX_BYTES,
+)
 from ..models import CustomEmoji
 from ..exceptions import (
     CustomEmojiNotFoundError,
@@ -38,6 +45,58 @@ WHERE (SELECT COUNT(*) FROM react_custom_emoji
 
 
 class EmojiOpsMixin(ReactionProtocol):
+    """Custom-emoji CRUD plus a small bounded cache over its read queries.
+
+    ``get_server_custom_emojis`` (a JOIN with ``auth_users``), ``get_custom_emoji``
+    and ``get_emoji_counts`` (two COUNTs) are resolved repeatedly by dispatch
+    helpers, enrichment code and direct core callers.  The cache is created
+    lazily on the manager instance so no change to ``ReactionBase`` is needed;
+    every successful mutation invalidates the entries it can affect.
+
+    The cached payloads are server data, not per-user data, so the keys carry no
+    credential segment: authorization is enforced by the callers/HTTP layer
+    before these helpers are reached, and its response cache keeps the
+    credential-partitioned keys.  Values are copied on the way in/out so a
+    caller mutating a returned list/dict/dataclass cannot poison the cache.
+    """
+
+    _EMOJI_CATALOG_CACHE_ATTR = "_emoji_catalog_cache_instance"
+
+    def _emoji_catalog_cache(self) -> EmojiCatalogCache:
+        cache = getattr(self, self._EMOJI_CATALOG_CACHE_ATTR, None)
+        if cache is None:
+            cache = EmojiCatalogCache(
+                ttl_seconds=float(
+                    self._config.get(
+                        "emoji_catalog_cache_ttl", DEFAULT_EMOJI_TTL_SECONDS
+                    )
+                ),
+                max_entries=int(
+                    self._config.get(
+                        "emoji_catalog_cache_max_entries", DEFAULT_EMOJI_MAX_ENTRIES
+                    )
+                ),
+                max_bytes=int(
+                    self._config.get(
+                        "emoji_catalog_cache_max_bytes", DEFAULT_EMOJI_MAX_BYTES
+                    )
+                ),
+            )
+            setattr(self, self._EMOJI_CATALOG_CACHE_ATTR, cache)
+        return cache
+
+    def _invalidate_emoji_catalog(
+        self,
+        server_id: Optional[SnowflakeID] = None,
+        emoji_id: Optional[SnowflakeID] = None,
+    ) -> None:
+        """Drop the list/count entries for a server and/or a detail entry."""
+        cache = self._emoji_catalog_cache()
+        if server_id is not None:
+            cache.invalidate_server(server_id)
+        if emoji_id is not None:
+            cache.invalidate_emoji(emoji_id)
+
     def _migrate_emoji_table(self):
         # Only migrate an EXISTING table that predates the new columns. A
         # missing table means a fresh install whose schema is created later -
@@ -278,6 +337,10 @@ class EmojiOpsMixin(ReactionProtocol):
                 )
 
             self._db.commit()
+            # The server's catalog/counts changed and a fresh detail row now
+            # exists. Drop only those entries; unrelated servers keep their
+            # warm cache entries.
+            self._invalidate_emoji_catalog(server_id=server_id, emoji_id=emoji_id)
 
         except EmojiNameExistsError:
             self._db.rollback()
@@ -335,6 +398,12 @@ class EmojiOpsMixin(ReactionProtocol):
                 )
 
                 self._db.commit()
+                # A rename changes both the server list payload and this emoji's
+                # detail row. Invalidate before the final read below so it is a
+                # fresh fetch rather than the pre-rename cached object.
+                self._invalidate_emoji_catalog(
+                    server_id=emoji.server_id, emoji_id=emoji_id
+                )
             except Exception:
                 self._db.rollback()
                 raise
@@ -362,6 +431,7 @@ class EmojiOpsMixin(ReactionProtocol):
             self._db.execute("DELETE FROM react_custom_emoji WHERE id = ?", (emoji_id,))
 
             self._db.commit()
+            self._invalidate_emoji_catalog(server_id=emoji.server_id, emoji_id=emoji_id)
         except Exception:
             self._db.rollback()
             raise
@@ -371,6 +441,12 @@ class EmojiOpsMixin(ReactionProtocol):
         return True
 
     def get_custom_emoji(self, emoji_id: int) -> Optional[CustomEmoji]:
+        cache = self._emoji_catalog_cache()
+        key = ("detail", emoji_id)
+        cached = cache.get(key, None)
+        if cached is not None:
+            return replace(cached)
+
         row = self._db.fetch_one(
             "SELECT * FROM react_custom_emoji WHERE id = ?", (emoji_id,)
         )
@@ -378,11 +454,19 @@ class EmojiOpsMixin(ReactionProtocol):
         if not row:
             return None
 
-        return self._row_to_custom_emoji(row)
+        emoji = self._row_to_custom_emoji(row)
+        cache.set(key, emoji)
+        return replace(emoji)
 
     def get_server_custom_emojis(
         self, server_id: int, include_unavailable: bool = False
     ) -> List[CustomEmoji]:
+        cache = self._emoji_catalog_cache()
+        key = ("list", server_id, bool(include_unavailable))
+        cached = cache.get(key, None)
+        if cached is not None:
+            return list(cached)
+
         query = """
             SELECT e.*, u.username as uploader_username 
             FROM react_custom_emoji e
@@ -397,9 +481,17 @@ class EmojiOpsMixin(ReactionProtocol):
 
         rows = self._db.fetch_all(query, (server_id,))
 
-        return [self._row_to_custom_emoji(row) for row in rows]
+        emojis = tuple(self._row_to_custom_emoji(row) for row in rows)
+        cache.set(key, emojis)
+        return list(emojis)
 
     def get_emoji_counts(self, server_id: SnowflakeID) -> Dict[str, int]:
+        cache = self._emoji_catalog_cache()
+        key = ("counts", server_id)
+        cached = cache.get(key, None)
+        if cached is not None:
+            return dict(cached)
+
         static_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 0",
             (server_id,),
@@ -408,9 +500,11 @@ class EmojiOpsMixin(ReactionProtocol):
             "SELECT COUNT(*) as count FROM react_custom_emoji WHERE server_id = ? AND animated = 1",
             (server_id,),
         )
-        return {
+        counts = {
             "static": static_row["count"] if static_row else 0,
             "animated": animated_row["count"] if animated_row else 0,
             "max_static": self._config.get("max_emojis_per_server", 50),
             "max_animated": self._config.get("max_animated_emojis_per_server", 50),
         }
+        cache.set(key, dict(counts))
+        return counts
