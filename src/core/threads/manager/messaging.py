@@ -13,6 +13,61 @@ from ..exceptions import (
 from .helpers import _get_thread_internal
 from .protocol import ThreadProtocol
 
+# v3 wire envelopes are ``ENC:3:<interval_id>:<base64(nonce || ciphertext)>``.
+# ``decrypt_message`` otherwise asks the ratchet store for the interval on
+# every single message, so a page of N v3 messages costs N round trips to
+# ``channel_ratchet_intervals``. The helpers below prefetch the conversation's
+# intervals once and let every decrypt on the page read from that snapshot.
+_RATCHET_WIRE_PREFIX = "ENC:3:"
+
+# A page holds at most ``limit`` messages (bounded to 100 at the HTTP edge),
+# so a few hundred intervals is already far more than any one page can span.
+# Keeping the prefetch bounded prevents a corrupt conversation from turning
+# this optimisation into an unbounded read.
+_RATCHET_INTERVAL_PREFETCH_LIMIT = 1000
+
+
+class _PreloadedRatchetStore:
+    """Store proxy serving ``get_by_id`` from a prefetched interval map.
+
+    Any interval not present in the snapshot (for example, an envelope from
+    a different conversation) falls back to the real store, so batching can
+    never change decryption results -- it only removes redundant lookups.
+    """
+
+    def __init__(self, store, intervals_by_id):
+        self._store = store
+        self._intervals_by_id = intervals_by_id
+
+    def get_by_id(self, interval_id):
+        interval = self._intervals_by_id.get(int(interval_id))
+        if interval is not None:
+            return interval
+        return self._store.get_by_id(interval_id)
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+
+def _v3_interval_ids(rows) -> set:
+    """Collect the distinct ratchet interval ids referenced by a page."""
+    interval_ids = set()
+    for row in rows:
+        content = row.get("content")
+        if not isinstance(content, str) or not content.startswith(
+            _RATCHET_WIRE_PREFIX
+        ):
+            continue
+        try:
+            interval_ids.add(
+                int(content[len(_RATCHET_WIRE_PREFIX) :].split(":", 1)[0])
+            )
+        except (ValueError, IndexError):
+            # Malformed envelope: leave it to decrypt_message to fail (and
+            # be logged) in the normal per-message path.
+            continue
+    return interval_ids
+
 
 class ThreadMessagingMixin(ThreadProtocol):
     def _enforce_slowmode(self, user_id: int, thread_id: int, can_manage: bool) -> None:
@@ -217,13 +272,42 @@ class ThreadMessagingMixin(ThreadProtocol):
 
         params.append(limit)
 
-        rows = self._db.fetch_all(query, tuple(params))
+        rows = [dict(row) for row in self._db.fetch_all(query, tuple(params))]
 
         from src.utils.encryption import decrypt_message
 
+        # Batch the v3 ratchet interval lookups for this page. Without this,
+        # every ENC:3: envelope triggers its own
+        # ``channel_ratchet_intervals`` query inside ``decrypt_message`` --
+        # an N+1 that scales with the page size. One conversation-scoped read
+        # fills a snapshot all messages on the page decrypt from.
+        ratchet_manager = None
+        if conversation_id is not None and _v3_interval_ids(rows):
+            try:
+                from src.utils.encryption import get_ratchet_manager
+
+                # A fresh manager bound to this db is used (rather than the
+                # process singleton) so swapping in the preloaded store is
+                # request-local and never mutates shared state.
+                manager = get_ratchet_manager(self._db)
+                intervals = manager.list_intervals(
+                    conversation_id, limit=_RATCHET_INTERVAL_PREFETCH_LIMIT
+                )
+                manager._store = _PreloadedRatchetStore(
+                    manager._store,
+                    {int(interval.interval_id): interval for interval in intervals},
+                )
+                ratchet_manager = manager
+            except Exception as e:
+                # Degrade to the original per-message decrypt path; a failed
+                # prefetch must not make a message unreadable.
+                logger.debug(
+                    f"Thread ratchet interval prefetch failed for thread {thread_id}: {e}"
+                )
+                ratchet_manager = None
+
         results = []
-        for row in rows:
-            data = dict(row)
+        for data in rows:
             content = data.get("content", "")
 
             try:
@@ -231,6 +315,7 @@ class ThreadMessagingMixin(ThreadProtocol):
                     content,
                     data["message_id"],
                     conversation_id=conversation_id,
+                    ratchet_manager=ratchet_manager,
                 )
             except Exception as e:
                 logger.debug(
