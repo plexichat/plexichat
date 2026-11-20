@@ -127,25 +127,8 @@ class UserNotesService:
             raise RuntimeError("Failed to retrieve updated note")
         return note_data
 
-    def get_note(
-        self,
-        user_id: SnowflakeID,
-        target_user_id: SnowflakeID,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Get a user's note about another user.
-
-        Args:
-            user_id: ID of the user who created the note
-            target_user_id: ID of the user the note is about
-
-        Returns:
-            Note data with decrypted content, or None if not found
-        """
-        row = self._repo.get(user_id, target_user_id)
-        if not row:
-            return None
-
+    def _note_from_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Format a repository row into the public note shape."""
         # Decrypt the note
         note_content = row["note_encrypted"]
         if self._encryption_enabled and row["note_encrypted"]:
@@ -164,6 +147,47 @@ class UserNotesService:
             "updated_at": row["updated_at"],
         }
 
+    def get_note(
+        self,
+        user_id: SnowflakeID,
+        target_user_id: SnowflakeID,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a user's note about another user.
+
+        Args:
+            user_id: ID of the user who created the note
+            target_user_id: ID of the user the note is about
+
+        Returns:
+            Note data with decrypted content, or None if not found
+        """
+        row = self._repo.get(user_id, target_user_id)
+        if not row:
+            return None
+        return self._note_from_row(row)
+
+    def get_notes_for_targets(
+        self,
+        user_id: SnowflakeID,
+        target_user_ids: List[SnowflakeID],
+        *,
+        chunk_size: Optional[int] = None,
+    ) -> Dict[SnowflakeID, Dict[str, Any]]:
+        """Get one author's notes about many targets without an N+1 read.
+
+        Replaces a loop of :meth:`get_note` calls with a handful of bounded
+        ``IN`` queries. The repository keeps ``user_id`` scoping on every
+        query, so no other author's notes can be returned. Results use the
+        same shape as :meth:`get_note`, keyed by target user id; targets
+        without a note are absent from the mapping.
+        """
+        kwargs = {} if chunk_size is None else {"chunk_size": chunk_size}
+        rows = self._repo.get_many(user_id, target_user_ids, **kwargs)
+        return {
+            target_id: self._note_from_row(row) for target_id, row in rows.items()
+        }
+
     def get_all_notes(self, user_id: SnowflakeID) -> List[Dict[str, Any]]:
         """
         Get all notes created by a user.
@@ -176,28 +200,7 @@ class UserNotesService:
         """
         rows = self._repo.get_all(user_id)
 
-        notes = []
-        for row in rows:
-            # Decrypt the note
-            note_content = row["note_encrypted"]
-            if self._encryption_enabled and row["note_encrypted"]:
-                try:
-                    note_content = decrypt_data(row["note_encrypted"])
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt user note: {e}")
-
-            notes.append(
-                {
-                    "id": row["id"],
-                    "user_id": row["user_id"],
-                    "target_user_id": row["target_user_id"],
-                    "note": note_content,
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                }
-            )
-
-        return notes
+        return [self._note_from_row(row) for row in rows]
 
     def delete_note(
         self,

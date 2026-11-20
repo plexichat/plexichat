@@ -26,6 +26,7 @@ repo = UserNotesRepository(db)
 repo.create(note_id, user_id, target_user_id, note_encrypted, created_at, updated_at)
 note = repo.get(user_id, target_user_id)
 all_notes = repo.get_all(user_id)
+notes_by_target = repo.get_many(user_id, target_user_ids)  # batched, scoped to user_id
 repo.update(note_id, note_encrypted, updated_at)
 repo.delete(user_id, target_user_id)
 exists = repo.exists(user_id, target_user_id)
@@ -39,6 +40,7 @@ exists = repo.exists(user_id, target_user_id)
 | `update()` | Update an existing note by ID |
 | `get()` | Retrieve a specific note by author and target user |
 | `get_all()` | Retrieve all notes by a user, ordered by `updated_at` descending |
+| `get_many()` | Retrieve one author's notes about many targets in bounded `IN` queries; scoped by `user_id` in every chunk |
 | `delete()` | Delete a note by author and target user |
 | `exists()` | Check whether a note exists between two users |
 

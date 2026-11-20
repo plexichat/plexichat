@@ -2,8 +2,25 @@
 Repository for user notes.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Iterator
 from src.core.base import SnowflakeID
+
+
+# A page of users can carry hundreds of notes to hydrate. Bind the target ids
+# in bounded slices instead of building one enormous ``IN (...)`` statement:
+# 500 matches the bulk chunk size used by the other back-end repositories and
+# stays well below SQLite's bind-variable cap on every supported build. The
+# author's ``user_id`` is bound alongside every chunk, so a batched read can
+# never observe another user's notes.
+MAX_NOTES_READ_CHUNK = 500
+
+
+def _chunk_target_ids(
+    target_ids: List[SnowflakeID], size: int = MAX_NOTES_READ_CHUNK
+) -> Iterator[List[SnowflakeID]]:
+    """Yield bounded slices of target ids for ``IN``-clause binding."""
+    for start in range(0, len(target_ids), size):
+        yield target_ids[start : start + size]
 
 
 class UserNotesRepository:
@@ -80,6 +97,50 @@ class UserNotesRepository:
                ORDER BY updated_at DESC, id DESC""",
             (user_id,),
         )
+
+    def get_many(
+        self,
+        user_id: SnowflakeID,
+        target_user_ids: List[SnowflakeID],
+        *,
+        chunk_size: int = MAX_NOTES_READ_CHUNK,
+    ) -> Dict[SnowflakeID, Dict[str, Any]]:
+        """Load one author's notes about many targets in bounded queries.
+
+        This is the batched replacement for calling :meth:`get` once per
+        target (an N+1 read). Target ids are de-duplicated and bound in chunks
+        of at most ``chunk_size``. The ``user_id`` predicate is present in
+        every chunk, so batching preserves per-user scoping: a caller can only
+        ever retrieve notes authored by ``user_id``.
+
+        Returns a mapping keyed by ``target_user_id``. Since
+        ``auth_user_notes`` enforces ``UNIQUE(user_id, target_user_id)``, at
+        most one row exists per target. Targets with no note are absent from
+        the mapping.
+        """
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+
+        # Preserve input order while removing duplicates so a repeated target
+        # never occupies extra bind slots.
+        unique_targets = list(dict.fromkeys(target_user_ids))
+        if not unique_targets:
+            return {}
+
+        notes: Dict[SnowflakeID, Dict[str, Any]] = {}
+        for chunk in _chunk_target_ids(unique_targets, chunk_size):
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                f"""SELECT id, user_id, target_user_id, note_encrypted, created_at, updated_at
+                   FROM auth_user_notes
+                   WHERE user_id = ? AND target_user_id IN ({placeholders})
+                   ORDER BY updated_at DESC, id DESC""",
+                (user_id, *chunk),
+            )
+            for row in rows:
+                target_id = row["target_user_id"] if isinstance(row, dict) else row[2]
+                notes[target_id] = row
+        return notes
 
     def delete(self, user_id: SnowflakeID, target_user_id: SnowflakeID) -> bool:
         """Delete a user note."""
