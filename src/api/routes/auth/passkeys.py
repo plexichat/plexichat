@@ -16,6 +16,7 @@ from src.api.schemas.auth import (
     LoginResponse,
 )
 from src.api.schemas.common import ErrorResponse, SnowflakeID, SuccessResponse
+from src.api.routes.users.helpers import require_user_token
 from .helpers import _user_to_response
 from .cookies import (
     set_session_cookie,
@@ -100,6 +101,10 @@ async def passkey_register_options(
     body: Optional[PasskeyRegisterOptionsRequest] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PasskeyRegisterOptionsResponse:
+    # A bot token's user_id is its human owner; only a real user token may
+    # register a credential on the account. Without this guard a leaked bot
+    # token could enrol an attacker-controlled passkey and take over the owner.
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         raise HTTPException(
@@ -159,6 +164,7 @@ async def passkey_register(
     request: Request,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PasskeyResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         raise HTTPException(
@@ -369,6 +375,7 @@ async def passkey_authenticate(
 async def list_passkeys(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[PasskeyResponse]:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         raise HTTPException(
@@ -415,6 +422,7 @@ async def revoke_passkey(
     request: Request,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         raise HTTPException(
@@ -464,6 +472,7 @@ async def rename_passkey(
     body: PasskeyRenameRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         raise HTTPException(

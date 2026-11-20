@@ -14,6 +14,7 @@ from src.api.schemas.auth import (
     TwoFactorDisableRequest,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.routes.users.helpers import require_user_token
 from .helpers import (
     _user_to_response,
     MAX_2FA_CODE_LENGTH,
@@ -238,6 +239,7 @@ async def complete_2fa(
 async def get_2fa_status(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> TwoFactorStatusResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -293,6 +295,7 @@ async def get_2fa_status(
 async def enable_2fa(
     body: TwoFactorSetupRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> TwoFactorSetupResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -389,6 +392,7 @@ async def enable_2fa(
 async def confirm_2fa_setup(
     body: TwoFactorConfirmRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -473,6 +477,7 @@ async def confirm_2fa_setup(
 async def disable_2fa(
     body: TwoFactorDisableRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
+    require_user_token(current_user)
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
