@@ -11,7 +11,8 @@ import json
 import threading
 import time
 import uuid
-from typing import Optional, List, Callable
+from collections import OrderedDict
+from typing import Any, Optional, List, Callable, Dict, Tuple
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
@@ -22,6 +23,93 @@ from .router import EventRouter
 
 # Valkey pub/sub channel used to forward events to sibling workers.
 _CROSS_WORKER_CHANNEL = "events:cross_worker"
+
+# A burst of events to the same audience (typing, presence, reactions) rebuilds
+# the *same* cross-worker envelope over and over: the only field that differs
+# is the per-publication ``id``. Serialize the envelope once per distinct
+# identity and stamp the unique id into the cached template. The marker below
+# is a sentinel JSON string, never a real id, and ``id`` is the first key, so
+# a single left-to-right replace swaps only the envelope's own id even if the
+# payload happens to contain the same bytes.
+_ENVELOPE_ID_MARKER = "__plexichat_envelope_id_9c2f41ab__"
+_ENVELOPE_ID_JSON = json.dumps(_ENVELOPE_ID_MARKER)
+_MAX_ENVELOPE_TEMPLATES = 64
+
+
+def _freeze_envelope_value(value: Any) -> Any:
+    """Hashable, structure-preserving key for a JSON-like value (no re-dumps)."""
+    if isinstance(value, dict):
+        return (
+            "d",
+            tuple(sorted((str(k), _freeze_envelope_value(v)) for k, v in value.items())),
+        )
+    if isinstance(value, (list, tuple)):
+        return ("l", tuple(_freeze_envelope_value(v) for v in value))
+    if isinstance(value, (set, frozenset)):
+        return ("s", tuple(sorted((_freeze_envelope_value(v) for v in value), key=repr)))
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return ("v", type(value).__name__, value)
+    try:
+        hash(value)
+    except TypeError:
+        return ("r", repr(value))
+    return ("v", type(value).__name__, value)
+
+
+class _EnvelopeTemplateCache:
+    """Bounded LRU of serialized cross-worker envelopes keyed by identity."""
+
+    def __init__(self, max_entries: int = _MAX_ENVELOPE_TEMPLATES) -> None:
+        self._max_entries = max(1, int(max_entries))
+        self._entries: "OrderedDict[Tuple[Any, ...], str]" = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._lock = threading.Lock()
+
+    def get(self, key: Tuple[Any, ...]) -> Optional[str]:
+        with self._lock:
+            template = self._entries.get(key)
+            if template is not None:
+                self._hits += 1
+                self._entries.move_to_end(key)
+                return template
+            self._misses += 1
+            return None
+
+    def put(self, key: Tuple[Any, ...], template: str) -> None:
+        with self._lock:
+            self._entries[key] = template
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def stats(self) -> Dict[str, int]:
+        with self._lock:
+            return {
+                "size": len(self._entries),
+                "max_entries": self._max_entries,
+                "hits": self._hits,
+                "misses": self._misses,
+            }
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._hits = 0
+            self._misses = 0
+
+
+_envelope_templates = _EnvelopeTemplateCache()
+
+
+def get_envelope_template_cache_stats() -> Dict[str, int]:
+    """Expose hit/miss/size counters for observability and regression tests."""
+    return _envelope_templates.stats()
+
+
+def clear_envelope_template_cache() -> None:
+    """Invalidate cached templates (intent/worker change, tests)."""
+    _envelope_templates.clear()
 
 
 def _envelope_scope_id(value) -> Optional[int]:
@@ -183,19 +271,38 @@ class EventManager:
             # the guild one (and vice versa) -- an intent-gate/audience leak.
             # The receiver prefers this explicit scope and only falls back to
             # data-derived scope for legacy payloads without the field.
-            payload = json.dumps(
-                {
-                    "id": event_id,
-                    "t": event.event_type.value,
-                    "d": event.data,
-                    "u": [int(uid) for uid in recipients],
-                    "sw": self._worker_id,
-                    "scope": [
-                        _envelope_scope_id(event.server_id),
-                        _envelope_scope_id(event.channel_id),
-                    ],
-                }
+            scope_server = _envelope_scope_id(event.server_id)
+            scope_channel = _envelope_scope_id(event.channel_id)
+
+            # The complete serialization identity: every value that appears in
+            # the envelope *except* the unique publication id. Two events that
+            # differ in any of these get different templates, so a cached
+            # envelope can never be stamped with the wrong audience or scope.
+            cache_key = (
+                event.event_type.value,
+                self._worker_id,
+                scope_server,
+                scope_channel,
+                _freeze_envelope_value(event.data),
+                _freeze_envelope_value(recipients),
             )
+            template = _envelope_templates.get(cache_key)
+            if template is None:
+                template = json.dumps(
+                    {
+                        "id": _ENVELOPE_ID_MARKER,
+                        "t": event.event_type.value,
+                        "d": event.data,
+                        "u": [int(uid) for uid in recipients],
+                        "sw": self._worker_id,
+                        "scope": [scope_server, scope_channel],
+                    }
+                )
+                _envelope_templates.put(cache_key, template)
+            # ``id`` is the first key, so the marker's JSON string occurs first
+            # in the template; replacing one occurrence swaps only this
+            # publication's id and leaves the wire shape byte-identical.
+            payload = template.replace(_ENVELOPE_ID_JSON, json.dumps(event_id), 1)
         except (TypeError, ValueError) as e:
             logger.warning(
                 "Cross-worker publish skipped for %s: payload not serializable (%s)",
