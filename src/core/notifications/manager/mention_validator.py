@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Dict, Optional, List
 
 import utils.config as _mention_config
 
@@ -6,7 +6,6 @@ from ..models import Mention, MentionType, MentionPosition
 from ..parser import parse_mentions as _parse_mentions
 from src.core.base import SnowflakeID
 from .helpers import (
-    role_exists,
     get_role,
     channel_exists,
     has_mention_everyone_permission,
@@ -29,6 +28,23 @@ class MentionValidationMixin(NotificationProtocol):
     ) -> List[Mention]:
         validated = []
 
+        # Per-call memo of role rows. ``role_exists`` + ``get_role`` used to
+        # issue two identical ``SELECT ... FROM srv_roles WHERE id = ?`` round
+        # trips for every role mention (and re-issue both for a role mentioned
+        # twice in one message). Fetch the row once per distinct role id and
+        # derive existence from it. The memo is local to this one validation
+        # call, holds only public server role metadata, and never crosses a
+        # request or worker boundary, so it adds no cross-user leak and no
+        # multi-node staleness window. Fail-closed semantics are unchanged: a
+        # missing row still marks the mention invalid, and the
+        # cross-server / non-mentionable checks still run against the same row.
+        roles_by_id: Dict[SnowflakeID, Optional[dict]] = {}
+
+        def _role_row(role_id: SnowflakeID) -> Optional[dict]:
+            if role_id not in roles_by_id:
+                roles_by_id[role_id] = get_role(self._db, role_id)
+            return roles_by_id[role_id]
+
         for mention in mentions:
             m = Mention(
                 mention_type=mention.mention_type,
@@ -47,17 +63,19 @@ class MentionValidationMixin(NotificationProtocol):
                     m.error = "User not found"
 
             elif mention.mention_type == MentionType.ROLE:
-                if mention.target_id is None or not role_exists(
-                    self._db, mention.target_id
-                ):
+                role = (
+                    _role_row(mention.target_id)
+                    if mention.target_id is not None
+                    else None
+                )
+                if role is None:
                     m.valid = False
                     m.error = "Role not found"
-                elif server_id and mention.target_id is not None:
-                    role = get_role(self._db, mention.target_id)
-                    if role and role["server_id"] != server_id:
+                elif server_id:
+                    if role["server_id"] != server_id:
                         m.valid = False
                         m.error = "Role not in this server"
-                    elif role and not bool(role["mentionable"]):
+                    elif not bool(role["mentionable"]):
                         if not self._servers or not self._servers.has_permission(
                             user_id, server_id, "roles.manage", channel_id
                         ):
