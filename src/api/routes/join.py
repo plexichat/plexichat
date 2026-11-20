@@ -13,9 +13,11 @@ authenticated-user dependency (``get_current_user``); the session user is
 then mapped onto an instance admin identity via the shared id space
 (``admin_users.id == user.id``, the same mapping used elsewhere, e.g.
 reports moderation) and authorized through the admin permission system:
-every mutating route requires the ``admin.plexijoin.manage`` permission
-(checked with ``check_admin_permission`` against that admin identity),
-while read-only listing requires only the admin-identity mapping.
+every route, including read-only listing, requires the
+``admin.plexijoin.manage`` permission (checked with ``check_admin_permission``
+against that admin identity). Listing exposes the same federation metadata as
+the admin PlexiJoin endpoints, so authentication alone must not be enough to
+read it through this client-facing surface.
 Host restriction remains enforced and configurable (provisional-license
 allowlist, proxy-spoofing guard, ``admin_ui.host_restriction``), but these
 routes do NOT hard-require ``admin_ui.enabled`` — a properly-permissioned
@@ -176,11 +178,16 @@ def _session_admin_id(current_user: TokenInfo) -> int:
 
 
 def _require_view(request: Request, current_user: TokenInfo) -> None:
-    """Host restriction (configurable) + instance-admin session for reads."""
-    from .admin.utils import check_host_restriction
+    """Host restriction + admin identity + the federation management scope.
 
-    check_host_restriction(request, require_admin_ui=False)
-    _session_admin_id(current_user)
+    ``GET /Join/list`` returns remote URLs, notes and peer identities — the
+    same federation metadata the admin PlexiJoin read endpoints gate behind
+    ``admin.plexijoin.manage``. Checking only the admin-identity mapping left
+    an IDOR-style read on the client-facing surface: any authenticated admin
+    without the federation scope could enumerate every connection. Reuse the
+    full manage gate so both surfaces enforce the same authorization.
+    """
+    _require_manage(request, current_user)
 
 
 def _require_manage(request: Request, current_user: TokenInfo) -> int:
@@ -250,9 +257,9 @@ async def list_joins(
 ):
     """List federation Joins (client contract for ``GET /Join/list``).
 
-    Auth: standard web-session user mapped to an instance admin identity
-    (see module docstring); host restriction applies, ``admin_ui.enabled``
-    is not required.
+    Auth: standard web-session user mapped to an instance admin identity with
+    the ``admin.plexijoin.manage`` scope (see module docstring); host
+    restriction applies, ``admin_ui.enabled`` is not required.
     """
     _require_view(request, current_user)
     try:

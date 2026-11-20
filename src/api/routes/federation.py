@@ -321,6 +321,26 @@ def validate_type_field(value: Any, field: str) -> str:
     return value
 
 
+def validate_payload_text(value: Any, field: str, max_length: int) -> Optional[str]:
+    """Bound an optional signed text field, failing with a 400, never a 500.
+
+    ``_bound_payload_value`` proves only that a value is a *bounded* JSON
+    scalar — a signed envelope can legally carry ``{"requested_by": 7}`` or an
+    oversized ``note``. ``submit_inbound_request`` then calls ``bound_text``,
+    which raises ``HardeningViolation`` (a plain ``ValueError``) for a non-str
+    or over-length value. On this unauthenticated-by-JWT route that escaped as
+    an unhandled exception and a 500 instead of a validation rejection. Apply
+    the same bound here and translate the failure to the route's 400 contract;
+    this tightens the boundary without relaxing the stored field's limits.
+    """
+    from src.core.plexijoin.validation import bound_text
+
+    try:
+        return bound_text(value, field, max_length)
+    except HardeningViolation:
+        raise _bad_field(field)
+
+
 def validate_invite_codes(value: Any, field: str = "payload") -> None:
     """Recursively validate any ``invite_code`` fields in a signed payload."""
     if isinstance(value, dict):
@@ -744,11 +764,18 @@ async def join_request_inbound(request: Request):
                 detail={"error": {"code": 400, "message": str(exc)}},
             ) from exc
 
+    # ``requested_by`` and ``note`` come straight from the signed envelope.
+    # A valid HMAC does not make their types safe: bound them to the same
+    # limits ``submit_inbound_request`` enforces and reject bad values with a
+    # clean 400 rather than letting its HardeningViolation surface as a 500.
+    requested_by = validate_payload_text(payload.get("requested_by"), "requested_by", 128)
+    note = validate_payload_text(payload.get("note"), "note", 500)
+
     row = manager.submit_inbound_request(
         remote_instance_id=remote_instance_id,
         remote_url=remote_url,
-        requested_by=payload.get("requested_by"),
-        note=payload.get("note"),
+        requested_by=requested_by,
+        note=note,
     )
     # ``request_id`` is the ``plexijoin_inbound_requests`` INTEGER PRIMARY KEY
     # rowid, so it stays numeric (only 64-bit snowflakes need stringifying).
