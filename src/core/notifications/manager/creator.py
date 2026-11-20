@@ -24,6 +24,13 @@ from .helpers import (
 from .protocol import NotificationProtocol
 
 
+# Bound the ``user_id IN (...)`` fan-out of a bulk unread bump. A role/everyone
+# mention is not capped by this module: one message can hand thousands of ids
+# to the fan-out. Keeping each statement to this many binds avoids the backend
+# variable ceiling and keeps the notification write transaction short-lived.
+_UNREAD_BULK_CHUNK_SIZE = 500
+
+
 def _encrypt_content_preview(preview: Optional[str], notif_id: int) -> Optional[str]:
     if not preview:
         return None
@@ -422,6 +429,86 @@ class NotificationCreatorMixin(NotificationProtocol):
             return f"/channels/{server_id}/{message_id}"
         return None
 
+    def _bump_unread_counts_bulk(
+        self,
+        user_ids: List[SnowflakeID],
+        conversation_id: SnowflakeID,
+        server_id: Optional[SnowflakeID],
+        channel_id: Optional[SnowflakeID],
+        is_mention: bool = True,
+    ) -> None:
+        """Bump unread counters for a whole fan-out in bounded SQL batches.
+
+        The old bulk path called ``_update_unread_count`` once per recipient.
+        That helper issues a SELECT followed by an UPDATE or INSERT, so a
+        role/everyone mention in a large server held the notification write
+        transaction open for ``2 * N`` round trips. Both counters live on one
+        ``notif_unread`` row per (user, conversation), so one scoped read plus
+        two ``execute_many`` batches per bounded chunk is enough.
+
+        Increments are applied in SQL (``col = col + 1``) rather than computed
+        in Python from the read values. Two workers can therefore bump the same
+        row concurrently without either losing the other's increment -- a
+        read-modify-write would overwrite it. Every statement carries both the
+        caller's ``conversation_id`` and an explicit user-id chunk, so a
+        recipient can only ever have its own counters changed. A missing row is
+        inserted with ``INSERT OR IGNORE``: if another worker inserted it in
+        between, that worker's increment stands (a rare undercount is safe;
+        a cross-user write is not).
+        """
+        ids = list(dict.fromkeys(int(uid) for uid in user_ids))
+        if not ids:
+            return
+        now = self._get_timestamp()
+        mention_delta = 1 if is_mention else 0
+
+        for start in range(0, len(ids), _UNREAD_BULK_CHUNK_SIZE):
+            chunk = ids[start : start + _UNREAD_BULK_CHUNK_SIZE]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                "SELECT id, user_id FROM notif_unread "
+                f"WHERE conversation_id = ? AND user_id IN ({placeholders})",
+                (conversation_id, *chunk),
+            )
+            existing_ids = {int(row["user_id"]): row["id"] for row in rows or []}
+
+            updates = [
+                (1, mention_delta, now, existing_ids[uid], conversation_id)
+                for uid in chunk
+                if uid in existing_ids
+            ]
+            inserts = [
+                (
+                    self._generate_id(),
+                    uid,
+                    conversation_id,
+                    server_id,
+                    channel_id,
+                    mention_delta,
+                    now,
+                )
+                for uid in chunk
+                if uid not in existing_ids
+            ]
+
+            if updates:
+                self._db.execute_many(
+                    "UPDATE notif_unread SET unread_count = unread_count + ?, "
+                    "mention_count = mention_count + ?, updated_at = ? "
+                    "WHERE id = ? AND conversation_id = ?",
+                    updates,
+                    auto_commit=False,
+                )
+            if inserts:
+                self._db.execute_many(
+                    "INSERT OR IGNORE INTO notif_unread "
+                    "(id, user_id, conversation_id, server_id, channel_id, "
+                    "unread_count, mention_count, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+                    inserts,
+                    auto_commit=False,
+                )
+
     def create_notifications_bulk(
         self,
         user_ids: List[SnowflakeID],
@@ -487,10 +574,9 @@ class NotificationCreatorMixin(NotificationProtocol):
                 notifications_to_insert,
             )
 
-            for uid in user_ids:
-                self._update_unread_count(
-                    uid, conversation_id, server_id, channel_id, is_mention=True
-                )
+            self._bump_unread_counts_bulk(
+                user_ids, conversation_id, server_id, channel_id, is_mention=True
+            )
 
             self._db.commit()
         except Exception:
