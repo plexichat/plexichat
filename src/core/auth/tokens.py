@@ -211,6 +211,28 @@ def safe_token_cache_key(token: Any) -> str:
     return f"token_verify:str:{hashlib.sha256(token.encode('utf-8')).hexdigest()}"
 
 
+def safe_token_binding_key(
+    ip_address: Optional[str], user_agent: Optional[str]
+) -> str:
+    """Return a bounded, hash-only suffix scoping a verify-cache key to IP/UA.
+
+    ``verify_token`` enforces IP/User-Agent binding against the session row when
+    ``security.token_binding`` is enabled. A cached ``TokenInfo`` must never be
+    replayed from a *different* network context -- otherwise a stolen bearer
+    token could ride the legitimate context's cached result past the binding
+    check. Mixing a digest of the presented IP and user agent into the cache key
+    makes every binding context its own entry while keeping raw IPs and user
+    agents out of the keyspace (and the key length fixed). Absent context yields
+    an empty suffix, which is safe: when binding is off the verifier does not
+    depend on these values at all, and when binding is on a missing IP/UA is
+    denied inside the verifier itself.
+    """
+    if not ip_address and not user_agent:
+        return ""
+    material = f"{ip_address or ''}\x00{user_agent or ''}"
+    return ":b:" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+
+
 def verify_token_hash(token_secret: str, stored_hash: str) -> bool:
     """Verify a token secret against its stored hash (fail closed).
 

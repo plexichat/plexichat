@@ -12,46 +12,23 @@ from ...tokens import (
     is_expired,
     is_malformed_token_input,
     parse_token,
+    safe_token_binding_key,
     safe_token_cache_key,
     verify_token_hash,
 )
 from ..protocol import AuthManagerProtocol
 
-# CORRECTNESS FIX: verify_token is wrapped in @cached, so a cache hit
-# reconstructs its return value from JSON. Without registering TokenInfo on
-# the reconstruction allowlist, a hit returns a PLAIN DICT and every consumer
-# that touches token_info.user_id / account_locked crashes (e.g. the second
-# authenticated request within the 10s verify TTL failing with a 500).
+# CORRECTNESS FIX: the cached verifier reconstructs its return value from JSON
+# on a hit. Without registering TokenInfo on the reconstruction allowlist, a
+# hit returns a PLAIN DICT and every consumer that touches
+# token_info.user_id / account_locked crashes (e.g. the second authenticated
+# request within the 10s verify TTL failing with a 500).
 from src.core.database.cache.serialization import register_reconstructable_type
 
 register_reconstructable_type(TokenInfo)
 
 
 class VerificationMixin(AuthManagerProtocol):
-    @cached(
-        ttl=10,
-        prefix="token_verify",
-        # Never embed the raw bearer token in the cache key: hash it so that
-        # anyone with cache visibility cannot recover live session tokens.
-        # The helper also tolerates non-string / oversized input, so a bad auth
-        # header becomes a clean denial inside the function instead of an
-        # AttributeError raised by the decorator.
-        key_builder=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            safe_token_cache_key(token)
-        ),
-        skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            is_malformed_token_input(token)
-            or (
-                # Single-use WS tickets must NEVER be served from cache: a replay
-                # within the TTL would bypass the atomic consumption below.
-                isinstance(token, str) and token.startswith("wst.")
-            )
-            or bool(
-                self._config.get("security", {}).get("token_binding", False)
-                or self._config.get("security", {}).get("token_verify_rate_limit")
-            )
-        ),
-    )
     def verify_token(
         self,
         token: str,
@@ -59,6 +36,23 @@ class VerificationMixin(AuthManagerProtocol):
         user_agent: Optional[str] = None,
         is_selftest: bool = False,
     ) -> TokenInfo:
+        """Verify a credential and return its ``TokenInfo``.
+
+        The bounded, short-TTL cache lives on :meth:`_verify_token`. Everything
+        that can change between two calls carrying the same credential stays
+        *outside* that cache and runs on every call:
+
+        * malformed input fails closed before any cache-key work;
+        * the verification rate limit is enforced before the cache lookup, so a
+          cache hit can never be used to bypass throttling;
+        * IP/User-Agent binding is folded into the cache key, so a result
+          verified in one network context is never replayed in another;
+        * revocation / privilege changes drop the shared ``token_verify:*``
+          keyspace after every state write, so a cached ``TokenInfo`` cannot
+          outlive a revoke; and
+        * the cache backend itself fails closed (errors fall through to a fresh
+          DB verification).
+        """
         # Fail closed on missing/malformed auth context before any lookup.
         if is_malformed_token_input(token):
             raise TokenInvalidError("Invalid token")
@@ -75,6 +69,37 @@ class VerificationMixin(AuthManagerProtocol):
             if not allowed:
                 raise TokenInvalidError("Token verification rate limit exceeded")
 
+        return self._verify_token(token, ip_address, user_agent)
+
+    @cached(
+        ttl=10,
+        prefix="token_verify",
+        # Never embed the raw bearer token in the cache key: hash it so that
+        # anyone with cache visibility cannot recover live session tokens. The
+        # binding suffix keeps a cached result scoped to the exact IP/UA it was
+        # verified for. Previously both ``token_binding`` and the rate-limit
+        # setting disabled this cache wholesale, which meant every repeated
+        # verification of the same token within a request/connection paid for a
+        # full DB lookup + constant-time hash comparison again.
+        key_builder=lambda self, token, ip_address=None, user_agent=None: (
+            safe_token_cache_key(token)
+            + safe_token_binding_key(ip_address, user_agent)
+        ),
+        # Only single-use WS tickets and malformed input bypass the cache. A
+        # replay of a ticket within the TTL would bypass its atomic consumption;
+        # binding and rate limiting are handled above / in the key builder, so
+        # they no longer need to turn caching off.
+        skip_cache_if=lambda self, token, ip_address=None, user_agent=None: (
+            is_malformed_token_input(token)
+            or (isinstance(token, str) and token.startswith("wst."))
+        ),
+    )
+    def _verify_token(
+        self,
+        token: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> TokenInfo:
         parsed = parse_token(token)
         if not parsed:
             raise TokenInvalidError("Invalid token")
