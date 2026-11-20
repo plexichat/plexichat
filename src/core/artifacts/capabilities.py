@@ -402,12 +402,30 @@ def get_artifact_capabilities(
     Returns:
         A dict keyed by feature name with a :class:`CapabilityInfo` per feature.
         Never raises.
+
+    With ``config=None`` the per-feature verdicts come from the same bounded,
+    short-TTL LRU that :func:`get_capability` uses. Both launcher and admin
+    catalog routes build this full map (and both are warmed at startup), so a
+    cold evaluation used to run every evaluator twice -- including the
+    voice-transcription provider import and backend probe. Reusing the bounded
+    cache collapses the second build to LRU hits. An explicit ``config`` still
+    bypasses the cache, so callers/tests always get a fresh evaluation for the
+    config they supplied.
     """
     try:
         artifacts = _load_config(config)
-        return {
-            feature: evaluate(artifacts) for feature, evaluate in _evaluators().items()
-        }
+        result: Dict[str, CapabilityInfo] = {}
+        for feature, evaluate in _evaluators().items():
+            if config is None:
+                cached = _capability_cache.get(feature)
+                if cached is not None:
+                    result[feature] = cached
+                    continue
+            info = evaluate(artifacts)
+            if config is None:
+                _capability_cache.set(feature, info)
+            result[feature] = info
+        return result
     except Exception:
         # Last-resort fallback so the endpoint can never crash.
         return {
