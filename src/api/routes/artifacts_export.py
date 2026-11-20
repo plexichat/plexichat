@@ -109,6 +109,17 @@ def _safe_url(value: str) -> Optional[str]:
     lowered = candidate.lower()
     if lowered.startswith(("javascript:", "vbscript:", "data:", "file:")):
         return None
+    # A leading "//" is not a same-document relative path: it is a
+    # network-path reference that inherits the document's scheme and selects a
+    # *different authority*. In a standalone HTML export opened from disk that
+    # becomes a UNC path (``file://attacker/share``), which can leak the
+    # viewer's NTLM credentials on Windows; served over HTTP it navigates
+    # off-origin. Browsers normalise backslashes to slashes in special schemes,
+    # so ``\\host``, ``/\host`` and ``\/host`` are the same reference and must
+    # be refused as well. Reject them here instead of letting the relative-url
+    # branch below hand an attacker-chosen authority to the exported document.
+    if len(candidate) >= 2 and candidate[0] in "/\\" and candidate[1] in "/\\":
+        return None
     if (
         "://" not in candidate
         and not lowered.startswith("mailto:")
