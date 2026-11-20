@@ -112,6 +112,22 @@ def _invalidate_emoji_cache(server_id: int, emoji_id: Optional[int] = None) -> N
         )
 
 
+def _invalidate_reaction_views() -> None:
+    """Drop cached reaction-list bodies after a custom-emoji mutation.
+
+    Deleting an emoji also deletes every reaction that used it, and a rename
+    changes the pill's emoji markup. Those bodies live in the separate
+    ``reaction_read_api`` HTTP cache, which the reaction routes invalidate on
+    their own writes but the emoji routes did not. The core L0 aggregation
+    cache is already dropped by the manager, but that does not reach the HTTP
+    tier, so a warm pill list could survive the mutation. Import lazily to
+    avoid coupling the two route modules at import time.
+    """
+    from src.api.routes.reactions import _invalidate_reaction_read_cache
+
+    _invalidate_reaction_read_cache()
+
+
 def _require_servers_module(servers_module, action: str):
     """Return the servers module or fail closed with 503.
 
@@ -584,6 +600,7 @@ async def create_emoji(
             )
 
             _invalidate_emoji_cache(sid, emoji.id)
+            _invalidate_reaction_views()
 
             # Dispatch WebSocket event (fire-and-forget, errors are self-contained)
             asyncio.create_task(_dispatch_emoji_update(sid))
@@ -697,6 +714,7 @@ async def update_emoji(
             )
 
             _invalidate_emoji_cache(sid, emoji_id)
+            _invalidate_reaction_views()
 
             # Dispatch WebSocket event (fire-and-forget, errors are self-contained)
             asyncio.create_task(_dispatch_emoji_update(sid))
@@ -800,6 +818,7 @@ async def delete_emoji(
             reactions.delete_custom_emoji(current_user.user_id, eid)
 
             _invalidate_emoji_cache(sid, eid)
+            _invalidate_reaction_views()
 
             # Dispatch WebSocket event (fire-and-forget, errors are self-contained)
             asyncio.create_task(_dispatch_emoji_update(sid))
