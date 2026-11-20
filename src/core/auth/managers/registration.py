@@ -284,6 +284,20 @@ class RegistrationMixin(AuthManagerProtocol):
         )
         if not row or row["email_verified"]:
             return True
+        # Per-email throttle: the resend route is public, so without a cap a
+        # single address can be mail-bombed by replaying the request. Mirror
+        # the reset-password throttle and keep the response identical (the
+        # route never reports whether the address exists) so enumeration safety
+        # is preserved. The count spans all tokens minted in the window,
+        # including consumed ones, so re-issuing cannot reset the budget.
+        recent = self._db.fetch_one(
+            "SELECT COUNT(*) as cnt FROM auth_email_tokens "
+            "WHERE user_id = ? AND token_type = 'verify_email' "
+            "AND created_at > ?",
+            (row["id"], self._get_timestamp() - 3600 * 1000),
+        )
+        if recent and recent["cnt"] >= 3:
+            return True
         return self._send_verification_email(row["id"], email)
 
     def _send_verification_email(self, user_id: int, email: str) -> bool:

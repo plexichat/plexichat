@@ -325,6 +325,35 @@ class OAuth2Flow:
             redirect_uri = require_oauth_redirect_url(redirect_uri)
         except HardeningViolation as exc:
             raise InvalidRedirectUriError(str(exc)) from exc
+        # Shape validation is not enough: a code is the credential that carries
+        # a user's grant to the callback, so it must be bound to a URI the app
+        # owner actually registered. ``validate_authorization_request`` enforces
+        # this on the authorize path, but code creation is a separate entry
+        # point — a caller reaching it with an attacker-supplied, well-formed
+        # callback could otherwise mint a code that turns the client into an
+        # open redirector and enables code interception. Re-check the exact
+        # allow-list here so every issuance path enforces the same rule.
+        # Apps with no registered callbacks (legacy/unconfigured rows) keep the
+        # old behaviour; a configured allow-list is always authoritative.
+        app_row = self._db.fetch_one(
+            "SELECT redirect_uris FROM app_applications WHERE id = ?",
+            (application_id,),
+        )
+        if not app_row:
+            raise InvalidClientError("Application not found")
+        try:
+            allowed_uris = json.loads(app_row["redirect_uris"])
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise InvalidRedirectUriError(
+                "Application redirect URI configuration is invalid"
+            ) from exc
+        if allowed_uris:
+            try:
+                redirect_uri = require_exact_redirect_match(
+                    redirect_uri, allowed_uris
+                )
+            except HardeningViolation as exc:
+                raise InvalidRedirectUriError(str(exc)) from exc
         scopes = self._require_scopes_for_app(
             application_id, self._require_scopes(scopes)
         )
