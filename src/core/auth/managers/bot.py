@@ -186,6 +186,27 @@ class BotMixin(AuthManagerProtocol):
         valid, issues = validate_permissions(permissions, is_bot=True)
         if not valid:
             raise AuthError(f"Invalid permissions: {issues}")
+        # A bot may never be granted a permission its owner does not hold.
+        # ``create_bot`` enforces this delegation rule, but this update path
+        # used to validate only the *shape* of the map (known scopes, no bot
+        # restrictions) and then write it verbatim. Bot tokens carry their
+        # stored ``auth_bots.permissions`` verbatim into every ``TokenInfo``,
+        # so a user with the default ``bots.create``/``bots.manage`` rights
+        # could escalate their bot to scopes they themselves lack — e.g.
+        # ``moderation.ban``, ``messages.delete_others`` or ``channels.manage``.
+        # Apply the same subset check as creation and fail closed when the
+        # owner row cannot be read.
+        owner_row = self._db.fetch_one(
+            "SELECT permissions FROM auth_users WHERE id = ?", (owner_id,)
+        )
+        if not owner_row:
+            raise PermissionDeniedError("Owner not found")
+        owner_perms = permissions_from_json(owner_row["permissions"])
+        for permission, allowed in permissions.items():
+            if allowed and not has_permission(owner_perms, permission):
+                raise PermissionDeniedError(
+                    f"Cannot grant bot permission not held by owner: {permission}"
+                )
         cursor = self._db.execute(
             "UPDATE auth_bots SET permissions = ? WHERE id = ? AND owner_id = ?",
             (permissions_to_json(permissions), bot_id, owner_id),
