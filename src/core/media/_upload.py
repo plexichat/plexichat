@@ -374,6 +374,13 @@ class _UploadMixin:
             ),
         )
 
+        # Prime the bounded identity-metadata cache so the immediate post-upload
+        # access check (and later reads of this file in the same request) do
+        # not re-query media_files for id/uploaded_by/checksum.
+        self._prime_file_meta(
+            file_id, os.path.basename(storage_path), user_id, checksum
+        )
+
         # Background malware scan — fire-and-forget
         self._executor.submit(self._background_scan, file_id, file_data, user_id)
 
@@ -702,6 +709,11 @@ class _UploadMixin:
                     ScanStatus.PENDING.value,
                     None,
                 ),
+            )
+
+            # Keep the identity-metadata cache coherent with the new row.
+            self._prime_file_meta(
+                file_id, os.path.basename(storage_path), user_id, checksum
             )
 
             # Background malware scan — fire-and-forget. The scan helper

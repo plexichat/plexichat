@@ -147,6 +147,9 @@ class _ScanningMixin:
                 "UPDATE media_files SET deleted = 1, deleted_at = ? WHERE id = ?",
                 (self._get_timestamp(), file_id),
             )
+            # Identity metadata must not keep granting access to a quarantined
+            # file. Invalidate by id (the cache drops both of the file's keys).
+            self._invalidate_file_meta(file_id=file_id)
 
             # 2. Find all referencing attachments and soft-delete them
             stored_name_row = self._db.fetch_one(

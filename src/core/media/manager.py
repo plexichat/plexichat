@@ -35,6 +35,7 @@ from ._upload import _UploadMixin
 from ._thumbnails import _ThumbnailsMixin
 from ._phash import _PhashMixin
 from ._files import _FilesMixin
+from ._file_meta_cache import FileMetaCache
 from ._processing import _ProcessingMixin
 from ._signing import _SigningMixin
 from ._proxy import _ProxyMixin
@@ -76,6 +77,7 @@ class MediaManager(
     _executor: Optional[ThreadPoolExecutor] = None
     _dedup_manager: object = None
     _compression_manager: object = None
+    _file_meta_cache: Optional[FileMetaCache] = None
 
     def __init__(self, db, messaging_module=None):
         super().__init__(db)
@@ -84,6 +86,15 @@ class MediaManager(
         self._config = self._load_config()
         self._lock = threading.RLock()
         self._rl_prefix = f"media:{uuid.uuid4().hex}"
+
+        # Bounded cache of stable media-file identity metadata. Invalidated
+        # by the upload and every deletion path; never holds scan_status or
+        # deleted, so serve gates still re-read those on every request.
+        try:
+            cache_size = int(self._config.get("file_meta_cache_size", 256))
+        except (TypeError, ValueError):
+            cache_size = 256
+        self._file_meta_cache = FileMetaCache(maxsize=cache_size)
 
         # Storage backends
         self._storage = self._init_storage()

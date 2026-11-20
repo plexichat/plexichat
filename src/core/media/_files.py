@@ -10,6 +10,7 @@ from typing import Any, Optional, Dict, List, Tuple, BinaryIO
 
 from .models import MediaFile
 from .exceptions import MediaError, PermissionDeniedError
+from ._file_meta_cache import FileMeta, FileMetaCache
 from src.utils.encryption import decrypt_data
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,82 @@ def _is_local_media_reference(url: Any, filename: str) -> bool:
 class _FilesMixin:
     """File CRUD + access-control methods mixed into MediaManager."""
 
+    # ── stable-metadata cache helpers ──────────────────────────────────────────
+    #
+    # The cache is lazily created so managers built via ``__new__`` by the
+    # tuple-row tests remain valid. It holds only id/filename/uploaded_by/
+    # checksum; scan_status and deleted are always read fresh.
+
+    def _file_meta(self) -> FileMetaCache:
+        cache = getattr(self, "_file_meta_cache", None)
+        if cache is None:
+            config = getattr(self, "_config", None) or {}
+            try:
+                size = int(config.get("file_meta_cache_size", 256))
+            except (TypeError, ValueError):
+                size = 256
+            cache = FileMetaCache(maxsize=size)
+            self._file_meta_cache = cache
+        return cache
+
+    @staticmethod
+    def _meta_from_file(file: MediaFile) -> FileMeta:
+        return FileMeta(
+            id=int(file.id),
+            filename=str(file.filename),
+            uploaded_by=int(file.uploaded_by),
+            checksum=file.checksum,
+        )
+
+    def _cache_meta_from_file(self, file: Optional[MediaFile]) -> None:
+        if file is not None and getattr(file, "id", None) is not None:
+            self._file_meta().put(self._meta_from_file(file))
+
+    def _prime_file_meta(
+        self, file_id: int, filename: str, uploaded_by: int, checksum: Optional[str]
+    ) -> None:
+        """Invalidate any prior entry for this filename, then prime the cache.
+
+        Called straight after an INSERT so the upload response's own access
+        check (and later reads in the same request) cost no extra DB query.
+        Invalidating first prevents a reused filename from leaving a stale
+        entry for an older file behind.
+        """
+        name = str(filename)
+        cache = self._file_meta()
+        cache.invalidate(filename=name)
+        cache.put(
+            FileMeta(
+                id=int(file_id),
+                filename=name,
+                uploaded_by=int(uploaded_by),
+                checksum=checksum,
+            )
+        )
+
+    def _invalidate_file_meta(
+        self, file_id: Optional[int] = None, filename: Optional[str] = None
+    ) -> None:
+        self._file_meta().invalidate(file_id=file_id, filename=filename)
+
+    @staticmethod
+    def _meta_from_access_row(row, filename: str) -> FileMeta:
+        """Parse ``SELECT id, uploaded_by, checksum`` (mapping or tuple row)."""
+        if isinstance(row, dict):
+            return FileMeta(
+                id=int(row["id"]),
+                filename=str(filename),
+                uploaded_by=int(row["uploaded_by"]),
+                checksum=row.get("checksum"),
+            )
+        # Tuple adapters return columns in SELECT order: id, uploaded_by, checksum.
+        return FileMeta(
+            id=int(row[0]),
+            filename=str(filename),
+            uploaded_by=int(row[1]),
+            checksum=row[2] if len(row) > 2 else None,
+        )
+
     # ── single-file retrieval ──────────────────────────────────────────────────
 
     def get_file(self, file_id: int) -> Optional[MediaFile]:
@@ -66,8 +143,11 @@ class _FilesMixin:
             "SELECT * FROM media_files WHERE id = ? AND deleted = 0", (file_id,)
         )
         if not row:
+            self._invalidate_file_meta(file_id=file_id)
             return None
-        return self._row_to_media_file(row)
+        file = self._row_to_media_file(row)
+        self._cache_meta_from_file(file)
+        return file
 
     def get_file_by_filename(self, filename: str) -> Optional[MediaFile]:
         row = self._db.fetch_one(
@@ -75,8 +155,11 @@ class _FilesMixin:
             (filename,),
         )
         if not row:
+            self._invalidate_file_meta(filename=filename)
             return None
-        return self._row_to_media_file(row)
+        file = self._row_to_media_file(row)
+        self._cache_meta_from_file(file)
+        return file
 
     # ── batch retrieval ────────────────────────────────────────────────────────
 
@@ -95,7 +178,9 @@ class _FilesMixin:
             # docs/admin-hardening.md); ``SELECT *`` follows the
             # ``media_files`` schema order, where ``filename`` is second.
             key = row["filename"] if isinstance(row, dict) else row[1]
-            result[key] = self._row_to_media_file(row)
+            file = self._row_to_media_file(row)
+            result[key] = file
+            self._cache_meta_from_file(file)
         return result
 
     # ── file data access ───────────────────────────────────────────────────────
@@ -136,6 +221,7 @@ class _FilesMixin:
             "UPDATE media_files SET deleted = 1, deleted_at = ? WHERE id = ?",
             (now, file_id),
         )
+        self._invalidate_file_meta(file_id=file_id, filename=file.filename)
         logger.debug(f"File {file_id} deleted by user {user_id}")
         return True
 
@@ -425,6 +511,10 @@ class _FilesMixin:
 
         try:
             self._retry_on_db_lock(_publish_tombstone)
+            # The tombstone transaction has already set deleted = 1, so the
+            # cached identity metadata must not grant further access even if
+            # the subsequent storage removal fails.
+            self._invalidate_file_meta(file_id=file_id, filename=file.filename)
         except MediaError:
             raise
         except Exception as exc:
@@ -549,6 +639,7 @@ class _FilesMixin:
                     (file_id,),
                 )
                 self._db.execute("DELETE FROM media_files WHERE id = ?", (file_id,))
+                self._invalidate_file_meta(file_id=file_id)
                 if checksum and self._dedup_manager is not None:
                     self._dedup_manager.decrement_reference(str(checksum))
 
@@ -566,15 +657,24 @@ class _FilesMixin:
         """
         search_filename = os.path.basename(filename)
 
+        cache = self._file_meta()
+
         # Thumbnail → delegate to parent file check
         if "thumbnails/" in filename:
             try:
                 parts = filename.split("/")
                 parent_file_id = parts[-2] if len(parts) >= 2 else None
                 if parent_file_id and parent_file_id.isdigit():
+                    parent_id = int(parent_file_id)
+                    # A resolve-get earlier in this request already cached the
+                    # parent's stable metadata: skip both the parent filename
+                    # lookup and the recursive one below.
+                    cached_parent = cache.get_by_id(parent_id)
+                    if cached_parent is not None:
+                        return self.check_file_access(cached_parent.filename, user_id)
                     parent_row = self._db.fetch_one(
                         "SELECT filename FROM media_files WHERE id = ? AND deleted = 0",
-                        (int(parent_file_id),),
+                        (parent_id,),
                     )
                     if parent_row:
                         parent_filename = (
@@ -586,24 +686,30 @@ class _FilesMixin:
             except Exception as e:
                 logger.warning(f"Error checking thumbnail access for {filename}: {e}")
 
-        # 1. Uploader (fast path)
-        row = self._db.fetch_one(
-            "SELECT id, uploaded_by, checksum FROM media_files "
-            "WHERE filename = ? AND deleted = 0",
-            (filename,),
-        )
-        if not row:
-            return False
+        # 1. Uploader (fast path). The identity triple is stable for the life
+        # of a row, so a prior resolve of this file in the same request makes
+        # this lookup free. ``deleted`` is never cached; upload and every
+        # deletion path invalidate the entry, and a miss below re-queries.
+        meta = cache.get_by_filename(filename)
+        if meta is None:
+            row = self._db.fetch_one(
+                "SELECT id, uploaded_by, checksum FROM media_files "
+                "WHERE filename = ? AND deleted = 0",
+                (filename,),
+            )
+            if not row:
+                cache.invalidate(filename=filename)
+                return False
+            meta = self._meta_from_access_row(row, filename)
+            cache.put(meta)
 
-        # ``SELECT id, uploaded_by, checksum`` -- read by position for
-        # tuple-row adapters (see docs/admin-hardening.md).
-        uploader_id = int(row["uploaded_by"] if isinstance(row, dict) else row[1])
+        uploader_id = int(meta.uploaded_by)
         if uploader_id == int(user_id):
             return True
 
         # 2. Message attachment in a conversation the user participates in
-        checksum = row.get("checksum") if isinstance(row, dict) else row[2]
-        file_id_token = str(row["id"] if isinstance(row, dict) else row[0])
+        checksum = meta.checksum
+        file_id_token = str(meta.id)
 
         rows = None
         if checksum:
