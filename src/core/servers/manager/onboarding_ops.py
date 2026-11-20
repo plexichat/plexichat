@@ -24,6 +24,49 @@ from ..exceptions import (
     RoleNotFoundError,
 )
 
+#: Bound every role-id IN list.  SQLite builds with the legacy 999-variable
+#: ceiling still need room for the extra ``server_id`` predicate, and a
+#: whitelist must not be able to turn one set-based lookup into an oversized
+#: statement.  Chunking also keeps the query plan a set of index probes.
+_ROLE_LOOKUP_CHUNK_SIZE = 500
+
+
+def _resolve_whitelist_roles(db, role_ids, server_id):
+    """Resolve many role ids with bounded, set-based queries.
+
+    Returns a ``{role_id: row}`` mapping for non-deleted roles belonging to
+    ``server_id``.  Ids are de-duplicated (a whitelist may repeat a role) and
+    bound in chunks of at most ``_ROLE_LOOKUP_CHUNK_SIZE``.
+
+    This helper deliberately resolves *rows only*: authorization and rank
+    decisions stay with the caller so batched resolution cannot weaken the
+    per-role hierarchy gate (see ``_validate_step_options``).
+    """
+    unique_ids = []
+    seen = set()
+    for rid in role_ids:
+        try:
+            rid = int(rid)
+        except (TypeError, ValueError):
+            # A malformed option resolves to no role, matching the old
+            # ``get_role`` lookup missing the row.
+            continue
+        if rid not in seen:
+            seen.add(rid)
+            unique_ids.append(rid)
+    resolved = {}
+    for start in range(0, len(unique_ids), _ROLE_LOOKUP_CHUNK_SIZE):
+        chunk = unique_ids[start : start + _ROLE_LOOKUP_CHUNK_SIZE]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = db.fetch_all(
+            f"SELECT * FROM srv_roles WHERE id IN ({placeholders}) "
+            "AND server_id = ? AND deleted = 0",
+            (*chunk, server_id),
+        )
+        for row in rows or []:
+            resolved[int(row["id"])] = row
+    return resolved
+
 
 class OnboardingManager:
     """Manages welcome screens and onboarding flows."""
@@ -252,12 +295,27 @@ class OnboardingManager:
             server = self._server_manager.get_server(server_id, user_id)
             is_owner = server is not None and server.owner_id == user_id
             user_roles = self._server_manager._get_member_role_rows(server_id, user_id)
+
+            # Whitelist validation used to call ``get_role`` once per option;
+            # each call issued a role read plus a membership read, so a full
+            # step with ``max_step_options`` roles cost 2N queries. Resolve the
+            # whole whitelist with bounded IN batches instead. The membership
+            # precondition of ``get_role`` is checked once here, and every
+            # role still goes through the same rank check below.
+            if self._server_manager._is_member(server_id, user_id):
+                roles_by_id = _resolve_whitelist_roles(self._db, role_ids, server_id)
+            else:
+                roles_by_id = {}
+
             for role_id in role_ids:
-                role = self._server_manager.get_role(role_id, user_id)
-                if not role or role.server_id != server_id:
+                try:
+                    role = roles_by_id.get(int(role_id))
+                except (TypeError, ValueError):
+                    role = None
+                if not role or int(role["server_id"]) != int(server_id):
                     raise RoleNotFoundError(f"Role {role_id} not found")
                 if not can_manage_role(
-                    user_roles, {"position": role.position}, is_owner
+                    user_roles, {"position": role["position"]}, is_owner
                 ):
                     raise OnboardingError(
                         f"Cannot offer role {role_id} at or above your own rank"
