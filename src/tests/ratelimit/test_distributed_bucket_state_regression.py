@@ -65,7 +65,11 @@ class _ScriptValkeyClient:
         assert "cjson.encode(res)" not in script, "script must not clobber the bucket"
 
         key = keys[0]
-        capacity, refill_rate, cost, ttl, now = args
+        # The plain spend script takes 5 args; the fused spend+secondary
+        # script takes 8 (hourly_limit, daily_limit, effective_limit extra)
+        # and returns a 4th "mutation applied" element.
+        fused = len(args) >= 8
+        capacity, refill_rate, cost, ttl, now = args[:5]
         raw = self.data.get(key)
         state = dict(raw) if isinstance(raw, dict) else {}
         tokens = float(state.get("tokens", capacity))
@@ -75,12 +79,51 @@ class _ScriptValkeyClient:
         allowed = tokens >= cost
         if allowed:
             tokens -= cost
+        remaining = int(tokens)
+        reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
+
+        secondary_reset = None
+        if fused:
+            hourly_limit, daily_limit, effective_limit = args[5:8]
+            if allowed and hourly_limit:
+                hourly_reset = float(state.get("hourly_reset", now + 3600))
+                hourly_count = float(state.get("hourly_count", 0))
+                if now >= hourly_reset:
+                    hourly_reset, hourly_count = now + 3600, 0
+                if hourly_count + cost <= hourly_limit:
+                    hourly_count += cost
+                else:
+                    secondary_reset = hourly_reset - now
+                state["hourly_reset"] = hourly_reset
+                state["hourly_count"] = hourly_count
+            if allowed and secondary_reset is None and daily_limit:
+                daily_reset = float(state.get("daily_reset", now + 86400))
+                daily_count = float(state.get("daily_count", 0))
+                if now >= daily_reset:
+                    daily_reset, daily_count = now + 86400, 0
+                if daily_count + cost <= daily_limit:
+                    daily_count += cost
+                else:
+                    secondary_reset = daily_reset - now
+                state["daily_reset"] = daily_reset
+                state["daily_count"] = daily_count
+            if secondary_reset is not None:
+                allowed = False
+                reset_after = secondary_reset
+                tokens = min(float(effective_limit), tokens + cost)
+
         state["tokens"] = tokens
         state["last_update"] = now
         self.data[key] = state
         self.ttls[key] = ttl
-        reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
-        return ["true" if allowed else "false", str(int(tokens)), str(reset_after)]
+        result = [
+            "true" if allowed else "false",
+            str(remaining if fused else int(tokens)),
+            str(reset_after),
+        ]
+        if fused:
+            result.append("1")
+        return result
 
     def keys(self, pattern: str):
         prefix = pattern[:-1]

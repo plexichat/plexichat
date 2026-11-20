@@ -74,6 +74,124 @@ _TOKEN_BUCKET_LUA = """
         return {tostring(allowed), tostring(math.floor(tokens)), tostring(reset_after)}
         """
 
+# HOT PATH: a token-bucket check that also carries hourly/daily secondary
+# quotas used to run TWO locked round trips on the same bucket:
+#   eval_token_bucket  -> lock, GET+spend+SET (Lua), unlock
+#   update_bucket      -> lock, GET+secondary-mutate+SET, unlock
+# i.e. seven client round trips, all serialising on the same ``extlock:<key>``.
+# Both operations read and write the SAME JSON state, so the second GET is
+# redundant. This script fuses them into ONE atomic server-side execution:
+#   lock, GET+spend+secondary+SET (Lua), unlock  -> three round trips.
+#
+# Bounded + multi-node safe:
+#   * one key, one script, the same bounded TTL as the plain spend;
+#   * the SAME distributed lock is still held across the whole operation, so
+#     this never interleaves with ``increment``/``get_and_set``/``add_to_list``
+#     (they would otherwise clobber a field via their own locked SET);
+#   * server-side atomicity means every node sees the same counter value.
+# The hourly/daily maths below is a faithful port of
+# ``manager.algorithms.check_hourly_limit`` / ``check_daily_limit`` /
+# ``apply_secondary_limits``. Any backend error still fails closed (see
+# ``_backend_error_outcome``); the final ``'1'`` is the "mutation applied"
+# proof the caller uses to reject a silently-skipped write.
+_TOKEN_BUCKET_WITH_SECONDARY_LUA = """
+        local key = KEYS[1]
+        local capacity = tonumber(ARGV[1])
+        local refill_rate = tonumber(ARGV[2])
+        local cost = tonumber(ARGV[3])
+        local ttl = tonumber(ARGV[4])
+        local now = tonumber(ARGV[5])
+        local hourly_limit = tonumber(ARGV[6]) or 0
+        local daily_limit = tonumber(ARGV[7]) or 0
+        local effective_limit = tonumber(ARGV[8]) or capacity
+
+        local state = {}
+        local tokens = capacity
+        local last_update = now
+        local bucket = redis.call('GET', key)
+        if bucket then
+            local ok, decoded = pcall(cjson.decode, bucket)
+            if ok and type(decoded) == 'table' then
+                state = decoded
+                if tonumber(state.tokens) then
+                    tokens = tonumber(state.tokens)
+                end
+                if tonumber(state.last_update) then
+                    last_update = tonumber(state.last_update)
+                end
+            end
+        end
+
+        local elapsed = math.max(0, now - last_update)
+        tokens = math.min(capacity, tokens + (elapsed * refill_rate))
+
+        local allowed = false
+        if tokens >= cost then
+            tokens = tokens - cost
+            allowed = true
+        end
+        -- ``remaining`` is reported from the post-spend value, exactly as the
+        -- two-call path did (the secondary rollback never changed it).
+        local remaining = math.floor(tokens)
+
+        local secondary_reset_after = nil
+
+        if allowed and hourly_limit > 0 then
+            local hourly_reset = tonumber(state.hourly_reset)
+            if not hourly_reset then
+                hourly_reset = now + 3600
+            end
+            local hourly_count = tonumber(state.hourly_count) or 0
+            if now >= hourly_reset then
+                hourly_reset = now + 3600
+                hourly_count = 0
+            end
+            if hourly_count + cost <= hourly_limit then
+                hourly_count = hourly_count + cost
+            else
+                secondary_reset_after = hourly_reset - now
+            end
+            state.hourly_reset = hourly_reset
+            state.hourly_count = hourly_count
+        end
+
+        if allowed and secondary_reset_after == nil and daily_limit > 0 then
+            local daily_reset = tonumber(state.daily_reset)
+            if not daily_reset then
+                daily_reset = now + 86400
+            end
+            local daily_count = tonumber(state.daily_count) or 0
+            if now >= daily_reset then
+                daily_reset = now + 86400
+                daily_count = 0
+            end
+            if daily_count + cost <= daily_limit then
+                daily_count = daily_count + cost
+            else
+                secondary_reset_after = daily_reset - now
+            end
+            state.daily_reset = daily_reset
+            state.daily_count = daily_count
+        end
+
+        local reset_after = 0
+        if not allowed then
+            reset_after = (cost - tokens) / refill_rate
+        elseif secondary_reset_after ~= nil then
+            allowed = false
+            reset_after = secondary_reset_after
+            -- Roll the already-spent primary token back so a near-cap request
+            -- does not burn quota without succeeding (matches Python).
+            tokens = math.min(effective_limit, tokens + cost)
+        end
+
+        state.tokens = tokens
+        state.last_update = now
+        redis.call('SET', key, cjson.encode(state), 'EX', ttl)
+
+        return {tostring(allowed), tostring(remaining), tostring(reset_after), '1'}
+        """
+
 
 def _decode_script_scalar(value: Any) -> Any:
     """Decode a value returned from a Lua script.
@@ -502,6 +620,84 @@ class ValkeyStorage(RateLimitStorage):
                     f"rate limit token-bucket lock release failed: {release_error}"
                 )
 
+    def _fused_backend_error_outcome(self, exc: Exception, capacity: int) -> tuple:
+        """Four-tuple form of :meth:`_backend_error_outcome`.
+
+        ``applied`` mirrors ``allowed`` so an explicitly configured fail-open
+        deployment still allows the request, while the default fail-closed
+        mode reports "not applied" and the caller denies it.
+        """
+        allowed, remaining, reset_after = self._backend_error_outcome(exc, capacity)
+        return allowed, remaining, reset_after, allowed
+
+    def eval_token_bucket_with_secondary(
+        self,
+        key: str,
+        capacity: int,
+        refill_rate: float,
+        cost: int,
+        hourly_limit: Optional[int],
+        daily_limit: Optional[int],
+        unix_now: float,
+        effective_limit: int,
+        ttl: int = 86400,
+        apply_secondary: Optional[Callable[[Dict[str, Any]], Optional[float]]] = None,
+    ) -> tuple:
+        """Spend a token and apply hourly/daily quotas in ONE locked script.
+
+        ``apply_secondary`` is accepted for interface parity with the base
+        fallback; the fused Lua script performs the quota maths server-side.
+
+        Returns ``(allowed, remaining, reset_after, applied)``. ``applied`` is
+        False only when the store could not verify the mutation (lock timeout
+        or backend error); callers must fail closed in that case.
+        """
+        client = get_client()
+        if not client or not is_available():
+            return False, 0, 60.0, False
+
+        full_key = self._get_key(key)
+        lock_key = f"extlock:{key}"
+        try:
+            token = client.acquire_lock(lock_key, timeout=5.0)
+        except Exception as exc:
+            return (*self._lock_failure_outcome(key, str(exc)), False)
+        if not token:
+            return (*self._lock_failure_outcome(key, "timeout"), False)
+
+        try:
+            result = client.eval_lua(
+                _TOKEN_BUCKET_WITH_SECONDARY_LUA,
+                keys=[full_key],
+                args=[
+                    capacity,
+                    refill_rate,
+                    cost,
+                    ttl,
+                    unix_now,
+                    hourly_limit or 0,
+                    daily_limit or 0,
+                    effective_limit,
+                ],
+            )
+            allowed = _script_truth(result[0])
+            remaining = int(float(_decode_script_scalar(result[1])))
+            reset_after = float(_decode_script_scalar(result[2]))
+            applied = _script_truth(result[3])
+            self._maybe_enforce_key_cap(client)
+            return allowed, remaining, reset_after, applied
+        except Exception as exc:
+            return self._fused_backend_error_outcome(exc, capacity)
+        finally:
+            try:
+                client.release_lock(lock_key, token)
+            except Exception as release_error:
+                import utils.logger as logger
+
+                logger.debug(
+                    f"rate limit token-bucket lock release failed: {release_error}"
+                )
+
     # ------------------------------------------------------------------
     # Async API
     # ------------------------------------------------------------------
@@ -701,6 +897,66 @@ class ValkeyStorage(RateLimitStorage):
             return allowed, remaining, reset_after
         except Exception as exc:
             return self._backend_error_outcome(exc, capacity)
+        finally:
+            try:
+                await client.arelease_lock(lock_key, token)
+            except Exception as release_error:
+                import utils.logger as logger
+
+                logger.debug(
+                    f"rate limit token-bucket lock release failed: {release_error}"
+                )
+
+    async def aeval_token_bucket_with_secondary(
+        self,
+        key: str,
+        capacity: int,
+        refill_rate: float,
+        cost: int,
+        hourly_limit: Optional[int],
+        daily_limit: Optional[int],
+        unix_now: float,
+        effective_limit: int,
+        ttl: int = 86400,
+        apply_secondary: Optional[Callable[[Dict[str, Any]], Optional[float]]] = None,
+    ) -> tuple:
+        """Awaitable counterpart of :meth:`eval_token_bucket_with_secondary`."""
+        client = get_client()
+        if not client or not is_available():
+            return False, 0, 60.0, False
+
+        full_key = self._get_key(key)
+        lock_key = f"extlock:{key}"
+        try:
+            token = await client.aacquire_lock(lock_key, timeout=5.0)
+        except Exception as exc:
+            return (*self._lock_failure_outcome(key, str(exc)), False)
+        if not token:
+            return (*self._lock_failure_outcome(key, "timeout"), False)
+
+        try:
+            result = await client.aeval_lua(
+                _TOKEN_BUCKET_WITH_SECONDARY_LUA,
+                keys=[full_key],
+                args=[
+                    capacity,
+                    refill_rate,
+                    cost,
+                    ttl,
+                    unix_now,
+                    hourly_limit or 0,
+                    daily_limit or 0,
+                    effective_limit,
+                ],
+            )
+            allowed = _script_truth(result[0])
+            remaining = int(float(_decode_script_scalar(result[1])))
+            reset_after = float(_decode_script_scalar(result[2]))
+            applied = _script_truth(result[3])
+            await self._amaybe_enforce_key_cap(client)
+            return allowed, remaining, reset_after, applied
+        except Exception as exc:
+            return self._fused_backend_error_outcome(exc, capacity)
         finally:
             try:
                 await client.arelease_lock(lock_key, token)

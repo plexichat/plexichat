@@ -12,7 +12,7 @@ explicit bypass decision, which never touches storage and is handled by the
 manager before reaching this module.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..models import BucketType, RateLimitAlgorithm, RateLimitConfig, RateLimitResult
 from ..storage import RateLimitStorage
@@ -44,41 +44,47 @@ def check_atomic_sync(
     """Evaluate a bucket using atomic storage operations (blocking)."""
     if config.algorithm == RateLimitAlgorithm.TOKEN_BUCKET:
         refill_rate = config.requests / config.window_seconds
-        try:
-            allowed, remaining, reset_after = storage.eval_token_bucket(
-                key, config.effective_limit, refill_rate, cost
-            )
-        except Exception as exc:
-            _log_store_failure(exc)
-            return create_store_unavailable_result(config, unix_now, key)
 
-        if allowed and (config.hourly_limit or config.daily_limit):
-            # SECURITY: a backend that silently skips the mutation (unreachable
-            # store, unacquirable lock, swallowed error) must not leave the
-            # secondary limits unchecked. Track whether the callback actually
-            # ran; a missing outcome means "cannot verify quota" == deny. This
-            # mirrors the legacy path's ``"result" not in legacy_outcome`` guard.
-            secondary_outcome: Dict[str, Any] = {"applied": False}
-
-            def apply_secondary(state: Dict[str, Any]) -> None:
-                secondary_outcome["denied"] = apply_secondary_limits(
-                    state, config, cost, unix_now
-                )
-                secondary_outcome["applied"] = True
+        if config.hourly_limit or config.daily_limit:
+            # Hot path: one locked, atomic server-side script performs the
+            # token spend AND the hourly/daily quota update. Backends without
+            # a fused primitive fall back to the old two-call sequence inside
+            # RateLimitStorage.eval_token_bucket_with_secondary. Either way a
+            # missing ``applied`` verdict fails closed.
+            def apply_secondary(state: Dict[str, Any]) -> Optional[float]:
+                return apply_secondary_limits(state, config, cost, unix_now)
 
             try:
-                storage.update_bucket(key, apply_secondary, ttl=86400)
+                (
+                    allowed,
+                    remaining,
+                    reset_after,
+                    applied,
+                ) = storage.eval_token_bucket_with_secondary(
+                    key,
+                    config.effective_limit,
+                    refill_rate,
+                    cost,
+                    config.hourly_limit,
+                    config.daily_limit,
+                    unix_now,
+                    config.effective_limit,
+                    apply_secondary=apply_secondary,
+                )
             except Exception as exc:
                 _log_store_failure(exc)
                 return create_store_unavailable_result(config, unix_now, key)
 
-            if not secondary_outcome.get("applied"):
+            if not applied:
                 return create_store_unavailable_result(config, unix_now, key)
-
-            denied_reset = secondary_outcome.get("denied")
-            if denied_reset is not None:
-                allowed = False
-                reset_after = denied_reset
+        else:
+            try:
+                allowed, remaining, reset_after = storage.eval_token_bucket(
+                    key, config.effective_limit, refill_rate, cost
+                )
+            except Exception as exc:
+                _log_store_failure(exc)
+                return create_store_unavailable_result(config, unix_now, key)
 
         return build_result(
             key,
@@ -134,38 +140,45 @@ async def check_atomic_async(
     """Evaluate a bucket using atomic storage operations (awaitable)."""
     if config.algorithm == RateLimitAlgorithm.TOKEN_BUCKET:
         refill_rate = config.requests / config.window_seconds
-        try:
-            allowed, remaining, reset_after = await storage.aeval_token_bucket(
-                key, config.effective_limit, refill_rate, cost
-            )
-        except Exception as exc:
-            _log_store_failure(exc)
-            return create_store_unavailable_result(config, unix_now, key)
 
-        if allowed and (config.hourly_limit or config.daily_limit):
-            # See check_atomic_sync: a silent backend skip must fail closed
-            # instead of leaving the hourly/daily quota unverified.
-            secondary_outcome: Dict[str, Any] = {"applied": False}
-
-            def apply_secondary(state: Dict[str, Any]) -> None:
-                secondary_outcome["denied"] = apply_secondary_limits(
-                    state, config, cost, unix_now
-                )
-                secondary_outcome["applied"] = True
+        if config.hourly_limit or config.daily_limit:
+            # See check_atomic_sync: the fused script (or the composing
+            # fallback) must prove the quota mutation ran, or the request is
+            # denied. This replaces two locked round trips on the same bucket.
+            def apply_secondary(state: Dict[str, Any]) -> Optional[float]:
+                return apply_secondary_limits(state, config, cost, unix_now)
 
             try:
-                await storage.aupdate_bucket(key, apply_secondary, ttl=86400)
+                (
+                    allowed,
+                    remaining,
+                    reset_after,
+                    applied,
+                ) = await storage.aeval_token_bucket_with_secondary(
+                    key,
+                    config.effective_limit,
+                    refill_rate,
+                    cost,
+                    config.hourly_limit,
+                    config.daily_limit,
+                    unix_now,
+                    config.effective_limit,
+                    apply_secondary=apply_secondary,
+                )
             except Exception as exc:
                 _log_store_failure(exc)
                 return create_store_unavailable_result(config, unix_now, key)
 
-            if not secondary_outcome.get("applied"):
+            if not applied:
                 return create_store_unavailable_result(config, unix_now, key)
-
-            denied_reset = secondary_outcome.get("denied")
-            if denied_reset is not None:
-                allowed = False
-                reset_after = denied_reset
+        else:
+            try:
+                allowed, remaining, reset_after = await storage.aeval_token_bucket(
+                    key, config.effective_limit, refill_rate, cost
+                )
+            except Exception as exc:
+                _log_store_failure(exc)
+                return create_store_unavailable_result(config, unix_now, key)
 
         return build_result(
             key,

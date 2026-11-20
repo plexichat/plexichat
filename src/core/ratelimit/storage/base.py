@@ -264,6 +264,55 @@ class RateLimitStorage(ABC):
 
                     logger.debug(f"rate limit lock release failed: {release_error}")
 
+    def eval_token_bucket_with_secondary(
+        self,
+        key: str,
+        capacity: int,
+        refill_rate: float,
+        cost: int,
+        hourly_limit: Optional[int],
+        daily_limit: Optional[int],
+        unix_now: float,
+        effective_limit: int,
+        ttl: int = 86400,
+        apply_secondary: Optional[Callable[[Dict[str, Any]], Optional[float]]] = None,
+    ) -> tuple:
+        """Spend a token and apply hourly/daily quotas as one logical check.
+
+        Backends that can fuse this into a single atomic operation (e.g. the
+        Valkey Lua path) override it. The default composes the two historic
+        calls; its behaviour is IDENTICAL to the old manager-level sequence,
+        including the fail-closed ``applied`` verdict. Returns
+        ``(allowed, remaining, reset_after, applied)``.
+
+        ``apply_secondary(state)`` is the in-process mutation backends without
+        a fused primitive use to update the quota counters; it returns a
+        reset-after value when a secondary limit denies, else ``None``.
+        """
+        allowed, remaining, reset_after = self.eval_token_bucket(
+            key, capacity, refill_rate, cost, ttl
+        )
+        if not allowed or not (hourly_limit or daily_limit):
+            return allowed, remaining, reset_after, True
+
+        if apply_secondary is None:
+            # Cannot verify the quota mutation -> fail closed.
+            return allowed, remaining, reset_after, False
+
+        outcome: Dict[str, Any] = {"applied": False, "denied": None}
+
+        def _mutate(state: Dict[str, Any]) -> None:
+            outcome["denied"] = apply_secondary(state)
+            outcome["applied"] = True
+
+        self.update_bucket(key, _mutate, ttl=86400)
+        if not outcome["applied"]:
+            return allowed, remaining, reset_after, False
+        if outcome["denied"] is not None:
+            allowed = False
+            reset_after = outcome["denied"]
+        return allowed, remaining, reset_after, True
+
     def close(self) -> None:
         """Close storage connection (optional override)."""
         pass
@@ -328,6 +377,48 @@ class RateLimitStorage(ABC):
         ttl: Optional[float] = None,
     ) -> None:
         await asyncio.to_thread(self.update_bucket, key, mutate_fn, ttl)
+
+    async def aeval_token_bucket_with_secondary(
+        self,
+        key: str,
+        capacity: int,
+        refill_rate: float,
+        cost: int,
+        hourly_limit: Optional[int],
+        daily_limit: Optional[int],
+        unix_now: float,
+        effective_limit: int,
+        ttl: int = 86400,
+        apply_secondary: Optional[Callable[[Dict[str, Any]], Optional[float]]] = None,
+    ) -> tuple:
+        """Awaitable counterpart of :meth:`eval_token_bucket_with_secondary`.
+
+        The default awaits the backend's own ``a*`` primitives so an
+        in-process backend (MemoryStorage) never hops threads; a backend with
+        a fused primitive overrides this method entirely.
+        """
+        allowed, remaining, reset_after = await self.aeval_token_bucket(
+            key, capacity, refill_rate, cost, ttl
+        )
+        if not allowed or not (hourly_limit or daily_limit):
+            return allowed, remaining, reset_after, True
+
+        if apply_secondary is None:
+            return allowed, remaining, reset_after, False
+
+        outcome: Dict[str, Any] = {"applied": False, "denied": None}
+
+        def _mutate(state: Dict[str, Any]) -> None:
+            outcome["denied"] = apply_secondary(state)
+            outcome["applied"] = True
+
+        await self.aupdate_bucket(key, _mutate, ttl=86400)
+        if not outcome["applied"]:
+            return allowed, remaining, reset_after, False
+        if outcome["denied"] is not None:
+            allowed = False
+            reset_after = outcome["denied"]
+        return allowed, remaining, reset_after, True
 
     async def aclose(self) -> None:
         """Async counterpart of :meth:`close`."""
