@@ -174,6 +174,26 @@ def _warm_tier_limits() -> None:
         logger.debug(f"Startup warm-up tier limits skipped: {e}")
 
 
+def _warm_audit_stats() -> None:
+    """Prime the admin audit-log stats summary off the request path.
+
+    ``GET /admin/audit/logs/stats`` pays for eleven COUNT scans over
+    ``admin_audit_log`` on a cold process while holding the request open. The
+    summary is request-invariant (the host/permission gates run in the route
+    *before* the cache is read) and contains no per-admin data, so building it
+    once here makes the first real poll a cache hit. The underlying
+    ``_summary_cache.warm`` is best-effort: a build failure (e.g. a database
+    that is not ready yet) is logged and swallowed, and the route still
+    computes on demand. No auth gate is moved, skipped or cached.
+    """
+    try:
+        from src.api.routes.admin.audit import warm_audit_stats_cache
+
+        warm_audit_stats_cache()
+    except Exception as e:
+        logger.debug(f"Startup warm-up audit stats skipped: {e}")
+
+
 def _warm_openapi(app: Any) -> None:
     """Generate and cache the OpenAPI schema off the request path."""
     if app is None:
@@ -230,6 +250,11 @@ def warm_once(app: Any = None) -> float:
         _warm_tier_limits()
     except Exception as e:
         logger.debug(f"Startup warm-up tier limits failed: {e}")
+
+    try:
+        _warm_audit_stats()
+    except Exception as e:
+        logger.debug(f"Startup warm-up audit stats failed: {e}")
 
     try:
         _db_probe(api)

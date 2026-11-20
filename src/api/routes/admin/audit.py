@@ -14,6 +14,7 @@ import time
 from pydantic import BeforeValidator
 
 from .utils import check_host_restriction, require_admin_permission
+from . import _summary_cache
 from ._summary_cache import get_or_compute
 from src.api.schemas.common import ErrorResponse, NullableSnowflakeIDParam
 from src.core.security.hardening import content_disposition
@@ -442,6 +443,101 @@ async def get_audit_logs(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _audit_stats_day_start() -> int:
+    """UTC midnight in epoch millis -- the audit-stats cache key boundary.
+
+    ``created_at`` is stored as UTC millis (``time.time() * 1000``), so the day
+    boundary must be UTC midnight rather than server-local midnight. Computing
+    it in one place keeps the route's key and the boot warm-up's key identical,
+    so a primed entry is the one the first real poll actually reads.
+    """
+    return int(
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
+        * 1000
+    )
+
+
+def _build_audit_stats(today_start: int) -> dict:
+    """Run the eleven COUNT scans that make up the audit-stats summary.
+
+    Kept at module scope so the request path and the boot warm-up prime the
+    exact same producer: a second implementation could otherwise drift and
+    leave the first poll paying for a cold build the warm-up never covered.
+    """
+    try:
+        import src.api as api
+
+        db = api.get_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database not available")
+
+        stats = {
+            "total_today": db.fetch_one(
+                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ?",
+                (today_start,),
+            )["count"],
+            "success_today": db.fetch_one(
+                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'success'",
+                (today_start,),
+            )["count"],
+            "failed_today": db.fetch_one(
+                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'failed'",
+                (today_start,),
+            )["count"],
+            "by_action_family": {},
+        }
+
+        families = [
+            "login",
+            "user",
+            "admin",
+            "config",
+            "approval",
+            "security",
+            "plexijoin",
+            "license",
+        ]
+        for family in families:
+            count = db.fetch_one(
+                "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND action LIKE ?",
+                (today_start, f"{family}%"),
+            )["count"]
+            if count > 0:
+                stats["by_action_family"][family] = count
+
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Audit stats retrieval error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def warm_audit_stats_cache() -> None:
+    """Prime today's audit-stats summary off the request path (best-effort).
+
+    The cold hit on ``GET /admin/audit/logs/stats`` issues eleven COUNT scans
+    over ``admin_audit_log`` while a request is held open. That work is
+    request-invariant and the payload is a system-wide summary with no
+    per-admin data, so it is safe to build once on the boot worker thread: the
+    host and permission gates still run in the route on every request *before*
+    the cache is consulted, and no gate is moved or skipped here. The exact
+    ``(namespace, params, producer, ttl)`` tuple used by the route is reused, so
+    a warmed entry is indistinguishable from one the route would have cached
+    itself. ``_summary_cache.warm`` logs and swallows build failures (e.g. a
+    database that is not ready yet); the route still computes on demand.
+    """
+    today_start = _audit_stats_day_start()
+    _summary_cache.warm(
+        "audit_stats",
+        (today_start,),
+        lambda: _build_audit_stats(today_start),
+        _AUDIT_STATS_TTL_SECONDS,
+    )
+
+
 @router.get("/audit/logs/stats")
 async def get_audit_stats(request: Request):
     """
@@ -454,61 +550,10 @@ async def get_audit_stats(request: Request):
     # day boundary must also be UTC midnight, not server-local midnight.
     # Compute it here so the cache key rolls over at midnight rather than
     # serving yesterday's totals for the remainder of the TTL window.
-    today_start = int(
-        datetime.now(timezone.utc)
-        .replace(hour=0, minute=0, second=0, microsecond=0)
-        .timestamp()
-        * 1000
-    )
+    today_start = _audit_stats_day_start()
 
     def _load() -> dict:
-        try:
-            import src.api as api
-
-            db = api.get_db()
-            if db is None:
-                raise HTTPException(status_code=503, detail="Database not available")
-
-            stats = {
-                "total_today": db.fetch_one(
-                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ?",
-                    (today_start,),
-                )["count"],
-                "success_today": db.fetch_one(
-                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'success'",
-                    (today_start,),
-                )["count"],
-                "failed_today": db.fetch_one(
-                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = 'failed'",
-                    (today_start,),
-                )["count"],
-                "by_action_family": {},
-            }
-
-            families = [
-                "login",
-                "user",
-                "admin",
-                "config",
-                "approval",
-                "security",
-                "plexijoin",
-                "license",
-            ]
-            for family in families:
-                count = db.fetch_one(
-                    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND action LIKE ?",
-                    (today_start, f"{family}%"),
-                )["count"]
-                if count > 0:
-                    stats["by_action_family"][family] = count
-
-            return stats
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Audit stats retrieval error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
+        return _build_audit_stats(today_start)
 
     return get_or_compute(
         "audit_stats", (today_start,), _load, _AUDIT_STATS_TTL_SECONDS
