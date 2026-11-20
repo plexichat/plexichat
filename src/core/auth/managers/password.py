@@ -64,6 +64,15 @@ class PasswordMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
+        # SECURITY: an intentional password change is a credential reset. Any
+        # password-reset link still outstanding (e.g. one an attacker induced
+        # the victim to request) must die with the old password, otherwise that
+        # stale link can be redeemed afterwards to overwrite the new one.
+        self._db.execute(
+            "UPDATE auth_email_tokens SET used = 1 "
+            "WHERE user_id = ? AND token_type = 'reset_password' AND used = 0",
+            (user_id,),
+        )
         invalidate_pattern("token_verify:*")
         self._log_audit(AuditEventType.PASSWORD_CHANGE, user_id, True)
         try:
@@ -98,6 +107,17 @@ class PasswordMixin(AuthManagerProtocol):
             return True
         tid = self._generate_id()
         token, token_hash = create_email_token(tid)
+        # SECURITY: keep exactly one live password-reset token per user, the
+        # same invariant the verification-email flow enforces. Without this,
+        # every reset request leaves an independently valid link behind, so an
+        # older (stolen/intercepted) link can still take over the account after
+        # the victim redeemed a newer one. Re-issuing a reset supersedes all
+        # earlier ones. Different token types are deliberately untouched.
+        self._db.execute(
+            "UPDATE auth_email_tokens SET used = 1 "
+            "WHERE user_id = ? AND token_type = 'reset_password' AND used = 0",
+            (user["id"],),
+        )
         self._db.execute(
             "INSERT INTO auth_email_tokens (id, user_id, token_hash, token_type, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
             (
@@ -181,6 +201,17 @@ class PasswordMixin(AuthManagerProtocol):
         )
         if getattr(cursor, "rowcount", 0) == 0:
             raise TokenInvalidError("Invalid token")
+        # A successful reset is a credential change: retire every other
+        # outstanding reset link for this user. The single-active-token
+        # invariant is normally enforced when tokens are issued, but tokens
+        # minted by older builds (or by a caller that bypasses the request
+        # path) can still exist and must not survive a completed reset.
+        self._db.execute(
+            "UPDATE auth_email_tokens SET used = 1 "
+            "WHERE user_id = ? AND token_type = 'reset_password' "
+            "AND used = 0 AND id != ?",
+            (rec["user_id"], rec["id"]),
+        )
         self._db.execute(
             "UPDATE auth_users SET password_hash = ? WHERE id = ?",
             (self.crypto.hash_password(new_password), rec["user_id"]),
