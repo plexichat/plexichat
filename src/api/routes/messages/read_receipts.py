@@ -48,6 +48,43 @@ async def _cap_bulk_ack_body(request: Request) -> None:
     await read_body_capped(request, MAX_BULK_ACK_BODY)
 
 
+def _filter_blocked_dm_ack_recipients(actor_id, user_ids, relationships=None):
+    """Drop DM read-receipt recipients who have a block with the ACK actor.
+
+    ``MESSAGE_ACK`` is published with an *explicit* recipient list, so the
+    gateway router's DM block filter (which only applies to implicit routing)
+    never sees it. Without this gate, a blocked pair in a shared DM/group still
+    receives each other's read receipts, leaking read/presence activity across
+    a block that ``send_message`` already enforces. This mirrors the typing
+    route's ``_filter_blocked_dm_recipients`` and the shared gateway emitter's
+    ``_dm_participants_without_blocks`` for the same ephemeral event family.
+
+    ``get_all_blocked_ids`` is the authoritative two-way block set. A lookup
+    failure fails closed: nobody receives the receipt rather than risking
+    delivery to a blocked pair. When no relationship source is wired at all,
+    the audience is left unchanged (matching the gateway router's behaviour).
+    """
+    if not user_ids:
+        return user_ids
+    if relationships is None:
+        from src.core import relationships as rel_module
+
+        if not (
+            getattr(rel_module, "_setup_complete", False)
+            and getattr(rel_module, "_manager", None) is not None
+        ):
+            return user_ids
+        relationships = rel_module
+    try:
+        blocked_ids = {
+            int(x) for x in relationships.get_all_blocked_ids(actor_id)
+        }
+    except Exception as e:
+        logger.debug(f"read receipt DM block lookup failed: {e}")
+        return []
+    return [uid for uid in user_ids if int(uid) not in blocked_ids]
+
+
 @router.get(
     "/channels/{channel_id}/messages/unread",
     response_model=UnreadCountResponse,
@@ -317,6 +354,13 @@ async def acknowledge_messages(
                             # Use the manager instance to get participant IDs
                             messaging_instance = msg_manager.get_manager()
                             user_ids = messaging_instance.get_participant_ids(cid)
+                            # MESSAGE_ACK is dispatched with an explicit audience,
+                            # bypassing the router's DM block filter. Apply the
+                            # two-way block gate here so a blocked pair cannot
+                            # observe each other's read receipts in a shared DM.
+                            user_ids = _filter_blocked_dm_ack_recipients(
+                                current_user.user_id, user_ids
+                            )
                             logger.debug(
                                 f"ACK: DM/Group channel {cid} has {len(user_ids)} participants"
                             )
@@ -324,6 +368,9 @@ async def acknowledge_messages(
                             logger.debug(
                                 f"Failed to get messaging participant IDs for ACK: {e}"
                             )
+                            # Fail closed: an unresolvable block set must never
+                            # widen the audience to a possibly blocked pair.
+                            user_ids = []
 
                     # Always remove current user to avoid echoing back to sender
                     raw_count = len(user_ids)
@@ -435,6 +482,11 @@ async def _dispatch_message_ack_broadcast(
                 )
             elif msg_manager is not None:
                 user_ids = msg_manager.get_manager().get_participant_ids(channel_id)
+                # Bulk ACK uses the same explicit-audience dispatch, so apply the
+                # same two-way DM block filter as the single-channel path.
+                user_ids = _filter_blocked_dm_ack_recipients(
+                    current_user_id, user_ids
+                )
         except Exception as e:
             logger.debug(
                 f"Bulk ACK: failed to resolve MESSAGE_ACK targets for {channel_id}: {e}"
