@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 _LOCK_RETRY_ATTEMPTS = 6
 _LOCK_RETRY_BASE_DELAY_S = 0.02
 
+# Erasing a user with many deduplicated uploads used to issue one
+# ``SELECT COUNT(*) ... uploaded_by != ?`` per distinct checksum (an N+1).
+# Resolve all of them in bounded ``IN`` chunks instead. 400 checksum binds plus
+# the user id stay well under the shared 900-bind ceiling of the execution
+# layer, so an arbitrarily large erasure degrades to a handful of queries.
+_SHARED_CHECKSUM_CHUNK = 400
+
 
 def _is_db_lock_error(exc: BaseException) -> bool:
     msg = str(exc).lower()
@@ -568,6 +575,36 @@ class _FilesMixin:
         logger.info("Permanently deleted media file %s", file_id)
         return True
 
+    def _shared_checksums(self, checksums, user_id: int) -> set:
+        """Return the checksums in ``checksums`` that another user also owns.
+
+        One bounded ``IN`` query per chunk replaces the old per-checksum
+        ``COUNT(*)`` probe. Only checksum *values* are read back, and only for
+        checksums the erasing user already owns, so no other user's file
+        metadata can leak into this path. The result is used solely to decide
+        whether the erasing user's own storage object may be removed; it is a
+        fresh read (never cached), so a concurrent upload on another worker is
+        always observed before an object is deleted.
+        """
+        unique = {str(value) for value in checksums if value}
+        if not unique:
+            return set()
+        ordered = list(unique)
+        shared: set = set()
+        for start in range(0, len(ordered), _SHARED_CHECKSUM_CHUNK):
+            chunk = ordered[start : start + _SHARED_CHECKSUM_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                "SELECT DISTINCT checksum FROM media_files "
+                f"WHERE uploaded_by != ? AND checksum IN ({placeholders})",
+                (int(user_id), *chunk),
+            )
+            for row in rows:
+                value = row["checksum"] if isinstance(row, dict) else row[0]
+                if value in unique:
+                    shared.add(str(value))
+        return shared
+
     def delete_files_for_user(self, user_id: int) -> List[str]:
         """Erase every file a user uploaded, including storage objects.
 
@@ -596,19 +633,15 @@ class _FilesMixin:
         for row in rows:
             groups.setdefault(row.get("checksum"), []).append(row)
 
+        # Resolve every distinct checksum in bounded chunks instead of one
+        # COUNT query per checksum. A missing/failed lookup is not silently
+        # treated as "unique": fetch_all either returns authoritative rows or
+        # raises, so an error can never justify deleting a shared object.
+        shared_checksums = self._shared_checksums(groups.keys(), uid)
+
         unswept: List[str] = []
         for checksum, files in groups.items():
-            shared = False
-            if checksum:
-                other = self._db.fetch_one(
-                    "SELECT COUNT(*) AS count FROM media_files "
-                    "WHERE checksum = ? AND uploaded_by != ?",
-                    (checksum, uid),
-                )
-                if other:
-                    shared = (
-                        int(other["count"] if isinstance(other, dict) else other[0]) > 0
-                    )
+            shared = bool(checksum) and str(checksum) in shared_checksums
 
             deleted_paths: set = set()
             for file_row in files:
