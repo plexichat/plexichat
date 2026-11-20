@@ -77,6 +77,10 @@ class ConversationService(BaseService):
         else:
             # Fallback to the authoritative block table so a partial outage of
             # the relationships module cannot reopen DMs to a blocked pair.
+            # The probe itself must fail CLOSED: if it raises we have no proof
+            # the pair is unblocked, so deny rather than silently skipping the
+            # check (which let a blocked pair open a fresh DM during a DB
+            # hiccup). Mirror the send path's contract for the same fallback.
             try:
                 blocked_row = self._db.fetch_one(
                     "SELECT 1 AS ok FROM rel_blocked WHERE "
@@ -85,8 +89,13 @@ class ConversationService(BaseService):
                     (user_id, recipient_id, recipient_id, user_id),
                 )
             except Exception as e:
-                logger.debug(f"DM block fallback lookup failed: {e}")
-                blocked_row = None
+                logger.warning(
+                    f"DM block fallback lookup failed for ({user_id}, {recipient_id}) "
+                    f"(failing closed): {e}"
+                )
+                raise ConversationAccessDeniedError(
+                    "Recipient does not accept DMs"
+                ) from e
             if blocked_row is not None:
                 raise ConversationAccessDeniedError("Recipient does not accept DMs")
 

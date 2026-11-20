@@ -82,14 +82,25 @@ class EditHistoryService(BaseService):
         # applies to live message content. The NOT NULL old_content column
         # keeps a non-reversible "[encrypted]" marker instead.
         old_content_encrypted = None
-        if self._encryption_enabled:
+        encryption_required = bool(self._encryption_enabled)
+        if encryption_required:
             try:
                 old_content_encrypted = encrypt_data(old_content)
             except Exception as e:
                 logger.warning(f"Failed to encrypt edit history: {e}")
-        stored_old_content = (
-            old_content if old_content_encrypted is None else "[encrypted]"
-        )
+        # Fail CLOSED on an encryption failure. When encryption is enabled the
+        # plaintext MUST NOT be persisted at rest: the previous fallback stored
+        # ``old_content`` verbatim whenever ``encrypt_data`` raised, defeating
+        # the encryption-at-rest contract for prior message content (which can
+        # hold sensitive text) exactly when the keyring is misconfigured. Keep
+        # the history row, but substitute a non-reversible redaction marker so
+        # no plaintext leaks to the database, backups or a reader of the column.
+        if encryption_required and old_content_encrypted is None:
+            stored_old_content = "[unavailable]"
+        elif old_content_encrypted is not None:
+            stored_old_content = "[encrypted]"
+        else:
+            stored_old_content = old_content
 
         now = int(time.time() * 1000)
         edit_id = self._generate_id()
