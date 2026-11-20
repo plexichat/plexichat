@@ -1,5 +1,5 @@
 import importlib
-from typing import Any, Optional, cast
+from typing import Any, List, Optional, cast
 
 import utils.logger as logger
 
@@ -161,6 +161,52 @@ class BasicMixin(ValkeyClientBase):
         except Exception as e:
             logger.error(f"GLIDE GET (async) failed for {key}: {e}")
             raise ValkeyOperationError(f"GET failed: {e}")
+
+    def mget(self, keys: List[str]) -> List[Optional[str]]:
+        """Fetch many string keys in a single Valkey round trip.
+
+        Batched counterpart of :meth:`get`: the returned list is positionally
+        aligned with ``keys`` (``None`` marks a miss), so a caller replacing a
+        ``for key in keys: get(key)`` loop keeps identical per-key semantics
+        while paying one RTT instead of N. Prefixing and sanitisation are
+        applied per key exactly as in :meth:`get`.
+
+        Fail-closed: a driver/transport error raises
+        :class:`ValkeyOperationError` instead of returning an all-``None``
+        list, which a caller could mistake for "every key is absent" and fail
+        open. An empty selection issues no round trip at all.
+        """
+        if not keys:
+            return []
+        self._ensure_connected()
+        full_keys = [self._prefixed_key(self._sanitize_key(key)) for key in keys]
+
+        try:
+            values = self._client.mget(full_keys)
+            result = self._decode_mget(values)
+            found = sum(v is not None for v in result)
+            logger.debug(f"GLIDE MGET: {len(keys)} keys, {found} found")
+            return result
+        except Exception as e:
+            logger.error(f"GLIDE MGET failed: {e}")
+            raise ValkeyOperationError(f"MGET failed: {e}")
+
+    async def amget(self, keys: List[str]) -> List[Optional[str]]:
+        """Async counterpart of :meth:`mget` — one round trip, fail-closed."""
+        if not keys:
+            return []
+        aclient = self._ensure_aconnected()
+        full_keys = [self._prefixed_key(self._sanitize_key(key)) for key in keys]
+
+        try:
+            values = await aclient.mget(full_keys)
+            result = self._decode_mget(values)
+            found = sum(v is not None for v in result)
+            logger.debug(f"GLIDE MGET (async): {len(keys)} keys, {found} found")
+            return result
+        except Exception as e:
+            logger.error(f"GLIDE MGET (async) failed: {e}")
+            raise ValkeyOperationError(f"MGET failed: {e}")
 
     def get_bin(self, key: str) -> Optional[bytes]:
         self._ensure_connected()

@@ -57,41 +57,28 @@ class JSONMixin(ValkeyClientBase):
         """Fetch and decode multiple JSON values in one Valkey round trip."""
         if not keys:
             return {}
-        self._ensure_connected()
-        client = self._client
-        if client is None:
-            raise ValkeyOperationError("GLIDE client is not connected")
-
-        full_keys = [self._prefixed_key(self._sanitize_key(key)) for key in keys]
+        # ``mget`` prefixes/sanitizes every key, issues a single MGET and fails
+        # closed on a transport error (never a silent all-miss list).
+        values = self.mget(keys)
         try:
-            values = client.mget(full_keys)
             return self._decode_json_mget(keys, values)
         except (TypeError, ValueError) as e:
             logger.error(f"JSON bulk deserialization failed: {e}")
             raise ValkeyOperationError(f"JSON bulk deserialization failed: {e}")
-        except Exception as e:
-            logger.error(f"GLIDE MGET failed: {e}")
-            raise ValkeyOperationError(f"MGET failed: {e}")
 
     async def amget_json(self, keys: List[str]) -> Dict[str, JsonSerializable]:
         """Async counterpart of :meth:`mget_json` -- one round trip."""
         if not keys:
             return {}
-        aclient = self._ensure_aconnected()
-
-        full_keys = [self._prefixed_key(self._sanitize_key(key)) for key in keys]
+        values = await self.amget(keys)
         try:
-            values = await aclient.mget(full_keys)
             return self._decode_json_mget(keys, values)
         except (TypeError, ValueError) as e:
             logger.error(f"JSON bulk deserialization (async) failed: {e}")
             raise ValkeyOperationError(f"JSON bulk deserialization failed: {e}")
-        except Exception as e:
-            logger.error(f"GLIDE MGET (async) failed: {e}")
-            raise ValkeyOperationError(f"MGET failed: {e}")
 
     def _decode_json_mget(
-        self, keys: List[str], values: List[Optional[bytes]]
+        self, keys: List[str], values: List[Optional[Union[str, bytes]]]
     ) -> Dict[str, JsonSerializable]:
         decoded = self._decode_mget(values)
         result: Dict[str, JsonSerializable] = {}
