@@ -240,7 +240,19 @@ def _authorize_scope(
         # the conversation must actually be bound to the requested server (or
         # the request is unscoped).
         conv_server = _conversation_server_id(conversation_id, cache)
-        if server_id is None or conv_server is None or conv_server == int(server_id):
+        # ``conv_server is None`` must NOT be treated as an unscoped request:
+        # ``server_id`` is still a real server here. It means the binding could
+        # not be resolved (missing/invalid conversation metadata, a
+        # soft-deleted conversation, or a DB read failure). Granting access on
+        # that basis let a mere conversation participant read/edit a
+        # server-scoped artifact without ever holding the server permission --
+        # exactly the "unrelated server scope" bypass this gate is meant to
+        # stop. Fail closed until the conversation is proven bound to the
+        # artifact's server. Only a genuinely unscoped artifact (server_id is
+        # None) is authorized by conversation membership alone.
+        if server_id is None or (
+            conv_server is not None and conv_server == int(server_id)
+        ):
             return
     # Author-only access applies to the personal scope only (no server and no
     # conversation). A server- or conversation-scoped artifact is authorized
