@@ -34,7 +34,8 @@ Usage:
     export_file = get_export_file(request.id, user_id)
 """
 
-from typing import Optional, List, Dict, Any
+import re
+from typing import Optional, List, Dict, Any, Sequence
 
 from .models import DSARStatus, DSARRequest, ExportManifest
 from .schema import create_tables as _create_tables_schema
@@ -42,7 +43,7 @@ from .audit_log import DSARLog
 from .collector import DataCollector
 from .export_formats import ExportFormatGenerator
 from .harvester import DSARHarvester
-from .manager import DSARManager
+from .manager import DSARManager, MAX_ADMIN_PAGE_SIZE
 
 _module_manager: Optional[DSARManager] = None
 _setup_complete = False
@@ -206,8 +207,16 @@ def deny_request(
     return _get_manager().deny_request(request_id, admin_id, reason)
 
 
+# A projection is caller-supplied (derived from the API response allowlist), so
+# only plain lowercase SQL identifiers may be interpolated into the SELECT.
+_SAFE_PROJECTION_COLUMN = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
 def get_admin_requests(
-    status: Optional[str] = None, limit: int = 50, offset: int = 0
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    columns: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Admin list all DSAR requests with optional filtering.
@@ -216,11 +225,40 @@ def get_admin_requests(
         status: Optional status filter
         limit: Maximum number of results
         offset: Offset for pagination
+        columns: Optional projection of the columns to fetch. A caller that
+            only serialises a subset of the row (e.g. the admin data-export
+            list) can pass its response allowlist here so ``SELECT *`` never
+            drags internal-only fields (``storage_path``, ``checksum``,
+            ``metadata``) across the DB boundary for every row. Invalid or
+            empty names are ignored; without a valid projection the manager's
+            default read is used unchanged.
 
     Returns:
         List of DSAR requests
     """
-    return _get_manager().get_admin_requests(status, limit, offset)
+    manager = _get_manager()
+    projected = tuple(columns) if columns else ()
+    if not projected or not all(
+        _SAFE_PROJECTION_COLUMN.fullmatch(c) for c in projected
+    ):
+        return manager.get_admin_requests(status, limit, offset)
+
+    # Clamp exactly like the manager does for its default read: SQLite treats
+    # LIMIT -1 as unlimited and would otherwise dump the whole table.
+    limit = max(0, min(int(limit), MAX_ADMIN_PAGE_SIZE))
+    offset = max(0, int(offset))
+    projection = ", ".join(projected)
+    params: List[Any] = []
+    where = ""
+    if status:
+        where = " WHERE status = ?"
+        params.append(status)
+    params.extend((limit, offset))
+    sql = (
+        f"SELECT {projection} FROM dsar_requests{where}"
+        " ORDER BY requested_at DESC LIMIT ? OFFSET ?"
+    )
+    return [dict(r) for r in manager._db.fetch_all(sql, tuple(params))]
 
 
 def generate_manual(request_id: int, admin_id: int) -> Optional[Dict[str, Any]]:

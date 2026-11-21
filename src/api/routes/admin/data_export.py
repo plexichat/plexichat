@@ -139,7 +139,18 @@ async def list_data_exports(
     check_host_restriction(request)
     require_admin_permission(request, "data_export.read")
     try:
-        items = get_admin_requests(status=status, limit=limit, offset=offset)
+        # Project only the columns the response actually emits. Without this
+        # the list read was ``SELECT *`` and dragged ``storage_path``,
+        # ``checksum`` and ``metadata`` (server filesystem/object layout and
+        # integrity internals) across the DB boundary for every row, only for
+        # ``_serialize_request`` to discard them. Same allowlist as the detail
+        # read, so the projection cannot drift from the response shape.
+        items = get_admin_requests(
+            status=status,
+            limit=limit,
+            offset=offset,
+            columns=REQUEST_RESPONSE_COLUMNS,
+        )
     except Exception as e:
         logger.error(f"Admin data-export listing failed: {e}", exc_info=True)
         raise HTTPException(
