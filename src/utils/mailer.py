@@ -13,6 +13,7 @@ this file and dies with ``ModuleNotFoundError: No module named
 import re
 import smtplib
 import ssl
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -64,6 +65,29 @@ class SMTPEmailSender:
         # so a misconfigured value cannot become an injection vector later.
         self.from_email = _safe_header(from_email, "from_email")
         self.use_tls = use_tls
+        # Building an SSL context loads and parses the whole system trust
+        # store, which dominates the cost of a short SMTP send. The sender is
+        # a long-lived singleton (see server.initializer), so build once and
+        # reuse. The cache is per instance, never process-global: no config or
+        # credential state can bleed between senders or server workers.
+        self._ssl_context: ssl.SSLContext | None = None
+        self._ssl_context_lock = threading.Lock()
+
+    def _get_ssl_context(self) -> ssl.SSLContext:
+        """Return this sender's TLS context, creating it on first use.
+
+        Double-checked locking bounds creation to exactly one context per
+        sender even when several request threads send mail concurrently. A
+        failed creation is never cached, so a later send simply retries.
+        """
+        context = self._ssl_context
+        if context is None:
+            with self._ssl_context_lock:
+                context = self._ssl_context
+                if context is None:
+                    context = ssl.create_default_context()
+                    self._ssl_context = context
+        return context
 
     def send(self, to: str, subject: str, body: str, html: bool = False) -> bool:
         """
@@ -92,12 +116,12 @@ class SMTPEmailSender:
             part = MIMEText(body, "html" if html else "plain")
             msg.attach(part)
 
-            context = ssl.create_default_context()
-
             # Using synchronous smtplib; in FastAPI this should be run in a threadpool
             with smtplib.SMTP(self.host, self.port) as server:
                 if self.use_tls:
-                    server.starttls(context=context)
+                    # Built only when TLS is actually used, then reused on
+                    # every subsequent send (see _get_ssl_context).
+                    server.starttls(context=self._get_ssl_context())
 
                 if self.user and self.password:
                     server.login(self.user, self.password)
