@@ -764,13 +764,25 @@ async def get_current_user(request: Request) -> TokenInfo:
     return user
 
 
-async def get_token_info(token: str) -> Optional[TokenInfo]:
+async def get_token_info(
+    token: str,
+    *,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> Optional[TokenInfo]:
     """Verify a raw token string and return token info when valid.
 
     When called during a request that already went through
     ``AuthenticationMiddleware`` the token was verified there; reuse that
     result instead of verifying the same credential a second time (signed
     media URLs call this after the auth middleware has run).
+
+    The IP/User-Agent binding context MUST be forwarded on the cache-miss path.
+    This helper used to call ``verify_token(token, None, None)``, skipping
+    binding entirely: a credential the auth middleware rejected for a binding
+    mismatch could be replayed against a signed media URL and accepted here.
+    Callers handling a request pass the same context the middleware uses, so a
+    miss re-verifies under that context and fails closed on a mismatch.
     """
     if not token:
         return None
@@ -786,7 +798,7 @@ async def get_token_info(token: str) -> Optional[TokenInfo]:
     from fastapi.concurrency import run_in_threadpool
 
     def _verify_token(token_str: str):
-        return auth.verify_token(token_str, None, None)
+        return auth.verify_token(token_str, ip_address, user_agent)
 
     try:
         result = await run_in_threadpool(_verify_token, token)

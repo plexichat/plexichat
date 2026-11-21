@@ -257,7 +257,19 @@ def register_attachment_route(app: FastAPI) -> None:
                     token = request.cookies.get("plexichat_token")
 
                 if token:
-                    token_info = await get_token_info(token)
+                    # Forward the same IP/User-Agent binding context the auth
+                    # middleware uses. Without this, a token rejected there for
+                    # a binding mismatch is silently re-verified with the
+                    # binding skipped, granting access to signed media URLs.
+                    from src.utils.net import get_client_ip
+
+                    from .middleware.request_context import cached_client_ip
+
+                    token_info = await get_token_info(
+                        token,
+                        ip_address=cached_client_ip(request, resolver=get_client_ip),
+                        user_agent=request.headers.get("User-Agent"),
+                    )
                     if token_info:
                         current_user_id = token_info.user_id
 
