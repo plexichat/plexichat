@@ -182,7 +182,11 @@ async def get_ticket_notes(ticket_id: SnowflakeIDParam, request: Request):
     require_admin_permission(request, "tickets.read")
     from src.core import admin
 
-    if not admin.get_ticket(ticket_id):
+    # Existence only: the full ``get_ticket`` fetch used here selected the
+    # whole feedback/auth_users JOIN (including note ciphertext) and, with
+    # encryption on, decrypted a note the NoteResponse list never carries.
+    # A ``SELECT 1`` probe answers the 404 check without any of that work.
+    if not _ticket_exists(ticket_id):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Ticket not found"}},
