@@ -721,6 +721,24 @@ class SessionManager:
         if not session:
             return None
 
+        # Enforce the same per-user connection cap IDENTIFY enforces. A resume
+        # whose previous socket is still tracked locally only MOVES the slot:
+        # resume_session() disconnects that old socket and discards it from the
+        # user's set below, so the count does not grow and the resume is safe.
+        # A session whose old socket is already gone, however, allocates a
+        # brand-new counted connection. Without this check a client could churn
+        # IDENTIFY/disconnect to accumulate resumable sessions, then resume them
+        # all and hold unbounded live sockets past max_connections_per_user.
+        # Check before taking the lock so can_user_connect() may do its (local
+        # or Valkey) count read without deadlocking on this lock.
+        old_conn_id = session.connection_id
+        old_conn_is_live = bool(old_conn_id and old_conn_id in self._connections)
+        if not old_conn_is_live and not self.can_user_connect(session.user_id):
+            logger.warning(
+                f"User {session.user_id} exceeded max connections; resume rejected"
+            )
+            return None
+
         with self._lock:
             old_conn_id = session.connection_id
             if old_conn_id and old_conn_id in self._connections:
