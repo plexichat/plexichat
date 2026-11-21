@@ -123,22 +123,38 @@ class RegistrationMixin(AuthManagerProtocol):
             raise UserExistsError("Registration failed", "email")
 
         # Enforce the license "max_users" limit (only when a finite cap is set).
+        # Free tier has no cap by design; a licensed instance whose cap cannot
+        # be evaluated must fail closed instead of admitting unlimited users.
         try:
-            from utils.licensing import get_license_limit, is_limit_enforced
+            from utils.licensing import (
+                get_license_limit,
+                is_free_tier,
+                is_limit_enforced,
+            )
 
-            _user_cap = get_license_limit("max_users", default=-1)
-            if is_limit_enforced(_user_cap):
-                _row = self._db.fetch_one("SELECT COUNT(*) AS c FROM auth_users")
-                _count = int(_row["c"]) if _row else 0
-                if _count >= _user_cap:
-                    raise AuthError(
-                        f"Registration limit reached: this instance permits a "
-                        f"maximum of {_user_cap} users.",
-                        "user_limit",
-                    )
+            if not is_free_tier():
+                _user_cap = get_license_limit("max_users", default=-1)
+                if is_limit_enforced(_user_cap):
+                    _row = self._db.fetch_one("SELECT COUNT(*) AS c FROM auth_users")
+                    _count = int(_row["c"]) if _row else 0
+                    if _count >= _user_cap:
+                        raise AuthError(
+                            f"Registration limit reached: this instance permits a "
+                            f"maximum of {_user_cap} users.",
+                            "user_limit",
+                        )
         except (RuntimeError, ImportError):
-            # Licensing is not configured; do not enforce.
-            pass
+            # Fail CLOSED: an uninitialised license manager or a missing
+            # licensing module used to be swallowed here, dropping *every*
+            # user-count cap and letting a licensed instance register unlimited
+            # users. Free tier short-circuits above before a cap is evaluated,
+            # so this handler only runs when a licensed cap was expected but
+            # could not be verified. Deny in that case.
+            raise AuthError(
+                "Registration limit could not be verified; registration is "
+                "temporarily unavailable.",
+                "user_limit",
+            )
 
         now = self._get_timestamp()
         email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
