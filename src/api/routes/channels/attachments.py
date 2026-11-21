@@ -22,6 +22,58 @@ import utils.logger as logger
 from .base import ChannelBase
 
 
+def _require_attachment_send_access(servers, user_id: int, addressed_id: int) -> None:
+    """Fail closed when the attachment target is a server channel the caller
+    cannot post to.
+
+    The attachment route also accepts a server channel's linked
+    ``conversation_id`` as a URL alias (the ``messaging.get_conversation``
+    fallback). Participation is seeded for every server member on join and is
+    NOT a send grant, so a member denied ``channels.view`` or ``messages.send``
+    on a channel could otherwise upload an attachment "to" it by putting the
+    linked conversation id in the URL. Reverse-resolve the alias
+    membership-agnostically and require a live view + send grant on the real
+    backing channel. A conversation with no backing channel is a genuine
+    DM/group, already covered by the participation gate. Any unresolved
+    permission data denies.
+    """
+    if not servers:
+        return  # no servers store => addressed id can only be a DM/group
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(lookup):
+        raise PermissionError("Cannot verify channel send access")
+    try:
+        info = lookup(addressed_id)
+    except Exception:
+        raise PermissionError("Cannot verify channel send access")
+    if info is None:
+        return  # DM/group conversation: participation already gated it
+    channel_id = info.get("id") if isinstance(info, dict) else None
+    server_id = info.get("server_id") if isinstance(info, dict) else None
+    if channel_id is None or server_id is None:
+        raise PermissionError("Cannot verify channel send access")
+
+    get_channel = getattr(servers, "get_channel", None)
+    timed_out = getattr(servers, "is_timed_out", None)
+    has_permission = getattr(servers, "has_permission", None)
+    if not (callable(get_channel) and callable(timed_out) and callable(has_permission)):
+        raise PermissionError("Cannot verify channel send access")
+    try:
+        if get_channel(int(channel_id), user_id) is None:
+            raise PermissionError("Cannot post to this channel")
+        if timed_out(user_id, int(server_id)):
+            raise PermissionError("Timed out in this server")
+        allowed = bool(
+            has_permission(user_id, int(server_id), "messages.send", int(channel_id))
+        )
+    except PermissionError:
+        raise
+    except Exception:
+        raise PermissionError("Cannot verify channel send access")
+    if not allowed:
+        raise PermissionError("Missing messages.send permission")
+
+
 class ChannelAttachmentsMixin(ChannelBase):
     def _register_routes(self) -> None:
         self.router.add_api_route(
@@ -159,6 +211,31 @@ class ChannelAttachmentsMixin(ChannelBase):
                     status_code=403,
                     detail={"error": {"code": 403, "message": "Channel access denied"}},
                 )
+
+            # The conversation probe above also accepts a server channel's
+            # linked conversation_id as an address alias. When channel
+            # resolution did not yield a server channel, reverse-resolve the
+            # alias and require a live view + send grant on the real backing
+            # channel; participation alone is not a send grant.
+            if channel is None and servers_mod:
+                try:
+                    _require_attachment_send_access(
+                        servers_mod, current_user.user_id, cid
+                    )
+                except PermissionError as perm_exc:
+                    logger.warning(
+                        f"User {current_user.user_id} denied attachment upload "
+                        f"to {cid}: {perm_exc}"
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error": {
+                                "code": 403,
+                                "message": "You do not have permission to upload files in this channel",
+                            }
+                        },
+                    )
 
             # Permission tier: membership alone is not enough - uploading
             # consumes storage quota, so require the send/upload permission.

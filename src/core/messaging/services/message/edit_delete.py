@@ -555,16 +555,6 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         if not msg_row:
             raise MessageNotFoundError("Message not found")
 
-        # Participation is granted to every member of a server regardless of
-        # the per-channel ``channels.view`` grant. The URL-id gate can be
-        # addressed by the backing conversation-id alias, and internal/service
-        # callers bypass the route gate entirely. Re-check the live view grant
-        # on the channel backing this message's conversation here as well,
-        # mirroring delete_messages_bulk. Fail closed with the same
-        # 404-equivalent oracle used for non-participants.
-        if not _can_view_conversation_messages(user_id, msg_row["conversation_id"]):
-            raise MessageNotFoundError("Message not found")
-
         # Authorship is not a standing write grant. A user who authored a
         # message but was later removed from the conversation (kick/ban/group
         # leave) must not keep deleting messages in a conversation they can no
