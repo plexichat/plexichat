@@ -692,6 +692,7 @@ def emit_channel_pins_update(
     channel_id: int,
     guild_id: Optional[int] = None,
     pinned_message_ids: Optional[List[int]] = None,
+    actor_id: Optional[int] = None,
 ) -> None:
     """Notify clients that the pinned-message set of a channel changed.
 
@@ -700,9 +701,20 @@ def emit_channel_pins_update(
     kept as a legacy alias (matching MESSAGE_DELETE_BULK). Recipients are
     the channel's actual viewers, so a pin in a private/restricted channel is
     not announced to every member of the server.
+
+    ``actor_id`` is the user who pinned/unpinned. It MUST be threaded into
+    ``resolve_channel_event_recipients``: that resolver hands an explicit
+    ``user_ids`` audience to ``dispatch``, bypassing the EventRouter's DM
+    block gate. Without the actor the two-way block filter is skipped and a
+    viewer who blocked the actor (or whom the actor blocked) still receives
+    the actor's channel event -- the same leak already closed for typing,
+    read receipts and reactions. The resolver fails closed when the block
+    set cannot be resolved.
     """
     sid = str(guild_id) if guild_id is not None else None
-    recipients = resolve_channel_event_recipients(channel_id, guild_id=guild_id)
+    recipients = resolve_channel_event_recipients(
+        channel_id, guild_id=guild_id, actor_id=actor_id
+    )
     _emit(
         EventType.CHANNEL_PINS_UPDATE,
         {
