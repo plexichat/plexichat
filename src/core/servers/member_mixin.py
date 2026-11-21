@@ -32,6 +32,16 @@ class MemberMixin:
         """Get a member by user ID."""
         return self._manager.get_member(server_id, user_id)
 
+    def is_timed_out(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
+        """Return whether *user_id* is currently timed out in *server_id*.
+
+        REST send/edit/react routes probe the object returned by
+        ``src.api.get_servers()`` for this gate. Without the proxy the
+        ``hasattr`` probe came back empty on the public composer and the
+        timeout restriction was silently skipped entirely.
+        """
+        return self._manager.is_timed_out(user_id, server_id)
+
     def get_members(
         self,
         user_id: SnowflakeID,

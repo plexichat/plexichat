@@ -33,6 +33,16 @@ def get_member(server_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Member]
     return _get_manager().get_member(server_id, user_id)
 
 
+def is_timed_out(user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
+    """Return whether *user_id* is currently timed out in *server_id*.
+
+    ``src.api.get_servers()`` resolves this module facade in production; the
+    send/edit/react routes gate on this symbol. Re-exporting it here makes the
+    timeout restriction actually evaluate on live traffic.
+    """
+    return _get_manager().is_timed_out(user_id, server_id)
+
+
 def get_members(
     user_id: SnowflakeID,
     server_id: SnowflakeID,

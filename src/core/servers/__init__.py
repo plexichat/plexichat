@@ -108,6 +108,7 @@ from .roles import (
 from .members import (
     add_member,
     get_member,
+    is_timed_out,
     get_members,
     get_member_user_ids,
     get_all_shared_member_ids,
@@ -213,6 +214,7 @@ __all__ = [
     # Member operations
     "add_member",
     "get_member",
+    "is_timed_out",
     "get_members",
     "get_member_user_ids",
     "get_all_shared_member_ids",
