@@ -801,6 +801,22 @@ class GatewayDispatcher:
                 if getattr(conn, "user_id", None) in participant_ids
             ]
 
+        # The ``d`` payload is byte-for-byte identical for every participant:
+        # the per-connection sequence number lives outside ``d``, on the frame.
+        # Build and render it once for the whole fan-out, then share the rendered
+        # object -- the same pattern ``dispatch_event`` uses for DISPATCH
+        # fan-outs. Building the dict and running the recursive snowflake walk
+        # inside the loop paid O(payload) work once per recipient even though
+        # every copy was identical. The render cache is this dispatcher's
+        # bounded, in-process LRU (no cross-node mutable state), and audience
+        # resolution, the fail-closed participant check and replay recording
+        # below are unchanged.
+        ratchet_data = {
+            "conversation_id": int(conversation_id),
+            **dict(update_data),
+        }
+        data_key = freeze_payload(ratchet_data)
+
         for conn in connections:
             if not conn.is_authenticated:
                 continue
@@ -815,11 +831,8 @@ class GatewayDispatcher:
                 "op": int(GatewayOpcode.RATCHET_UPDATE),
                 "t": "RATCHET_UPDATE",
                 "s": conn.increment_sequence(),
-                "d": stringify_snowflake_ids(
-                    {
-                        "conversation_id": int(conversation_id),
-                        **dict(update_data),
-                    }
+                "d": self._render_cache.render(
+                    ratchet_data, stringify_snowflake_ids, key=data_key
                 ),
             }
             if conn.session_id:
