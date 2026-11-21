@@ -78,8 +78,20 @@ class KeywordRule(BaseRule):
         if not self._keywords:
             return self._no_match()
 
+        # Filter on the FULL canonical view, not the truncated one. The raw
+        # message carrying the blocked word is what the send path stores,
+        # renders to every recipient and copies into notification previews;
+        # the default MAX_CANONICAL_LENGTH cap can be blown past by NFKC
+        # expansion (U+FDFA -> 18 codepoints) with a few hundred schema-legal
+        # characters. Truncating here would hide a blocked word placed after
+        # the cut from this rule while it is delivered verbatim to users.
+        # Message content is already length-bounded at the API schema, so
+        # scanning the whole folded form stays linear and bounded. This keeps
+        # the filter view identical to the consumer's view (strictest wins).
         check_content = canonicalize_for_matching(
-            content, case_sensitive=self._case_sensitive
+            content,
+            case_sensitive=self._case_sensitive,
+            max_length=None,
         )
 
         matched_keywords = []

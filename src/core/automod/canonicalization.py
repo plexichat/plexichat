@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any
+from typing import Any, Optional
 
 # Cf = format (zero-width joiners, bidi overrides, direction marks, soft
 # hyphen, BOM, ...); Cc = control (C0/C1 including NUL). Both are visually
@@ -36,13 +36,27 @@ _WS_RUN = re.compile(r"\s+")
 MAX_CANONICAL_LENGTH = 10_000
 
 
-def canonicalize_for_matching(content: Any, *, case_sensitive: bool = False) -> str:
+def canonicalize_for_matching(
+    content: Any,
+    *,
+    case_sensitive: bool = False,
+    max_length: Optional[int] = MAX_CANONICAL_LENGTH,
+) -> str:
     """Return the canonical form of ``content`` for automod matching.
 
     Both the message text and the blocklist entries must be passed through this
     function so they fold to identical bytes. When ``case_sensitive`` is true
     the case fold is skipped, but width folding and invisible-character removal
     still apply: those are normalization attacks, not case differences.
+
+    ``max_length`` bounds the folded form for linear substring scans (NFKC can
+    expand one compatibility codepoint into many, e.g. U+FDFA -> 18). Callers
+    whose filter must see EVERY byte the consumer later delivers/renders -- and
+    whose input is already length-bounded at the schema boundary -- should pass
+    ``max_length=None`` to disable truncation. Truncating there would let a
+    blocked token placed past the cut be matched as benign while the raw
+    message containing it is delivered unchanged (the same class of bypass as
+    the mass-mention one: filter view vs. consumer view disagree).
     """
     if content is None:
         return ""
@@ -57,8 +71,8 @@ def canonicalize_for_matching(content: Any, *, case_sensitive: bool = False) -> 
     # Strip invisibles BEFORE collapsing whitespace: an invisible next to a
     # space would otherwise leave a doubled whitespace run behind.
     text = _WS_RUN.sub(" ", text).strip()
-    if len(text) > MAX_CANONICAL_LENGTH:
-        text = text[:MAX_CANONICAL_LENGTH]
+    if max_length is not None and len(text) > max_length:
+        text = text[:max_length]
     return text
 
 
