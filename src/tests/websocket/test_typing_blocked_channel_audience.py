@@ -61,6 +61,10 @@ def _clear_audience_cache():
 
 
 def _wire(monkeypatch, servers, relationships) -> None:
+    import src.core.relationships as rel_module
+
+    monkeypatch.setattr(rel_module, "_setup_complete", True, raising=False)
+    monkeypatch.setattr(rel_module, "_manager", object(), raising=False)
     monkeypatch.setattr(api, "get_servers", lambda: servers)
     monkeypatch.setattr(api, "get_messaging", lambda: None)
     monkeypatch.setattr(api, "get_relationships", lambda: relationships)
