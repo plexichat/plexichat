@@ -5,6 +5,10 @@
       "path_glob": "tests/**",
       "kind": "hardcoded_secret",
       "reason": "Synthetic credentials in test fixtures (fake JWTs, PEM blocks, sk_live_* samples) are test data, not deployable secrets. detect-secrets' own pre-commit hook applies the same tests/ exclusion. New hardcoded secrets in production code under src/ are still blocked."
+    },
+    {
+      "fingerprint": "2f539e1306feb039",
+      "reason": "Test helper in test_admin_migration_session_authority_after_demotion.py compiles and execs a single function definition lifted from the module under test; the source is a literal in the same file, visible at authoring time. This is test scaffolding, not execution of untrusted data. Reviewed 2026-11-21 during the CI-guard enforcement audit."
     }
   ]
 }

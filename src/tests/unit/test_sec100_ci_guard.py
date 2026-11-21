@@ -125,6 +125,57 @@ def test_shell_true_is_flagged_but_shell_false_is_not(tmp_path: Path) -> None:
     assert kinds.count("shell_true") == 1
 
 
+def test_indirect_eval_exec_spellings_are_flagged(tmp_path: Path) -> None:
+    """Non-vacuous: indirect dispatch evades a direct-name-only detector."""
+    snippets = [
+        'builtins.__dict__["eval"](user_input)',
+        'getattr(__builtins__, "exec")(payload)',
+    ]
+    guard = _guard()
+    # The broadened pre-filter must let these reach the AST pass at all.
+    assert all(guard.PREFILTER.search(s) for s in snippets)
+    root = _tree(tmp_path, {f"b{i}.py": s + "\n" for i, s in enumerate(snippets)})
+    assert _kinds(guard.find_patterns(root)).count("eval_exec") == 2
+
+
+def test_indirect_os_system_spellings_are_flagged(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "a.py": '__import__("os").system(cmd)\n',
+            "b.py": 'import os\ngetattr(os, "system")(cmd)\n',
+            "c.py": 'import importlib\nimportlib.import_module("os").system(cmd)\n',
+        },
+    )
+    assert _kinds(_guard().find_patterns(root)).count("os_system") == 3
+
+
+def test_shell_true_via_variable_and_kwargs_is_flagged(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "a.py": "subprocess.Popen(cmd, shell=USE_SHELL)\n",
+            "b.py": 'subprocess.Popen(cmd, **{"shell": True})\n',
+            "c.py": "subprocess.run(cmd, shell=False)\n",  # stays clean
+        },
+    )
+    assert _kinds(_guard().find_patterns(root)).count("shell_true") == 2
+
+
+def test_pickle_deserialization_is_flagged_including_alias(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "a.py": "import pickle as p\nobj = p.loads(payload)\n",
+            "b.py": "from pickle import loads as l\nobj = l(payload)\n",
+            "c.py": "import json\nobj = json.loads(payload)\n",  # not a sink
+        },
+    )
+    guard = _guard()
+    assert guard.PREFILTER.search("import pickle as p")
+    assert _kinds(guard.find_patterns(root)).count("pickle_load") == 2
+
+
 def test_hardcoded_token_is_flagged(tmp_path: Path) -> None:
     root = _tree(
         tmp_path, {"a.py": 'TOKEN = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\n'}

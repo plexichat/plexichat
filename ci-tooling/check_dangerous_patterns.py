@@ -6,9 +6,15 @@ under ``src/`` with :mod:`ast` (plus a few regexes for credential *shapes*) and
 fails when it finds any of:
 
 * ``eval()`` / ``exec()`` called with a non-literal argument — dynamic code
-  execution on data the interpreter cannot see at authoring time.
-* ``os.system()`` — shell command construction with no argument separation.
-* a call with ``shell=True`` — the subprocess equivalent of ``os.system()``.
+  execution on data the interpreter cannot see at authoring time. Indirect
+  spellings (``builtins.__dict__["eval"]``, ``getattr(__builtins__, "exec")``)
+  are resolved too.
+* ``os.system()`` — shell command construction with no argument separation,
+  including ``__import__("os").system()`` and ``getattr(os, "system")()``.
+* a call with a truthy ``shell=`` (literal, variable or ``**kwargs``) — the
+  subprocess equivalent of ``os.system()``.
+* ``pickle.load()`` / ``pickle.loads()`` — deserialization of untrusted data,
+  including aliased imports.
 * a hardcoded credential token (AWS/GitHub/GitLab/Slack/Stripe/OpenAI key,
   JWT, PEM private key) embedded as a string literal. Detector *regexes* such
   as ``re.compile(r"...PRIVATE KEY...")`` are deliberately not findings.
@@ -53,7 +59,8 @@ REPO = HERE.parent
 KIND_DESCRIPTIONS = {
     "eval_exec": "eval()/exec() with a non-literal argument",
     "os_system": "os.system() call",
-    "shell_true": "call with shell=True",
+    "shell_true": "call with shell=True (literal, variable, or **kwargs)",
+    "pickle_load": "pickle.load()/loads() on a possibly untrusted payload",
     "hardcoded_secret": "hardcoded credential token",
     "bare_except_auth": "bare except swallowing errors in auth code",
 }
@@ -94,7 +101,13 @@ TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # and would push the gate past the per-test timeout in CI. The pre-filter is
 # deliberately *broader* than the real rules (it may over-match, never miss).
 PREFILTER = re.compile(
-    r"\beval\b|\bexec\b|\bsystem\s*\(|\bshell\s*=\s*True\b|\bexcept\s*:|"
+    # Deliberately broad. In particular ``shell=`` (not just ``shell=True``),
+    # ``getattr``/``__import__``/``import_module``/``__dict__`` (indirect sink
+    # resolution) and ``pickle`` must all reach the AST pass — otherwise a sink
+    # spelled indirectly would be skipped before it is ever examined. May
+    # over-match; must never miss.
+    r"\beval\b|\bexec\b|\bsystem\b|\bshell\b|\bgetattr\s*\(|\b__import__\s*\(|"
+    r"\bimport_module\s*\(|__dict__|\bpickle\b|\bexcept\s*:|"
     r"AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|AGPA|gh[pousr]_|github_pat_|glpat-|"
     r"xox[baprs]-|(?:sk|rk)_(?:live|test)_|sk-[A-Za-z0-9_-]{32}|"
     r"eyJ[A-Za-z0-9_-]{8,}\.|"
@@ -196,6 +209,75 @@ def _is_regex_call(func: ast.expr) -> bool:
     return False
 
 
+def _getattr_attr_name(node: ast.Call) -> str | None:
+    """The constant attribute name in ``getattr(obj, "name")``, if any."""
+    if (
+        isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and isinstance(node.args[1].value, str)
+    ):
+        return node.args[1].value
+    return None
+
+
+def _is_getattr_call(node: ast.expr, attr: str | None = None) -> bool:
+    """True for ``getattr(...)``; *attr*, when given, must be the constant name."""
+    if not isinstance(node, ast.Call):
+        return False
+    name = _getattr_attr_name(node)
+    return name is not None and (attr is None or name == attr)
+
+
+def _dynamic_call_name(func: ast.expr) -> str | None:
+    """Best-effort static name for a callable expression.
+
+    Resolves the indirect spellings a real RCE sink hides behind:
+    ``builtins.eval`` / ``x.exec`` (Attribute), ``builtins.__dict__["eval"]``
+    (Subscript) and ``getattr(__builtins__, "exec")`` (Call). Returns None when
+    the target cannot be named statically (a plain helper function, etc.).
+    """
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Subscript):
+        sl = func.slice
+        if isinstance(sl, ast.Constant) and isinstance(sl.value, str):
+            return sl.value
+        return None
+    if isinstance(func, ast.Call):
+        return _getattr_attr_name(func)
+    return None
+
+
+def _is_os_module_expr(node: ast.expr, os_aliases: set[str]) -> bool:
+    """True when *node* names the ``os`` module: direct, aliased, or dynamic."""
+    if isinstance(node, ast.Name):
+        return node.id in os_aliases
+    if isinstance(node, ast.Call) and node.args:
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and first.value == "os"):
+            return False
+        fn = node.func
+        return (isinstance(fn, ast.Name) and fn.id == "__import__") or (
+            isinstance(fn, ast.Attribute) and fn.attr == "import_module"
+        )
+    return False
+
+
+def _shell_is_truthy(value: ast.expr) -> bool:
+    """A ``shell=`` value that is not a literal false is a shell risk.
+
+    Mirrors the SEC400 invariant: ``shell=True``, ``shell=1`` and a
+    non-constant expression (``shell=FLAG``) all enable the shell.
+    """
+    if isinstance(value, ast.Constant):
+        return bool(value.value)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Per-file analysis
 # ---------------------------------------------------------------------------
@@ -217,6 +299,8 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
     # this to a single pass matters: parsing dominates the scan's cost.
     parents: dict[ast.AST, ast.AST] = {}
     os_aliases = {"os"}
+    pickle_aliases = {"pickle"}
+    pickle_loaded_names: set[str] = set()
     regex_arg_ids: set[int] = set()
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -225,10 +309,16 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
             for alias in parent.names:
                 if alias.name == "os":
                     os_aliases.add(alias.asname or "os")
+                if alias.name == "pickle":
+                    pickle_aliases.add(alias.asname or "pickle")
         elif isinstance(parent, ast.ImportFrom) and parent.module == "os":
             for alias in parent.names:
                 if alias.name == "system":
                     os_aliases.add(alias.asname or "system")
+        elif isinstance(parent, ast.ImportFrom) and parent.module == "pickle":
+            for alias in parent.names:
+                if alias.name in ("load", "loads"):
+                    pickle_loaded_names.add(alias.asname or alias.name)
         elif isinstance(parent, ast.Call) and _is_regex_call(parent.func):
             for arg in parent.args:
                 for sub in ast.walk(arg):
@@ -247,31 +337,72 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
         # --- eval / exec with a non-literal argument -----------------------
         if isinstance(node, ast.Call) and node.args:
             func = node.func
-            name = (
-                func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-            )
+            name = _dynamic_call_name(func)
             if name in EVAL_NAMES and not isinstance(node.args[0], ast.Constant):
                 add(node, "eval_exec", "dynamic eval/exec argument", "eval()")
 
             # --- os.system --------------------------------------------------
+            # Covers direct/aliased imports plus dynamic resolution:
+            # ``__import__("os").system()``, ``importlib.import_module("os").system()``
+            # and ``getattr(os, "system")()``.
             if isinstance(func, ast.Attribute) and func.attr == "system":
-                base = func.value
-                if isinstance(base, ast.Name) and base.id in os_aliases:
+                if _is_os_module_expr(func.value, os_aliases):
                     add(node, "os_system", "os.system()", "os.system()")
             elif (
                 isinstance(func, ast.Name) and func.id in os_aliases and func.id != "os"
             ):
                 # `from os import system` (possibly aliased).
                 add(node, "os_system", "os.system() import", "system()")
+            elif _is_getattr_call(func, "system") and _is_os_module_expr(
+                func.args[0], os_aliases
+            ):
+                add(
+                    node,
+                    "os_system",
+                    "os.system() via getattr",
+                    "getattr(os,'system')()",
+                )
 
-            # --- shell=True --------------------------------------------------
+            # --- shell=True (literal, variable, or **kwargs spelling) -------
             for kw in node.keywords:
-                if (
-                    kw.arg == "shell"
-                    and isinstance(kw.value, ast.Constant)
-                    and kw.value.value is True
-                ):
+                if kw.arg == "shell" and _shell_is_truthy(kw.value):
                     add(node, "shell_true", "shell=True", "shell=True")
+                if kw.arg is None and isinstance(kw.value, ast.Dict):
+                    for key, value in zip(kw.value.keys, kw.value.values):
+                        if (
+                            isinstance(key, ast.Constant)
+                            and key.value == "shell"
+                            and _shell_is_truthy(value)
+                        ):
+                            add(
+                                node,
+                                "shell_true",
+                                "shell=True via **kwargs",
+                                "shell=True",
+                            )
+
+            # --- pickle deserialization (aliased import / from-import) ------
+            if isinstance(func, ast.Name) and func.id in pickle_loaded_names:
+                add(node, "pickle_load", "pickle.load(s)()", "pickle.loads()")
+            elif (
+                isinstance(func, ast.Attribute)
+                and func.attr in ("load", "loads")
+                and isinstance(func.value, ast.Name)
+                and func.value.id in pickle_aliases
+            ):
+                add(node, "pickle_load", "pickle.load(s)()", "pickle.loads()")
+            elif (
+                isinstance(func, ast.Attribute)
+                and func.attr in ("load", "loads")
+                and isinstance(func.value, ast.Call)
+                and _dynamic_call_name(func.value.func) == "Unpickler"
+            ):
+                add(
+                    node,
+                    "pickle_load",
+                    "pickle.Unpickler().load()",
+                    "Unpickler().load()",
+                )
 
         # --- hardcoded credential tokens ----------------------------------
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
