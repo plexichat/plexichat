@@ -78,7 +78,10 @@ def test_batch_pack_stickers_uses_one_query_and_no_per_pack_calls():
     assert [s["id"] for s in result[33]] == [3]
     assert len(db.calls) == 1
     assert "sticker_stickers" in db.calls[0][0]
-    assert "GROUP BY s.id" in db.calls[0][0]
+    # usage_count is not part of StickerResponse: no unused aggregation.
+    assert "sticker_usage" not in db.calls[0][0]
+    assert "COUNT(" not in db.calls[0][0]
+    assert "GROUP BY" not in db.calls[0][0]
     assert stickers.per_pack_calls == []
 
 

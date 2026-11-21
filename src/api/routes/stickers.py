@@ -83,6 +83,12 @@ def _parse_sticker_id(value: object, field: str, message: str) -> int:
 # the original per-pack path is kept as a fallback when the batch path cannot
 # run (module not wired, unexpected schema). Membership was already validated
 # by ``get_server_packs`` before this helper is called.
+#
+# Both callers serialize hydrated rows with ``StickerResponse``, which has no
+# ``usage_count`` field. The old batch query's ``LEFT JOIN sticker_usage`` +
+# ``COUNT(u.id) as usage_count`` + ``GROUP BY s.id`` scanned every usage row for
+# every sticker on the server-library / GUILD_STICKERS_UPDATE hot paths for a
+# value nobody consumed. Drop them; one row per sticker comes from the scan.
 _MAX_STICKER_BATCH_CHUNK = 400
 
 # A server's sticker library changes rarely (create/delete), so the *hydrated*
@@ -119,11 +125,9 @@ def _batch_pack_stickers(stickers_mod, packs, user_id: int) -> dict:
                 chunk = pack_ids[start : start + _MAX_STICKER_BATCH_CHUNK]
                 placeholders = ",".join("?" * len(chunk))
                 rows = db.fetch_all(
-                    "SELECT s.*, COUNT(u.id) as usage_count "
-                    "FROM sticker_stickers s "
-                    "LEFT JOIN sticker_usage u ON s.id = u.sticker_id "
+                    "SELECT s.* FROM sticker_stickers s "
                     f"WHERE s.pack_id IN ({placeholders}) "
-                    "GROUP BY s.id ORDER BY s.pack_id, s.name",
+                    "ORDER BY s.pack_id, s.name",
                     tuple(chunk),
                 )
                 for row in rows:
