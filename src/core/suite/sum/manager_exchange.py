@@ -15,8 +15,11 @@ from .manager_protocol import SumManagerProtocol
 from ._shared import (
     MAX_CSV_COLUMNS,
     MAX_CSV_ROWS,
+    MAX_XLSX_ARCHIVE_ENTRIES,
+    MAX_XLSX_EXPANSION_RATIO,
     MAX_XLSX_MEMBER_BYTES,
     MAX_XLSX_UNCOMPRESSED_BYTES,
+    XLSX_RATIO_MIN_OUTPUT_BYTES,
     SumNotFoundError,
     SumStorageError,
     SumValidationError,
@@ -285,12 +288,30 @@ class SumManagerExchange(SumManagerProtocol):
         except zipfile.BadZipFile as exc:
             raise SumValidationError("File is not a valid XLSX workbook") from exc
         total = 0
-        for info in infos:
+        compressed_total = 0
+        for count, info in enumerate(infos, start=1):
+            # Count every central-directory record, including directory
+            # entries: parsing them into ZipInfo objects is itself the cost a
+            # member-count bomb tries to amplify.
+            if count > MAX_XLSX_ARCHIVE_ENTRIES:
+                raise SumValidationError("XLSX archive has too many entries")
             if info.file_size > MAX_XLSX_MEMBER_BYTES:
                 raise SumValidationError("XLSX archive member is too large")
             total += info.file_size
+            compressed_total += max(0, info.compress_size)
             if total > MAX_XLSX_UNCOMPRESSED_BYTES:
                 raise SumValidationError("XLSX archive expands to too much data")
+
+        # The absolute cap above still allows a ~60 kB upload to declare tens
+        # of megabytes of worksheet XML, which openpyxl dutifully inflates and
+        # materialises as a single cell before any row/column cap can help.
+        # The floor keeps ordinary, modestly compressible workbooks unaffected.
+        if (
+            total > XLSX_RATIO_MIN_OUTPUT_BYTES
+            and compressed_total > 0
+            and total // compressed_total > MAX_XLSX_EXPANSION_RATIO
+        ):
+            raise SumValidationError("XLSX archive expansion ratio is too high")
 
     @staticmethod
     def _cells_to_csv(cells: List[Dict[str, Any]]) -> str:

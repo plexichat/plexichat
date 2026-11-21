@@ -28,6 +28,14 @@ MAX_CSV_COLUMNS = 100
 # front.
 MAX_XLSX_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 MAX_XLSX_MEMBER_BYTES = 64 * 1024 * 1024
+# The absolute caps above bound the worst case, but a few tens of kilobytes of
+# deflate stream can still declare tens of megabytes of XML and force a large
+# allocation before any row/column cap applies. Reject such extreme ratios and
+# archives whose member count is implausible for a workbook, both from the ZIP
+# central directory without inflating anything.
+MAX_XLSX_ARCHIVE_ENTRIES = 10_000
+MAX_XLSX_EXPANSION_RATIO = 256
+XLSX_RATIO_MIN_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_INDEXES_PER_SHEET = 8
 INDEX_PROMOTION_THRESHOLD = 50
 
