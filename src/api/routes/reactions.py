@@ -163,6 +163,22 @@ async def _dispatch_reaction_event(
         # Exclude the acting user so their optimistic update is not doubled.
         recipient_ids = [pid for pid in participant_ids if pid != user_id]
 
+        # The dispatcher takes an explicit audience, so the EventRouter's DM
+        # block filter never sees it. Apply the same two-way gate used by the
+        # typing / read-receipt / DM-message fan-outs: a participant who blocked
+        # the actor, or whom the actor blocked, must not receive the actor's
+        # reaction events. The shared helper fails closed when the
+        # authoritative block set cannot be resolved.
+        try:
+            from src.core.events.gateway_emit import (
+                _dm_participants_without_blocks,
+            )
+
+            recipient_ids = _dm_participants_without_blocks(recipient_ids, user_id)
+        except Exception as filter_error:
+            logger.debug(f"Reaction DM block filter unavailable: {filter_error}")
+            return
+
         if not recipient_ids:
             return
 
