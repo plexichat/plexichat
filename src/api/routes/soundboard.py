@@ -292,6 +292,52 @@ def _map_soundboard_error(e: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Soundboard operation failed")
 
 
+def _require_server_member_for_library(sid: int, user_id: int) -> None:
+    """Re-check membership on EVERY request, before the cached page is read.
+
+    ``_load_server_sounds_page`` checks membership inside its cold path via
+    ``get_server_sounds``, but a cache hit skips that body entirely. Core
+    membership revocations (kick/ban/leave performed by automod, an admin path
+    or a bot) clear the core membership caches but do not know about this HTTP
+    response namespace, so a removed member could otherwise keep reading a
+    still-warm 200 until the short TTL elapsed. Run an independent, fail-closed
+    gate ahead of the cache so revocation is visible immediately no matter which
+    path performed it. Mirrors the emoji routes' membership gate.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        logger.error("Servers module not available for sound library read")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Servers module not available"}},
+        )
+    try:
+        member = servers_mod.get_member(sid, user_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Membership check failed for sound library read of server %s: %s",
+            sid,
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": "Failed to verify server membership",
+                }
+            },
+        ) from exc
+    if not member:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Not a member of this server"}},
+        )
+
+
 @cached(ttl=_SOUNDS_LIST_CACHE_TTL, prefix=_SOUNDS_LIST_CACHE_PREFIX)
 async def _load_server_sounds_page(
     sid: int, user_id: int, limit: int, offset: int
@@ -323,6 +369,10 @@ async def list_server_sounds(
 ) -> List[SoundResponse]:
     """List a bounded page of a server's sounds (members only)."""
     sid = _parse_server_id(server_id)
+    # Live authz gate BEFORE the cache lookup: a revoked member must not be
+    # served a still-warm library page, even if the revocation path did not
+    # invalidate this cache namespace.
+    _require_server_member_for_library(sid, current_user.user_id)
     try:
         page = await _load_server_sounds_page(sid, current_user.user_id, limit, offset)
         # A cache hit may hand back plain dicts; re-validate so the response is
