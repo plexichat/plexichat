@@ -14,6 +14,13 @@ if TYPE_CHECKING:
     from src.core.servers.manager import ServerManager
 
 
+# Sentinel for the precomputed-audience parameters on the voice dispatch
+# helpers. ``None`` is a valid resolved value (no audience / no server) and
+# must NOT trigger a redundant re-resolution, so "not supplied" needs its own
+# marker. See ``handle_voice_speaking``.
+_UNRESOLVED = object()
+
+
 def _present_bool(payload: Dict[str, Any], key: str) -> Optional[bool]:
     """Return the payload's boolean for ``key``, or ``None`` when absent.
 
@@ -498,17 +505,48 @@ class VoiceHandler:
                     signaling.record_activity(connection.user_id)
                 except Exception as activity_error:
                     logger.debug(f"voice activity record failed: {activity_error}")
+
+                # The state event and the speaking indicator target the SAME
+                # channel members. Resolving that audience is O(members) - one
+                # get_channel visibility check per member - and each helper
+                # used to resolve it independently, so a single speaking frame
+                # paid ~2N checks plus two server-id lookups. Resolve it once
+                # here and share it. The audience still passes through the same
+                # visibility filter keyed by (user, channel, server), so it
+                # cannot be widened to another channel; the sender is removed
+                # only for the speaking indicator. An unresolvable channel
+                # yields no audience (fail closed) for both dispatches.
+                server_id = await self._resolve_voice_server_id(
+                    channel_id, connection.user_id
+                )
+                visible_user_ids = (
+                    await run_in_threadpool(
+                        self._get_typing_recipient_ids,
+                        connection.user_id,
+                        channel_id,
+                        server_id,
+                        True,
+                    )
+                    if server_id
+                    else []
+                )
                 await self._dispatch_voice_state_update(
                     user_id=connection.user_id,
                     channel_id_for_recipients=channel_id,
                     event_channel_id=channel_id,
                     voice_state=state,
+                    server_id=server_id,
+                    recipient_ids=visible_user_ids,
                 )
                 await self._dispatch_voice_speaking(
                     user_id=connection.user_id,
                     channel_id=channel_id,
                     speaking=speaking,
                     volume=volume,
+                    server_id=server_id,
+                    recipient_ids=[
+                        uid for uid in visible_user_ids if uid != connection.user_id
+                    ],
                 )
         except Exception as e:
             logger.warning(f"Voice speaking failed: {e}")
@@ -552,19 +590,39 @@ class VoiceHandler:
 
         return None, None, None
 
+    async def _resolve_voice_server_id(
+        self, channel_id: int, user_id: int
+    ) -> Optional[int]:
+        """Resolve a voice channel's server id off-loop; fail closed on error."""
+        if not self._servers:
+            return None
+        try:
+            channel = await run_in_threadpool(
+                self._servers.get_channel, channel_id, user_id
+            )
+            if channel:
+                return getattr(channel, "server_id", None)
+        except Exception as channel_error:
+            logger.debug(f"voice channel server lookup failed: {channel_error}")
+        return None
+
     async def _dispatch_voice_speaking(
         self,
         user_id: int,
         channel_id: int,
         speaking: bool,
         volume: float,
+        server_id: Any = _UNRESOLVED,
+        recipient_ids: Any = _UNRESOLVED,
     ) -> None:
         """Relay a speaking indicator to the channel's other members.
 
         Recipients are resolved through the servers module (same visibility
         filter as the voice-state fan-out), so a non-member never receives the
         frame. The sender is excluded: its own indicator is driven locally by
-        its audio analysis.
+        its audio analysis. The speaking hot path precomputes ``server_id`` and
+        ``recipient_ids`` once per frame and passes them to both dispatches;
+        callers that don't supply them keep the original resolution path.
         """
         try:
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
@@ -572,27 +630,21 @@ class VoiceHandler:
             if not ws_is_setup():
                 return
 
-            server_id = None
-            if self._servers:
-                try:
-                    channel = await run_in_threadpool(
-                        self._servers.get_channel, channel_id, user_id
-                    )
-                    if channel:
-                        server_id = getattr(channel, "server_id", None)
-                except Exception as channel_error:
-                    logger.debug(f"voice channel server lookup failed: {channel_error}")
-
+            if server_id is _UNRESOLVED:
+                server_id = await self._resolve_voice_server_id(channel_id, user_id)
             if not server_id:
                 return
 
-            target_user_ids = await run_in_threadpool(
-                self._get_typing_recipient_ids,
-                user_id,
-                channel_id,
-                server_id,
-                False,
-            )
+            if recipient_ids is _UNRESOLVED:
+                target_user_ids = await run_in_threadpool(
+                    self._get_typing_recipient_ids,
+                    user_id,
+                    channel_id,
+                    server_id,
+                    False,
+                )
+            else:
+                target_user_ids = recipient_ids
             if not target_user_ids:
                 return
 
@@ -615,8 +667,16 @@ class VoiceHandler:
         channel_id_for_recipients: int,
         event_channel_id: Optional[int],
         voice_state: Any,
+        server_id: Any = _UNRESOLVED,
+        recipient_ids: Any = _UNRESOLVED,
     ) -> None:
-        """Dispatch voice state update to channel members."""
+        """Dispatch voice state update to channel members.
+
+        The speaking hot path precomputes ``server_id`` and ``recipient_ids``
+        once per frame and forwards them here and to the speaking dispatch, so
+        the O(members) visibility walk runs once instead of twice. Callers that
+        omit them keep the original resolution path.
+        """
         try:
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
             from src.core.events import payloads
@@ -626,16 +686,10 @@ class VoiceHandler:
 
             dispatcher = get_dispatcher()
 
-            server_id = None
-            if self._servers:
-                try:
-                    channel = await run_in_threadpool(
-                        self._servers.get_channel, channel_id_for_recipients, user_id
-                    )
-                    if channel:
-                        server_id = getattr(channel, "server_id", None)
-                except Exception as channel_error:
-                    logger.debug(f"voice channel server lookup failed: {channel_error}")
+            if server_id is _UNRESOLVED:
+                server_id = await self._resolve_voice_server_id(
+                    channel_id_for_recipients, user_id
+                )
 
             event = payloads.create_voice_state_update(
                 user_id=user_id,
@@ -650,13 +704,16 @@ class VoiceHandler:
 
             target_user_ids: List[int] = []
             if server_id:
-                target_user_ids = await run_in_threadpool(
-                    self._get_typing_recipient_ids,
-                    user_id,
-                    channel_id_for_recipients,
-                    server_id,
-                    True,
-                )
+                if recipient_ids is _UNRESOLVED:
+                    target_user_ids = await run_in_threadpool(
+                        self._get_typing_recipient_ids,
+                        user_id,
+                        channel_id_for_recipients,
+                        server_id,
+                        True,
+                    )
+                else:
+                    target_user_ids = recipient_ids
 
             if target_user_ids:
                 await dispatcher.dispatch_event(event, target_user_ids)
