@@ -27,6 +27,7 @@ from src.core.settings.exceptions import (
     SettingsKeyReserved,
     SettingsBulkLimitExceeded,
 )
+from src.core.security.hardening import parse_id
 
 import utils.logger as logger
 
@@ -38,6 +39,37 @@ _SERVER_SETTING_KEYS = {"_focused_channel"}
 
 # Setting keys whose dedicated read caches must be invalidated on write.
 _PROFILE_VISIBILITY_KEY = "profile_visibility"
+
+
+def _parse_focus_id(value, field: str):
+    """Parse an optional focused channel/server id at the HTTP boundary.
+
+    The ``_focused_channel`` payload is JSON supplied by the caller. Coercing
+    its ids with a bare ``int()`` accepted Unicode decimal homoglyphs
+    (``"٤٢"``/``"４２"`` -> ``42``), PEP-515 separators (``"1_0"`` -> ``10``),
+    signs and values past the 63-bit snowflake ceiling. Those values are stored
+    in Valkey and merged into the caller's presence payload as
+    ``current_channel_id``/``current_server_id``, which is broadcast to other
+    users and consumed by notification suppression. A parser differential
+    between this write path and the snowflake-aware consumers means a client or
+    a downstream service can read a different id than the one validated here.
+
+    Reuse the shared ASCII-only, range-bounded gate so every consumer sees the
+    same canonical positive snowflake (or ``None`` when focus is cleared).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text == "" or text == "0":
+            return None
+    elif value == 0:
+        # ``0`` is the documented "clear the focus" sentinel. bool is an int
+        # subclass; ``False`` must not be silently accepted as a clear.
+        if isinstance(value, bool):
+            return parse_id(value, field)
+        return None
+    return parse_id(value, field)
 
 
 def _invalidate_feature_caches(user_id: int, keys) -> None:
@@ -232,13 +264,15 @@ async def bulk_update_settings(
                 if key == "_focused_channel" and presence_module:
                     try:
                         data = json.loads(value)
-                        cid = data.get("channel_id")
-                        sid = data.get("server_id")
+                        if not isinstance(data, dict):
+                            raise ValueError("_focused_channel payload must be an object")
+                        cid = _parse_focus_id(data.get("channel_id"), "channel_id")
+                        sid = _parse_focus_id(data.get("server_id"), "server_id")
 
                         presence_module.set_focused_channel(
                             current_user.user_id,
-                            channel_id=int(cid) if cid and str(cid) != "0" else None,
-                            server_id=int(sid) if sid and str(sid) != "0" else None,
+                            channel_id=cid,
+                            server_id=sid,
                         )
                         # Persist so GET /_focused_channel stays consistent with PUT.
                         settings_module.set_server_setting(
@@ -407,13 +441,15 @@ async def set_setting(
         if presence_module:
             try:
                 data = json.loads(body.value)
-                cid = data.get("channel_id")
-                sid = data.get("server_id")
+                if not isinstance(data, dict):
+                    raise ValueError("_focused_channel payload must be an object")
+                cid = _parse_focus_id(data.get("channel_id"), "channel_id")
+                sid = _parse_focus_id(data.get("server_id"), "server_id")
 
                 presence_module.set_focused_channel(
                     current_user.user_id,
-                    channel_id=int(cid) if cid and str(cid) != "0" else None,
-                    server_id=int(sid) if sid and str(sid) != "0" else None,
+                    channel_id=cid,
+                    server_id=sid,
                 )
                 # Persist so GET /_focused_channel returns the same value.
                 setting = settings_module.set_server_setting(
