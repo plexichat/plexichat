@@ -11,7 +11,13 @@ import asyncio
 import utils.config as config
 import utils.logger as logger
 
+from src.core.security.hardening import clamp_finite_float
+
 _SWEEP_MIN_INTERVAL_SEC = 5.0
+# A runaway interval (NaN/inf/huge) must never park the sweep forever: expired
+# polls must always be reaped. Bound it at the config boundary.
+_SWEEP_MAX_INTERVAL_SEC = 86400.0
+_SWEEP_DEFAULT_INTERVAL_SEC = 60.0
 
 
 async def poll_expiry_sweep_loop() -> None:
@@ -22,8 +28,14 @@ async def poll_expiry_sweep_loop() -> None:
     # changes for the life of this task, so capture it once and reuse it for
     # every executor hand-off below.
     loop = asyncio.get_running_loop()
-    interval = float(config.get("polls.expiry_sweep_interval_seconds", 60))
-    interval = max(interval, _SWEEP_MIN_INTERVAL_SEC)
+    # max(float(raw), MIN) fails open on NaN: max(nan, MIN) is nan and
+    # asyncio.sleep(nan) raises, killing the task so expired polls go unreaped.
+    interval = clamp_finite_float(
+        config.get("polls.expiry_sweep_interval_seconds", _SWEEP_DEFAULT_INTERVAL_SEC),
+        _SWEEP_MIN_INTERVAL_SEC,
+        _SWEEP_MAX_INTERVAL_SEC,
+        default=_SWEEP_DEFAULT_INTERVAL_SEC,
+    )
     while True:
         try:
             if polls_module.is_setup():

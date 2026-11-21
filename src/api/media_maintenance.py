@@ -16,7 +16,13 @@ import asyncio
 import utils.config as config
 import utils.logger as logger
 
+from src.core.security.hardening import clamp_finite_float
+
 _SWEEP_MIN_INTERVAL_SEC = 30.0
+# NaN/inf/huge intervals must not park the sweep: abandoned chunked-upload
+# sessions and their temp files rely on this task to be reaped at all.
+_SWEEP_MAX_INTERVAL_SEC = 86400.0
+_SWEEP_DEFAULT_INTERVAL_SEC = 300.0
 
 
 async def _sweep_once(loop: asyncio.AbstractEventLoop) -> None:
@@ -54,12 +60,17 @@ async def _sweep_once(loop: asyncio.AbstractEventLoop) -> None:
 
 
 async def media_maintenance_sweep_loop() -> None:
-    interval_cfg = config.get("media.chunked_upload.cleanup_interval", 300)
-    try:
-        interval = float(interval_cfg)
-    except (TypeError, ValueError):
-        interval = 300.0
-    interval = max(interval, _SWEEP_MIN_INTERVAL_SEC)
+    # max(float(raw), MIN) fails open on NaN: max(nan, MIN) is nan and
+    # asyncio.sleep(nan) raises, killing the task so expired upload sessions
+    # and their temp files are never reaped.
+    interval = clamp_finite_float(
+        config.get(
+            "media.chunked_upload.cleanup_interval", _SWEEP_DEFAULT_INTERVAL_SEC
+        ),
+        _SWEEP_MIN_INTERVAL_SEC,
+        _SWEEP_MAX_INTERVAL_SEC,
+        default=_SWEEP_DEFAULT_INTERVAL_SEC,
+    )
     # The loop is fixed for this task's life; resolve it once and pass it into
     # each sweep instead of looking it up on every executor hand-off.
     loop = asyncio.get_running_loop()
