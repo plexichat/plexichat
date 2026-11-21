@@ -249,6 +249,95 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "and swallow a genuine stacked-write separator"
         ),
     ),
+    # --- Targeted gateway socket closure on session revocation ---
+    # Private-index repairs dc3b481e / c62071ac landed these closes at HEAD
+    # while peer agents' working-tree/index copies of the same files are stale.
+    # A peer staging a whole stale file would silently drop the server-side
+    # close and leave revoked credentials usable on an already-authenticated
+    # gateway socket (gateway auth happens only at IDENTIFY/RESUME).
+    CommittedFixMarker(
+        key="c62071ac-disable-2fa-session-socket-close",
+        path="src/core/auth/managers/twofactor.py",
+        marker=(
+            'for row in to_close:\n'
+            '            close_session_gateway_connections(\n'
+            '                user_id, int(row["id"]), "Session revoked"\n'
+            '            )'
+        ),
+        why=(
+            "c62071ac: disable_2fa closes the sockets of the sessions it "
+            "revokes (preserving the current session); a stale staged copy "
+            "drops the close and leaves pre-2FA-trusted sessions usable"
+        ),
+    ),
+    CommittedFixMarker(
+        key="dc3b481e-logout-session-socket-close",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=(
+            'close_session_gateway_connections(\n'
+            '                    row["user_id"], parsed["id"], "Session revoked"\n'
+            '                )'
+        ),
+        why=(
+            "dc3b481e: bearer-token logout closes its own session's socket; "
+            "a stale staged copy leaves that socket authenticated after logout"
+        ),
+    ),
+    CommittedFixMarker(
+        key="dc3b481e-max-eviction-session-socket-close",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=(
+            'close_session_gateway_connections(\n'
+            '                        user_id, evicted_id, "Session revoked"\n'
+            '                    )'
+        ),
+        why=(
+            "dc3b481e: max-sessions-per-user eviction closes the evicted "
+            "session's socket; a stale staged copy leaves an evicted, revoked "
+            "session still usable server-side"
+        ),
+    ),
+    CommittedFixMarker(
+        key="dc3b481e-bulk-revoke-session-socket-close",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=(
+            'for row in now_revoked:\n'
+            '                close_session_gateway_connections('
+        ),
+        why=(
+            "dc3b481e: revoke_sessions_bulk closes each revoked session's "
+            "socket by id (keeping the except_current survivor); a stale "
+            "staged copy restores a hint-only revoke with live sockets"
+        ),
+    ),
+    CommittedFixMarker(
+        key="dc3b481e-revoke-device-session-socket-close",
+        path="src/core/auth/managers/device.py",
+        marker=(
+            'self._log_audit(AuditEventType.DEVICE_REVOKED, user_id, True)\n'
+            '        for row in owned:\n'
+            '            close_session_gateway_connections('
+        ),
+        why=(
+            "dc3b481e: revoke_device closes the revoked device's session "
+            "sockets without killing other devices; a stale staged copy "
+            "leaves them authenticated"
+        ),
+    ),
+    CommittedFixMarker(
+        key="dc3b481e-untrust-device-session-socket-close",
+        path="src/core/auth/managers/device.py",
+        marker=(
+            'self._log_audit(AuditEventType.DEVICE_UNTRUSTED, user_id, True)\n'
+            '        for row in owned:\n'
+            '            close_session_gateway_connections('
+        ),
+        why=(
+            "dc3b481e: untrust_device closes the revoked fingerprint's session "
+            "sockets without killing other devices; a stale staged copy "
+            "leaves them authenticated"
+        ),
+    ),
 )
 
 
