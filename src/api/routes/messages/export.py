@@ -63,7 +63,13 @@ def _require_export_channel_view(servers_mod, cid, user_id) -> None:
     before any participation-only transcript read can happen.
     """
     if not servers_mod:
-        return
+        # The backing-channel/alias lookup cannot be evaluated without the
+        # servers module. A private-channel alias can exist in the DB
+        # independently of that module, so skipping this gate would let a
+        # member denied channels.view export a full private-channel transcript.
+        # Deny instead; a wired store with no backing channel still allows a
+        # genuine DM below.
+        raise _export_not_found()
     get_channel = getattr(servers_mod, "get_channel", None)
     channel_exists = getattr(servers_mod, "channel_exists", None)
     reverse = getattr(servers_mod, "get_channel_by_conversation", None)

@@ -99,7 +99,14 @@ class ForwardingService:
         """
         servers = self._servers
         if not servers:
-            return  # no servers store => conversation can only be a DM/group
+            # The backing-channel lookup cannot be evaluated without the
+            # servers module. A private-channel alias can exist in the DB
+            # (srv_channels.conversation_id) independently of that module, so
+            # skipping this gate would let a member denied channels.view read
+            # and decrypt source content into a conversation they control.
+            # Deny instead; a wired store whose reverse lookup finds no backing
+            # channel still allows genuine DMs below.
+            raise PermissionError("Cannot verify channel view access")
         lookup = getattr(servers, "get_channel_by_conversation", None)
         if not callable(lookup):
             raise PermissionError("Cannot verify channel view access")

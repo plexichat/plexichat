@@ -59,7 +59,13 @@ def _require_voice_send_access(servers, user_id: int, conversation_id: int) -> N
     gate in ``VoiceMessageService``. Any unresolved permission data denies.
     """
     if not servers:
-        return  # no servers store => conversation can only be a DM/group
+        # The backing-channel lookup cannot be evaluated without the servers
+        # module. A private-channel alias can exist in the DB independently of
+        # that module, so skipping this gate would let a member post a voice
+        # message into a channel whose messages.send grant was never checked.
+        # Deny instead; a wired store with no backing channel still allows a
+        # genuine DM below.
+        raise PermissionError("Cannot verify channel send access")
     lookup = getattr(servers, "get_channel_by_conversation", None)
     if not callable(lookup):
         raise PermissionError("Cannot verify channel send access")
