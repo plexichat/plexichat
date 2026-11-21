@@ -17,6 +17,11 @@ from .._result_cache import ResultCache, content_hash
 from ..models import ImageMetadata, ThumbnailSize
 from ..exceptions import ImageProcessingError
 
+from src.core.avatars.manager.upload_guard import (
+    DecompressionLimitError,
+    check_image_decode_limits,
+)
+
 
 # Default security limits
 DEFAULT_MAX_IMAGE_DIMENSION = 16384  # 16K pixels max width/height
@@ -137,7 +142,7 @@ class ImageProcessor:
                 "init",
             )
 
-    def _validate_image_dimensions(self, img) -> None:
+    def _validate_image_dimensions(self, img, compressed_bytes: int = 0) -> None:
         """
         Validate image dimensions are within safe limits.
 
@@ -158,6 +163,19 @@ class ImageProcessor:
                 "validation",
             )
 
+        try:
+            frames = max(1, int(getattr(img, "n_frames", 1) or 1))
+        except (TypeError, ValueError):
+            frames = 1
+        try:
+            check_image_decode_limits(
+                compressed_bytes, img.width, img.height, frames=frames
+            )
+        except DecompressionLimitError as exc:
+            raise ImageProcessingError(
+                f"Image exceeds the decoded-size budget: {exc}", "validation"
+            ) from exc
+
     def _open_validated(self, image_data: bytes):
         """
         Open an image and enforce the dimension security limit.
@@ -167,7 +185,7 @@ class ImageProcessor:
         method drifting from the others.
         """
         img = self._Image.open(io.BytesIO(image_data))
-        self._validate_image_dimensions(img)
+        self._validate_image_dimensions(img, len(image_data))
         return img
 
     def _prepare_for_jpeg(self, img):
@@ -201,7 +219,7 @@ class ImageProcessor:
             img = self._Image.open(io.BytesIO(image_data))
 
             # Security: Validate dimensions before processing
-            self._validate_image_dimensions(img)
+            self._validate_image_dimensions(img, len(image_data))
 
             has_alpha = img.mode in ("RGBA", "LA", "PA") or (
                 img.mode == "P" and "transparency" in img.info
@@ -297,7 +315,7 @@ class ImageProcessor:
                 img = self._Image.open(io.BytesIO(image_data))
 
                 # Security: Validate dimensions before processing
-                self._validate_image_dimensions(img)
+                self._validate_image_dimensions(img, len(image_data))
 
                 if img.mode == "P" and "transparency" in img.info:
                     img = img.convert("RGBA")
@@ -357,7 +375,7 @@ class ImageProcessor:
         try:
             # Open source image once
             source_img = self._Image.open(io.BytesIO(image_data))
-            self._validate_image_dimensions(source_img)
+            self._validate_image_dimensions(source_img, len(image_data))
 
             # Prepare image for JPEG if needed (transparency handle)
             if output_format == "JPEG":
@@ -410,7 +428,7 @@ class ImageProcessor:
             img = self._Image.open(io.BytesIO(image_data))
 
             # Security: Validate dimensions before processing
-            self._validate_image_dimensions(img)
+            self._validate_image_dimensions(img, len(image_data))
 
             original_format = img.format
 
