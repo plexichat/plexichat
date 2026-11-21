@@ -141,6 +141,20 @@ def invalidate_member_count_cache() -> None:
     )
 
     invalidate_typing_audience_cache()
+    # Channel-scoped gateway events (typing, read receipts, reactions, message
+    # activity) resolve their audience in ``resolve_channel_event_recipients``
+    # and memoize the fully resolved list in
+    # ``src.core.events.gateway_emit._channel_recipient_cache``. That list is
+    # derived from the same ``srv_members`` rows (plus each member's
+    # ``channels.view`` decision), but unlike the caches above it was never
+    # evicted on a membership write: a kick/ban/leave that leaves the removed
+    # member's socket up kept them in the warm recipient list and leaked those
+    # events to them for the whole TTL. Evict it here with the other fan-out
+    # caches. Lazy import keeps the membership tier decoupled from the event
+    # emit layer at module load (membership writes are rare).
+    from src.core.events.gateway_emit import clear_channel_recipient_cache
+
+    clear_channel_recipient_cache()
 
 
 def member_count_cache_stats() -> dict:
