@@ -194,6 +194,9 @@ class DeleteMessageAction(BaseAction):
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
             from src.core.events import build_message_update
             from src.api.routes.messages.helpers import _message_to_response
+            from src.api.routes.messages.messages_crud.broadcast import (
+                _fanout_safe_message_body,
+            )
 
             if not ws_is_setup():
                 return
@@ -242,8 +245,14 @@ class DeleteMessageAction(BaseAction):
             user_ids, resolved_server_id = self._resolve_recipients(violation, context)
 
             if user_ids:
+                # ``response`` is serialized for no concrete request viewer,
+                # but this one body is fanned out to every channel viewer.
+                # Route it through the shared sanitizer so any viewer-scoped
+                # field (poll results, read/receipt state, reaction "me"
+                # flags) is stripped on the wire even if the serializer path
+                # changes later. Fail closed; the actor gets no HTTP body here.
                 event = build_message_update(
-                    response.model_dump(),
+                    _fanout_safe_message_body(response),
                     channel_id=violation.channel_id,
                     server_id=resolved_server_id or violation.server_id,
                 )
