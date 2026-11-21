@@ -12,6 +12,7 @@ import pyotp
 from .dataclasses import AdminLoginResult
 from .helpers import _create_otp_challenge, _verify_admin_password
 from .otp_mixin import _check_admin_otp_budget
+from src.core.security.secrets import constant_time_compare
 
 
 class OTPSetupMixin:
@@ -134,9 +135,14 @@ class OTPSetupMixin:
                 try:
                     hashed_list = json.loads(backup_codes_hashed)
                     for i, h in enumerate(hashed_list):
-                        if candidate_sha256 == str(h) or _verify_pwd(
-                            normalized.lower(), str(h)
-                        ):
+                        h_str = str(h)
+                        # Backup-code digests are secret-derived values: route
+                        # the comparison through the constant-time helper, as
+                        # verify_otp() does. A plain ``==`` leaks the stored
+                        # digest through comparison timing.
+                        if constant_time_compare(
+                            candidate_sha256, h_str
+                        ) or _verify_pwd(normalized.lower(), h_str):
                             verified_backup_index = i
                             verified = True
                             break
@@ -146,8 +152,15 @@ class OTPSetupMixin:
                 codes = [
                     item for item in str(backup_codes_plaintext).split(",") if item
                 ]
-                if normalized in codes:
-                    verified_backup_index = codes.index(normalized)
+                # Legacy plaintext codes are secrets too. Scan the whole list
+                # with a constant-time comparator instead of ``in``/``index``,
+                # which short-circuit and leak the value and index by timing.
+                matched = -1
+                for i, stored in enumerate(codes):
+                    if constant_time_compare(normalized, stored) and matched == -1:
+                        matched = i
+                if matched != -1:
+                    verified_backup_index = matched
                     verified = True
         if not verified:
             return False, "Invalid OTP or backup code"
