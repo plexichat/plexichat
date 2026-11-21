@@ -110,26 +110,43 @@ def _fail_open_violations(tree):
     ]
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes reachable through execution (not definition).
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a nested callable that runs
+    a guard does not run it. Counting a dead nested guard as protection lets a
+    write method silence this invariant with dead evidence (the same vacuity
+    fixed across the SEC100/200/300 route guards).
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
 def _raise_messages(node):
     messages = []
-    if isinstance(node, (list, tuple)):
-        nodes = [sub for stmt in node for sub in ast.walk(stmt)]
-    else:
-        nodes = list(ast.walk(node))
-    for sub in nodes:
-        if not isinstance(sub, ast.Raise) or sub.exc is None:
-            continue
-        exc = sub.exc
-        if isinstance(exc, ast.Call) and exc.args:
-            arg = exc.args[0]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                messages.append(arg.value)
+    statements = node if isinstance(node, (list, tuple)) else [node]
+    for stmt in statements:
+        for sub in _own_body_nodes(stmt):
+            if not isinstance(sub, ast.Raise) or sub.exc is None:
+                continue
+            exc = sub.exc
+            if isinstance(exc, ast.Call) and exc.args:
+                arg = exc.args[0]
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    messages.append(arg.value)
     return messages
 
 
 def _has_fail_closed_guard(function, svc_source: str) -> bool:
     """Require ``if not <svc>: raise PermissionError(<sentinel>)`` in the body."""
-    for node in ast.walk(function):
+    for node in _own_body_nodes(function):
         if not isinstance(node, ast.If):
             continue
         test = node.test
@@ -237,6 +254,50 @@ def test_detector_flags_fail_open_but_accepts_both_fail_closed_shapes():
     assert not _has_fail_closed_guard(
         _find_function(fail_open, "write"), "self._participant_svc"
     )
+
+
+def test_dead_nested_fail_closed_guard_does_not_protect_write_path():
+    """A guard in a never-invoked nested callable is dead evidence.
+
+    Regression: ``_has_fail_closed_guard`` used ``ast.walk(function)``, which
+    descends into nested functions and lambdas. Merely *defining* a nested
+    helper that raises the fail-closed sentinel did not run the guard, so a
+    write method stripped of its live guard could silence this invariant with
+    dead evidence. A live in-handler guard (including behind statement-level
+    nesting) must still count.
+    """
+    source = textwrap.dedent(
+        """
+        class Svc:
+            def write_dead_nested(self, user_id, conversation_id):
+                def never_called():
+                    if not self._participant_svc:
+                        raise PermissionError("Cannot verify conversation participation")
+                return None
+
+            async def write_dead_async_nested(self, user_id, conversation_id):
+                async def never_called():
+                    if not self._participant_svc:
+                        raise PermissionError("Cannot verify conversation participation")
+                return None
+
+            def write_live(self, user_id, conversation_id):
+                if something:
+                    if not self._participant_svc:
+                        raise PermissionError("Cannot verify conversation participation")
+                return None
+        """
+    )
+    tree = ast.parse(source)
+    assert not _has_fail_closed_guard(
+        _find_function(tree, "write_dead_nested"), "self._participant_svc"
+    ), "dead fail-closed guard in a nested function must not protect the path"
+    assert not _has_fail_closed_guard(
+        _find_function(tree, "write_dead_async_nested"), "self._participant_svc"
+    ), "dead fail-closed guard in a nested async function must not protect the path"
+    assert _has_fail_closed_guard(
+        _find_function(tree, "write_live"), "self._participant_svc"
+    ), "a live in-handler guard behind statement nesting must still protect"
 
 
 def test_scan_is_not_vacuous():
