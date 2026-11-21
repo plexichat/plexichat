@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.servers import (
     BanResponse,
     BanCreateRequest,
@@ -32,6 +33,9 @@ router = APIRouter()
 async def get_server_bans(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[BanResponse]:
+    # A bot token carries its owner's user_id; reject it before any identity-
+    # based ban-list lookup so a bot cannot read its owner's moderation data.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -126,6 +130,10 @@ async def ban_member(
     body: Optional[BanCreateRequest] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    # A bot token's user_id is its human owner. Without this guard a narrow-
+    # scope bot credential could ban members as its owner in any server the
+    # owner manages (or owns outright).
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -223,6 +231,9 @@ async def ban_member(
 async def unban_member(
     server_id: str, user_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
+    # Same owner-identity confusion as ban_member: the acting user id is the
+    # bot owner's, so refuse bot credentials before any server lookup.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(

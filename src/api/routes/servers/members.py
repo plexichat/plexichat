@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.servers import (
     MemberResponse,
     MemberListResponse,
@@ -413,6 +414,10 @@ async def kick_member(
     current_user: TokenInfo = Depends(get_current_user),
     payload: Optional[KickMemberRequest] = None,
 ) -> SuccessResponse:
+    # A bot token's user_id is its human owner, so passing it to kick_member
+    # would let a narrow-scope bot credential wield the owner's server
+    # authority (including owner/all-permission) in a server it does not manage.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
