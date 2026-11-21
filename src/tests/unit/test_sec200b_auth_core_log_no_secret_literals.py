@@ -126,9 +126,8 @@ def _message_parts(node):
     return None
 
 
-def _scan(source):
-    """Return ``(leaks, log_call_count)`` for a source string."""
-    tree = ast.parse(source)
+def _scan_tree(tree):
+    """Return ``(leaks, log_call_count)`` from an already-parsed module tree."""
     leaks, calls = [], 0
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and _is_logger_call(node)):
@@ -145,6 +144,37 @@ def _scan(source):
             if _SECRET_EXPR.search(expression):
                 leaks.append((node.lineno, "interpolation", expression[:70]))
     return leaks, calls
+
+
+def _scan(source):
+    """Scan one source string. Used only by the in-memory self-test below.
+
+    Real sample modules never go through this path: they are read and parsed
+    once by :func:`_load_sample` and handed to ``_scan_tree`` as trees, so a
+    synthetic snippet is the only thing that pays for its own parse.
+    """
+    return _scan_tree(ast.parse(source))
+
+
+def _load_sample():
+    """Read and AST-parse every sample module exactly once.
+
+    Returns ``((relative, source, tree), ...)`` shared by the parametrized
+    completeness test and the non-vacuity test. Previously each sample was read
+    and parsed twice: once by the parametrized test and again by
+    ``test_sample_is_not_vacuous``, which re-read and re-scanned all 15 modules
+    just to count log calls. Every detector now reuses these shared trees.
+    """
+    samples = []
+    for relative in SAMPLE_MODULES:
+        path = ROOT / relative
+        assert path.is_file(), f"sample module disappeared: {relative}"
+        source = path.read_text(encoding="utf-8")
+        samples.append((relative, source, ast.parse(source)))
+    return tuple(samples)
+
+
+_SAMPLES = _load_sample()
 
 
 def test_detector_flags_both_leak_shapes_and_spares_benign_text():
@@ -166,18 +196,56 @@ def test_detector_flags_both_leak_shapes_and_spares_benign_text():
     assert 5 not in benign_lines and 6 not in benign_lines, leaks
 
 
-@pytest.mark.parametrize("relative", SAMPLE_MODULES)
-def test_no_secret_values_in_auth_core_log_format_strings(relative):
-    source = (ROOT / relative).read_text(encoding="utf-8")
-    leaks, _ = _scan(source)
+@pytest.mark.parametrize(
+    "relative,source,tree", _SAMPLES, ids=[relative for relative, _, _ in _SAMPLES]
+)
+def test_no_secret_values_in_auth_core_log_format_strings(relative, source, tree):
+    leaks, _ = _scan_tree(tree)
     assert not leaks, f"{relative} logs secret material: {leaks}"
 
 
 def test_sample_is_not_vacuous():
     """The fixed sample must exercise a meaningful number of log calls."""
-    total = 0
-    for relative in SAMPLE_MODULES:
-        path = ROOT / relative
-        assert path.is_file(), f"sample module disappeared: {relative}"
-        total += _scan(path.read_text(encoding="utf-8"))[1]
+    total = sum(_scan_tree(tree)[1] for _, _, tree in _SAMPLES)
     assert total >= 80, f"expected a meaningful sample, found {total} log calls"
+
+
+def test_sample_modules_are_read_and_parsed_once(monkeypatch):
+    """Perf regression: every sample module is read and AST-parsed once.
+
+    The detector used to be a source-string parser (``_scan(source)``) called
+    from both the per-module parametrized test and the non-vacuity test, so all
+    15 sample modules were read and parsed twice for no benefit. Counting the
+    reads/parses pins the fix deterministically -- no wall-clock timing and no
+    flaky threshold. The detector and all real-tree callers must reuse the
+    pre-built trees: no extra I/O however many assertions call them.
+    """
+    reads = []
+    parses = []
+    real_read_text = Path.read_text
+    real_parse = ast.parse
+
+    def counting_read_text(self, *args, **kwargs):
+        reads.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    def counting_parse(source, *args, **kwargs):
+        parses.append(source)
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    monkeypatch.setattr(ast, "parse", counting_parse)
+
+    samples = _load_sample()
+
+    assert len(samples) == len(SAMPLE_MODULES)
+    assert reads == [ROOT / rel for rel in SAMPLE_MODULES]
+    assert parses == [source for _, source, _ in samples]
+
+    # Every real-tree caller reuses the shared trees; it neither re-reads a
+    # module nor re-parses an already-parsed source.
+    for relative, source, tree in samples:
+        leaks, calls = _scan_tree(tree)
+        assert isinstance(leaks, list) and calls >= 0
+    assert reads == [ROOT / rel for rel in SAMPLE_MODULES]
+    assert parses == [source for _, source, _ in samples]
