@@ -672,6 +672,15 @@ class GatewayDispatcher:
             return 0
 
         connections = self._session_manager.get_connections_for_users(target_ids)
+        # The event's ``d`` payload is byte-for-byte identical for every member
+        # of the fan-out. Freeze its structural key once here rather than once
+        # per recipient inside ``PayloadRenderCache.render``: without this, a
+        # broadcast to N member connections paid the recursive O(payload) walk
+        # N times even though the cache hit on that same key N-1 times. This
+        # mirrors the hoist already done in ``dispatch_event`` and
+        # ``dispatch_raw_to_users``; this path was the last identical-payload
+        # fan-out still rebuilding the key per recipient.
+        data_key = freeze_payload(event.data)
         for conn in connections:
             if not conn.is_authenticated:
                 continue
@@ -681,7 +690,7 @@ class GatewayDispatcher:
             if not filter_event_by_intents(event, conn.intents):
                 continue
 
-            payload = self._build_dispatch_payload(conn, event)
+            payload = self._build_dispatch_payload(conn, event, data_key=data_key)
             tasks.append(self._send_to_connection(conn, payload))
 
         if tasks:
