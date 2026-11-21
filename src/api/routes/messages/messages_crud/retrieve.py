@@ -52,6 +52,52 @@ def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
 
     get_channel = getattr(servers_mod, "get_channel", None)
     channel_exists = getattr(servers_mod, "channel_exists", None)
+    reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+
+    def _require_alias_backing_channel() -> None:
+        """Gate a server channel's linked conversation-id URL alias.
+
+        Message routes accept either a channel id or the channel's linked
+        conversation id (see ``_resolve_channel_scope``). A conversation id is
+        NOT a channel id, so the direct ``get_channel``/``channel_exists``
+        probes above both miss it and the alias looks like a DM. Resolve it
+        membership-agnostically and require a live view grant on the real
+        backing channel before a read/delete is allowed. Fail closed on any
+        broken lookup; a genuine DM/group has no backing channel and is left
+        to the messaging layer's participation check.
+        """
+        if not callable(reverse):
+            # Legacy/stub stores without the reverse lookup cannot be checked
+            # for the alias; the addressed-id gate above is all we can do.
+            return
+        try:
+            backing = reverse(cid)
+        except Exception:
+            raise _not_found()
+        if backing is None:
+            return
+        channel_id = (
+            backing.get("id")
+            if isinstance(backing, dict)
+            else getattr(backing, "id", None)
+        )
+        if channel_id is None:
+            raise _not_found()
+        try:
+            channel_id = int(channel_id)
+        except (TypeError, ValueError):
+            raise _not_found()
+        if channel_id == cid:
+            return  # addressed-id gate already checked this exact channel
+        if not callable(get_channel):
+            raise _not_found()
+        try:
+            if get_channel(channel_id, user_id) is None:
+                raise _not_found()
+        except HTTPException:
+            raise
+        except Exception:
+            raise _not_found()
 
     def _is_server_channel() -> bool:
         if callable(channel_exists):
@@ -70,6 +116,7 @@ def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
     if not callable(get_channel):
         if _is_server_channel():
             raise _not_found()
+        _require_alias_backing_channel()
         return
     try:
         if get_channel(cid, user_id) is not None:
@@ -78,6 +125,7 @@ def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
         raise _not_found()
     if _is_server_channel():
         raise _not_found()
+    _require_alias_backing_channel()
 
 
 class RetrieveMixin(MessagesCRUDBase):
