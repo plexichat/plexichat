@@ -90,12 +90,24 @@ def test_ack_dispatch_scan_is_not_vacuous():
     )
 
 
-def test_raw_member_lookup_scan_is_not_vacuous():
-    uses = [(p.name, fn.name) for p, fn in _member_lookup_functions()]
+def test_scoped_resolution_scan_is_not_vacuous():
+    """The half of the invariant that must stay observable.
+
+    Every broadcast now resolves through the scoped resolver, so a scan for
+    surviving raw ``get_member_user_ids`` uses legitimately finds none -- and a
+    guard on that list would be vacuous. What must still be seen is the scoped
+    resolution these routes use instead; if that disappeared, both the ACK
+    invariant and the raw-lookup filter guard would pass by looking at nothing.
+    """
+    uses = [
+        (path.name, fn.name)
+        for path, fn in _functions()
+        if any(_call_name(call) == SCOPED_RESOLVER for call in _calls(fn))
+    ]
     assert uses, (
-        "expected at least one permission-filtered member lookup in the "
-        "message-event broadcast helper; if all call sites were removed the "
-        "filter invariant below would pass vacuously"
+        "expected at least one message-route broadcast to resolve its audience "
+        f"through {SCOPED_RESOLVER}; the raw-lookup guards below would "
+        "otherwise pass vacuously"
     )
 
 

@@ -29,6 +29,30 @@ SLEEP_CALL = re.compile(r"^\s*[^#\n]*\.sleep\(", re.MULTILINE)
 
 # relative path under src/tests -> (number of .sleep() calls, why they exist)
 INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
+    "api/test_admin_dashboard_summary_warmup.py": (
+        1,
+        "slow-build double widens the window where two readers race the cache fill",
+    ),
+    "api/test_admin_license_feature_catalog_cache.py": (
+        1,
+        "stubbed provider delay stands in for a cold catalog build so the fill is observable",
+    ),
+    "api/test_read_receipt_dm_block_audience.py": (
+        1,
+        "yield to the loop so the fire-and-forget ACK broadcast runs",
+    ),
+    "auth/test_api_token_verify_cache.py": (
+        1,
+        "let the short access-token verify cache TTL expire",
+    ),
+    "automod/test_ai_check_backpressure.py": (
+        1,
+        "poll a backpressure predicate until it flips inside a stubbed caller",
+    ),
+    "automod/test_compiled_rule_cache.py": (
+        1,
+        "slow rule double widens the window where two readers race the compile cache",
+    ),
     "api/test_admin_migrations_list_cache.py": (
         1,
         "slow-build double widens the window where two readers race the cache fill",
@@ -88,6 +112,18 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
     "avatars/test_checksum_cache_bound_m5.py": (
         1,
         "let the bounded checksum-cache TTL expire",
+    ),
+    "database/test_cache_request_local_coalescing.py": (
+        1,
+        "yield to the loop so a concurrent request coalesces onto the in-flight fill",
+    ),
+    "database/test_cache_single_flight_swr.py": (
+        7,
+        "yield to the loop while concurrent loaders coalesce; poll until the leader registers",
+    ),
+    "media/test_video_metadata_dedup.py": (
+        2,
+        "poll the coalescing counter, then let the metadata dedup window elapse",
     ),
     "database/test_security.py": (
         3,
@@ -283,6 +319,14 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
     "unit/test_gateway_throughput_regression.py": (
         1,
         "advance the fixed throughput measurement window",
+    ),
+    "unit/test_gateway_batching_optimization.py": (
+        4,
+        "yield to the event loop so the batcher's gather window and flush run",
+    ),
+    "unit/test_valkey_lock_backoff_scaling.py": (
+        3,
+        "yield across loop turns so holders overlap, then sleep out a short backoff",
     ),
     "unit/test_inprocess_cache_bounds.py": (
         2,

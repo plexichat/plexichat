@@ -32,13 +32,18 @@ class _FakeClient:
 
 
 @pytest.fixture(autouse=True)
-def _isolated(monkeypatch):
+def client(monkeypatch):
+    """A fake Valkey client, also exposed as the ``client`` argument.
+
+    Autouse, so the cache is cleared around every case here; named ``client``
+    because the cases take it as a parameter to assert what was published.
+    """
     clear_envelope_template_cache()
     manager_mod.cross_worker_dedupe.clear()
-    client = _FakeClient()
+    fake = _FakeClient()
     monkeypatch.setattr(db, "valkey_available", lambda: True)
-    monkeypatch.setattr(db, "get_valkey_client", lambda: client)
-    yield client
+    monkeypatch.setattr(db, "get_valkey_client", lambda: fake)
+    yield fake
     clear_envelope_template_cache()
     manager_mod.cross_worker_dedupe.clear()
 

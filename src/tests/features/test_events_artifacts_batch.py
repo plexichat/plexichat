@@ -395,6 +395,10 @@ class TestConcurrentDM(unittest.TestCase):
         repo.get_dm_lookup.return_value = 999
 
         svc = conv_mod.ConversationService.__new__(conv_mod.ConversationService)
+        # __new__ skips BaseService.__init__, so the db handle the DM block
+        # fallback reads has to be supplied here as well.
+        svc._db = MagicMock()
+        svc._db.fetch_one.return_value = None
         svc._repo = repo
         svc._user_settings_svc = MagicMock()
         svc._user_settings_svc.user_exists.return_value = True
