@@ -679,8 +679,10 @@ class ApiTokenMixin(AuthManagerProtocol):
             return False
 
         # Mutable side effects stay OUTSIDE the cache: usage accounting and
-        # auditing must reflect every request, not just cache misses.
-        last_used = verdict["last_used_at"]
+        # auditing must reflect every request, not just cache misses. The single
+        # combined UPDATE below already persists ``last_used_at``; a separate
+        # "SET last_used_at = ?" write (formerly gated on the cached value being
+        # older than a minute) re-wrote the identical ``now`` and was removed.
         updates = [
             "last_used_at = ?",
             "ua_index = ?",
@@ -711,11 +713,6 @@ class ApiTokenMixin(AuthManagerProtocol):
             f"UPDATE auth_api_access_tokens SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
         )
-        if now - int(last_used) > 60000:
-            self._db.execute(
-                "UPDATE auth_api_access_tokens SET last_used_at = ? WHERE id = ?",
-                (now, token_id),
-            )
         self._record_api_access_token_event(
             token_id=int(token_id),
             ip_address=ip_address,
