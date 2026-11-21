@@ -132,7 +132,10 @@ def _pyotp_alias_names(
 
 
 def _is_pyotp_verify(
-    node, alias_names=frozenset(), module_aliases=frozenset(), constructor_aliases=frozenset()
+    node,
+    alias_names=frozenset(),
+    module_aliases=frozenset(),
+    constructor_aliases=frozenset(),
 ):
     """Whether ``node`` is a ``<totp|hotp>.verify(...)`` call.
 
@@ -189,11 +192,31 @@ def _is_canonical_gate_call(node):
     return False
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes reachable through execution (not definition).
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a nested callable that runs a
+    gate does not run it. Counting a dead nested gate as protection lets a
+    verifier silence this invariant with dead evidence (the same vacuity fixed
+    across the SEC100/200/300 route guards, the cached-route guard and the
+    fail-closed write guard).
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
 def _has_ascii_gate(function):
     """Whether ``function``'s body performs an ASCII-canonical gate."""
     if function is None:
         return False
-    return any(_is_canonical_gate_call(node) for node in ast.walk(function))
+    return any(_is_canonical_gate_call(node) for node in _own_body_nodes(function))
 
 
 def _verify_sites(tree):
@@ -356,6 +379,56 @@ def test_detector_recognises_pyotp_verify_through_import_alias():
     sites = _scan_source(gated_module_alias)
     assert len(sites) == 1
     assert _has_ascii_gate(sites[0][1])
+
+
+def test_dead_nested_gate_does_not_protect_verify():
+    """A canonical gate in a never-invoked nested callable is dead evidence.
+
+    Regression: ``_has_ascii_gate`` used ``ast.walk(function)``, which descends
+    into nested functions and lambdas. Merely *defining* a nested helper or
+    lambda that calls a canonical gate did not run it, so a verifier stripped of
+    its live gate could silence this invariant with dead evidence (the same
+    vacuity fixed across the SEC100/200/300 route guards, the cached-route
+    guard and the fail-closed write guard). A live in-body gate -- including one
+    behind statement-level nesting -- must still count.
+    """
+    dead_nested = """
+    def verify(code):
+        def never_called():
+            if not _is_canonical_totp_code(code):
+                return False
+        return totp.verify(code)
+    """
+    dead_lambda = """
+    def verify(code):
+        _ = lambda: _ASCII_DIGITS_RE.fullmatch(code)
+        return totp.verify(code)
+    """
+    live_gate = """
+    def verify(code):
+        if not _is_canonical_totp_code(code):
+            return False
+        return totp.verify(code)
+    """
+    nested_live_gate = """
+    def verify(code):
+        for _ in range(1):
+            if not _is_canonical_totp_code(code):
+                return False
+        return totp.verify(code)
+    """
+    for source in (dead_nested, dead_lambda):
+        sites = _scan_source(source)
+        assert len(sites) == 1, f"verify site not detected in: {source}"
+        assert not _has_ascii_gate(sites[0][1]), (
+            "dead nested gate must not protect the verifier"
+        )
+    for source in (live_gate, nested_live_gate):
+        sites = _scan_source(source)
+        assert len(sites) == 1
+        assert _has_ascii_gate(sites[0][1]), (
+            "a live in-body gate must still protect the verifier"
+        )
 
 
 def test_detector_does_not_flag_non_pyotp_verify_aliases():
