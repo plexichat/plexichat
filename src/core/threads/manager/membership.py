@@ -13,6 +13,13 @@ from ..exceptions import (
 from .helpers import _get_thread_internal, _row_to_thread_member
 from .protocol import ThreadProtocol
 
+#: Hard ceiling for ``get_thread_members``. The ``limit`` argument used to be
+#: clamped from below only (``max(0, limit)``); a large positive value reached
+#: SQL ``LIMIT ?`` verbatim and returned the entire membership roster, turning
+#: one request into an unbounded query/serialization. 100 matches this method's
+#: default page size and the other thread/relationship listings.
+MAX_MEMBERS_PAGE_SIZE = 100
+
 
 class ThreadMembershipMixin(ThreadProtocol):
     def _is_member(self, user_id: int, thread_id: int) -> bool:
@@ -283,11 +290,17 @@ class ThreadMembershipMixin(ThreadProtocol):
         if not self.can_view_thread(user_id, thread_id):
             raise ThreadAccessDeniedError("Cannot access this thread")
 
-        # Clamp from below: SQLite treats ``LIMIT -1`` as *unlimited*, so a
-        # negative limit would dump the entire membership roster instead of
-        # returning an empty page. Mirrors the clamp in get_messages() and
-        # the relationship/blocking listings.
-        limit = max(0, limit)
+        # Clamp from both sides: SQLite treats ``LIMIT -1`` as *unlimited*, so a
+        # negative limit would dump the entire membership roster, while an
+        # oversized positive limit (e.g. 100000000) would return every member
+        # and blow up the query/serialization. Non-integer input fails closed
+        # to an empty page. Mirrors the clamp in get_messages() and the
+        # relationship/blocking listings.
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError, OverflowError):
+            limit = 0
+        limit = max(0, min(limit, MAX_MEMBERS_PAGE_SIZE))
 
         if after_user_id:
             rows = self._db.fetch_all(
