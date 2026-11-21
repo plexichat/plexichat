@@ -315,11 +315,40 @@ def force_password_change(
     themselves.
     """
     from .auth.password_mixin import force_password_change_target
+    from .permissions import can_manage_admin
+
+    db = _get_db()
+
+    # This is a support-tool style mutation against another *admin* account, so
+    # it must honour the same role-position hierarchy every other admin-targeting
+    # mutation enforces (admin_user.update/delete/toggle_status, ban/unban admin).
+    # Historically only self-targeting was refused here, which let any holder of
+    # ``admin.edit`` (e.g. a support_admin at position 10) force a password change
+    # on a super_admin (position 100) and evict a superior account. Fail closed
+    # when the ids cannot be coerced or the hierarchy lookup errors.
+    try:
+        actor_id = int(acting_admin_id)
+        target_id = int(target_admin_id)
+        manageable = can_manage_admin(db, actor_id, target_id)
+    except (TypeError, ValueError):
+        return False, "Invalid admin ID"
+    except Exception:
+        import utils.logger as logger
+
+        logger.error(
+            "force_password_change REFUSED: hierarchy check failed for %s -> %s",
+            acting_admin_id,
+            target_admin_id,
+            exc_info=True,
+        )
+        return False, "Could not verify admin hierarchy"
+    if not manageable:
+        return False, "Insufficient role position to force this admin's password change"
 
     return force_password_change_target(
-        db=_get_db(),
-        acting_admin_id=acting_admin_id,
-        target_admin_id=target_admin_id,
+        db=db,
+        acting_admin_id=actor_id,
+        target_admin_id=target_id,
         client_ip=client_ip,
     )
 
