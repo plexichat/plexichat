@@ -136,9 +136,21 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         channel_id_for_conv = row["channel_id"]
         conversation_id = channel_id_for_conv
         channel_row = self._db.fetch_one(
-            "SELECT conversation_id FROM srv_channels WHERE id = ?",
+            "SELECT server_id, conversation_id FROM srv_channels WHERE id = ?",
             (channel_id_for_conv,),
         )
+        # SECURITY: ``row["channel_id"]`` is the webhook's delivery target. It
+        # must resolve to a channel on the SAME server as the webhook. Without
+        # this check, a webhook record whose channel_id points at another
+        # guild's channel (a stale/migrated/partially-updated row) silently
+        # posts into that foreign guild's conversation -- cross-tenant message
+        # injection by anyone holding the webhook token. Mirror the thread
+        # target check below and fail closed on a mismatch.
+        if channel_row and int(channel_row["server_id"]) != int(row["server_id"]):
+            raise InvalidWebhookContentError(
+                "Webhook channel does not belong to the webhook's server",
+                ["invalid_channel"],
+            )
         if channel_row and channel_row["conversation_id"]:
             conversation_id = channel_row["conversation_id"]
 
