@@ -271,7 +271,16 @@ class DeliveryMixin(PushManagerBase):
                 if not settings.mobile_push:
                     return 0
             except Exception as e:
-                logger.debug(f"Push settings lookup failed, delivering anyway: {e}")
+                # FAIL CLOSED: the settings lookup is the authorization gate for
+                # a device push. Swallowing the error and continuing delivered
+                # notifications to users whose mobile_push opt-out could not be
+                # resolved (backend hiccup, corrupt/missing cache entry, or an
+                # uninitialized notifications module). An unavailable preference
+                # store must never silently grant delivery.
+                logger.warning(
+                    f"Push settings lookup failed; suppressing push (fail closed): {e}"
+                )
+                return 0
 
         sent_count = 0
         invalid_tokens = []
@@ -353,7 +362,12 @@ class DeliveryMixin(PushManagerBase):
                 if not settings.mobile_push:
                     return 0
             except Exception as e:
-                logger.debug(f"Push settings lookup failed, delivering anyway: {e}")
+                # FAIL CLOSED: same gate as the synchronous path. A failed
+                # preference lookup must suppress, never grant, device push.
+                logger.warning(
+                    f"Push settings lookup failed; suppressing push (fail closed): {e}"
+                )
+                return 0
 
         async def send_one(token_record: Dict[str, Any]) -> Optional[bool]:
             return await asyncio.to_thread(
