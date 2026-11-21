@@ -239,14 +239,54 @@ def _own_or_route_gate(fn, gates):
 
 
 def _enclosing_function(tree, node):
-    for parent in ast.walk(tree):
-        if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    """Innermost function body that directly contains ``node``.
+
+    ``ast.walk`` yields outer functions before the ones nested inside them,
+    so returning the first container credits a cached call to its outermost
+    enclosing function. A gate that only exists in a different (possibly
+    never-invoked) sibling helper would then wrongly mark the call as gated.
+    Return the deepest container so the caller check is scoped to the function
+    that actually invokes the cached helper.
+    """
+    containers = [
+        parent
+        for parent in ast.walk(tree)
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and parent is not node
+        and any(child is node for child in ast.walk(parent))
+    ]
+    if not containers:
+        return None
+    innermost = containers[0]
+    for candidate in containers[1:]:
+        if any(candidate is child for child in ast.walk(innermost)):
+            innermost = candidate
+    return innermost
+
+
+def _own_body_gate_calls(caller, gates):
+    """Gate calls in ``caller``'s own body, excluding nested callables.
+
+    Merely *defining* a nested function that calls the gate does not run it, so
+    a gate call inside a nested function / lambda must not silence the guard.
+    """
+    hits = []
+
+    def walk(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Call) and _callee_name(child) in gates:
+                hits.append(child)
+            walk(child)
+
+    for stmt in caller.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
-        if parent is node:
-            continue
-        if any(child is node for child in ast.walk(parent)):
-            return parent
-    return None
+        if isinstance(stmt, ast.Call) and _callee_name(stmt) in gates:
+            hits.append(stmt)
+        walk(stmt)
+    return hits
 
 
 def _caller_gate_evidence(trees, cached_name, gates):
@@ -255,7 +295,8 @@ def _caller_gate_evidence(trees, cached_name, gates):
     Returns ``(sites, ungated)``. ``sites`` is the number of call sites found;
     ``ungated`` is the list of sites with no declared gate ahead of the call.
     Fails closed: an unresolvable caller or zero call sites is reported as
-    ungated.
+    ungated. Only gates in the calling function's own body count -- a gate in
+    a nested (and possibly never-called) helper is not a live pre-cache check.
     """
     sites = 0
     ungated = []
@@ -269,10 +310,8 @@ def _caller_gate_evidence(trees, cached_name, gates):
                 ungated.append((_rel, node.lineno, "no enclosing function"))
                 continue
             gated = any(
-                isinstance(inner, ast.Call)
-                and _callee_name(inner) in gates
-                and inner.lineno < node.lineno
-                for inner in ast.walk(caller)
+                inner.lineno < node.lineno
+                for inner in _own_body_gate_calls(caller, gates)
             )
             if not gated:
                 ungated.append((_rel, node.lineno, caller.name))
@@ -326,6 +365,30 @@ _BAD_CALLER = textwrap.dedent(
     """
 )
 
+# A gate that only appears inside a nested callable that is never invoked is
+# not a live pre-cache check. Both shapes used to be credited by the detector:
+# the first because the outermost function was selected as the caller, the
+# second because the whole caller subtree (including nested bodies) was scanned.
+_DEAD_GATE_SIBLING = textwrap.dedent(
+    """
+    async def outer(current_user):
+        def never_called():
+            _require_access(current_user)
+        async def cached_fn():
+            return await _load_cached(current_user)
+        return await cached_fn()
+    """
+)
+
+_DEAD_GATE_NESTED = textwrap.dedent(
+    """
+    async def caller(current_user):
+        def never_called():
+            _require_access(current_user)
+        return await _load_cached(current_user)
+    """
+)
+
 
 def _first_fn(source):
     tree = ast.parse(source)
@@ -352,6 +415,35 @@ def test_detector_flags_ungated_cached_call_site():
     assert sites == 1 and ungated == []
     sites, ungated = _caller_gate_evidence(
         [("synthetic.py", bad_tree)], "_load_cached", {"_require_access"}
+    )
+    assert sites == 1 and len(ungated) == 1
+
+
+def test_detector_rejects_dead_gate_in_sibling_nested_function():
+    """A gate in a never-called sibling helper must not gate the cached call.
+
+    Regression: ``ast.walk`` yields the outermost function first, so the old
+    ``_enclosing_function`` reported ``outer`` and credited its whole body --
+    including the dead helper's gate call -- to the cached call in ``cached_fn``.
+    """
+    tree = ast.parse(_DEAD_GATE_SIBLING)
+    call = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and _callee_name(n) == "_load_cached"
+    )
+    assert _enclosing_function(tree, call).name == "cached_fn"
+    sites, ungated = _caller_gate_evidence(
+        [("synthetic.py", tree)], "_load_cached", {"_require_access"}
+    )
+    assert sites == 1 and len(ungated) == 1
+
+
+def test_detector_rejects_dead_gate_in_nested_helper_of_caller():
+    """A gate inside a nested helper of the caller is not a live pre-cache check."""
+    tree = ast.parse(_DEAD_GATE_NESTED)
+    sites, ungated = _caller_gate_evidence(
+        [("synthetic.py", tree)], "_load_cached", {"_require_access"}
     )
     assert sites == 1 and len(ungated) == 1
 
