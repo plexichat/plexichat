@@ -7,6 +7,7 @@ from starlette.concurrency import run_in_threadpool
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.request_guards import read_body_capped
+from src.api.routes.users.helpers import authenticated_cache_key, require_user_token
 from src.api.schemas.servers import ChannelResponse, ChannelUpdateRequest
 from src.api.schemas.common import ErrorResponse
 from src.core.database import cached
@@ -139,7 +140,7 @@ class ChannelCRUDMixin(ChannelBase):
     # representations for up to half a minute after a kick/ban/downgrade.
     # A short TTL keeps the read hot-path benefit while bounding the
     # revocation-staleness window to seconds.
-    @cached(ttl=5, prefix="channel_api")
+    @cached(ttl=5, prefix="channel_api", key_builder=authenticated_cache_key("channel_api"))
     async def _load_channel(
         self, channel_id: str, current_user: TokenInfo
     ) -> ChannelResponse:
@@ -150,6 +151,7 @@ class ChannelCRUDMixin(ChannelBase):
         access on the cold path so only authorised data is cached, but the
         authoritative revocation gate lives outside the ``@cached`` wrapper.
         """
+        require_user_token(current_user)
         servers_mod = api.get_servers()
         if not servers_mod:
             logger.error("Servers module not available")
