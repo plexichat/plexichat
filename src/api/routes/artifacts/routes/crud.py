@@ -24,6 +24,7 @@ from src.core.artifacts.models import ArtifactStatus, ArtifactType
 
 from ...artifacts_helpers import (
     _AuthCache,
+    _artifact_type_enabled,
     _artifact_response,
     _author_profile_cache,
     _authorize_scope,
@@ -222,7 +223,17 @@ async def list_artifacts(
             "offset": offset,
         }
         if types is not None:
+            # An explicit filter already 403'd above for any disabled type.
             filters["artifact_type"] = types
+        else:
+            # Fail closed: an untyped listing must apply the same per-type
+            # capability gate that the single-artifact GET and explicit type
+            # filters enforce. Encoding it as a SQL filter keeps the page and
+            # the COUNT query consistent (so pagination stays correct) instead
+            # of fetching disabled-type rows and dropping them after the fact.
+            filters["artifact_type"] = [
+                t for t in ArtifactType if _artifact_type_enabled(t)
+            ]
         if status_filter is not None:
             valid_statuses = {s.value for s in ArtifactStatus}
             if status_filter in valid_statuses:

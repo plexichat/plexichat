@@ -303,6 +303,17 @@ def _artifact_capability_for_type(artifact_type: ArtifactType) -> str:
     return artifact_type_capability(artifact_type)
 
 
+def _artifact_type_enabled(artifact_type: ArtifactType) -> bool:
+    """Whether an artifact type passed the same gate as a single-artifact GET.
+
+    Shared by the untyped listing path so it cannot expose stored types whose
+    license/config capability is currently unavailable.
+    """
+    feature = _artifact_capability_for_type(artifact_type)
+    info = get_capability(feature, config.get("artifacts", {}) or {})
+    return is_usable(info.state)
+
+
 def _require_artifact_capability(artifact_type: ArtifactType) -> str:
     """Fail closed when the requested artifact feature is unavailable."""
     feature = _artifact_capability_for_type(artifact_type)
