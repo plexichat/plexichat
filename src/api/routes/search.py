@@ -6,11 +6,12 @@ import copy
 import time
 from collections import OrderedDict
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.api.schemas.search import (
     MessageSearchPageResponse,
@@ -125,8 +126,11 @@ def _suggestions(search_mod, user_id: int, q: str, limit: int) -> List[str]:
     # Reclaim expired keys before any live entry so staleness cannot consume
     # the capacity reserved for hot answers. TTLs are short (seconds), so there
     # are at most a few hundred entries to inspect.
-    for stale in [k for k, (stored, _) in _suggestion_cache.items()
-                  if (now - stored) >= _SUGGESTION_CACHE_TTL_SECONDS]:
+    for stale in [
+        k
+        for k, (stored, _) in _suggestion_cache.items()
+        if (now - stored) >= _SUGGESTION_CACHE_TTL_SECONDS
+    ]:
         _suggestion_cache.pop(stale, None)
     # One-at-a-time LRU eviction keeps the rest of the working set warm.
     while len(_suggestion_cache) >= _SUGGESTION_CACHE_MAX_ENTRIES:
@@ -502,6 +506,12 @@ async def get_search_suggestions(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get search suggestions for autocomplete (filter names + history)."""
+    # A bot token's user_id is its human owner (the bot id lives in
+    # account_id). The rate-limit bucket and the suggestion cache below are
+    # both keyed on that id, so without this gate a bot credential would spend
+    # the owner's search:suggestions quota, evade its own, and read the
+    # owner's autocomplete history. Reject bots before either lookup.
+    require_user_token(current_user)
     search_mod = api.get_search()
     if not search_mod:
         raise HTTPException(status_code=500, detail="Search module not available")
