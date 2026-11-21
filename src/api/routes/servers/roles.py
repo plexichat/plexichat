@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.servers import (
     RoleResponse,
     RoleCreateRequest,
@@ -43,7 +44,14 @@ async def _require_roles_manage(
     here keeps authorization on every request while the expensive fetch stays
     cached. Error mapping mirrors ``get_server_roles`` so the endpoint's HTTP
     contract is unchanged.
+
+    A bot token carries its owner's ``user_id`` (the bot account id lives in
+    ``account_id``). The ``require_permission`` below would therefore check the
+    *owner's* server roles -- a server owner holds every server permission, so
+    a narrow-scope bot credential could manage roles as its owner. Reject bot
+    credentials before any identity-based lookup.
     """
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -132,6 +140,10 @@ async def get_server_roles(
     current_user: TokenInfo = Depends(get_current_user),
     _roles_manage_gate: None = Depends(_require_roles_manage),
 ) -> List[RoleResponse]:
+    # Defense in depth: the live gate above already rejects bot credentials on
+    # every request (including cache hits). Keep the guard here too so the
+    # identity boundary holds if this handler is called without the dependency.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -198,6 +210,7 @@ async def create_role(
     body: RoleCreateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> RoleResponse:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -289,6 +302,7 @@ async def update_role(
     body: RoleUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> RoleResponse:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -372,6 +386,7 @@ async def update_role(
 async def delete_role(
     server_id: str, role_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
