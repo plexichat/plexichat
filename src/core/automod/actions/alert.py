@@ -188,7 +188,17 @@ class AlertModeratorsAction(BaseAction):
         # keyed by user id and lookups below stay scoped to that one moderator.
         # Missing rows fall back to the same defaults the per-user helpers
         # returned, so eligibility (and fail-closed behaviour) is unchanged.
-        audience = list(dict.fromkeys(int(mid) for mid in moderator_ids))
+        # SECURITY: only a genuine integer id from the authoritative moderator
+        # roster (srv_servers.owner_id / srv_members.user_id) may attend the
+        # ALERT_MODERATORS audience. moderator_ids is the raw DB projection with
+        # no type filtering, so int() laundering of a malformed-but-coercible
+        # value ("07"->7, " 8 "->8, 7.9->7, True->1) would alert the wrong
+        # principal. The downstream _should_notify_user_optimized gate only
+        # checks preferences/focus, never moderator authority, so this is the
+        # sole audience gate. type() also rejects bool; genuine ints preserved.
+        audience = list(
+            dict.fromkeys(mid for mid in moderator_ids if type(mid) is int)
+        )
         all_settings = manager.get_notification_settings_bulk(
             audience, violation.server_id
         )
