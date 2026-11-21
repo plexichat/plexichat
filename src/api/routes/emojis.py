@@ -706,6 +706,18 @@ async def update_emoji(
         # Check permissions (fail closed when the servers module is absent)
         _require_manage_emojis(servers_mod, current_user.user_id, sid)
 
+        # Bind the emoji to the URL's server before mutating it, matching the
+        # GET detail route. The core re-checks the owning server's permission,
+        # but without this the route would authorize against A's URL while
+        # mutating an emoji owned by B, then evict A's cache and broadcast A's
+        # GUILD_EMOJIS_UPDATE for a change that happened in B.
+        bound_emoji = reactions.get_custom_emoji(int(emoji_id))
+        if bound_emoji is None or int(bound_emoji.server_id) != sid:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Emoji not found"}},
+            )
+
         try:
             emoji = reactions.update_custom_emoji(
                 user_id=current_user.user_id,
@@ -813,6 +825,16 @@ async def delete_emoji(
 
         # Check permissions (fail closed when the servers module is absent)
         _require_manage_emojis(servers_mod, current_user.user_id, sid)
+
+        # Same URL-server binding as get_emoji/update_emoji: never let a
+        # mutation authorized for the URL's server act on another server's
+        # emoji and then invalidate/announce the wrong server.
+        bound_emoji = reactions.get_custom_emoji(eid)
+        if bound_emoji is None or int(bound_emoji.server_id) != sid:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Emoji not found"}},
+            )
 
         try:
             reactions.delete_custom_emoji(current_user.user_id, eid)
