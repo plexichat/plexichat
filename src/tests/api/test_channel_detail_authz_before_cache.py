@@ -53,9 +53,14 @@ def _top_level_call_lines(node, name):
     """Only an unconditional top-level call counts as a live gate."""
     lines = []
     for stmt in node.body:
-        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+        if not isinstance(stmt, ast.Expr):
             continue
-        func = stmt.value.func
+        value = stmt.value
+        if isinstance(value, ast.Await):  # ``await gate(...)``
+            value = value.value
+        if not isinstance(value, ast.Call):
+            continue
+        func = value.func
         if (isinstance(func, ast.Name) and func.id == name) or (
             isinstance(func, ast.Attribute) and func.attr == name
         ):
