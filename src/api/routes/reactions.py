@@ -136,10 +136,26 @@ def _require_channel_view(reactions, user_id: int, mid: int, action: str) -> Non
     manager's own participant gate.
     """
     servers_mod = api.get_servers()
-    if not servers_mod or not hasattr(servers_mod, "get_channel_by_conversation"):
-        # No reverse-lookup API is available (unwired module, or a manager
-        # stub without that API): there is no channel view bit to check, so
-        # defer to the manager's own fail-closed checks -- as for DMs.
+    if not servers_mod:
+        # The reverse lookup cannot be evaluated without the servers module.
+        # A private-channel conversation_id alias can exist in the DB
+        # independently of that module, so deferring to the manager here would
+        # let a member denied messages.read react in a private channel. Deny
+        # instead; a wired store with no backing channel still allows genuine
+        # DMs below.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": f"Cannot {action} this message",
+                }
+            },
+        )
+    if not hasattr(servers_mod, "get_channel_by_conversation"):
+        # A wired manager stub without the reverse-lookup API has no channel
+        # view bit to check; defer to the manager's own fail-closed checks as
+        # for DMs. This is the pre-existing wired control, unchanged.
         return
 
     conv_id = reactions.get_conversation_id_from_message(mid)
