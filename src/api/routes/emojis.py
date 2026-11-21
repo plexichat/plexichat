@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.routes.users.helpers import authenticated_cache_key
+from src.api.routes.users.helpers import authenticated_cache_key, require_user_token
 from src.core.security.hardening import parse_id
 from src.core.database.cache import cached, invalidate_pattern
 from src.api.schemas.emojis import (
@@ -522,6 +522,9 @@ async def create_emoji(
     Uploads an image and creates a new custom emoji.
     Requires emojis.manage or server.manage permission.
     """
+    # A bot token's user_id is its owner; reject it before it can wield
+    # the owner's server roles through _require_manage_emojis.
+    require_user_token(current_user)
     reactions = api.get_reactions()
     servers_mod = api.get_servers()
 
@@ -683,6 +686,9 @@ async def update_emoji(
     Currently only supports renaming the emoji.
     Requires emojis.manage or server.manage permission.
     """
+    # A bot token's user_id is its owner; reject it before it can wield
+    # the owner's server roles through _require_manage_emojis.
+    require_user_token(current_user)
     reactions = api.get_reactions()
     servers_mod = api.get_servers()
 
@@ -793,6 +799,9 @@ async def delete_emoji(
     Permanently removes the emoji from the server.
     Requires emojis.manage or server.manage permission.
     """
+    # A bot token's user_id is its owner; reject it before it can wield
+    # the owner's server roles through _require_manage_emojis.
+    require_user_token(current_user)
     reactions = api.get_reactions()
     servers_mod = api.get_servers()
 
