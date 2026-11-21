@@ -10,30 +10,79 @@ without the safe transform fails the suite unless it is explicitly listed in
 ``NON_VIEWER_DATA_FANOUTS`` with a concrete justification.
 
 It reads production source directly (no app import, no DB, no fixture
-ordering) so it cannot flake. The self-tests at the bottom prove the guard is
+ordering) so it cannot flake. The set of builders whose payload is a
+serialized body is *derived from the signatures* of the canonical builder
+module, not hand-curated: a new ``build_message_*`` factory that accepts a
+``data`` dict under a novel name is swept automatically instead of silently
+escaping the lock. The self-tests at the bottom prove the guard is
 non-vacuous: swapping a real ``_fanout_safe_message_body(response)`` call for
-``response.model_dump()`` is detected as an offender.
+``response.model_dump()`` is detected, as is a brand-new body builder that was
+never added to any curated name list.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src"
 
-# Builders whose first / ``data`` argument is a serialized message body and
-# therefore MUST be sanitized before the event is fanned out.
-BODY_BUILDERS = frozenset({"build_message_create", "build_message_update"})
-# Tombstone builder: carries only id/channel_id (+ optional marker) -- no
-# viewer-scoped body, so it is safe by construction. We still assert nothing
-# viewer-shaped is smuggled in through ``extra``.
-TOMBSTONE_BUILDERS = frozenset({"build_message_delete"})
-ALL_BUILDERS = BODY_BUILDERS | TOMBSTONE_BUILDERS
+# The canonical message-event builder module. Every producer of live message
+# events is required to build through it, so the builder surface can be derived
+# from its function signatures rather than maintained as a curated name list.
+BUILDER_SRC = ROOT / "src/core/events/message_events.py"
 
 SAFE_TRANSFORM = "_fanout_safe_message_body"
+
+
+def _regular_params(fn):
+    """Positional-or-keyword parameter names (excludes ``*args``/``**kwargs``)."""
+    return [arg.arg for arg in fn.args.posonlyargs + fn.args.args]
+
+
+def _body_builders(tree):
+    """``build_message_*`` factories that accept a serialized body dict.
+
+    A factory whose regular parameters include ``data`` can carry a
+    ``MessageResponse``/``model_dump()`` payload, so its fan-out MUST pass
+    through the safe transform. Deriving this from signatures means a newly
+    added body builder is tracked under any name without editing this guard.
+    """
+    return {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("build_message_")
+        and "data" in _regular_params(node)
+    }
+
+
+def _tombstone_builders(tree):
+    """ID-only ``build_message_*`` factories (first regular arg is an id).
+
+    They carry only id/channel_id (+ optional marker), so there is no
+    viewer-scoped body -- but we still assert nothing viewer-shaped is smuggled
+    through ``extra``.
+    """
+    result = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("build_message_"):
+            continue
+        params = _regular_params(node)
+        if params and params[0].endswith("_id") and "data" not in params:
+            result.add(node.name)
+    return result
+
+
+_BUILDER_TREE = ast.parse(BUILDER_SRC.read_text(encoding="utf-8"))
+BODY_BUILDERS = frozenset(_body_builders(_BUILDER_TREE))
+TOMBSTONE_BUILDERS = frozenset(_tombstone_builders(_BUILDER_TREE))
+ALL_BUILDERS = BODY_BUILDERS | TOMBSTONE_BUILDERS
 
 # (relative source path, builder, unparsed data argument) -> justification.
 # Only events that provably carry NO viewer-specific message data belong here.
@@ -78,12 +127,8 @@ class Site:
         return f"Site({self.path}, {self.builder}, {self.data_source!r}, {self.kind})"
 
 
-# Names the guard tracks, plus the local spellings that can resolve to them.
-_TRACKED_NAMES = ALL_BUILDERS | {SAFE_TRANSFORM}
-
-
-def _canonical_names(tree: ast.AST) -> dict[str, str]:
-    """Resolve local aliases of a builder/transform to its canonical name.
+def _canonical_names(tree: ast.AST, tracked: frozenset[str]) -> dict[str, str]:
+    """Resolve local aliases of any name in ``tracked`` to its canonical name.
 
     A producer that imports ``build_message_update as bmu`` or binds
     ``bmu = build_message_update`` is still calling the very same fan-out
@@ -114,7 +159,7 @@ def _canonical_names(tree: ast.AST) -> dict[str, str]:
                 pairs = [
                     (alias.asname or alias.name, alias.name)
                     for alias in node.names
-                    if alias.name in _TRACKED_NAMES
+                    if alias.name in tracked
                 ]
             elif isinstance(node, ast.Assign):
                 value = node.value
@@ -123,7 +168,7 @@ def _canonical_names(tree: ast.AST) -> dict[str, str]:
                     canonical = resolve(value.id)
                 elif isinstance(value, ast.Attribute):
                     canonical = resolve(value.attr)
-                if canonical in _TRACKED_NAMES:
+                if canonical in tracked:
                     pairs = [
                         (target.id, canonical)
                         for target in node.targets
@@ -161,8 +206,8 @@ def _is_model_dump(expr: ast.AST) -> bool:
     )
 
 
-def _data_arg(call: ast.Call, builder: str) -> ast.AST | None:
-    if builder in TOMBSTONE_BUILDERS:
+def _data_arg(call: ast.Call, builder: str, tombstones: frozenset[str]) -> ast.AST | None:
+    if builder in tombstones:
         return None
     if call.args:
         return call.args[0]
@@ -172,19 +217,30 @@ def _data_arg(call: ast.Call, builder: str) -> ast.AST | None:
     return None
 
 
-def _scan_source(source: str, rel_path: str) -> list[Site]:
-    """Classify every message-event-builder call in ``source``."""
+def _scan_source(
+    source: str,
+    rel_path: str,
+    *,
+    builders: frozenset[str] = ALL_BUILDERS,
+    tombstones: frozenset[str] = TOMBSTONE_BUILDERS,
+) -> list[Site]:
+    """Classify every message-event-builder call in ``source``.
+
+    ``builders``/``tombstones`` default to the sets derived from the canonical
+    builder module; the self-test passes a synthetic set to prove a brand-new
+    builder name is swept too.
+    """
     tree = ast.parse(source)
-    aliases = _canonical_names(tree)
+    aliases = _canonical_names(tree, builders | tombstones | {SAFE_TRANSFORM})
     sites: list[Site] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         name = _callee_name(node, aliases)
-        if name not in ALL_BUILDERS:
+        if name not in builders:
             continue
 
-        if name in TOMBSTONE_BUILDERS:
+        if name in tombstones:
             # ID-only tombstone. The only way viewer data could sneak in is
             # an explicit ``extra={...}`` carrying a raw model_dump.
             smuggled = any(
@@ -200,7 +256,7 @@ def _scan_source(source: str, rel_path: str) -> list[Site]:
             )
             continue
 
-        data = _data_arg(node, name)
+        data = _data_arg(node, name, tombstones)
         if data is None:
             sites.append(Site(rel_path, name, "<missing>", "missing_data"))
             continue
@@ -375,3 +431,49 @@ def test_swapping_safe_transform_for_raw_dump_in_real_source_is_flagged():
         "replacing _fanout_safe_message_body(response) with "
         "response.model_dump() in broadcast.py was NOT flagged"
     )
+
+
+def test_body_builders_are_derived_not_hand_curated():
+    """Non-vacuity pin: the derived sets must match the reviewed surface.
+
+    If the canonical builder module is renamed wholesale, or a body factory
+    stops accepting ``data``, this pin fails instead of the sweep quietly
+    becoming vacuous.
+    """
+    assert {"build_message_create", "build_message_update"} <= BODY_BUILDERS
+    assert "build_message_delete" in TOMBSTONE_BUILDERS
+    assert not (BODY_BUILDERS & TOMBSTONE_BUILDERS)
+    assert "build_flat_message_create" not in ALL_BUILDERS, (
+        "the flat factory assembles explicit scalars, not a serialized body"
+    )
+
+
+def test_novel_named_body_builder_is_discovered_and_swept():
+    """A new body builder under a novel name cannot escape the whole-tree lock.
+
+    Regression: BODY_BUILDERS used to be a hand-curated frozenset. Adding
+    ``build_message_edit(data, ...)`` to the canonical builder module and
+    fanning it out with ``response.model_dump()`` was invisible to the guard.
+    The builder set is now derived from the module's signatures, so the novel
+    builder is discovered and its raw-dump fan-out is flagged.
+    """
+    novel_module = textwrap.dedent(
+        """
+        def build_message_create(data, *, channel_id): ...
+        def build_message_update(data, *, channel_id): ...
+        def build_message_edit(data, *, channel_id): ...
+        def build_message_delete(message_id, channel_id): ...
+        """
+    )
+    derived = _body_builders(ast.parse(novel_module))
+    assert derived == {
+        "build_message_create",
+        "build_message_update",
+        "build_message_edit",
+    }
+
+    producer = "build_message_edit(response.model_dump(), channel_id=1)"
+    sites = _scan_source(producer, "src/any.py", builders=derived)
+    assert len(sites) == 1
+    assert sites[0].kind == "unprotected"
+    assert _offenders(sites), "raw dump into a novel body builder was not flagged"
