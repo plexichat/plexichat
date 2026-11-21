@@ -295,17 +295,50 @@ class ConfigLoader:
         return result
 
     def _create_default_config(self) -> None:
-        """Creates the config file with default values."""
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(self.config_path)), exist_ok=True)
+        """Create the config file with default values, atomically.
 
-        with open(self.config_path, "w") as f:
-            if self.config_path.endswith(".yaml") or self.config_path.endswith(".yml"):
-                yaml.dump(self.default_config, f, default_flow_style=False)
-            elif self.config_path.endswith(".json"):
-                json.dump(self.default_config, f, indent=4)
-            else:
-                raise ValueError("Unsupported config format. Use .yaml, .yml, or .json")
+        ``open(path, "w")`` follows a symlink planted at the config path and
+        truncates the target before the new contents are known, so a local
+        attacker could redirect this write to an arbitrary file and a crash
+        mid-write left a corrupt config. Mirror ``_save_config``: create a
+        unique private file in the destination directory and atomically rename
+        it over the final path. ``os.replace`` replaces a symlink entry itself
+        rather than following it, so the link target is never written to.
+        """
+        parent = os.path.dirname(os.path.abspath(self.config_path))
+        os.makedirs(parent, exist_ok=True)
+        # A brand-new config uses the same umask-derived mode a plain
+        # open(path, "w") would have produced (mkstemp always creates 0600).
+        umask = os.umask(0)
+        os.umask(umask)
+        file_mode = 0o666 & ~umask
+        temp_path: Optional[str] = None
+        try:
+            fd, temp_path = tempfile.mkstemp(
+                dir=parent,
+                prefix=os.path.basename(self.config_path) + ".",
+                suffix=".tmp",
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                if self.config_path.endswith(".yaml") or self.config_path.endswith(
+                    ".yml"
+                ):
+                    yaml.dump(self.default_config, f, default_flow_style=False)
+                elif self.config_path.endswith(".json"):
+                    json.dump(self.default_config, f, indent=4)
+                else:
+                    raise ValueError(
+                        "Unsupported config format. Use .yaml, .yml, or .json"
+                    )
+            os.chmod(temp_path, file_mode)
+            os.replace(temp_path, self.config_path)
+        except Exception:
+            if temp_path is not None:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            raise
 
     def _handle_malformed_config(self, error: Exception) -> None:
         """Handles malformed configuration based on the selected action."""
