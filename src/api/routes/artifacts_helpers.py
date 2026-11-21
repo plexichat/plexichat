@@ -719,6 +719,7 @@ def _emit_artifact_message(
             f"{config.get('artifacts', {}).get('inline_icon', '📎')} {artifact.title}"
         )
 
+        send_rejected = False
         messaging_mod = api.get_messaging()
         if messaging_mod is not None and conversation_id is not None:
             try:
@@ -728,7 +729,10 @@ def _emit_artifact_message(
                     content=content,
                 )
             except Exception as e:  # best-effort: never break the artifact write
+                send_rejected = True
                 logger.debug(f"Failed to persist artifact message: {e}")
+        if send_rejected:
+            return
 
         event = build_flat_message_create(
             message_id=artifact.id,
