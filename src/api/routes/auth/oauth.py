@@ -418,6 +418,13 @@ def _oauth_cookie_params(max_age: int) -> dict:
     }
 
 
+def _oauth_state_cookie_clear_headers() -> dict:
+    """Headers that clear the state-binding cookie on a failed callback."""
+    clear = Response()
+    clear.delete_cookie(OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"])
+    return {"set-cookie": clear.headers["set-cookie"]}
+
+
 @router.get(
     "/oauth/{provider}/login",
     response_model=OAuthLoginResponse,
@@ -706,9 +713,6 @@ async def oauth_callback(
 
     if not valid:
         logger.warning(f"OAuth state verification failed for {provider}: {error_msg}")
-        response.delete_cookie(
-            OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"]
-        )
         raise HTTPException(
             status_code=400,
             detail={
@@ -717,6 +721,7 @@ async def oauth_callback(
                     "message": f"Security verification failed: {error_msg}",
                 }
             },
+            headers=_oauth_state_cookie_clear_headers(),
         )
 
     # Login-CSRF defense (enforced): when this flow started in a browser it
@@ -731,9 +736,6 @@ async def oauth_callback(
                 f"OAuth callback rejected for {provider}: state cookie "
                 f"{'mismatch' if state_cookie else 'missing'}"
             )
-            response.delete_cookie(
-                OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"]
-            )
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -742,6 +744,7 @@ async def oauth_callback(
                         "message": "Security verification failed: state cookie mismatch",
                     }
                 },
+                headers=_oauth_state_cookie_clear_headers(),
             )
 
     if state_record and state_record.pkce_challenge:
