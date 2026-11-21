@@ -23,6 +23,7 @@ class EditHistoryService(BaseService):
         db: Any,
         participant_service: ParticipantService,
         encryption_enabled: bool = True,
+        servers_mod: Any = None,
     ) -> None:
         """Initialize edit history service."""
         super().__init__(db)
@@ -30,6 +31,53 @@ class EditHistoryService(BaseService):
         self._message_repo = MessageRepository(db)
         self._participant_svc = participant_service
         self._encryption_enabled = encryption_enabled
+        self._servers = servers_mod
+
+    def _require_channel_view(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Deny when ``conversation_id`` is a server channel the caller cannot view.
+
+        ``is_participant`` grants every member of a server participation in its
+        channel conversations, independent of the per-channel ``channels.view``
+        permission. Edit-history reads decrypt and return *previous message
+        content*, so a member denied view on a private channel could otherwise
+        read old versions of messages they are not allowed to see (the same
+        gap already closed for the message get, pin and forward paths). Resolve
+        the backing server channel membership-agnostically and require a live
+        view grant on it. A conversation with no backing channel is a genuine
+        DM/group and needs no further gate.
+
+        Fails closed: if the reverse lookup or the view decision cannot be
+        established, the read is denied rather than silently allowed.
+        """
+        servers = self._servers
+        if not servers:
+            return  # no servers store => conversation can only be a DM/group
+        lookup = getattr(servers, "get_channel_by_conversation", None)
+        if not callable(lookup):
+            raise ConversationAccessDeniedError("Cannot verify channel view access")
+        try:
+            info = lookup(conversation_id)
+        except Exception:
+            raise ConversationAccessDeniedError("Cannot verify channel view access")
+        if info is None:
+            return  # DM/group conversation: participation already gated it
+        channel_id = info.get("id") if isinstance(info, dict) else None
+        if channel_id is None:
+            raise ConversationAccessDeniedError("Cannot verify channel view access")
+        get_channel = getattr(servers, "get_channel", None)
+        if not callable(get_channel):
+            raise ConversationAccessDeniedError("Cannot verify channel view access")
+        try:
+            if get_channel(int(channel_id), user_id) is None:
+                raise ConversationAccessDeniedError(
+                    "Cannot view channel for this conversation"
+                )
+        except ConversationAccessDeniedError:
+            raise
+        except Exception:
+            raise ConversationAccessDeniedError("Cannot verify channel view access")
 
     def record_edit(
         self,
@@ -158,6 +206,12 @@ class EditHistoryService(BaseService):
                 "Not a participant in this conversation"
             )
 
+        # Participation alone is not enough for server channels: every server
+        # member is a participant in its channel conversations even when they
+        # lack channels.view. Enforce a live view grant before reading (and
+        # decrypting) any prior message content.
+        self._require_channel_view(conversation_id, user_id)
+
         rows = self._repo.get_by_message(
             message_id, limit=_bounded_history_limit(limit)
         )
@@ -216,5 +270,9 @@ class EditHistoryService(BaseService):
             raise ConversationAccessDeniedError(
                 "Not a participant in this conversation"
             )
+
+        # Same live channel-view gate as the history read: an edit count over
+        # a private server channel is itself information the caller cannot view.
+        self._require_channel_view(conversation_id, user_id)
 
         return self._repo.count_edits(message_id)
