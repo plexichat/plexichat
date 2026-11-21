@@ -11,7 +11,8 @@ cannot reach config or licensing get a best-effort `MISCONFIGURED`/`DISABLED`
 state rather than an exception.
 """
 
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
@@ -37,6 +38,21 @@ class CapabilityInfo:
     state: CapabilityState
     message: str
     details: Dict[str, Any] = field(default_factory=dict)
+
+
+def _copy_capability_info(info: CapabilityInfo) -> CapabilityInfo:
+    """Return an independent copy of a memoized capability verdict.
+
+    ``CapabilityInfo`` is a mutable dataclass whose ``details`` field is a
+    mutable dict. The no-config cache in :func:`get_capability` and
+    :func:`get_artifact_capabilities` is shared by every request and keyed only
+    by feature name, so handing out the cached instance by reference would let
+    one caller's in-place mutation (flipping ``state`` to bypass a license gate,
+    or editing ``details``) silently rewrite the verdict every later caller
+    sees for the rest of the TTL. Copy on both the store and read paths so the
+    stored object is never reachable by a caller.
+    """
+    return replace(info, details=deepcopy(info.details))
 
 
 def _load_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -419,12 +435,14 @@ def get_artifact_capabilities(
             if config is None:
                 cached = _capability_cache.get(feature)
                 if cached is not None:
-                    result[feature] = cached
+                    result[feature] = _copy_capability_info(cached)
                     continue
             info = evaluate(artifacts)
             if config is None:
                 _capability_cache.set(feature, info)
-            result[feature] = info
+                result[feature] = _copy_capability_info(info)
+            else:
+                result[feature] = info
         return result
     except Exception:
         # Last-resort fallback so the endpoint can never crash.
@@ -532,7 +550,7 @@ def get_capability(
     if config is None:
         cached = _capability_cache.get(feature)
         if cached is not None:
-            return cached
+            return _copy_capability_info(cached)
     try:
         artifacts = _load_config(config)
         evaluator = _evaluators().get(feature)
@@ -554,6 +572,7 @@ def get_capability(
         )
     if config is None:
         _capability_cache.set(feature, info)
+        return _copy_capability_info(info)
     return info
 
 
