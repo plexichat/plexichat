@@ -81,12 +81,21 @@ class MemberCrudMixin:
                     (sid,),
                 )
                 if row:
-                    owner_id = int(row["owner_id"])
-                    self.manager._cache_set(
-                        self.manager._server_owner_cache_prefix, sid, owner_id
-                    )
-                    if valkey_available():
-                        cache_set(owner_cache_key, str(owner_id), ttl=3600)
+                    # SECURITY: only a genuine integer id from the authoritative
+                    # srv_servers.owner_id row may attest to ownership. Coercing
+                    # a malformed-but-coercible value with int() ("05"->5,
+                    # 5.9->5, True->1) would launder it into a genuine cached
+                    # int, granting owner-level membership here AND on every
+                    # later cache hit. Prime only genuine ints; type() also
+                    # rejects bool.
+                    authoritative_owner_id = row["owner_id"]
+                    if type(authoritative_owner_id) is int:
+                        owner_id = authoritative_owner_id
+                        self.manager._cache_set(
+                            self.manager._server_owner_cache_prefix, sid, owner_id
+                        )
+                        if valkey_available():
+                            cache_set(owner_cache_key, str(owner_id), ttl=3600)
 
         if owner_id == uid:
             self.manager._cache_set(self.manager._member_cache_prefix, cache_key, True)

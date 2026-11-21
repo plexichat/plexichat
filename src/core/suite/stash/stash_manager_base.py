@@ -339,8 +339,17 @@ class StashManagerBase(StashManagerProtocol):
             raise StashValidationError("collection_id does not identify a collection")
         collection_server = collection.get("server_id")
         if scope == "personal":
-            if collection_server is not None or int(collection["owner_id"]) != int(
-                user_id
+            # SECURITY: only a genuine integer id from the authoritative
+            # stash_collections.owner_id row may attest to collection
+            # ownership. int() would launder a malformed-but-coercible value
+            # ("05"->5, 5.9->5, True->1) into ownership and let a non-owner
+            # attach an item to someone else's collection. type() also
+            # rejects bool.
+            collection_owner_id = collection["owner_id"]
+            if (
+                collection_server is not None
+                or type(collection_owner_id) is not int
+                or collection_owner_id != int(user_id)
             ):
                 raise StashPermissionError(
                     "Collection is not available for this personal item"
@@ -509,7 +518,12 @@ class StashManagerBase(StashManagerProtocol):
     ) -> None:
         if permission not in STASH_PERMISSIONS:
             raise StashValidationError("Unknown Stash permission")
-        owner = int(item["owner_id"]) == int(user_id)
+        # SECURITY: only a genuine integer id from the authoritative item row
+        # may attest to ownership. int() laundering of a malformed value
+        # ("05"->5, 5.9->5, True->1) would grant every stash permission.
+        # type() also rejects bool.
+        item_owner_id = item["owner_id"]
+        owner = type(item_owner_id) is int and item_owner_id == int(user_id)
         server_id = item.get("server_id")
         if item["scope"] == "personal":
             if (
@@ -550,7 +564,8 @@ class StashManagerBase(StashManagerProtocol):
 
     def _can_expose_storage(self, row: Dict[str, Any], user_id: int) -> bool:
         """Return whether storage/version references may be returned."""
-        if int(row["owner_id"]) == int(user_id):
+        row_owner_id = row["owner_id"]
+        if type(row_owner_id) is int and row_owner_id == int(user_id):
             return True
         server_id = row.get("server_id")
         if server_id is not None and self._can_administer_server(
@@ -603,7 +618,10 @@ class StashManagerBase(StashManagerProtocol):
         result: Dict[int, bool] = {}
         for row in rows:
             item_id = int(row["id"])
-            if int(row["owner_id"]) == int(user_id) or item_id in exposed_by_grant:
+            row_owner_id = row["owner_id"]
+            if (
+                type(row_owner_id) is int and row_owner_id == int(user_id)
+            ) or item_id in exposed_by_grant:
                 result[item_id] = True
                 continue
             server_id = row.get("server_id")
