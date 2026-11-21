@@ -43,6 +43,11 @@ MAX_SERIALIZE_CACHE_ENTRIES = 16
 _PRIVILEGED_CONTENT_FIELDS_BY_EVENT = {
     "MESSAGE_BOOKMARK_ADD": ("message_content",),
     "MESSAGE_BOOKMARK_REMOVE": ("message_content",),
+    # Mention notifications carry the mentioned message's body as a preview on
+    # an otherwise metadata-only frame. NOTIFICATION_CREATE is dispatched with
+    # no scope and no base intent (router default-allow), so without this gate
+    # a connection that never declared MESSAGE_CONTENT still reads the text.
+    "NOTIFICATION_CREATE": ("content", "content_preview"),
 }
 
 
