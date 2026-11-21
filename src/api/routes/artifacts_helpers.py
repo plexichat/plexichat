@@ -481,10 +481,14 @@ def _my_permissions(
             api.get_messaging(), conversation_id, user_id, cache
         ):
             conv_server = _conversation_server_id(conversation_id, cache)
-            if (
-                server_id is None
-                or conv_server is None
-                or conv_server == int(server_id)
+            # An unresolvable conversation->server binding (deleted/invalid
+            # metadata or a DB read failure) must NOT be treated as an unscoped
+            # request. ``_authorize_scope`` already fails closed here; this
+            # permission-reporting helper must mirror it, otherwise a mere
+            # conversation participant is told can_view/can_edit for a
+            # server-scoped artifact they cannot actually access.
+            if server_id is None or (
+                conv_server is not None and conv_server == int(server_id)
             ):
                 return True
         return (
