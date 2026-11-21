@@ -31,9 +31,25 @@ class ThreadMembershipMixin(ThreadProtocol):
         falling back to "all members of the server". It returns ids only —
         never the thread itself or its content. Do not expose through the API.
         """
+        # Leaving/kicking a server deletes the ``srv_members`` row but does
+        # NOT prune ``thread_members``. Intersect the stale thread roster with
+        # the live server roster so a former member does not keep receiving
+        # private thread events. Resolve the backing server WITHOUT the
+        # ``deleted = 0`` filter (delete events are emitted post-tombstone)
+        # and fail closed when it cannot be resolved.
+        server_row = self._db.fetch_one(
+            "SELECT server_id FROM thread_threads WHERE id = ?", (thread_id,)
+        )
+        if not server_row or server_row.get("server_id") is None:
+            return []
+        server_id = server_row["server_id"]
+
         rows = self._db.fetch_all(
-            "SELECT user_id FROM thread_members WHERE thread_id = ?",
-            (thread_id,),
+            """SELECT tm.user_id FROM thread_members tm
+               JOIN srv_members sm
+                 ON sm.user_id = tm.user_id AND sm.server_id = ?
+               WHERE tm.thread_id = ?""",
+            (server_id, thread_id),
         )
         return [int(row["user_id"]) for row in rows or []]
 
