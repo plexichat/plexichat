@@ -555,7 +555,7 @@ async def delete_artifact(
             cache=_AuthCache(),
         )
 
-        if not manager.delete(aid):
+        if not manager.delete(aid, purging_user_id=current_user.user_id):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={"error": {"code": 500, "message": "Failed to delete"}},

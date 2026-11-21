@@ -306,6 +306,7 @@ class ArtifactManager(BaseManager):
         artifact_id: SnowflakeID,
         purge_media: bool = True,
         emit_event: bool = True,
+        purging_user_id: Optional[SnowflakeID] = None,
     ) -> bool:
         """Delete an artifact row plus its cascade-linked rows.
 
@@ -349,7 +350,7 @@ class ArtifactManager(BaseManager):
                 # L3: media cleanup is best-effort and runs only after the
                 # confirmed row delete; media errors never fail the delete.
                 try:
-                    self._purge_artifact_media(artifact)
+                    self._purge_artifact_media(artifact, purging_user_id)
                 except Exception as exc:  # pragma: no cover - best-effort
                     logger.debug(
                         "Media purge failed for artifact %s: %s", artifact.id, exc
@@ -523,7 +524,9 @@ class ArtifactManager(BaseManager):
             )
             raise
 
-    def _purge_artifact_media(self, artifact: Artifact) -> None:
+    def _purge_artifact_media(
+        self, artifact: Artifact, purging_user_id: Optional[SnowflakeID] = None
+    ) -> None:
         """Best-effort soft-delete of media files referenced by the payload."""
         payload = artifact.payload or {}
         if not isinstance(payload, dict):

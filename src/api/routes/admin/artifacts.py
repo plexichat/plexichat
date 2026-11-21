@@ -173,7 +173,7 @@ async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str,
         # success path this saves one database round trip. Only on a failed
         # delete do a single follow-up read to distinguish "already gone"
         # (404) from a genuine deletion failure (500), preserving the contract.
-        if not manager.delete(aid):
+        if not manager.delete(aid, purging_user_id=admin_id):
             if manager.get(aid) is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
