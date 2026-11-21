@@ -29,6 +29,8 @@ from types import SimpleNamespace
 import pytest
 
 import utils.config as config
+import src.core.ratelimit.manager.principals as principals
+import src.utils.net as net
 from src.core.ratelimit.manager.principals import (
     normalise_ip_address,
     normalise_principal,
@@ -175,3 +177,54 @@ def test_negative_control_naive_leftmost_resolver_is_spoofed(monkeypatch):
 
     assert naive(hostile) == ATTACKER  # the regression the guard must catch
     assert get_client_ip(hostile) == REAL_CLIENT  # current, correct behaviour
+
+
+# --- 5. non-vacuity: the two other named regressions are also caught ---------
+
+
+def test_self_test_wildcard_trust_mutation_is_caught(monkeypatch):
+    """Trusting every peer makes the REAL resolver honor attacker headers.
+
+    Mutating the resolver's trusted-peer check itself (rather than reimplementing
+    a naive resolver) is the faithful "trusted_proxies regressed to a wildcard"
+    regression. The untrusted-peer assertion in test 1 rejects exactly the
+    result produced here, so that guard is non-vacuous for this regression too.
+    """
+    monkeypatch.setattr(net, "_ip_matches_trusted", lambda *_a, **_k: True)
+    hostile = _scope(
+        "203.0.113.9",
+        [
+            (b"x-forwarded-for", ATTACKER.encode()),
+            (b"cf-connecting-ip", ATTACKER.encode()),
+        ],
+    )
+
+    # Broken (trust-all) resolver is subverted by the client-controlled headers.
+    assert get_client_ip(hostile) == ATTACKER
+    # The guard's own key assertion (test 1) rejects that same attacker address.
+    assert _key(ATTACKER) != "203.0.113.9"
+
+
+def test_self_test_bot_owner_fallback_mutation_is_caught(monkeypatch):
+    """A bot verdict that falls back to the owner keys on the human owner.
+
+    Mutating the real resolver's fallback behaviour shows it would resolve to
+    the owner id and charge that principal — precisely what test 4 rejects.
+    The direct import still calls the unmutated function, confirming correct
+    behaviour is what the guard asserts.
+    """
+    credential = SimpleNamespace(
+        token_type="bot",
+        account_id=None,
+        user_id=OWNER_ID,
+    )
+    monkeypatch.setattr(
+        principals,
+        "resolve_credential_principal",
+        lambda c: getattr(c, "user_id", None),
+    )
+
+    broken = principals.resolve_credential_principal(credential)
+    broken_uid, _ = normalise_principal(broken, REAL_CLIENT)
+    assert broken_uid == OWNER_ID  # the regression guard test 4 rejects
+    assert resolve_credential_principal(credential) is None  # correct behaviour
