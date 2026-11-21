@@ -394,11 +394,25 @@ class ConfigLoader:
         """Sets a value in the config and saves it."""
         self.config[key] = value
         self._save_config()
-        self._invalidate_cache()
+        # Only the mutated key went stale; preserve every other hot-path entry.
+        self._invalidate_cache(key)
 
-    def _invalidate_cache(self) -> None:
-        """Invalidate the get() cache. Called after reload/set."""
-        self._get_cache.clear()
+    def _invalidate_cache(self, key: Optional[str] = None) -> None:
+        """Invalidate cached :meth:`get` results.
+
+        With no key (a full reload), every cached value may be stale so the
+        whole cache is dropped. With a key (a single :meth:`set`), only the
+        entries for that config key are stale. Evicting just those entries
+        keeps cached lookups for unrelated keys warm - important because
+        ``get()`` is a hot path and a lone admin/settings mutation used to
+        flush every other key's cached value.
+        """
+        if key is None:
+            self._get_cache.clear()
+            return
+        stale = [ck for ck in self._get_cache if ck[0] == key]
+        for ck in stale:
+            del self._get_cache[ck]
 
     def _save_config(self) -> None:
         """Saves the current config to the file atomically (write-then-rename).
