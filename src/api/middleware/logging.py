@@ -123,10 +123,16 @@ def _safe_log_path(scope: Scope, raw_path: str) -> str:
         template = getattr(route, "path_format", None) or getattr(route, "path", None)
         if isinstance(template, str) and template:
             return template
-    # No route metadata (e.g. a 404): still never emit a webhook token.
+    # No route metadata (e.g. a 404, or a path served by the SPA ASGI
+    # middleware): still never emit a credential carried in a path segment.
     parts = raw_path.split("/")
     if len(parts) >= 3 and parts[-3] == "webhooks":
         return "/".join(parts[:-1]) + "/{token}"
+    # ``/invite/{code}`` is redirected by StaticClientMiddleware (no FastAPI
+    # route metadata), so its code would otherwise be written verbatim to the
+    # access log on every join-link visit. The code is a bearer credential.
+    if len(parts) >= 3 and parts[-2] == "invite":
+        return "/".join(parts[:-1]) + "/{code}"
     return raw_path
 
 
