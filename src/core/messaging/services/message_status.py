@@ -413,11 +413,15 @@ class MessageStatusService(BaseService):
         if not by_conv:
             return {}
 
-        eligible = [
-            conv
-            for conv in by_conv
-            if self._participant_svc.is_participant(conv, user_id)
-        ]
+        # Resolve the access gate in bounded batches. ``is_participant`` is
+        # cached per (conversation, user) but is still one or more DB round
+        # trips per conversation from a cold cache; a server-wide ack arrives
+        # cold and used to pay that N times. The bulk helper mirrors the same
+        # decision tree, writes results back into the same per-pair cache and
+        # fails closed for anything it cannot resolve, so authorization is
+        # unchanged -- only the number of round trips is bounded.
+        participation = self._delivery_participation(user_id, list(by_conv))
+        eligible = [conv for conv in by_conv if participation.get(conv, False)]
         if not eligible:
             return {}
 
@@ -742,9 +746,22 @@ class MessageStatusService(BaseService):
         user_id: SnowflakeID,
         server_id: SnowflakeID,
     ) -> int:
-        """Mark all channels in a server as read.
+        """Mark all channels in a server as read in bounded round trips.
 
-        Returns the number of channels marked.
+        BEFORE: this looped over every channel and called the full
+        ``mark_read`` once per channel. Each call re-ran a participant lookup,
+        MAX(id), settings/channel probes, a status SELECT + executemany,
+        several cache invalidations and a read-position write -- an O(N)
+        fan-out where N is the number of channels in the server.
+
+        AFTER: every channel conversation id is collected in one pass and
+        handed to ``mark_read_bulk`` in a single call. That path chunks
+        participation, last-read positions, MAX(id), status writes and
+        read-position updates into a bounded number of round trips, applies
+        the same owner-scoped / fail-closed participation gate, and preserves
+        per-channel read-receipt settings. The returned count keeps its
+        historical meaning: the number of channels the caller can actually
+        read (is a participant of).
         """
         servers_mod = self._get_servers_module()
         if not servers_mod:
@@ -756,19 +773,41 @@ class MessageStatusService(BaseService):
             # Not a member or server inaccessible — nothing to mark
             return 0
 
-        count = 0
+        # Resolve every channel's conversation id once, de-duplicated so a
+        # channel aliasing another cannot make the bulk pass do the same work
+        # twice. Ids are normalised to int for stable cache keys / IN binds.
+        conversation_ids: List[SnowflakeID] = []
+        seen = set()
         for channel in channels:
-            if hasattr(channel, "conversation_id") and channel.conversation_id:
-                try:
-                    self.mark_read(user_id, channel.conversation_id)
-                    count += 1
-                except Exception as read_error:
-                    import utils.logger as logger
+            conv_id = getattr(channel, "conversation_id", None)
+            if not conv_id:
+                continue
+            try:
+                conv = int(conv_id)
+            except (TypeError, ValueError):
+                continue
+            if conv in seen:
+                continue
+            seen.add(conv)
+            conversation_ids.append(conv)
 
-                    logger.debug(f"mark-all-read skipped a conversation: {read_error}")
-                    continue
+        if not conversation_ids:
+            return 0
 
-        return count
+        # One batched pass replaces the per-channel full mark_read loop. With
+        # no explicit up_to id, mark_read_bulk resolves MAX(id) per conversation
+        # itself, matching the old behaviour exactly.
+        self.mark_read_bulk(user_id, [(cid, None) for cid in conversation_ids])
+
+        # ``channels_marked`` keeps its old semantics: channels the caller is
+        # allowed to read. mark_read_bulk applied that same fail-closed gate,
+        # and is_participant is cache-backed and already warm from the bulk
+        # pass, so this costs no extra database round trips.
+        return sum(
+            1
+            for cid in conversation_ids
+            if self._participant_svc.is_participant(cid, user_id)
+        )
 
     def create_initial_status(
         self,
