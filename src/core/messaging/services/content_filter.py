@@ -5,6 +5,8 @@ Content filter service - Business logic for content filtering.
 from typing import Any, List, Optional, Set
 import re
 
+from src.core.bounded_lru import BoundedLRU
+
 from ..models import ContentFilter, FilterAction
 from ..repositories.user_settings import UserSettingsRepository
 from ..content import ContentValidationResult
@@ -22,6 +24,22 @@ NSFW_PATTERNS = [
     r"\b18\+\b",
     r"\badult\s*content\b",
 ]
+
+
+# The combined profanity + custom-word regex is rebuilt from the *word set*,
+# never from the message: validating two messages for the same user compiled
+# the same (potentially large) pattern twice. Cache the compiled pattern by its
+# frozen word set so the per-message path is a dict lookup after the first call.
+# The key carries every input to the compilation, so a config reload or a
+# filter-settings edit that changes the words naturally produces a new key; a
+# pattern is a pure function of its key, so no cross-user data can leak and no
+# authz decision depends on the cache. Bounded by entries and bytes (a hostile
+# rotating word list cannot grow the process without limit) with a short TTL.
+_USER_FILTER_PATTERN_CACHE = BoundedLRU(
+    max_entries=128,
+    max_bytes=256 * 1024,
+    ttl_seconds=300,
+)
 
 
 class ContentFilterService(BaseService):
@@ -231,18 +249,27 @@ class ContentFilterService(BaseService):
         if user_filter.custom_blocked_words:
             words_to_filter.update(user_filter.custom_blocked_words)
 
+        # The pattern is a pure function of the non-empty word set, not of the
+        # message. Compile once per distinct set and reuse it on every later
+        # message; the bounded LRU keeps a rotating/hostile word list from
+        # growing the process without limit. Drop empty words up front so the
+        # key is a plain set copy (no per-word generator on the hot path).
+        words_to_filter.discard("")
         if not words_to_filter:
             return result, filtered_words
+        word_key = frozenset(words_to_filter)
 
-        # Build single pattern for all words (O(N) instead of O(N*M))
-        escaped_words = [re.escape(w) for w in words_to_filter if w]
-        if not escaped_words:
-            return result, filtered_words
-
-        combined_pattern = re.compile(
-            r"\b(" + "|".join(escaped_words) + r")\b",
-            re.IGNORECASE,
-        )
+        combined_pattern = _USER_FILTER_PATTERN_CACHE.get(word_key)
+        if combined_pattern is None:
+            # Build single pattern for all words (O(N) instead of O(N*M)).
+            # Sorting makes the compiled alternation deterministic across
+            # processes; the matched set is identical for any order.
+            escaped_words = [re.escape(w) for w in sorted(word_key)]
+            combined_pattern = re.compile(
+                r"\b(" + "|".join(escaped_words) + r")\b",
+                re.IGNORECASE,
+            )
+            _USER_FILTER_PATTERN_CACHE.set(word_key, combined_pattern)
 
         # Find all matches first
         matches = combined_pattern.findall(result)
