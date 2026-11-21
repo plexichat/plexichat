@@ -155,6 +155,17 @@ def invalidate_member_count_cache() -> None:
     from src.core.events.gateway_emit import clear_channel_recipient_cache
 
     clear_channel_recipient_cache()
+    # The presence-audience cache in ``src.core.events.router`` memoizes each
+    # subject's PRESENCE_UPDATE recipients -- their friends plus the shared
+    # server members from ``get_all_shared_member_ids`` (the same srv_members
+    # rows) minus blocked users. It was only evicted on relationship writes, so
+    # a kick/ban/leave left the removed member in the warm audience and they
+    # kept receiving the subject's presence until the TTL lapsed. Evict it in
+    # the same membership funnel. Lazy import keeps the membership tier
+    # decoupled from the event router at module load.
+    from src.core.events.router import clear_presence_audience_cache
+
+    clear_presence_audience_cache()
 
 
 def member_count_cache_stats() -> dict:
