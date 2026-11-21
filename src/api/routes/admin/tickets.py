@@ -65,7 +65,17 @@ async def get_tickets(
     from src.core import admin
 
     try:
-        tickets = admin.get_feedback_tickets(status_filter, limit, offset)
+        # TicketResponse has no internal_notes field, so decrypting each row's
+        # note in the core loader is pure waste on this listing path. Call the
+        # core loader directly to pass the opt-out without changing the shared
+        # admin wrapper; DB resolution is identical to that wrapper's.
+        tickets = admin.tickets.get_feedback_tickets(
+            admin._get_db(),
+            status_filter,
+            limit,
+            offset,
+            include_internal_notes=False,
+        )
         return [
             TicketResponse(
                 id=str(t.id),

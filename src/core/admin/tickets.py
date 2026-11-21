@@ -47,19 +47,37 @@ class AdminNote:
 
 
 def get_feedback_tickets(
-    db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
+    db: Any,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    include_internal_notes: bool = True,
 ) -> List[FeedbackTicket]:
-    """Get feedback tickets with optional status filter."""
+    """Get feedback tickets with optional status filter.
+
+    The admin listing response does not carry ``internal_notes``. A caller
+    that only needs ticket metadata can pass ``include_internal_notes=False``:
+    the query then selects NULL placeholders instead of the two note columns,
+    so no note ciphertext is read and no per-row decrypt runs for the page.
+    The default stays True for callers that do use the notes.
+    """
     limit = max(0, min(limit, MAX_PAGE_SIZE))
     offset = max(0, offset)
 
     encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
-
+    # Keep the column count/ordering identical in both modes so the tuple-row
+    # (legacy adapter) branch below needs no index changes.
+    note_columns = (
+        "f.internal_notes, f.internal_notes_encrypted"
+        if include_internal_notes
+        else "NULL AS internal_notes, NULL AS internal_notes_encrypted"
+    )
     if status_filter:
         rows = db.fetch_all(
-            """SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
-                      COALESCE(f.status, 'open') as status, f.created_at, 
-                      f.resolved_at, f.resolved_by, f.internal_notes, f.internal_notes_encrypted
+            f"""SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
+                      COALESCE(f.status, 'open') as status, f.created_at,
+                      f.resolved_at, f.resolved_by, {note_columns}
                FROM feedback f
                LEFT JOIN auth_users u ON f.user_id = u.id
                WHERE COALESCE(f.status, 'open') = ?
@@ -69,9 +87,9 @@ def get_feedback_tickets(
         )
     else:
         rows = db.fetch_all(
-            """SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
+            f"""SELECT f.id, f.user_id, u.username, f.content, f.category, f.rating,
                       COALESCE(f.status, 'open') as status, f.created_at,
-                      f.resolved_at, f.resolved_by, f.internal_notes, f.internal_notes_encrypted
+                      f.resolved_at, f.resolved_by, {note_columns}
                FROM feedback f
                LEFT JOIN auth_users u ON f.user_id = u.id
                ORDER BY f.created_at DESC
