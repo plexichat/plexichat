@@ -636,6 +636,33 @@ async def remove_banned_username(request: Request, pattern_id: SnowflakeIDParam)
     return SuccessResponse(success=True, message=None)
 
 
+async def _close_revoked_user_gateway_connections(user_id: int, reason: str) -> None:
+    """Server-side half of a per-user session revocation.
+
+    A ``SECURITY_LOGOUT`` frame only asks a well-behaved client to disconnect;
+    until the socket is actually closed it stays authenticated and usable on
+    the server. The site-wide logout route already calls
+    ``close_all_connections()`` -- per-user revocation (force-logout, account
+    lock) must close that user's sockets too. Non-raising: the DB write that
+    revoked the sessions has already succeeded, so a gateway failure must not
+    turn a completed revocation into a 500.
+    """
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+
+        if ws_is_setup():
+            await get_dispatcher().close_user_connections(
+                user_id=user_id,
+                reason=reason,
+            )
+    except Exception:
+        logger.warning(
+            "Failed to close gateway connections for revoked user %s",
+            user_id,
+            exc_info=True,
+        )
+
+
 @router.post(
     "/security/force-logout",
     response_model=SuccessResponse,
@@ -711,6 +738,9 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
             logger.warning(
                 "Failed to broadcast force-logout WebSocket event", exc_info=True
             )
+        # The frame above is only a client-side hint: close the sockets on the
+        # server as well, mirroring the site-wide logout route.
+        await _close_revoked_user_gateway_connections(uid, "Security logout")
 
         try:
             from src.utils.system_alerts import record_system_alert
@@ -807,6 +837,9 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
             logger.warning(
                 "Failed to broadcast lock-user WebSocket event", exc_info=True
             )
+        # Locking disables the account and logs out every session -- revoke the
+        # live gateway sockets too, not just the client-side logout hint.
+        await _close_revoked_user_gateway_connections(uid, "Account suspended")
 
         try:
             from src.utils.system_alerts import record_system_alert

@@ -11,7 +11,7 @@ import utils.logger as logger
 from src.core.events.models import Event
 from src.core.events.snowflakes import stringify_snowflake_ids
 
-from .opcodes import GatewayOpcode
+from .opcodes import GatewayCloseCode, GatewayOpcode
 from .connection import Connection
 from .session import SessionManager
 from .intents import filter_event_by_intents
@@ -885,6 +885,60 @@ class GatewayDispatcher:
             f"to {sent_count} connections (reason={update_data.get('reason')})"
         )
         return sent_count
+
+    async def close_user_connections(
+        self,
+        user_id: int,
+        close_code: int = GatewayCloseCode.AUTHENTICATION_FAILED,
+        reason: str = "Session revoked",
+    ) -> int:
+        """Close every local gateway connection belonging to ``user_id``.
+
+        Session revocation must invalidate the live socket *server-side*, not
+        merely push a client-side hint: a ``SECURITY_LOGOUT``/``SECURITY_ALERT``
+        frame tells a well-behaved client to disconnect, but the socket itself
+        stays authenticated and usable until it is actually closed. The global
+        logout route already calls :meth:`close_all_connections`; per-user
+        revocation needs the same guarantee scoped to one user.
+
+        Uses a non-resumable close code by default so a revoked session cannot
+        immediately resume the gateway session over a fresh socket. Mirrors
+        :meth:`close_all_connections`'s drain-before-close handshake and is
+        non-raising: one bad socket cannot block revocation of the others.
+        Returns the number of connections closed.
+        """
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        with self._lock:
+            connections = self._session_manager.get_user_connections(uid)
+
+        if not connections:
+            return 0
+
+        async def _close_conn(conn) -> bool:
+            try:
+                flush = getattr(conn, "flush_outbound", None)
+                if flush is not None:
+                    await flush()
+                conn.set_disconnecting()
+                await conn.websocket.close(code=close_code, reason=reason)
+                conn.set_disconnected()
+                return True
+            except Exception as e:
+                logger.debug(f"Error closing connection {conn.connection_id}: {e}")
+                return False
+
+        results = await asyncio.gather(
+            *(_close_conn(conn) for conn in connections), return_exceptions=True
+        )
+        closed_count = sum(1 for result in results if result is True)
+        logger.info(
+            f"Closed {closed_count} gateway connections for user {uid} "
+            f"on session revocation"
+        )
+        return closed_count
 
     async def close_all_connections(
         self,

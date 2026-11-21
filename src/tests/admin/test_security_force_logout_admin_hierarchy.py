@@ -189,7 +189,15 @@ _EXPECTED_GATED_HANDLERS = {
 
 # Id-plumbing calls that legitimately receive the target id but are not
 # mutations, so they are excluded from the target-id mutation sweep below.
-_UID_PASSTHROUGH_CALLS = {"str", "int", "get_user_details"}
+# ``_close_revoked_user_gateway_connections`` closes the target's live gateway
+# sockets after the sessions were revoked by a gated mutation; it grants no
+# privilege and is already on the gated handler's execution path.
+_UID_PASSTHROUGH_CALLS = {
+    "str",
+    "int",
+    "get_user_details",
+    "_close_revoked_user_gateway_connections",
+}
 
 # Every call in these two modules that consumes the caller-supplied target id
 # (``uid``) is swept below. The three lifecycle mutations listed here are
