@@ -44,6 +44,13 @@ _CHUNK = 64 * 1024
 # which is far larger than any real client dist while still bounding a
 # decompression bomb.
 _UNCOMPRESSED_FACTOR = 20
+# Pre-extraction archive guards. A release dist.zip never needs thousands of
+# members, and a payload that expands more than a few hundredfold while being
+# larger than a megabyte is a zip bomb rather than web assets. These are
+# checked from the ZIP central directory *before* any member is written.
+_MAX_ARCHIVE_ENTRIES = 20_000
+_MAX_EXPANSION_RATIO = 256
+_RATIO_MIN_OUTPUT_BYTES = 8 * 1024 * 1024
 # A SHA256 digest is exactly 32 bytes rendered as 64 lowercase hex characters.
 _SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -86,56 +93,126 @@ def _parse_iso8601(value: str) -> float:
         return 0.0
 
 
+def _check_member_name(info: zipfile.ZipInfo) -> None:
+    """Reject absolute/drive/traversal/symlink member names before extraction."""
+    name = info.filename
+    # Reject absolute paths and Windows drive letters
+    if name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name):
+        raise FetchError(f"Refusing to extract unsafe path: {name!r}")
+    if ".." in Path(name).parts:
+        raise FetchError(f"Refusing to extract path with '..': {name!r}")
+    # Reject symlinks (and other special Unix file types)
+    if (info.external_attr >> 16) & 0o170000 == 0o120000:
+        raise FetchError(f"Refusing to extract symlink: {name!r}")
+
+
+def _preflight_archive(
+    zf: zipfile.ZipFile, max_uncompressed_bytes: Optional[int]
+) -> list[zipfile.ZipInfo]:
+    """Validate archive metadata before any member is materialized.
+
+    The ZIP central directory declares each member's uncompressed and
+    compressed sizes, so the whole expansion can be checked without inflating
+    anything. Rejecting here means a crafted archive leaves no partial output
+    on disk and cannot burn CPU/disk bit by bit until a mid-stream limit fires.
+    """
+    infos: list[zipfile.ZipInfo] = []
+    declared_total = 0
+    compressed_total = 0
+    for info in zf.infolist():
+        name = info.filename
+        if not name or name.endswith("/"):
+            continue
+        _check_member_name(info)
+        infos.append(info)
+        if len(infos) > _MAX_ARCHIVE_ENTRIES:
+            raise FetchError(f"Archive has too many entries (>{_MAX_ARCHIVE_ENTRIES})")
+        size = info.file_size
+        if size < 0:
+            raise FetchError(f"Refusing to extract member with invalid size: {name!r}")
+        if max_uncompressed_bytes is not None and size > max_uncompressed_bytes:
+            raise FetchError(
+                "Extraction exceeded max_uncompressed_bytes="
+                f"{max_uncompressed_bytes}"
+            )
+        declared_total += size
+        if max_uncompressed_bytes is not None and declared_total > max_uncompressed_bytes:
+            raise FetchError(
+                "Extraction exceeded max_uncompressed_bytes="
+                f"{max_uncompressed_bytes}"
+            )
+        compressed_total += max(0, info.compress_size)
+
+    # A payload that expands many hundredfold is a bomb regardless of the
+    # absolute cap (which callers may raise). The floor keeps legitimately
+    # compressible but small assets from tripping the ratio check.
+    if declared_total > _RATIO_MIN_OUTPUT_BYTES and compressed_total > 0:
+        if declared_total // compressed_total > _MAX_EXPANSION_RATIO:
+            raise FetchError(
+                f"Archive expansion ratio exceeds {_MAX_EXPANSION_RATIO}:1"
+            )
+    return infos
+
+
 def _safe_extract_zip(
     zf: zipfile.ZipFile,
     target: Path,
     max_uncompressed_bytes: Optional[int] = None,
 ) -> None:
-    """Extract *zf* into *target* safely, defending against zip-slip.
+    """Extract *zf* into *target* safely, defending against zip-slip and bombs.
 
-    All entries with absolute paths, drive letters, parent references, or
-    symlinks are rejected. When *max_uncompressed_bytes* is set, the total
-    number of decompressed bytes written is bounded so a crafted archive
-    (zip bomb) cannot exhaust disk space.
+    Every member is validated from archive metadata before any file is
+    written: absolute/drive/traversal/symlink names, entry count, cumulative
+    uncompressed size and expansion ratio are all bounded up front. The
+    per-chunk budget below is kept as defence in depth in case a crafted
+    archive lies about ``file_size``. If anything fails, all files created
+    during this call are removed so no partial tree is left behind.
     """
-    target_resolved = target.resolve()
-    total_written = 0
-    for info in zf.infolist():
-        name = info.filename
-        if not name or name.endswith("/"):
-            continue
-        # Reject absolute paths and Windows drive letters
-        if name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name):
-            raise FetchError(f"Refusing to extract unsafe path: {name!r}")
-        if ".." in Path(name).parts:
-            raise FetchError(f"Refusing to extract path with '..': {name!r}")
-        # Reject symlinks
-        if (info.external_attr >> 16) & 0o170000 == 0o120000:
-            raise FetchError(f"Refusing to extract symlink: {name!r}")
+    # Validate the whole archive before touching the filesystem.
+    infos = _preflight_archive(zf, max_uncompressed_bytes)
 
-        dest = (target / name).resolve()
-        try:
-            dest.relative_to(target_resolved)
-        except ValueError as exc:
-            raise FetchError(
-                f"Refusing to extract path outside target: {name!r}"
-            ) from exc
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        with zf.open(info, "r") as src, open(dest, "wb") as out:
-            while True:
-                chunk = src.read(_CHUNK)
-                if not chunk:
-                    break
-                total_written += len(chunk)
-                if (
-                    max_uncompressed_bytes is not None
-                    and total_written > max_uncompressed_bytes
-                ):
-                    raise FetchError(
-                        "Extraction exceeded max_uncompressed_bytes="
-                        f"{max_uncompressed_bytes}"
-                    )
-                out.write(chunk)
+    target_resolved = target.resolve()
+    pre_existing = set(target.rglob("*"))
+    total_written = 0
+    try:
+        for info in infos:
+            name = info.filename
+            dest = (target / name).resolve()
+            try:
+                dest.relative_to(target_resolved)
+            except ValueError as exc:
+                raise FetchError(
+                    f"Refusing to extract path outside target: {name!r}"
+                ) from exc
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info, "r") as src, open(dest, "wb") as out:
+                while True:
+                    chunk = src.read(_CHUNK)
+                    if not chunk:
+                        break
+                    total_written += len(chunk)
+                    if (
+                        max_uncompressed_bytes is not None
+                        and total_written > max_uncompressed_bytes
+                    ):
+                        raise FetchError(
+                            "Extraction exceeded max_uncompressed_bytes="
+                            f"{max_uncompressed_bytes}"
+                        )
+                    out.write(chunk)
+    except BaseException:
+        # Fail closed: remove every path created by this call, deepest first
+        # so directories are only removed once their contents are gone.
+        created = [p for p in target.rglob("*") if p not in pre_existing]
+        for path in sorted(created, key=lambda p: len(p.parts), reverse=True):
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    path.rmdir()
+                else:
+                    path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def _download_to_stream(
