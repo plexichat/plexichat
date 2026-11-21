@@ -201,8 +201,8 @@ class ScheduledEventManager:
         # PostgreSQL READ COMMITTED would let two concurrent guarded INSERTs
         # both see a stale count. Serialise per server with an advisory xact
         # lock. Namespace 140 stays clear of the invite (1/2), emoji (100/101),
-        # sticker (102), soundboard (120) and webhook (130) quota locks; masking
-        # to 30 bits keeps the second key in signed int4 range.
+        # sticker (102), soundboard (120), webhook (130) and role (141) quota
+        # locks; masking to 30 bits keeps the second key in signed int4 range.
         is_postgres = getattr(self._db, "type", "") == "postgres"
         if is_postgres:
             self._db.begin_transaction()

@@ -126,16 +126,17 @@ class RoleCrudMixin(RoleHandlerProtocol):
 
         # PostgreSQL READ COMMITTED would let two concurrent guarded INSERTs
         # both see a stale count. Serialise per server with an advisory xact
-        # lock. Namespace 140 stays clear of the invite (1/2), emoji (100/101),
-        # sticker (102), soundboard (120) and webhook (130) quota locks; masking
-        # to 30 bits keeps the second key in signed int4 range.
+        # lock. Namespace 141 stays clear of the invite (1/2), emoji (100/101),
+        # sticker (102), soundboard (120), webhook (130) and scheduled-event
+        # (140) quota locks; masking to 30 bits keeps the second key in signed
+        # int4 range.
         is_postgres = getattr(self.db, "type", "") == "postgres"
         if is_postgres:
             self.db.begin_transaction()
             try:
                 self.db.execute(
                     "SELECT pg_advisory_xact_lock(?, ?)",
-                    (140, int(server_id) & 0x3FFFFFFF),
+                    (141, int(server_id) & 0x3FFFFFFF),
                 )
             except Exception:
                 self.db.rollback()
