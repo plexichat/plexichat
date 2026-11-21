@@ -191,6 +191,10 @@ async def _dispatch_offline_presence(
                 logger.debug(
                     f"presence broadcast member enumeration failed: {member_error}"
                 )
+                # FAIL CLOSED: the two-way block set is authoritative. Without
+                # it no recipient is proven safe, so withhold offline presence
+                # entirely rather than deliver it to a blocked pair.
+                target_user_ids.clear()
 
         # Clear typing indicators and dispatch TYPING_STOP events to the
         # channel members who were actually able to see the typing

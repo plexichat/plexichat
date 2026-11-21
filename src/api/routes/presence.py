@@ -158,6 +158,11 @@ def _get_presence_targets(user_id: int) -> list:
                     continue
         except Exception as e:
             logger.debug(f"Error filtering blocked users from presence targets: {e}")
+            # FAIL CLOSED: get_all_blocked_ids is the authoritative two-way
+            # block set. Without it no candidate recipient is proven safe, so
+            # withhold the whole audience rather than broadcast the subject's
+            # real presence to a user who blocked them (or whom they blocked).
+            return []
 
     # Remove self just in case
     target_user_ids.discard(user_id)
