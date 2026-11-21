@@ -180,15 +180,23 @@ class LastChatService:
             cached["conversation_id"] = conv_id
             cached["last_message_id"] = msg_id
             cached["scroll_position"] = scroll_pos
-            # Verify the conversation still exists and user is still a participant
-            if conv_id and self._participant_svc:
-                if self._participant_svc.is_participant(conv_id, user_id):
+            # Authorization must fail CLOSED, exactly like save_last_chat.
+            # A missing participation checker is not a grant: returning the
+            # cached state when we cannot prove membership would expose a
+            # conversation the user was removed from during the cache TTL.
+            if conv_id:
+                allowed = (
+                    bool(self._participant_svc.is_participant(conv_id, user_id))
+                    if self._participant_svc
+                    else False
+                )
+                if allowed:
                     return cached
-                else:
-                    # User was removed from the conversation, invalidate
-                    cache_delete(cache_key)
-                    return None
-            return cached
+                cache_delete(cache_key)
+                return None
+            # A state row with no conversation cannot be authorized at all.
+            cache_delete(cache_key)
+            return None
 
         # Fall back to database
         row = self._db.fetch_one(
@@ -200,16 +208,31 @@ class LastChatService:
 
         data = _last_chat_row_to_dict(row)
 
-        # Verify user is still a participant
+        # Verify user is still a participant, failing closed when the checker
+        # is unavailable (same contract as the cache-hit path above and as
+        # save_last_chat).  A stale row must not become readable just because
+        # the messaging module failed to initialise.
         conv_id = data.get("conversation_id")
-        if conv_id and self._participant_svc:
-            if not self._participant_svc.is_participant(conv_id, user_id):
+        if conv_id:
+            allowed = (
+                bool(self._participant_svc.is_participant(conv_id, user_id))
+                if self._participant_svc
+                else False
+            )
+            if not allowed:
                 # Clean up stale record
                 self._db.execute(
                     "DELETE FROM user_last_chat WHERE user_id = ?",
                     (user_id,),
                 )
                 return None
+        else:
+            # No conversation id means the state cannot be authorized.
+            self._db.execute(
+                "DELETE FROM user_last_chat WHERE user_id = ?",
+                (user_id,),
+            )
+            return None
 
         # Coerce legacy string IDs to int for type compatibility
         conv_id = self._safe_int(data.get("conversation_id"))
@@ -239,6 +262,15 @@ class LastChatService:
         # negative limit would bypass the page cap and dump the whole table.
         limit = max(0, min(limit, self.MAX_HISTORY))
 
+        # Fail closed: a recent-chat row can only be returned after proving the
+        # viewer still participates in its conversation.  With no checker that
+        # proof is impossible, so an unavailable messaging module must not turn
+        # this into an unchecked history dump (mirrors save_last_chat and
+        # get_last_chat, which both deny when the checker is missing).
+        checker = self._participant_svc
+        if not checker:
+            return []
+
         rows = self._db.fetch_all(
             """SELECT h.conversation_id, h.accessed_at, h.unread_count,
                       c.last_message_at, c.last_message_id
@@ -260,10 +292,7 @@ class LastChatService:
         # manager implementations that only expose is_participant keep the
         # original per-row path.
         normalized = [_recent_chat_row_to_dict(row) for row in rows]
-        checker = self._participant_svc
-        bulk_check = (
-            getattr(checker, "are_participants_bulk", None) if checker else None
-        )
+        bulk_check = getattr(checker, "are_participants_bulk", None)
         if bulk_check:
             allowed = bulk_check(
                 [data.get("conversation_id") for data in normalized], user_id
@@ -273,18 +302,20 @@ class LastChatService:
 
         results = []
         for data in normalized:
-            # Verify user is still a participant
+            # Verify user is still a participant.  A row without a
+            # conversation id cannot be authorized and is dropped.
             conv_id = data.get("conversation_id")
-            if conv_id and checker:
-                if bulk_check is not None:
-                    try:
-                        permitted = allowed.get(int(conv_id), False)
-                    except (TypeError, ValueError):
-                        permitted = False
-                else:
-                    permitted = checker.is_participant(conv_id, user_id)
-                if not permitted:
-                    continue
+            if not conv_id:
+                continue
+            if bulk_check is not None:
+                try:
+                    permitted = allowed.get(int(conv_id), False)
+                except (TypeError, ValueError):
+                    permitted = False
+            else:
+                permitted = checker.is_participant(conv_id, user_id)
+            if not permitted:
+                continue
             results.append(data)
 
         return results

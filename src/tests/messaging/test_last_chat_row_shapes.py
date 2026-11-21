@@ -67,11 +67,23 @@ class _TupleLastChatDB:
         return _Cursor()
 
 
+class _AllowAllParticipants:
+    """Permissive checker for row-shape tests.
+
+    These tests pin tuple-vs-mapping decoding, not authorization.  The read
+    paths fail closed when no checker is supplied, so supply an explicit
+    allow-all stub to keep exercising the decoding contract.
+    """
+
+    def is_participant(self, conversation_id, user_id):
+        return True
+
+
 def _make_service(db, monkeypatch):
     from src.core.messaging.services.last_chat import LastChatService
     import src.core.messaging.services.last_chat as last_chat_module
 
-    service = LastChatService(db)
+    service = LastChatService(db, participant_svc=_AllowAllParticipants())
     service._generate_id = lambda: 42
     # Bypass the Valkey cache so every test exercises the database path.
     monkeypatch.setattr(last_chat_module, "cache_get", lambda key: None)
