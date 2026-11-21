@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 import utils.logger as logger
 from src.core.database import invalidate_pattern
 
+from ..gateway_revocation import close_session_gateway_connections
 from ..models import AuditEventType, Device
 
 
@@ -135,6 +136,13 @@ class DeviceMixin(AuthManagerProtocol):
         )
         if cursor.rowcount == 0:
             return False
+        # Capture the sessions this device owns before revoking them so their
+        # sockets can be closed individually. A blanket user-wide close would
+        # also kill the user's other, still-valid devices.
+        owned = self._db.fetch_all(
+            "SELECT id FROM auth_sessions WHERE device_id = ? AND revoked = 0",
+            (device_id,),
+        )
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ?", (device_id,)
         )
@@ -144,6 +152,10 @@ class DeviceMixin(AuthManagerProtocol):
         # warm cache entry (and be re-cached) for the length of the TTL.
         invalidate_pattern("token_verify:*")
         self._log_audit(AuditEventType.DEVICE_REVOKED, user_id, True)
+        for row in owned:
+            close_session_gateway_connections(
+                user_id, int(row["id"]), "Session revoked"
+            )
         return True
 
     # ------------------------------------------------------------------
@@ -215,6 +227,14 @@ class DeviceMixin(AuthManagerProtocol):
         )
         if getattr(cursor, "rowcount", 0) == 0:
             return False
+        # Sessions on this fingerprint are about to be revoked; record them so
+        # only their sockets are closed, not sessions on other devices.
+        owned = self._db.fetch_all(
+            "SELECT s.id AS id FROM auth_sessions s JOIN auth_devices d "
+            "ON s.device_id = d.id WHERE d.user_id = ? AND d.fingerprint = ? "
+            "AND s.revoked = 0",
+            (user_id, fingerprint),
+        )
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE device_id IN "
             "(SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?)",
@@ -222,4 +242,8 @@ class DeviceMixin(AuthManagerProtocol):
         )
         invalidate_pattern("token_verify:*")
         self._log_audit(AuditEventType.DEVICE_UNTRUSTED, user_id, True)
+        for row in owned:
+            close_session_gateway_connections(
+                user_id, int(row["id"]), "Session revoked"
+            )
         return True

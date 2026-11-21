@@ -134,6 +134,16 @@ class LifecycleMixin(AuthManagerProtocol):
         active_count = int(count_row["c"]) if count_row else 0
         excess = active_count - max_sessions
         if excess > 0:
+            # Capture the eviction candidates before the guarded UPDATE. The
+            # single-statement eviction below is deliberately kept (it makes
+            # concurrent logins converge on the cap); after the write we close
+            # the sockets of the rows that actually became revoked, so a
+            # concurrently created/kept session is never targeted.
+            evicted_candidates = self._db.fetch_all(
+                "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 0 "
+                "AND id != ? ORDER BY last_activity ASC, id ASC LIMIT ?",
+                (user_id, sid, excess),
+            )
             self._db.execute(
                 "UPDATE auth_sessions SET revoked = 1 WHERE id IN ("
                 "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 0 "
@@ -142,6 +152,17 @@ class LifecycleMixin(AuthManagerProtocol):
             )
             # Evicted sessions must not remain verifiable via the verify cache.
             invalidate_pattern("token_verify:*")
+            for candidate in evicted_candidates:
+                evicted_id = int(candidate["id"])
+                row = self._db.fetch_one(
+                    "SELECT revoked FROM auth_sessions WHERE id = ?", (evicted_id,)
+                )
+                if row and row["revoked"]:
+                    # An evicted session is dead; its socket must not stay
+                    # authenticated. Target only that auth session.
+                    close_session_gateway_connections(
+                        user_id, evicted_id, "Session revoked"
+                    )
 
         return Session(
             id=sid,
@@ -600,6 +621,14 @@ class LifecycleMixin(AuthManagerProtocol):
                 # re-cache the still-valid row in between.
                 invalidate_pattern("token_verify:*")
                 self._log_audit(AuditEventType.LOGOUT, row["user_id"], True)
+                # The session is revoked; any socket authenticated under it is
+                # no longer legitimate, even though gateway auth happens only
+                # at IDENTIFY/RESUME. Close just this auth session's sockets so
+                # a stolen token used for logout cannot be the only thing that
+                # drops the socket, and sibling sessions are unaffected.
+                close_session_gateway_connections(
+                    row["user_id"], parsed["id"], "Session revoked"
+                )
                 return True
         return False
 
@@ -847,4 +876,19 @@ class LifecycleMixin(AuthManagerProtocol):
                 emit_security_alert(user_id, "session_revoked")
             except Exception as exc:
                 logger.debug(f"session_revoked alert not emitted: {exc}")
+            # A SECURITY_ALERT is only a client-side hint; the sockets of the
+            # revoked sessions stay authenticated server-side unless closed.
+            # Close them one by one by auth-session id rather than blanket
+            # closing the user: with except_session_id the surviving current
+            # session (and its socket) must remain usable. Only sessions that
+            # are now actually revoked are targeted.
+            now_revoked = self._db.fetch_all(
+                "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 1 "
+                f"AND id IN ({placeholders})",
+                (user_id, *targets),
+            )
+            for row in now_revoked:
+                close_session_gateway_connections(
+                    user_id, int(row["id"]), "Session revoked"
+                )
         return revoked
