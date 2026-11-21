@@ -79,7 +79,7 @@ def test_user_token_passes_the_identity_gate(monkeypatch):
     result = _call(threads_routes.list_my_threads, current_user=_USER)
 
     assert result == []
-    threads_mod.get_user_threads.assert_called_once_with(int(_USER.user_id))
+    threads_mod.get_user_threads.assert_called_once_with(_USER.user_id)
 
 
 def test_guard_helper_accepts_a_real_user_token():
