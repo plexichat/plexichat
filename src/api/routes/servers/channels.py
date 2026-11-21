@@ -35,6 +35,63 @@ def _invalidate_channel_listing_cache() -> None:
     invalidate_pattern("server_channels_api:*")
 
 
+def _require_channel_list_access(
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> None:
+    """Live membership gate for the cached channel-list GET.
+
+    ``get_server_channels`` enforces membership via ``servers_mod.get_channels``
+    inside its ``@cached`` body. On a warm hit that body never runs, so a member
+    removed by a path with no API-layer eviction (automod, an admin path or a
+    bot calling the core manager) kept reading a still-warm 200 listing the
+    channels they could see before the revocation, for the whole TTL. FastAPI
+    resolves dependencies before entering the endpoint, and therefore before
+    the ``@cached`` wrapper reads the cache, so enforcing membership here keeps
+    authorization live on every request while the expensive fetch stays
+    memoized. Error mapping mirrors the cached body; a failing probe must fail
+    closed, never fall through to a hit.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+    try:
+        sid = parse_id(server_id, "server ID")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
+    try:
+        member = servers_mod.get_member(sid, current_user.user_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Membership check failed for channel list read of server %s: %s",
+            server_id,
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": "Failed to verify server membership",
+                }
+            },
+        ) from exc
+    if not member:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Access denied"}},
+        )
+
+
 @router.get(
     "/{server_id}/channels",
     response_model=List[ChannelResponse],
@@ -49,7 +106,9 @@ def _invalidate_channel_listing_cache() -> None:
 )
 @cached(ttl=30, prefix="server_channels_api")
 def get_server_channels(
-    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+    _channel_list_access_gate: None = Depends(_require_channel_list_access),
 ) -> List[ChannelResponse]:
     servers_mod = api.get_servers()
     if not servers_mod:
