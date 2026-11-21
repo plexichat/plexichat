@@ -409,6 +409,20 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         client_secret, secret_hash = generate_client_secret()
 
+        # SECURITY: a client secret is regenerated precisely because the old
+        # one may be compromised. Every OAuth token in app_oauth_tokens was
+        # minted on the strength of that secret, so leaving those rows live
+        # would let a party holding a stolen secret and a stolen bearer token
+        # keep acting as the application's users after rotation. Consume all
+        # outstanding tokens first: if that write fails the rotation aborts
+        # (fail closed) rather than leaving valid tokens behind, and a later
+        # failure can only revoke tokens needlessly (which is safe). The
+        # conditional ``revoked = 0`` keeps the write bounded/idempotent.
+        self._db.execute(
+            "UPDATE app_oauth_tokens SET revoked = 1 "
+            "WHERE application_id = ? AND revoked = 0",
+            (application_id,),
+        )
         self._db.execute(
             "UPDATE app_applications SET client_secret_hash = ?, updated_at = ? WHERE id = ?",
             (secret_hash, self._get_timestamp(), application_id),
