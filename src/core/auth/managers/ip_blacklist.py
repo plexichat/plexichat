@@ -1,10 +1,20 @@
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
+from src.core.auth.ip_canonical import canonicalize_ip_address
 from src.core.database import cached, invalidate_pattern
 
 
 from .protocol import AuthManagerProtocol
+
+
+def _ip_blocked_cache_key(*args, **kwargs) -> str:
+    """Key the per-IP verdict cache on the canonical IP, not its spelling."""
+    if "ip_address" in kwargs:
+        ip_address = kwargs["ip_address"]
+    else:
+        ip_address = args[1] if len(args) > 1 else ""
+    return f"ip_blocked:{canonicalize_ip_address(ip_address) or ip_address}"
 
 
 class IpBlacklistMixin(AuthManagerProtocol):
@@ -18,7 +28,11 @@ class IpBlacklistMixin(AuthManagerProtocol):
         now = self._get_timestamp()
         expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
 
-        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+        # Route the key through the shared canonicalizer: the admin entering
+        # ``::ffff:1.2.3.4`` and the resolver surfacing ``1.2.3.4`` must index
+        # the same row, otherwise the ban is evadable by respelling the IP.
+        canonical_ip = canonicalize_ip_address(ip_address) or ip_address
+        ip_index = self.crypto.fast_blind_index(canonical_ip, "ip_address")
         ip_encrypted = self.crypto.encrypt_data(ip_address, context="ip_blacklist")
 
         self._db.upsert(
@@ -54,8 +68,9 @@ class IpBlacklistMixin(AuthManagerProtocol):
         return True
 
     def unblock_ip(self, ip_address: str) -> bool:
-        ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
-        legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
+        canonical_ip = canonicalize_ip_address(ip_address) or ip_address
+        ip_index = self.crypto.fast_blind_index(canonical_ip, "ip_address")
+        legacy_index = self.crypto.legacy_fast_blind_index(canonical_ip, "ip_address")
 
         self._db.execute(
             "DELETE FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
@@ -69,14 +84,15 @@ class IpBlacklistMixin(AuthManagerProtocol):
         logger.info("IP unblocked")
         return True
 
-    @cached(ttl=300, prefix="ip_blocked")
+    @cached(ttl=300, key_builder=_ip_blocked_cache_key)
     def is_ip_blocked(self, ip_address: str) -> bool:
         # Fail OPEN on DB/crypto/cache errors: a transient outage must not
         # turn into a site-wide lockout. Listed IPs are still blocked via
         # the normal DB path below; only the error path returns False.
         try:
-            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
-            legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
+            canonical_ip = canonicalize_ip_address(ip_address) or ip_address
+            ip_index = self.crypto.fast_blind_index(canonical_ip, "ip_address")
+            legacy_index = self.crypto.legacy_fast_blind_index(canonical_ip, "ip_address")
 
             row = self._db.fetch_one(
                 "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
