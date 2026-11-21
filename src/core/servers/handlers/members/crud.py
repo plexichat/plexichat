@@ -291,13 +291,22 @@ class MemberCrudMixin:
                 raise PermissionDeniedError(
                     "Not a member of this server", "members.manage_roles"
                 )
-            if server.owner_id == member_user_id:
+            owner_id = server.owner_id
+            # SECURITY: both ids are authoritative DB values -- owner_id is
+            # projected from the srv_servers row, member_user_id from the
+            # srv_members row resolved by the API route. Loose ``==`` let a
+            # text/float encoded owner id ("5", 5.9) compare unequal to the
+            # genuine int target, skipping this "owner is untouchable" rule.
+            # Fail closed: only a genuine int attests to identity (type() also
+            # rejects bool). A malformed owner/target id cannot prove the
+            # target is NOT the owner, so deny the moderation.
+            if type(owner_id) is not int or type(member_user_id) is not int:
+                raise CannotModifyOwnerError("Cannot verify server owner identity")
+            if owner_id == member_user_id:
                 raise CannotModifyOwnerError("Cannot moderate the server owner")
             user_roles = self.manager._get_member_role_rows(server_id, user_id)
             target_roles = self.manager._get_member_role_rows(server_id, member_user_id)
-            if not can_manage_member(
-                user_roles, target_roles, server.owner_id == user_id, False
-            ):
+            if not can_manage_member(user_roles, target_roles, owner_id == user_id, False):
                 raise RoleHierarchyError(
                     "Cannot moderate a member with equal or higher role"
                 )
@@ -421,7 +430,14 @@ class MemberCrudMixin:
             # Actor is not a member of this server (or server missing) -
             # fail with a permission error instead of dereferencing None.
             raise PermissionDeniedError("Not a member of this server", "members.kick")
-        if server.owner_id == member_user_id:
+        owner_id = server.owner_id
+        # SECURITY: fail-closed owner/target id typing, mirroring update_member
+        # and the ban/unban gates. A malformed owner or target id could
+        # otherwise make the loose ``==`` below evaluate False and skip the
+        # "owner is untouchable" rule.
+        if type(owner_id) is not int or type(member_user_id) is not int:
+            raise CannotModifyOwnerError("Cannot verify server owner identity")
+        if owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot kick the server owner")
 
         member = self.get_member(server_id, member_user_id)
@@ -433,9 +449,7 @@ class MemberCrudMixin:
 
         user_roles = self.manager._get_member_role_rows(server_id, user_id)
         target_roles = self.manager._get_member_role_rows(server_id, member_user_id)
-        if not can_manage_member(
-            user_roles, target_roles, server.owner_id == user_id, False
-        ):
+        if not can_manage_member(user_roles, target_roles, owner_id == user_id, False):
             raise RoleHierarchyError("Cannot kick a member with equal or higher role")
 
         self.db.execute(

@@ -124,6 +124,12 @@ class KickUserAction(BaseAction):
         if owner_id is None:
             return False, "Cannot resolve server owner"
 
+        # SECURITY: fail-closed owner/target id typing, mirroring ban.py. A
+        # malformed owner or violation id could otherwise make the loose ``==``
+        # below evaluate False and skip the protected-target rule.
+        if type(owner_id) is not int or type(violation.user_id) is not int:
+            return False, "Cannot verify server owner identity"
+
         if owner_id == violation.user_id:
             return False, "Cannot kick server owner"
 

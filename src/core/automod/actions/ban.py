@@ -161,6 +161,16 @@ class BanUserAction(BaseAction):
         if owner_id is None:
             return False, "Cannot resolve server owner"
 
+        # SECURITY: both ids are authoritative identities -- owner_id comes from
+        # the srv_servers row, violation.user_id from the rule violation. Loose
+        # ``==`` let a text/float encoded owner id ("5", 5.9) compare unequal to
+        # the genuine int target, skipping this protected-target rule and letting
+        # automod ban the server owner. Fail closed: a genuine int attests to
+        # identity (type() also rejects bool); a malformed value cannot prove the
+        # target is NOT the owner, so deny the sanction.
+        if type(owner_id) is not int or type(violation.user_id) is not int:
+            return False, "Cannot verify server owner identity"
+
         if owner_id == violation.user_id:
             return False, "Cannot ban server owner"
 
