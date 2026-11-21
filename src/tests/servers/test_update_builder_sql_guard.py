@@ -164,6 +164,26 @@ def _iter_source_files():
         yield path
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes on its execution path, skipping nested defs.
+
+    Descend through statement-level nesting (``if``/``for``/``with``/``try``/...)
+    but do not descend into a nested function or lambda: *defining* a helper
+    that lists ``updated_at = ?`` or spells out the defective statement does not
+    run it. Crediting such dead primitives as builder evidence mis-classifies a
+    clean builder, so the in-handler evidence scans below use this walker. The
+    function enumeration in :func:`_offenders_in_source` stays broad.
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
 def _updated_at_list_entries(function: ast.AST) -> set:
     """Ids of the literal ``updated_at = ?`` nodes the function lists.
 
@@ -175,7 +195,7 @@ def _updated_at_list_entries(function: ast.AST) -> set:
     ones that join the list.
     """
     entries = set()
-    for node in ast.walk(function):
+    for node in _own_body_nodes(function):
         candidates = []
         if (
             isinstance(node, ast.Call)
@@ -222,7 +242,7 @@ def _emits_updated_at_after_another_column(function: ast.AST, excluded: set) -> 
     statement text, and matching them would flag every builder that mentions
     the column.
     """
-    for node in ast.walk(function):
+    for node in _own_body_nodes(function):
         if (
             isinstance(node, ast.Constant)
             and isinstance(node.value, str)
@@ -315,6 +335,73 @@ def test_static_audit_recognises_the_shipped_defect_shapes():
     ], "the per-column if/elif shape must be detected"
     assert _offenders_in_source(joined, "synthetic") == []
     assert _offenders_in_source(timestamp_only, "synthetic") == []
+
+
+def test_dead_nested_defect_primitives_do_not_flag_a_clean_builder():
+    """Defect primitives in a never-called nested callable are not evidence.
+
+    Regression: ``_updated_at_list_entries`` and
+    ``_emits_updated_at_after_another_column`` used ``ast.walk(function)``,
+    which descends into nested functions and lambdas. A clean builder that only
+    *defined* a helper/lambda carrying both defect primitives was reported as an
+    offender. The in-handler evidence scans now use :func:`_own_body_nodes`, so
+    dead code is ignored while a live defect behind statement-level nesting is
+    still detected.
+    """
+    dead_nested = textwrap.dedent("""
+        def update_thing(self):
+            updates = []
+            if name is not None:
+                updates.append("name = ?")
+            updates.append("updated_at = ?")
+            def never_called():
+                query = "UPDATE t SET name = ?, updated_at = ? WHERE id = ?"
+            self._db.execute(f"UPDATE t SET {', '.join(updates)} WHERE id = ?")
+    """)
+    dead_lambda = textwrap.dedent("""
+        def update_thing(self):
+            updates = ["updated_at = ?"]
+            _ = lambda: "UPDATE t SET name = ?, updated_at = ? WHERE id = ?"
+            self._db.execute(f"UPDATE t SET {', '.join(updates)} WHERE id = ?")
+    """)
+    live_nested = textwrap.dedent("""
+        def update_thing(self):
+            updates = []
+            if name is not None:
+                updates.append("updated_at = ?")
+            if updates:
+                for column in updates:
+                    query = "UPDATE t SET " + column + " = ?, updated_at = ?"
+                    self._db.execute(query)
+    """)
+
+    assert _offenders_in_source(dead_nested, "synthetic") == [], (
+        "a dead nested def must not make a clean builder an offender"
+    )
+    assert _offenders_in_source(dead_lambda, "synthetic") == [], (
+        "a dead nested lambda must not make a clean builder an offender"
+    )
+    assert _offenders_in_source(live_nested, "synthetic") == [
+        "synthetic::update_thing (line 2)"
+    ], "a live defect behind statement-level nesting must still be detected"
+
+    # Confirm the self-test is non-vacuous: the old broad traversal really did
+    # see the dead defect statement, while the own-body walker does not.
+    for source in (dead_nested, dead_lambda):
+        fn = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef)
+        )
+        def has_statement(nodes):
+            return any(
+                isinstance(n, ast.Constant)
+                and isinstance(n.value, str)
+                and UPDATED_AT_AFTER_COLUMN in _normalise_sql(n.value)
+                for n in nodes
+            )
+        assert has_statement(ast.walk(fn)), "old logic was fooled by the dead def"
+        assert not has_statement(_own_body_nodes(fn)), "dead def is not own-body"
 
 
 def test_no_builder_lists_updated_at_while_also_writing_it():
