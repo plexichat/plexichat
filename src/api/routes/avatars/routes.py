@@ -289,6 +289,7 @@ async def upload_my_avatar(
 
     Accepts image file upload and stores it in the database.
     """
+    require_user_token(current_user)
     avatars = api.get_avatars()
     if not avatars:
         logger.error("Avatars module not available")
@@ -422,6 +423,7 @@ async def delete_my_avatar(
     """
     Delete current user's avatar.
     """
+    require_user_token(current_user)
     avatars = api.get_avatars()
     if not avatars:
         logger.error("Avatars module not available")
