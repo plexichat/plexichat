@@ -354,10 +354,80 @@ async def get_channel_messages(
         )
 
 
+async def _verify_pinned_channel_access(
+    channel_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> None:
+    """Re-check channel view access on *every* pins request, before the cache.
+
+    ``get_pinned_messages`` is wrapped in a 120s ``@cached`` body. Previously
+    the only access check lived inside that cached function, so a viewer whose
+    channel/server access was revoked kept receiving the warm private pin list
+    until the entry expired. FastAPI resolves route dependencies before calling
+    the endpoint, so this gate runs on cache hits and misses alike. It denies
+    any server channel the caller can no longer resolve through ``get_channel``
+    while leaving genuine DM conversation ids (which are not server channels)
+    to the messaging service's participation check in the cached loader.
+    """
+    try:
+        cid = parse_id(channel_id, "channel_id")
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+        ) from None
+
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        # No server module: the cached loader treats the id as a DM and the
+        # messaging backend gates participation; nothing to re-check here.
+        return
+
+    try:
+        channel = await run_in_threadpool(
+            servers_mod.get_channel, cid, current_user.user_id
+        )
+    except (ChannelAccessDeniedError, PermissionDeniedError) as exc:
+        logger.debug(f"pins channel access denied for {cid}: {exc}")
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Channel not found"}},
+        ) from None
+    except (ServerNotFoundError, ChannelNotFoundError):
+        # The lookup itself says the id is not a server channel; the DM path
+        # below remains available.
+        return
+    except Exception as exc:
+        # An unproven lookup must never fall through to a cached private body.
+        logger.debug(f"pins channel access probe failed for {cid}: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        ) from None
+
+    if channel is not None:
+        return  # live access proven for this credential
+
+    # get_channel returns None both for "not a server channel" and for "user
+    # lost access". Only a membership-agnostic existence probe may tell them
+    # apart; if it cannot, fail closed instead of serving a warm private page.
+    try:
+        exists = await run_in_threadpool(servers_mod.channel_exists, cid)
+    except Exception as exc:
+        logger.debug(f"pins channel existence probe failed for {cid}: {exc}")
+        exists = True
+    if exists:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Channel not found"}},
+        )
+
+
 @router.get(
     "/channels/{channel_id}/pins",
     response_model=List[MessageResponse],
     summary="Get pinned messages",
+    dependencies=[Depends(_verify_pinned_channel_access)],
     responses={
         400: {"model": ErrorResponse, "description": "Invalid channel ID"},
         401: {"model": ErrorResponse, "description": "Not authenticated"},
