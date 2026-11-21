@@ -241,10 +241,23 @@ def _sync_password_to_auth_users(db: Any, username: str, password_hash: str) -> 
                 "UPDATE auth_users SET password_hash = ? WHERE id = ?",
                 (password_hash, user_id),
             )
+            # SECURITY: the hash written above is the account's main-app
+            # credential. A credential reset must retire every session that was
+            # authenticated with the old one, otherwise a stolen session token
+            # survives the reset (the user-facing password-change paths already
+            # do this). Without this, an admin password change only killed the
+            # admin-panel sessions, leaving the account reachable via auth_users.
+            db.execute(
+                "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?",
+                (user_id,),
+            )
             try:
                 from src.core.database import invalidate_pattern
 
                 invalidate_pattern(f"user_data:{user_id}*")
+                # Cached token verifications would otherwise replay a
+                # pre-reset "valid" answer for up to the verify-cache TTL.
+                invalidate_pattern("token_verify:*")
             except Exception as cache_error:
                 # The admin action already committed; the cache TTL is the floor.
                 logger.debug(f"admin user cache invalidate failed: {cache_error}")
