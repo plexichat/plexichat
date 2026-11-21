@@ -48,6 +48,106 @@ async def _cap_bulk_ack_body(request: Request) -> None:
     await read_body_capped(request, MAX_BULK_ACK_BODY)
 
 
+def _require_read_receipt_channel_view(cid: int, user_id: int, servers_mod) -> None:
+    """Fail closed when ``cid`` is a server channel the caller cannot view.
+
+    The read-receipt routes resolve the URL id to a conversation with a
+    best-effort ``get_channel(cid, user)`` and otherwise treat the id as a DM
+    conversation id. ``get_channel`` returns ``None`` for a genuine DM *and*
+    for a channel denied by ``channels.view``; a server channel's linked
+    ``conversation_id`` has no channel row at all. Without this gate a member
+    denied view on a private channel can pass that linked id as the URL
+    ``channel_id`` (an alias for the channel), skip the resolver, and reach the
+    participation-only unread/read-state lookup -- server membership is seeded
+    as participation regardless of ``channels.view``. Resolve both spellings
+    membership-agnostically and require a live view grant on the real backing
+    channel. Fails closed on any broken lookup; a genuine DM/group has no
+    backing channel and is left to the messaging layer's participation gate.
+    """
+    if not servers_mod:
+        return  # no servers store => cid can only be a DM/group conversation
+
+    def _deny() -> None:
+        # Same 404 as a missing channel, so a restricted channel is not
+        # disclosed and the alias cannot be used as an existence oracle.
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Channel not found"}},
+        )
+
+    get_channel = getattr(servers_mod, "get_channel", None)
+    channel_exists = getattr(servers_mod, "channel_exists", None)
+    reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+
+    def _gate_alias() -> None:
+        """Gate a linked conversation-id alias of a server channel."""
+        if not callable(reverse):
+            # Without the reverse lookup the alias cannot be checked; the
+            # addressed-id gate above is all that is possible here.
+            return
+        try:
+            backing = reverse(cid)
+        except HTTPException:
+            raise
+        except Exception:
+            _deny()
+        if backing is None:
+            return  # genuine DM/group: participation is the only boundary
+        channel_id = (
+            backing.get("id")
+            if isinstance(backing, dict)
+            else getattr(backing, "id", None)
+        )
+        if channel_id is None or not callable(get_channel):
+            _deny()
+        try:
+            channel_id = int(channel_id)
+        except (TypeError, ValueError):
+            _deny()
+        if channel_id == cid:
+            return  # addressed-id gate already checked this exact channel
+        try:
+            if get_channel(channel_id, user_id) is None:
+                _deny()
+        except HTTPException:
+            raise
+        except Exception:
+            _deny()
+
+    if not callable(get_channel):
+        # No view accessor: never treat a known channel id as a DM.
+        if callable(channel_exists):
+            try:
+                if channel_exists(cid):
+                    _deny()
+            except HTTPException:
+                raise
+            except Exception:
+                _deny()
+        _gate_alias()
+        return
+
+    try:
+        if get_channel(cid, user_id) is not None:
+            return  # live view grant on the addressed id
+    except HTTPException:
+        raise
+    except Exception:
+        _deny()
+
+    # No live view grant on the addressed id. It is either a view-denied
+    # channel, a view-denied channel's linked-conversation alias, or a DM.
+    if callable(channel_exists):
+        try:
+            if channel_exists(cid):
+                _deny()
+        except HTTPException:
+            raise
+        except Exception:
+            _deny()  # cannot prove it is NOT a channel: fail closed
+    _gate_alias()
+
+
 def _filter_blocked_dm_ack_recipients(actor_id, user_ids, relationships=None):
     """Drop DM read-receipt recipients who have a block with the ACK actor.
 
@@ -584,6 +684,13 @@ async def acknowledge_messages_bulk(
             )
             parsed_ids[cid] = mid
 
+        # The bulk path must not be a bypass of the single-channel view gate:
+        # a linked conversation id accepted as a channel-id alias would reach
+        # mark_read_bulk with only the participation check (every member).
+        servers_mod = api.get_servers()
+        for cid in parsed_ids:
+            _require_read_receipt_channel_view(cid, current_user.user_id, servers_mod)
+
         # BEFORE: one mark_read() per channel — each ran its own participant,
         # MAX(id), settings, SELECT and executemany round trips. AFTER: a
         # single bulk call resolves and writes all channels with bounded
@@ -718,6 +825,10 @@ async def get_last_read(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid channel ID"}},
         )
+
+    # A linked conversation id is an alias for its server channel; gate both
+    # spellings before the participation-only last-read lookup below.
+    _require_read_receipt_channel_view(cid, current_user.user_id, servers_mod)
 
     # Resolve to conversation_id
     conv_id = cid
