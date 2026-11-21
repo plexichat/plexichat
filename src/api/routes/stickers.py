@@ -30,6 +30,7 @@ from fastapi import Request
 from src.api.schemas.common import _reject_ui_text_chars
 from src.core.database import cached, invalidate_pattern
 from src.core.security.hardening import HardeningViolation, parse_id
+from src.api.routes.users.helpers import require_user_token
 
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
@@ -444,6 +445,12 @@ async def create_sticker(
     """
     Create a custom sticker for a server.
     """
+    # A bot token's ``user_id`` is its human owner. Without this gate a leaked
+    # bot credential would be charged to the owner's
+    # ``stickers:create:minute:<id>`` bucket (and would create the sticker as
+    # the owner), draining their quota and evading its own. Match every other
+    # owner-scoped route: reject bot credentials before the rate-limit spend.
+    require_user_token(current_user)
     stickers_mod = api.get_stickers()
     if not stickers_mod:
         raise HTTPException(status_code=500, detail="Stickers module not available")
