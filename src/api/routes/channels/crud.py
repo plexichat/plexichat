@@ -32,6 +32,61 @@ async def _cap_channel_update_body(request: Request) -> None:
     await read_body_capped(request, MAX_CHANNEL_UPDATE_BODY)
 
 
+async def _require_channel_access(channel_id: str, user_id: int) -> None:
+    """Live channel/DM access gate that runs before the cached read.
+
+    ``_load_channel`` enforces channel membership / ``channels.view`` (and DM
+    participation) in its cold path, but a warm ``@cached`` hit returns before
+    that body runs. A viewer whose access was revoked -- kick/ban/leave, a role
+    change dropping ``channels.view``, or removal from a group DM -- would
+    otherwise keep reading the still-warm channel detail for the whole TTL.
+    Re-probe access authoritatively on every request and fail closed: a missing
+    module or a failing checker must never let a warm body substitute for a
+    denial. The 404-vs-403 mapping mirrors the cached body's contract.
+    """
+    cid = require_channel_snowflake(channel_id)
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+    try:
+        if servers_mod.channel_exists(cid):
+            channel = await run_in_threadpool(servers_mod.get_channel, cid, user_id)
+            if not channel:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Channel access denied"}},
+                )
+            return
+
+        messaging_mod = api.get_messaging()
+        if messaging_mod and messaging_mod.conversation_exists(cid):
+            conversation = await run_in_threadpool(
+                messaging_mod.get_conversation, cid, user_id
+            )
+            if not conversation:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Channel access denied"}},
+                )
+            return
+
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Channel not found"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Channel access gate failed for {channel_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Failed to verify channel access"}},
+        ) from e
+
+
 class ChannelCRUDMixin(ChannelBase):
     def _register_routes(self) -> None:
         self.router.add_api_route(
@@ -85,9 +140,16 @@ class ChannelCRUDMixin(ChannelBase):
     # A short TTL keeps the read hot-path benefit while bounding the
     # revocation-staleness window to seconds.
     @cached(ttl=5, prefix="channel_api")
-    async def _get_channel(
-        self, channel_id: str, current_user: TokenInfo = Depends(get_current_user)
+    async def _load_channel(
+        self, channel_id: str, current_user: TokenInfo
     ) -> ChannelResponse:
+        """Data-only cold path for a single channel.
+
+        Access is re-probed live by ``_require_channel_access`` in the route
+        handler on EVERY request, including cache hits. This body still checks
+        access on the cold path so only authorised data is cached, but the
+        authoritative revocation gate lives outside the ``@cached`` wrapper.
+        """
         servers_mod = api.get_servers()
         if not servers_mod:
             logger.error("Servers module not available")
@@ -193,6 +255,13 @@ class ChannelCRUDMixin(ChannelBase):
                     }
                 },
             )
+
+    async def _get_channel(
+        self, channel_id: str, current_user: TokenInfo = Depends(get_current_user)
+    ) -> ChannelResponse:
+        """Route handler: live access gate BEFORE the cached channel read."""
+        await _require_channel_access(channel_id, current_user.user_id)
+        return await self._load_channel(channel_id, current_user)
 
     async def _update_channel(
         self,
