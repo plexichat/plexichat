@@ -27,6 +27,59 @@ from src.api.routes.messages.helpers import (
 from .base import MessagesCRUDBase
 
 
+def _not_found() -> HTTPException:
+    """Same 404 as a missing message, so a restricted channel is not disclosed."""
+    return HTTPException(
+        status_code=404,
+        detail={"error": {"code": 404, "message": "Message not found"}},
+    )
+
+
+def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
+    """Fail closed when ``cid`` is a server channel the caller cannot view.
+
+    ``get_message`` (and the message-bound channel check) only prove
+    conversation *participation*. For server channels participation is granted
+    to every member of the server (see ``ParticipantService.is_participant``),
+    independent of ``channels.view``. Without this live gate a member denied
+    view on a private channel could fetch any message in it by id -- including
+    its attachments and viewer-bound signed URLs. The canonical ``get_channel``
+    accessor enforces both membership and ``channels.view``; a channel that
+    exists but cannot be resolved is indistinguishable from a missing message.
+    """
+    if not servers_mod:
+        return  # No servers store => cid can only be a DM/group conversation.
+
+    get_channel = getattr(servers_mod, "get_channel", None)
+    channel_exists = getattr(servers_mod, "channel_exists", None)
+
+    def _is_server_channel() -> bool:
+        if callable(channel_exists):
+            try:
+                return bool(channel_exists(cid))
+            except Exception:
+                return True  # cannot prove it is NOT a server channel: deny
+        getter = getattr(servers_mod, "get_channel_conversation_id", None)
+        if callable(getter):
+            try:
+                return getter(cid) is not None
+            except Exception:
+                return True
+        return False
+
+    if not callable(get_channel):
+        if _is_server_channel():
+            raise _not_found()
+        return
+    try:
+        if get_channel(cid, user_id) is not None:
+            return
+    except Exception:
+        raise _not_found()
+    if _is_server_channel():
+        raise _not_found()
+
+
 class RetrieveMixin(MessagesCRUDBase):
     async def get_message(
         self,
@@ -114,6 +167,13 @@ class RetrieveMixin(MessagesCRUDBase):
                     cid, current_user.user_id, api.get_servers()
                 ),
             )
+
+            # Participation in a server channel is granted to every server
+            # member, so it is NOT an authorization boundary for a by-id read.
+            # Re-check the live per-channel view permission on every request,
+            # including any cached message body, before serializing (which also
+            # signs attachment URLs for this viewer).
+            _require_channel_view(cid, current_user.user_id, api.get_servers())
 
             author_info = {"username": None, "avatar_url": None, "badges": []}
             auth = api.get_auth()
