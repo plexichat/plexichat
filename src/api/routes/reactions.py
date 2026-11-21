@@ -138,9 +138,18 @@ def _require_channel_view(reactions, user_id: int, mid: int, action: str) -> Non
     servers_mod = api.get_servers()
     if servers_mod and hasattr(servers_mod, "get_channel_by_conversation"):
         conv_id = reactions.get_conversation_id_from_message(mid)
-        srv_channel = (
-            servers_mod.get_channel_by_conversation(conv_id) if conv_id else None
-        )
+        try:
+            srv_channel = (
+                servers_mod.get_channel_by_conversation(conv_id) if conv_id else None
+            )
+        except Exception:
+            # The servers module cannot resolve this conversation's channel
+            # (e.g. it is not set up in this process). With no channel row we
+            # cannot check a channel-level view bit, so defer to the manager's
+            # own fail-closed checks -- exactly as for DMs, which have no
+            # channel row either. This is an infrastructure condition, not an
+            # attacker-controlled value: conv_id comes from the message row.
+            srv_channel = None
         if srv_channel and not servers_mod.has_permission(
             user_id,
             srv_channel["server_id"],
