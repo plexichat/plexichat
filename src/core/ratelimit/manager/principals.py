@@ -101,7 +101,18 @@ def normalise_ip_address(value: object) -> Optional[str]:
     # share one budget.
     if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
         return str(parsed.ipv4_mapped)
-    return str(parsed)
+    canonical = str(parsed)
+    # An IPv6 zone/scope id (``fe80::1%eth0``) names a *local interface*, not a
+    # distinct host: it is meaningful only on the machine that observed the
+    # packet and carries no identity information on the wire. A client behind a
+    # trusted proxy can rotate it in X-Forwarded-For, and the ASGI socket peer
+    # may carry one too. Leaving it in the principal would hand one source an
+    # unbounded supply of fresh buckets. Strip it so every spelling of a scoped
+    # address shares one budget. Safe because scoped/link-local addresses are
+    # never internet-routable.
+    if isinstance(parsed, ipaddress.IPv6Address) and "%" in canonical:
+        canonical = canonical.split("%", 1)[0]
+    return canonical
 
 
 def normalise_principal(

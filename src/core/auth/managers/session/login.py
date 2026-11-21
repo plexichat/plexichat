@@ -53,7 +53,14 @@ def _canonical_source_ip(ip_address: Optional[str]) -> Optional[str]:
         # both spellings of the same peer share a failure budget too.
         if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
             return str(parsed.ipv4_mapped)
-        return str(parsed)
+        canonical = str(parsed)
+        # An IPv6 zone/scope id names a local interface, not a distinct host.
+        # Keeping it would let one source rotate the failure-budget key (or
+        # inflate COUNT(DISTINCT ip_index) to lock out an arbitrary account),
+        # so strip it just like the rate-limit principal canonicalizer does.
+        if isinstance(parsed, ipaddress.IPv6Address) and "%" in canonical:
+            canonical = canonical.split("%", 1)[0]
+        return canonical
     except ValueError:
         return text
 
