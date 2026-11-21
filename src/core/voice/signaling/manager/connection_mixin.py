@@ -54,8 +54,15 @@ class ConnectionManagementMixin:
         sentinel channel 0 used by /voice/ice-servers) are skipped here
         and handled by the caller's own channel lookup.
 
+        An unresolvable channel is a fail-closed condition: if the lookup
+        itself raises (DB error, malformed row), the permission cannot be
+        evaluated, so deny rather than issue credentials on an unevaluable
+        guard. Only a *successful* lookup that returns no row is deferred to
+        the caller's own channel lookup (e.g. DM voice channels).
+
         Raises:
-            PermissionDeniedError: If the user lacks voice.connect.
+            PermissionDeniedError: If the user lacks voice.connect or the
+                check could not be evaluated.
         """
         manager = self._voice_manager()
         if manager is None:
@@ -79,7 +86,14 @@ class ConnectionManagementMixin:
             logger.warning(
                 f"Could not resolve channel {channel_id} for connect check: {e}"
             )
-            return
+            # Fail closed. An exception here means the guard could not be
+            # evaluated; returning would hand out voice credentials without
+            # ever checking voice.connect. Preserve the strict policy already
+            # applied above when the helpers are missing.
+            raise PermissionDeniedError(
+                "Cannot verify voice.connect for this channel",
+                permission="voice.connect",
+            ) from e
 
         if not channel:
             # Unknown/non-voice channel: defer to the caller's own

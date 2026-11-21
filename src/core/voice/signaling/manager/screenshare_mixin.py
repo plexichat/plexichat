@@ -24,9 +24,10 @@ class ScreenShareMixin:
         """Enforce ``voice.speak`` for stream-capable operations (M7).
 
         Raises PermissionDeniedError when the voice module is wired and the
-        user lacks the permission; fails open only when the underlying
-        module cannot resolve the channel (deferring to the caller's own
-        channel lookup).
+        user lacks the permission, or when the channel lookup raises (the
+        guard cannot be evaluated and must deny). A *successful* lookup with
+        no row is deferred to the caller's own channel lookup (e.g. DM voice
+        channels), which is the only intended fail-open-adjacent case.
         """
         manager = self._voice_manager()
         if manager is None:
@@ -49,7 +50,12 @@ class ScreenShareMixin:
                 f"Could not resolve channel {channel_id} for screen share "
                 f"permission check: {e}"
             )
-            return
+            # Fail closed: an unevaluable voice.speak guard must never allow a
+            # stream to start. Mirror the missing-helper policy above.
+            raise PermissionDeniedError(
+                "Cannot verify voice.speak for this channel",
+                permission="voice.speak",
+            ) from e
 
         if not channel:
             return
