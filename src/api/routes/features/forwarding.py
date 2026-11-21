@@ -35,7 +35,11 @@ async def forward_message(
     messaging = api.get_messaging()
     participant_svc = resolve_participant_service(messaging)
 
-    svc = ForwardingService(db, messaging, participant_svc)
+    # Pass the live servers module so the service can enforce the per-channel
+    # channels.view gate on the source and target conversations. Participation
+    # alone is granted to every server member, so forwarding would otherwise
+    # let a member denied view on a private channel read/export its messages.
+    svc = ForwardingService(db, messaging, participant_svc, api.get_servers())
 
     result = call_or_raise(
         svc.forward_message,
