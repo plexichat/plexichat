@@ -122,6 +122,20 @@ class ChannelAccessCache:
             if user_id is not None:
                 key = (sid, int(user_id))
                 self._user_epochs[key] = self._user_epochs.get(key, 0) + 1
+        # Every RBAC mutation funnels through here, so this is the one place
+        # that can also evict response caches whose body was computed behind
+        # an authorization gate but carries no RBAC version of its own. The
+        # per-channel GET response (``channel_api``) is the notable gap: its
+        # cached loader ran get_channel (membership + channels.view), and the
+        # decorator replayed the warm 200 without re-checking that gate. No
+        # role/member/override mutation cleared that namespace, so a viewer
+        # who lost access kept a valid channel response for the full TTL.
+        try:
+            from src.core.database import invalidate_pattern
+
+            invalidate_pattern("channel_api:*")
+        except Exception:  # pragma: no cover - accelerator cache only
+            pass
 
     # -- decision cache -----------------------------------------------------
     def get(
