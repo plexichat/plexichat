@@ -105,6 +105,31 @@ def _log_error(msg: str):
 SKIP_PATHS = frozenset(["/api/v1/health", "/health", "/favicon.ico"])
 
 
+def _safe_log_path(scope: Scope, raw_path: str) -> str:
+    """Return a request path that is safe to persist in the access log.
+
+    ``scope["path"]`` is the *resolved* path. Routes that carry a credential
+    in a path segment -- most notably ``POST /webhooks/{webhook_id}/{token}``,
+    whose ``token`` segment is a live webhook secret -- would otherwise write
+    that secret to ``latest.log`` on every execution. Starlette records the
+    matched route template (each parameter replaced by ``{name}``) in
+    ``scope["route"]``; use it whenever routing metadata is available, exactly
+    as the telemetry branch in ``send_wrapper`` already does. When routing
+    metadata is absent, redact the credential-bearing segment of webhook
+    execution paths rather than logging it verbatim.
+    """
+    route = scope.get("route")
+    if route is not None:
+        template = getattr(route, "path_format", None) or getattr(route, "path", None)
+        if isinstance(template, str) and template:
+            return template
+    # No route metadata (e.g. a 404): still never emit a webhook token.
+    parts = raw_path.split("/")
+    if len(parts) >= 3 and parts[-3] == "webhooks":
+        return "/".join(parts[:-1]) + "/{token}"
+    return raw_path
+
+
 class LoggingMiddleware:
     """
     ASGI middleware for logging HTTP requests and responses with accurate timing.
@@ -187,8 +212,12 @@ class LoggingMiddleware:
                     end_time = time.perf_counter()
                     duration_ms = (end_time - start_time) * 1000
 
-                    # Generate and write log message in a threadpool to avoid HDD bottlenecks
-                    log_msg = f"{method} {path} - {status_code} - {duration_ms:.2f}ms - {client_ip}"
+                    # Generate and write log message in a threadpool to avoid HDD bottlenecks.
+                    # Use a sanitized path, NOT the resolved path: webhook tokens and
+                    # other credentials live in path segments and must never be
+                    # written to the access log.
+                    log_path = _safe_log_path(scope, path)
+                    log_msg = f"{method} {log_path} - {status_code} - {duration_ms:.2f}ms - {client_ip}"
 
                     def write_log():
                         if status_code >= 500:
@@ -248,7 +277,7 @@ class LoggingMiddleware:
             end_time = time.perf_counter()
             duration_ms = (end_time - start_time) * 1000
             _log_error(
-                f"{method} {path} - ERROR - {duration_ms:.2f}ms - {client_ip} - "
-                f"{type(e).__name__}"
+                f"{method} {_safe_log_path(scope, path)} - ERROR - "
+                f"{duration_ms:.2f}ms - {client_ip} - {type(e).__name__}"
             )
             raise
