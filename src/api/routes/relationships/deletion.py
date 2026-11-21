@@ -6,6 +6,7 @@ from fastapi import HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.common import SnowflakeIDParam, SuccessResponse
 from src.core.relationships.exceptions import (
     FriendRequestNotFoundError,
@@ -28,6 +29,7 @@ class DeletionMixin:
 
         Removes friend, declines request, or unblocks user.
         """
+        require_user_token(current_user)
         relationships = api.get_relationships()
         if not relationships:
             logger.error("Relationships module not available")

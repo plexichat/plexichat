@@ -6,6 +6,7 @@ from fastapi import HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.relationships import BlockCreate, RelationshipResponse
 from src.api.schemas.common import SnowflakeID
 from src.core.security.hardening import parse_id
@@ -29,6 +30,7 @@ class BlockingMixin:
 
         Blocks the specified user, removing any existing relationship.
         """
+        require_user_token(current_user)
         relationships = api.get_relationships()
         if not relationships:
             logger.error("Relationships module not available")

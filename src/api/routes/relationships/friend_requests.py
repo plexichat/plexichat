@@ -9,6 +9,7 @@ from fastapi import HTTPException, Depends, status
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.relationships import (
     FriendRequestCreate,
     RelationshipResponse,
@@ -156,6 +157,7 @@ class FriendRequestMixin:
 
         Creates a pending friend request to the specified user.
         """
+        require_user_token(current_user)
         relationships = api.get_relationships()
         auth = api.get_auth()
         if not relationships:
@@ -384,6 +386,7 @@ class FriendRequestMixin:
 
         Accepts a pending friend request from the specified user.
         """
+        require_user_token(current_user)
         relationships = api.get_relationships()
         auth = api.get_auth()
         presence = api.get_presence()
