@@ -3,6 +3,7 @@ OTP verification mixin providing verify_otp_setup and verify_otp.
 """
 
 import json
+import re
 import secrets
 import time
 
@@ -31,6 +32,22 @@ from src.core.security.secrets import constant_time_compare
 # switching flows cannot extend it.
 ADMIN_OTP_MAX_ATTEMPTS = 5
 ADMIN_OTP_WINDOW_SECONDS = 900
+
+# pyotp's verifier NFKC-normalises its input before comparing, so a fullwidth
+# spelling of a TOTP code (e.g. "１２３４５６") verifies for the same secret as
+# the ASCII spelling. The single-use replay guard stores and compares the raw
+# presented code, so a homoglyph of an already-consumed code skipped both the
+# reuse pre-check and the conditional claim and minted a second session.
+# Pin TOTP codes to the canonical ASCII grammar the authenticator emits, as
+# ``src.core.auth.totp.verify_totp_code`` already does for user-facing 2FA.
+# Backup codes are handled by the separate branch below and keep their
+# XXXX-XXXX hex grammar.
+_ASCII_DIGITS_RE = re.compile(r"[0-9]+")
+
+
+def _is_canonical_totp_code(code: Any) -> bool:
+    """Whether ``code`` is an ASCII-digit TOTP code (fail closed otherwise)."""
+    return isinstance(code, str) and bool(_ASCII_DIGITS_RE.fullmatch(code))
 
 
 def _check_admin_otp_budget(admin_id: int) -> bool:
@@ -71,6 +88,8 @@ class OTPMixin(SessionMixin, PasswordMixin):
             return AdminLoginResult(
                 success=False, error="Invalid or expired OTP challenge"
             )
+        if not isinstance(code, str):
+            return AdminLoginResult(success=False, error="Invalid OTP code")
         # Account-scoped budget first: a new challenge must not restore the
         # guesses already spent against this admin in another flow.
         if not _check_admin_otp_budget(admin_id):
@@ -134,7 +153,9 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 success=False, error="Code already used — wait for next code"
             )
 
-        if not pyotp.TOTP(secret).verify(code, valid_window=1):
+        if not _is_canonical_totp_code(code) or not pyotp.TOTP(secret).verify(
+            code, valid_window=1
+        ):
             return AdminLoginResult(success=False, error="Invalid OTP code")
 
         now_ms = int(time.time() * 1000)
@@ -178,6 +199,8 @@ class OTPMixin(SessionMixin, PasswordMixin):
             return AdminLoginResult(
                 success=False, error="Invalid or expired OTP challenge"
             )
+        if not isinstance(code, str):
+            return AdminLoginResult(success=False, error="Invalid OTP code")
         # Account-scoped budget first: a fresh challenge obtained by another
         # password phase must not restore the account's exhausted guess budget.
         if not _check_admin_otp_budget(admin_id):
@@ -241,7 +264,9 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 success=False, error="Code already used — wait for next code"
             )
 
-        if pyotp.TOTP(secret).verify(code, valid_window=1):
+        if _is_canonical_totp_code(code) and pyotp.TOTP(secret).verify(
+            code, valid_window=1
+        ):
             # Single-use claim: the pre-check above is racy (two concurrent
             # logins both read the same "last used" value), so the UPDATE must
             # itself refuse a code another request already consumed. Mirror
