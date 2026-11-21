@@ -163,20 +163,35 @@ async def approve_data_export(request: Request, request_id: SnowflakeIDParam):
     """Approve a pending DSAR request so the harvester can process it."""
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
+    # The sibling GET binds this path id with ``parse_id`` and GENERATE with
+    # ``validate_export_id`` (also a parse_id gate). These destructive handlers
+    # used a bare ``int()`` instead: Python's int accepts Unicode decimal
+    # homoglyphs ("٤٢" -> 42), PEP 515 separators ("1_2" -> 12), signs,
+    # bools/floats and unbounded integers, so the same path segment was
+    # reinterpreted as a different id here than at every other step of the
+    # approval workflow. Bind through the one canonical ASCII snowflake gate
+    # before any mutation (fail closed).
     try:
-        await run_in_threadpool(approve_request, int(request_id), int(admin_id))
+        req_id = parse_id(request_id, "request_id")
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request ID"}},
+        )
+    try:
+        await run_in_threadpool(approve_request, req_id, int(admin_id))
     except ValueError as e:
-        raise _handle_mutation_error(request_id, e)
+        raise _handle_mutation_error(req_id, e)
     except Exception as e:
         logger.error(
-            f"Admin data-export approve failed for {request_id}: {e}",
+            f"Admin data-export approve failed for {req_id}: {e}",
             exc_info=True,
         )
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
-    logger.info(f"Admin {admin_id} approved data-export request {request_id}")
+    logger.info(f"Admin {admin_id} approved data-export request {req_id}")
     return SuccessResponse(success=True, message="Request approved")
 
 
@@ -187,22 +202,30 @@ async def deny_data_export(
     """Deny a pending DSAR request with a reason."""
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
+    # Same boundary gate as approve/get/generate: never let bare ``int()``
+    # reinterpret a homoglyph/separator/signed/oversized id at this destructive
+    # endpoint. See approve_data_export for the full rationale.
     try:
-        await run_in_threadpool(
-            deny_request, int(request_id), int(admin_id), body.reason
+        req_id = parse_id(request_id, "request_id")
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request ID"}},
         )
+    try:
+        await run_in_threadpool(deny_request, req_id, int(admin_id), body.reason)
     except ValueError as e:
-        raise _handle_mutation_error(request_id, e)
+        raise _handle_mutation_error(req_id, e)
     except Exception as e:
         logger.error(
-            f"Admin data-export deny failed for {request_id}: {e}",
+            f"Admin data-export deny failed for {req_id}: {e}",
             exc_info=True,
         )
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
-    logger.info(f"Admin {admin_id} denied data-export request {request_id}")
+    logger.info(f"Admin {admin_id} denied data-export request {req_id}")
     return SuccessResponse(success=True, message="Request denied")
 
 
