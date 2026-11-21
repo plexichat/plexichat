@@ -7,6 +7,7 @@ malware-scan gating and range-aware streaming.
 """
 
 import io
+import json
 import unicodedata
 from typing import Optional
 
@@ -146,6 +147,52 @@ def _signed_uid_from_query(query_string: str) -> Optional[str]:
 
     values = parse_qs(query_string).get("uid", [])
     return values[0] if values else None
+
+
+def _admin_session_is_authoritative(token: str, admin_mod) -> bool:
+    """Validate an admin bearer AND confirm it still carries live privileges.
+
+    A role edit or revocation deliberately leaves the admin's row in
+    ``admin_sessions``: admin routes re-read roles on every request, so they do
+    not need to revoke the session to make a permission change effective. This
+    route instead uses ``validate_session()`` truthiness as a boolean admin
+    grant (per-file access bypass, attachment auth fallback). A demoted admin
+    whose roles were all revoked -- or whose scopes were all switched off --
+    keeps that session row, and would otherwise bypass the granular access
+    check with a stale admin credential.
+
+    Require at least one still-granted scope from a live role assignment before
+    treating a bearer as an admin here. Fail closed on a missing DB, malformed
+    payloads, or any lookup error; only a literal boolean ``true`` grants.
+    """
+    admin_id = admin_mod.validate_session(token)
+    if not admin_id:
+        return False
+    try:
+        import src.api as api_module
+
+        db = api_module.get_db()
+        if db is None:
+            return False
+        rows = db.fetch_all(
+            "SELECT r.permissions FROM admin_roles r "
+            "JOIN admin_role_assignments a ON a.role_id = r.id "
+            "WHERE a.admin_id = ?",
+            (admin_id,),
+        )
+    except Exception:
+        return False
+    for row in rows or ():
+        raw = row.get("permissions") if isinstance(row, dict) else (row[0] if row else None)
+        permissions = raw
+        if isinstance(raw, str):
+            try:
+                permissions = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+        if isinstance(permissions, dict) and any(v is True for v in permissions.values()):
+            return True
+    return False
 
 
 def _parse_byte_range(range_header: Optional[str], size: int) -> tuple[int, int, bool]:
@@ -298,7 +345,9 @@ def register_attachment_route(app: FastAPI) -> None:
                             admin_mod = api_module.get_admin()
                             privileged = False
                             if admin_mod and token:
-                                privileged = bool(admin_mod.validate_session(token))
+                                privileged = _admin_session_is_authoritative(
+                                    token, admin_mod
+                                )
                         except Exception:
                             privileged = False
                         if not privileged and not media.check_file_access(
@@ -374,8 +423,8 @@ def register_attachment_route(app: FastAPI) -> None:
                     # This allows the Admin Dashboard to load user attachments without 401 errors
                     try:
                         admin = api_module.get_admin()
-                        if admin and admin.validate_session(token):
-                            # Valid admin session - allow access
+                        if admin and _admin_session_is_authoritative(token, admin):
+                            # Valid, still-privileged admin session - allow access
                             pass
                         else:
                             logger.warning(
@@ -400,7 +449,7 @@ def register_attachment_route(app: FastAPI) -> None:
                 is_privileged = False
                 try:
                     admin_mod = api_module.get_admin()
-                    if admin_mod and admin_mod.validate_session(token):
+                    if admin_mod and _admin_session_is_authoritative(token, admin_mod):
                         is_privileged = True
                 except Exception as e:
                     logger.debug(f"Admin session validation failed for {filename}: {e}")
@@ -618,3 +667,5 @@ def register_attachment_route(app: FastAPI) -> None:
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
+
+# CANARY_TEST_MARKER
