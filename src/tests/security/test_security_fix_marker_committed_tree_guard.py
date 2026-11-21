@@ -338,6 +338,129 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "leaves them authenticated"
         ),
     ),
+    # --- Additional private-index fixes at risk of stale-staged-file revert ---
+    # Each entry below pins the key fix of a commit that was landed through the
+    # private index while a peer's working-tree/index copy of the same file is
+    # still the pre-fix version.  The distinctive marker exists only in the
+    # repaired HEAD blob, so staging a whole stale file silently reverts it.
+    CommittedFixMarker(
+        key="79e83f54-override-owner-id-type-confusion",
+        path="src/core/servers/handlers/roles/overrides.py",
+        marker='raise RoleHierarchyError("Cannot verify server owner identity")',
+        why=(
+            "79e83f54: the channel-override hierarchy gate rejects a "
+            "type-confused server owner id (bool/str/float) instead of the "
+            "authoritative int; a stale staged copy restores a loose == that "
+            "lets a channels.manage holder deny the real owner's access"
+        ),
+    ),
+    CommittedFixMarker(
+        key="4acc2696-typing-viewer-id-type-confusion",
+        path="src/api/websocket/handlers/presence.py",
+        marker="if type(member_user_id) is not int:",
+        why=(
+            "4acc2696: the typing viewer audience drops malformed-but-coercible "
+            "member ids before the int() laundering at the cache/dispatch "
+            "boundary; a stale staged copy re-admits a principal that never "
+            "proved channels.view to TYPING_START/STOP fan-out"
+        ),
+    ),
+    CommittedFixMarker(
+        key="bc7d08d9-dispatch-recipient-id-type-confusion",
+        path="src/api/websocket/dispatcher.py",
+        marker="user_ids = [uid for uid in user_ids if type(uid) is int]",
+        why=(
+            "bc7d08d9: the gateway fan-out boundary drops type-confused "
+            "recipient ids instead of int()-laundering them; a stale staged "
+            "copy leaks events to a wrong principal that never proved "
+            "membership/view rights"
+        ),
+    ),
+    CommittedFixMarker(
+        key="98469c69-event-channel-audience-id-type-confusion",
+        path="src/core/events/gateway_emit.py",
+        marker="if type(uid) is not int:",
+        why=(
+            "98469c69: the channel-event audience resolver's final dedupe/cache "
+            "step keeps only genuine int ids; a stale staged copy launders a "
+            "type-confused id into a cached audience that never proved "
+            "view/participation rights"
+        ),
+    ),
+    CommittedFixMarker(
+        key="98469c69-event-envelope-audience-id-type-confusion",
+        path="src/core/events/manager.py",
+        marker='"u": [uid for uid in recipients if type(uid) is int],',
+        why=(
+            "98469c69: the cross-worker envelope stamps only genuine int ids "
+            "into the wire audience; a stale staged copy restores int() "
+            "laundering and leaks a wrong principal into sibling workers"
+        ),
+    ),
+    CommittedFixMarker(
+        key="8cdcddb0-twofactor-no-debug-print",
+        path="src/core/auth/managers/twofactor.py",
+        marker="DBG manager complete_2fa",
+        why=(
+            "8cdcddb0: the 2FA completion path must not copy client IP/user-agent "
+            "to stdout via a bare print; this absent-marker fails if a stale "
+            "staged copy reintroduces the debug print"
+        ),
+        absent=True,
+    ),
+    CommittedFixMarker(
+        key="b71b0d64-targeted-session-socket-close-method",
+        path="src/api/websocket/dispatcher.py",
+        marker="async def close_session_connections(",
+        why=(
+            "b71b0d64: the dispatcher gains a targeted close_session_connections "
+            "helper bound to the verified auth_session_id so a single-session "
+            "revoke closes only matching sockets; a stale staged copy drops it "
+            "and forces a blanket close (or leaves revoked sockets live)"
+        ),
+    ),
+    CommittedFixMarker(
+        key="33cf9e7d-refresh-replay-session-socket-close",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker='row["user_id"], session_id, "Session revoked"',
+        why=(
+            "33cf9e7d: refresh-token replay revocation closes the single socket "
+            "bound to the replayed session; a stale staged copy revokes the row "
+            "but leaves the authenticated socket live server-side"
+        ),
+    ),
+    # bb824009 (private-index repair): the REST logout/revoke-all and 2FA-enable
+    # paths close live gateway sockets.  All three files are stale in a peer's
+    # working tree/index, so a whole-file stage would re-open authenticated
+    # sockets after a credential transition.
+    CommittedFixMarker(
+        key="bb824009-logout-closes-user-sockets",
+        path="src/api/routes/auth/sessions.py",
+        marker='close_user_gateway_connections(current_user.user_id, "Logged out")',
+        why=(
+            "bb824009: an explicit REST logout closes live gateway sockets; a "
+            "cookie clear alone leaves the socket authenticated server-side"
+        ),
+    ),
+    CommittedFixMarker(
+        key="bb824009-revoke-all-closes-user-sockets",
+        path="src/api/routes/auth/sessions.py",
+        marker='current_user.user_id, "All sessions revoked"',
+        why=(
+            "bb824009: revoke-all sessions closes live gateway sockets; a stale "
+            "staged copy revokes the rows but keeps the user's sockets live"
+        ),
+    ),
+    CommittedFixMarker(
+        key="bb824009-2fa-enable-closes-user-sockets",
+        path="src/core/auth/managers/twofactor.py",
+        marker='close_user_gateway_connections(user_id, "Two-factor enabled")',
+        why=(
+            "bb824009: enabling 2FA closes pre-2FA sockets (fail-closed because "
+            "the connection does not record the auth-session id); a stale staged "
+            "copy leaves pre-2FA-trusted sockets authenticated"
+        ),
+    ),
 )
 
 
@@ -370,6 +493,24 @@ QUERY_CACHE_COMMITTED_KEYS: frozenset[str] = frozenset(
         "query-cache-explain-not-read-prefix",
         "query-cache-multiple-statement-check",
         "query-cache-dollar-quote-neutralization",
+    }
+)
+
+# Private-index fixes pinned by this audit.  Kept explicit so an entry can never
+# be dropped from the registry without this companion check failing.
+PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
+    {
+        "79e83f54-override-owner-id-type-confusion",
+        "4acc2696-typing-viewer-id-type-confusion",
+        "bc7d08d9-dispatch-recipient-id-type-confusion",
+        "98469c69-event-channel-audience-id-type-confusion",
+        "98469c69-event-envelope-audience-id-type-confusion",
+        "8cdcddb0-twofactor-no-debug-print",
+        "b71b0d64-targeted-session-socket-close-method",
+        "33cf9e7d-refresh-replay-session-socket-close",
+        "bb824009-logout-closes-user-sockets",
+        "bb824009-revoke-all-closes-user-sockets",
+        "bb824009-2fa-enable-closes-user-sockets",
     }
 )
 
@@ -538,6 +679,24 @@ def test_query_cache_committed_keys_are_registered() -> None:
     for key in QUERY_CACHE_COMMITTED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path == "src/core/database/core/execution.py"
+
+
+def test_private_index_pinned_keys_are_registered() -> None:
+    """Every audited private-index fix is pinned in the committed registry.
+
+    Companion to the registry entries themselves: dropping one of these keys
+    (or the whole block) without updating this set fails here as well as in the
+    parametrized presence/non-vacuity tests.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert PRIVATE_INDEX_PINNED_KEYS <= set(keys), (
+        "private-index key set references keys missing from COMMITTED_FIX_MARKERS: "
+        f"{sorted(PRIVATE_INDEX_PINNED_KEYS - set(keys))}"
+    )
+    assert len(PRIVATE_INDEX_PINNED_KEYS) == 11
+    for key in PRIVATE_INDEX_PINNED_KEYS:
+        record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
+        assert record.path.startswith("src/"), f"bad path for {key!r}"
 
 
 def test_committed_absent_marker_scopes_resolve(commit_sha: str) -> None:
