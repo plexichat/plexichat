@@ -45,8 +45,61 @@ KNOWN_VERIFIERS = (
 )
 
 
-def _is_pyotp_verify(node):
-    """Whether ``node`` is a ``<totp|hotp>.verify(...)`` call."""
+_PYOTP_CONSTRUCTORS = frozenset({"totp", "hotp"})
+
+
+def _is_pyotp_constructor(node):
+    """Whether ``node`` builds a pyotp ``TOTP``/``HOTP`` verifier object."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name):
+        # ``from pyotp import TOTP`` followed by ``TOTP(secret)``.
+        return func.id.lower() in _PYOTP_CONSTRUCTORS
+    if isinstance(func, ast.Attribute):
+        # ``pyotp.TOTP(secret)`` / ``pyotp.totp.TOTP(secret)``.
+        return func.attr.lower() in _PYOTP_CONSTRUCTORS and "pyotp" in ast.unparse(
+            func.value
+        ).lower()
+    return False
+
+
+def _pyotp_alias_names(function):
+    """Local names bound to a freshly constructed pyotp verifier object.
+
+    ``verifier = pyotp.TOTP(secret); verifier.verify(code)`` crosses exactly
+    the same trust boundary as ``pyotp.TOTP(secret).verify(code)``, but its
+    receiver text carries no ``totp``/``hotp`` spelling. Without resolving
+    these aliases a text-only scan silently skips such a verify site, so a new
+    verifier could reintroduce the NFKC homoglyph replay bypass undetected.
+    """
+    names = set()
+    if function is None:
+        return names
+    for node in ast.walk(function):
+        value = None
+        targets = ()
+        if isinstance(node, ast.Assign):
+            value, targets = node.value, node.targets
+        elif isinstance(node, ast.AnnAssign):
+            value, targets = node.value, (node.target,)
+        if not _is_pyotp_constructor(value):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+            elif isinstance(target, ast.Attribute):
+                names.add(target.attr)
+    return names
+
+
+def _is_pyotp_verify(node, alias_names=frozenset()):
+    """Whether ``node`` is a ``<totp|hotp>.verify(...)`` call.
+
+    ``alias_names`` holds local names bound to pyotp verifier objects in the
+    enclosing function, so a verifier stored under a non-totp/hotp name is not
+    missed.
+    """
     if not isinstance(node, ast.Call):
         return False
     func = node.func
@@ -55,7 +108,14 @@ def _is_pyotp_verify(node):
     # Covers ``pyotp.TOTP(secret).verify(...)`` and a locally bound
     # ``totp.verify(...)`` / ``hotp.verify(...)`` receiver alike.
     receiver = ast.unparse(func.value)
-    return bool(re.search(r"totp|hotp", receiver, re.IGNORECASE))
+    if re.search(r"totp|hotp", receiver, re.IGNORECASE):
+        return True
+    # A verifier cached in a local name that has no totp/hotp spelling.
+    if isinstance(func.value, ast.Name) and func.value.id in alias_names:
+        return True
+    if isinstance(func.value, ast.Attribute) and func.value.attr in alias_names:
+        return True
+    return False
 
 
 def _is_canonical_gate_call(node):
@@ -99,7 +159,10 @@ def _verify_sites(tree):
             parents[child] = parent
 
     for node in ast.walk(tree):
-        if not _is_pyotp_verify(node):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "verify":
             continue
         cur = node
         function = None
@@ -108,7 +171,8 @@ def _verify_sites(tree):
             if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 function = cur
                 break
-        yield node, function
+        if _is_pyotp_verify(node, _pyotp_alias_names(function)):
+            yield node, function
 
 
 def _scan_source(source):
@@ -166,6 +230,48 @@ def test_detector_distinguishes_gated_from_ungated_verifiers():
         sites = _scan_source(source)
         assert len(sites) == 1
         assert not _has_ascii_gate(sites[0][1])
+
+
+def test_detector_recognises_pyotp_verify_through_local_alias():
+    """A verifier stored under a non-totp/hotp name is still pyotp.
+
+    Non-vacuity: if alias resolution is removed from ``_verify_sites`` /
+    ``_is_pyotp_verify`` these sites vanish from the scan and this test fails.
+    """
+    ungated_alias = """
+    def verify(code):
+        verifier = pyotp.TOTP(secret)
+        return verifier.verify(code)
+    """
+    gated_alias = """
+    def verify(code):
+        if not _is_canonical_totp_code(code):
+            return False
+        verifier = pyotp.TOTP(secret)
+        return verifier.verify(code)
+    """
+    imported_alias = """
+    def verify(code):
+        v = TOTP(secret)
+        return v.verify(code)
+    """
+    for source in (ungated_alias, imported_alias):
+        sites = _scan_source(source)
+        assert len(sites) == 1, f"alias verify not detected in: {source}"
+        assert not _has_ascii_gate(sites[0][1])
+    sites = _scan_source(gated_alias)
+    assert len(sites) == 1
+    assert _has_ascii_gate(sites[0][1])
+
+
+def test_detector_does_not_flag_non_pyotp_verify_aliases():
+    """Alias resolution must not swallow unrelated ``.verify()`` calls."""
+    decoy = """
+    def check(sig, msg):
+        key = Ed25519PublicKey.from_public_bytes(pk)
+        return key.verify(sig, msg)
+    """
+    assert _scan_source(decoy) == []
 
 
 def test_scan_is_not_vacuous():
