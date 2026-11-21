@@ -13,12 +13,86 @@ Usage:
 """
 
 import copy as _copy
+import os as _os
 from typing import Any, Optional, Dict
 from .core import ConfigLoader, MalformedConfigAction
 
 # Global config instance
 _config_instance: Optional[ConfigLoader] = None
 _setup_called = False
+
+# Security allowlists whose explicit operator value must win over the code
+# defaults. ConfigLoader._deep_merge concatenates string lists (so a partial
+# list inherits defaults); for an allowlist that is a fail-open widening - an
+# operator who narrows the list silently gets the broader defaults back. The
+# keys below are restored verbatim from the raw config file after merge.
+_EXPLICIT_ALLOWLIST_PATHS = (("api", "cors_origins"),)
+
+
+def _apply_explicit_allowlists(instance: ConfigLoader) -> None:
+    """Restore explicit security allowlist values from the raw config file.
+
+    ``config.get("api")`` is post-deep-merge and therefore always contains the
+    broader code defaults for list-valued allowlists such as ``cors_origins``.
+    Reading the operator's own file lets an explicit (possibly empty) allowlist
+    take effect exactly as written, instead of being silently widened. When the
+    key is absent from the file, the merged defaults are left untouched.
+    """
+    path = getattr(instance, "config_path", None)
+    if not path or not _os.path.exists(path):
+        return
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        if str(path).lower().endswith(".json"):
+            import json as _json
+
+            doc = _json.loads(raw) if raw else {}
+        else:
+            import yaml as _yaml
+
+            doc = _yaml.safe_load(raw) if raw else {}
+        if not isinstance(doc, dict):
+            return
+        merged = getattr(instance, "config", None)
+        if not isinstance(merged, dict):
+            return
+
+        # Keep environment interpolation working for explicit origins, exactly
+        # as ConfigLoader would have resolved them during the merge.
+        resolve = getattr(instance, "_resolve_value", None)
+        changed = False
+        for keys in _EXPLICIT_ALLOWLIST_PATHS:
+            node: Any = doc
+            for key in keys:
+                if not isinstance(node, dict) or key not in node:
+                    node = None
+                    break
+                node = node[key]
+            if not isinstance(node, list):
+                continue
+            explicit = [
+                resolve(item)
+                if isinstance(item, str) and callable(resolve)
+                else item
+                for item in node
+            ]
+            parent: Any = merged
+            for key in keys[:-1]:
+                if not isinstance(parent, dict):
+                    parent = None
+                    break
+                parent = parent.get(key)
+            if isinstance(parent, dict) and keys[-1] in parent:
+                parent[keys[-1]] = explicit
+                changed = True
+        if changed:
+            invalidate = getattr(instance, "_invalidate_cache", None)
+            if callable(invalidate):
+                invalidate()
+    except Exception:
+        # A failure to re-read must not change the already-loaded config.
+        return
 
 
 def setup(
@@ -30,7 +104,7 @@ def setup(
     Setup the config loader. Should be called once in your main application file.
 
     Args:
-        config_path (str): Path to the config file (YAML or JSON).
+        config_path (str): Path to the config file.
         default_config (dict): Default configuration to create if file doesn't exist.
         malformed_action (str): Action on malformed config - "CRASH_ON_SINGLE", "CRASH_ON_MANY", or "IGNORE".
     """
@@ -49,6 +123,7 @@ def setup(
     _config_instance = ConfigLoader(
         config_path=config_path, default_config=default_config, malformed_action=action
     )
+    _apply_explicit_allowlists(_config_instance)
     _setup_called = True
 
 
