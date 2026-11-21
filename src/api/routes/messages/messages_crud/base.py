@@ -471,7 +471,10 @@ class MessagesCRUDBase:
     def _resolve_invite_codes(self, content: str, servers_mod: Any) -> List[str]:
         """Resolve invite codes found in content against real invites.
 
-        Results are cached briefly so repeated sends stay on the fast path.
+        Results are cached briefly so repeated sends stay on the fast path. On
+        a cache miss the candidates are resolved in ONE set-based manager
+        lookup instead of one ``get_invite`` DB query per code (previously up
+        to ``AUTOMOD_MAX_INVITE_CODES`` round trips on every novel-code send).
         """
         getter = getattr(servers_mod, "get_invite", None) if servers_mod else None
         if getter is None or not content:
@@ -483,27 +486,49 @@ class MessagesCRUDBase:
             )
         )[: self.AUTOMOD_MAX_INVITE_CODES]
 
-        known_codes = []
+        # Serve cached decisions first; collect misses for a single batched read.
+        known = set()
+        misses: List[str] = []
         for code in candidates:
-            cache_key = f"automod_invite:{code.lower()}"
-            exists = cache_get(cache_key)
+            exists = cache_get(f"automod_invite:{code.lower()}")
             if exists is None:
+                misses.append(code)
+            elif exists:
+                known.add(code)
+
+        if misses:
+            if hasattr(servers_mod, "get_existing_invite_codes"):
+                # One chunked, set-based query resolves every miss. Fail closed
+                # (nothing known) if the lookup is unavailable so moderation
+                # still sees an empty set rather than a partially resolved one.
                 try:
-                    exists = getter(code) is not None
+                    found = set(servers_mod.get_existing_invite_codes(misses) or ())
                 except Exception as e:
-                    logger.debug(f"Invite resolution failed for '{code}': {e}")
-                    continue
-                cache_set(cache_key, bool(exists), ttl=300)
-            if exists:
-                known_codes.append(code)
-        return known_codes
+                    logger.debug(f"Batched invite resolution failed: {e}")
+                    found = set()
+                for code in misses:
+                    exists = code in found
+                    cache_set(f"automod_invite:{code.lower()}", bool(exists), ttl=300)
+                    if exists:
+                        known.add(code)
+            else:
+                # Fallback for managers without the bulk helper; still bounded
+                # by AUTOMOD_MAX_INVITE_CODES candidates.
+                for code in misses:
+                    try:
+                        exists = getter(code) is not None
+                    except Exception as e:
+                        logger.debug(f"Invite resolution failed for '{code}': {e}")
+                        continue
+                    cache_set(f"automod_invite:{code.lower()}", bool(exists), ttl=300)
+                    if exists:
+                        known.add(code)
+
+        # Preserve the original candidate ordering for callers.
+        return [code for code in candidates if code in known]
 
     def _enforce_channel_slowmode(
-        self,
-        channel_id: int,
-        user_id: int,
-        servers_mod: Any,
-        channel: Optional[Any] = None,
+        self, channel_id: int, user_id: int, servers_mod: Any
     ) -> None:
         """Reject sends that violate the channel's slowmode interval.
 
@@ -524,14 +549,6 @@ class MessagesCRUDBase:
             return
 
         try:
-            if channel is None:
-                retry_after = checker(user_id, channel_id)
-            else:
-                retry_after = checker(user_id, channel_id, channel=channel)
-        except TypeError as e:
-            msg = str(e).lower()
-            if "unexpected keyword" not in msg or "channel" not in msg:
-                raise
             retry_after = checker(user_id, channel_id)
         except Exception as e:
             logger.warning(
