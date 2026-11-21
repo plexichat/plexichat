@@ -134,6 +134,17 @@ class ChannelAccessCache:
             from src.core.database import invalidate_pattern
 
             invalidate_pattern("channel_api:*")
+            # The per-viewer channel list (``server_channels`` at the manager
+            # tier and ``server_channels_api`` at the HTTP tier) is the same
+            # class of gap: its cached body is the set of channels that passed
+            # the ``channels.view`` gate for that viewer. Role/membership/
+            # ownership mutations clear those namespaces through their own
+            # helpers, but a channel-override revoke only bumped the epoch,
+            # leaving a warm list that kept granting a now-revoked view for
+            # the whole 30s TTL. Evict them here so every RBAC mutation
+            # retires the bundled verdicts.
+            invalidate_pattern("server_channels:*")
+            invalidate_pattern("server_channels_api:*")
         except Exception:  # pragma: no cover - accelerator cache only
             pass
 
