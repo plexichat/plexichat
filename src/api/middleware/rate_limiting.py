@@ -8,6 +8,7 @@ from fastapi import Request
 
 import utils.config as config
 from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
+from src.core.ratelimit.manager.principals import resolve_credential_principal
 from src.core.ratelimit.middleware import extract_route_info
 from src.utils.net import get_client_ip
 
@@ -82,11 +83,12 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
 
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user
-        user_info["user_id"] = getattr(user, "user_id", None) or getattr(
-            user, "id", None
-        )
         token_type = getattr(user, "token_type", "")
         user_info["is_bot"] = token_type == "bot"
+        # A bot token's ``user_id`` is its human owner; keying the bucket on it
+        # would let the bot spend the owner's quota. Resolve the authoritative
+        # principal (the bot account for bot credentials, fail closed if absent).
+        user_info["user_id"] = resolve_credential_principal(user)
         permissions = getattr(user, "permissions", {})
         if isinstance(permissions, dict):
             user_info["is_admin"] = (

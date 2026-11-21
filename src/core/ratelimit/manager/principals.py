@@ -20,7 +20,7 @@ IP), or by a shared sentinel bucket.
 from __future__ import annotations
 
 import ipaddress
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from .constants import MAX_COMPONENT_KEY_LENGTH
 
@@ -120,6 +120,43 @@ def normalise_principal(
     return None, normalise_ip_address(ip_address)
 
 
+def resolve_credential_principal(credential: object) -> Optional[Any]:
+    """Resolve the bucket principal for a verified auth credential.
+
+    A bot token's ``user_id`` is its human OWNER; the bot's own account id is
+    carried in ``account_id`` (see ``AuthManager._verify_bot_token`` and
+    ``TokenInfo``). Keying a bot's bucket on ``user_id`` charges its traffic to
+    the owner and lets a leaked bot credential spend the owner's quota while
+    evading its own -- the same cross-principal confusion the gateway and REST
+    layers already reject. For a bot credential the authoritative principal is
+    therefore the bot account.
+
+    Fail closed: a bot verdict whose ``account_id`` is missing, non-numeric,
+    non-positive, or equal to the owner's ``user_id`` is not a distinct bot
+    account. Return ``None`` so :func:`normalise_principal` keys the request on
+    the trusted IP instead of silently falling back to the owner's id. User
+    credentials keep their ``user_id`` (or ``id``); the canonicalizer below
+    validates it before it reaches any key.
+    """
+    if getattr(credential, "token_type", "") == "bot":
+        raw_bot_id = getattr(credential, "account_id", None)
+        try:
+            bot_id = int(raw_bot_id)
+        except (TypeError, ValueError):
+            return None
+        if bot_id <= 0:
+            return None
+        owner_id = getattr(credential, "user_id", None)
+        if owner_id is not None:
+            try:
+                if int(owner_id) == bot_id:
+                    return None
+            except (TypeError, ValueError):
+                pass
+        return bot_id
+    return getattr(credential, "user_id", None) or getattr(credential, "id", None)
+
+
 __all__ = [
     "INVALID_IP_PRINCIPAL",
     "MAX_PRINCIPAL_ID",
@@ -127,4 +164,5 @@ __all__ = [
     "normalise_principal",
     "normalise_principal_id",
     "normalise_resource_id",
+    "resolve_credential_principal",
 ]

@@ -17,6 +17,7 @@ import utils.config as config
 from src.core.config import VersionedConfigSnapshot, config_source_version
 from src.utils.net import get_client_ip
 
+from .manager.principals import resolve_credential_principal
 from .manager.results import create_store_unavailable_result
 
 
@@ -456,9 +457,10 @@ class RateLimitMiddlewareASGI:
 
             if hasattr(request.state, "user") and request.state.user:
                 user = request.state.user
-                user_info["user_id"] = getattr(user, "user_id", None) or getattr(
-                    user, "id", None
-                )
+                # A bot token's ``user_id`` is its OWNER (the bot id lives in
+                # ``account_id``). Key the bot's bucket on its own account and
+                # fail closed to an IP key when no distinct bot account exists.
+                user_info["user_id"] = resolve_credential_principal(user)
                 user_info["is_bot"] = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
                 user_info["is_admin"] = permissions.get(

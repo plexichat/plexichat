@@ -7,6 +7,7 @@ from typing import Optional, Callable
 
 from fastapi import Request, HTTPException
 
+from .manager.principals import resolve_credential_principal
 from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 
 
@@ -94,7 +95,10 @@ def rate_limit(
             is_admin = False
             if hasattr(request.state, "user") and request.state.user:
                 user = request.state.user
-                user_id = getattr(user, "user_id", None)
+                # A bot token's ``user_id`` is its OWNER; charge the per-account
+                # decorator bucket to the bot's own account (fail closed if the
+                # verdict has no distinct bot id).
+                user_id = resolve_credential_principal(user)
                 is_bot = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
                 is_admin = permissions.get("admin.*", False) or permissions.get(
@@ -184,7 +188,10 @@ def custom_rate_limit(
             is_admin = False
             if hasattr(request.state, "user") and request.state.user:
                 user = request.state.user
-                user_id = getattr(user, "user_id", None)
+                # A bot token's ``user_id`` is its OWNER; charge the per-account
+                # decorator bucket to the bot's own account (fail closed if the
+                # verdict has no distinct bot id).
+                user_id = resolve_credential_principal(user)
                 is_bot = getattr(user, "token_type", "") == "bot"
                 permissions = getattr(user, "permissions", {})
                 is_admin = permissions.get("admin.*", False) or permissions.get(
