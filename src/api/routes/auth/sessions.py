@@ -4,7 +4,11 @@ from fastapi.responses import Response
 
 import src.api as api
 import utils.logger as logger
-from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.middleware.authentication import (
+    AuthenticationMiddleware,
+    get_current_user,
+    TokenInfo,
+)
 from src.api.schemas.auth import (
     LoginResponse,
     SessionResponse,
@@ -26,6 +30,16 @@ from src.core.auth.exceptions import (
     UserNotFoundError,
 )
 from src.utils.net import get_client_ip
+
+def _cookie_csrf_allowed(request: Request) -> bool:
+    """Fail-closed cookie-CSRF policy for the session-rotation endpoint."""
+    sec_fetch_site = request.headers.get("Sec-Fetch-Site")
+    if sec_fetch_site == "cross-site":
+        return False
+    if sec_fetch_site == "same-origin":
+        return True
+    return AuthenticationMiddleware._origin_allowed(request)
+
 
 router = APIRouter()
 
@@ -151,7 +165,10 @@ async def refresh_session(request: Request, response: Response) -> LoginResponse
         from .cookies import get_session_token_from_cookies
 
         token = cookie_token = get_session_token_from_cookies(request.cookies)
-        if cookie_token and request.headers.get("X-Plexichat-Request") != "1":
+        if cookie_token and (
+            request.headers.get("X-Plexichat-Request") != "1"
+            or not _cookie_csrf_allowed(request)
+        ):
             raise HTTPException(
                 status_code=403,
                 detail={"error": {"code": 403, "message": "CSRF validation failed"}},
