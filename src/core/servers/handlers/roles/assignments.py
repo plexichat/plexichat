@@ -49,8 +49,22 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
             return
 
         server = self.manager.get_server(server_id, user_id)
-        is_owner = server is not None and server.owner_id == user_id
-        target_is_owner = server is not None and server.owner_id == member_user_id
+        owner_id = server.owner_id if server is not None else None
+        # SECURITY: both ids here are DB-sourced -- owner_id is projected from
+        # the srv_servers row, member_user_id from the srv_members row resolved
+        # by the API route. Loose ``==`` let a text/float encoded owner id
+        # ("5", 5.9) compare unequal to the genuine int 5, so target_is_owner
+        # was False and a moderator could edit the server owner's roles.
+        # Fail closed: a genuine int attests to identity (type() also rejects
+        # bool). A malformed owner row or target id cannot prove the target is
+        # NOT the owner, so deny the edit rather than granting the hierarchy
+        # bypass.
+        if server is not None and type(owner_id) is not int:
+            raise RoleHierarchyError("Cannot manage roles: malformed server owner row")
+        if type(member_user_id) is not int:
+            raise RoleHierarchyError("Cannot manage roles: malformed member id row")
+        is_owner = server is not None and owner_id == int(user_id)
+        target_is_owner = server is not None and owner_id == member_user_id
         if target_is_owner:
             raise RoleHierarchyError("Cannot manage the roles of the server owner")
 
