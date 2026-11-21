@@ -38,6 +38,12 @@ class _Servers:
         self.get_conv_calls += 1
         return self.channel.conversation_id if self.channel else None
 
+    def has_permission(self, user_id, server_id, permission, channel_id=None):
+        # The REST send path now requires the servers module to answer the
+        # per-channel messages.send question; this fake represents a member
+        # who is allowed to post, so query-count behaviour stays testable.
+        return True
+
 
 class _Message:
     id = 5001
