@@ -7,14 +7,15 @@ fails when it finds any of:
 
 * ``eval()`` / ``exec()`` called with a non-literal argument — dynamic code
   execution on data the interpreter cannot see at authoring time. Indirect
-  spellings (``builtins.__dict__["eval"]``, ``getattr(__builtins__, "exec")``)
-  are resolved too.
+  spellings (``builtins.__dict__["eval"]``, ``getattr(__builtins__, "exec")``,
+  a name bound to the builtin) are resolved too.
 * ``os.system()`` — shell command construction with no argument separation,
   including ``__import__("os").system()`` and ``getattr(os, "system")()``.
-* a call with a truthy ``shell=`` (literal, variable or ``**kwargs``) — the
-  subprocess equivalent of ``os.system()``.
+* a call with a truthy ``shell=`` (literal, variable, or ``**kwargs`` —
+  including a dict variable splatted as ``**opts``) — the subprocess
+  equivalent of ``os.system()``.
 * ``pickle.load()`` / ``pickle.loads()`` — deserialization of untrusted data,
-  including aliased imports.
+  including aliased imports and zero-argument ``pickle.Unpickler(f).load()``.
 * a hardcoded credential token (AWS/GitHub/GitLab/Slack/Stripe/OpenAI key,
   JWT, PEM private key) embedded as a string literal. Detector *regexes* such
   as ``re.compile(r"...PRIVATE KEY...")`` are deliberately not findings.
@@ -278,6 +279,20 @@ def _shell_is_truthy(value: ast.expr) -> bool:
     return True
 
 
+def _dict_has_truthy_shell(node: ast.Dict) -> bool:
+    """True when a ``{...}`` literal carries a truthy ``shell`` key.
+
+    Used both for an inline ``**{"shell": True}`` and for a dict literal
+    assigned to a name that is later splatted as ``**opts``.
+    """
+    return any(
+        isinstance(key, ast.Constant)
+        and key.value == "shell"
+        and _shell_is_truthy(value)
+        for key, value in zip(node.keys, node.values)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-file analysis
 # ---------------------------------------------------------------------------
@@ -301,6 +316,11 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
     os_aliases = {"os"}
     pickle_aliases = {"pickle"}
     pickle_loaded_names: set[str] = set()
+    # Names bound to a dict literal holding ``shell=...``, and names bound to
+    # the eval/exec builtins. Both are one-hop aliases a bypass can hide behind
+    # (``opts = {"shell": True}; run(cmd, **opts)`` / ``f = exec; f(code)``).
+    shell_kwargs_vars: set[str] = set()
+    eval_exec_aliases: set[str] = set()
     regex_arg_ids: set[int] = set()
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -319,6 +339,20 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
             for alias in parent.names:
                 if alias.name in ("load", "loads"):
                     pickle_loaded_names.add(alias.asname or alias.name)
+        elif isinstance(parent, (ast.Assign, ast.AnnAssign)):
+            value = parent.value
+            if value is None:  # pragma: no cover - bare annotation
+                continue
+            targets = (
+                parent.targets
+                if isinstance(parent, ast.Assign)
+                else [parent.target]
+            )
+            names = {t.id for t in targets if isinstance(t, ast.Name)}
+            if isinstance(value, ast.Dict) and _dict_has_truthy_shell(value):
+                shell_kwargs_vars.update(names)
+            if _dynamic_call_name(value) in EVAL_NAMES:
+                eval_exec_aliases.update(names)
         elif isinstance(parent, ast.Call) and _is_regex_call(parent.func):
             for arg in parent.args:
                 for sub in ast.walk(arg):
@@ -334,11 +368,17 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
         )
 
     for node in parents:
-        # --- eval / exec with a non-literal argument -----------------------
-        if isinstance(node, ast.Call) and node.args:
+        # NOTE: do not gate this block on ``node.args``. Zero-argument calls
+        # are real sinks too -- most notably ``pickle.Unpickler(f).load()``,
+        # which carries no positional arguments. Gating on args left that
+        # rule dead code. The eval_exec branch below checks args itself.
+        if isinstance(node, ast.Call):
             func = node.func
             name = _dynamic_call_name(func)
-            if name in EVAL_NAMES and not isinstance(node.args[0], ast.Constant):
+            # --- eval / exec with a non-literal argument -------------------
+            if (
+                name in EVAL_NAMES or name in eval_exec_aliases
+            ) and node.args and not isinstance(node.args[0], ast.Constant):
                 add(node, "eval_exec", "dynamic eval/exec argument", "eval()")
 
             # --- os.system --------------------------------------------------
@@ -367,19 +407,26 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
             for kw in node.keywords:
                 if kw.arg == "shell" and _shell_is_truthy(kw.value):
                     add(node, "shell_true", "shell=True", "shell=True")
-                if kw.arg is None and isinstance(kw.value, ast.Dict):
-                    for key, value in zip(kw.value.keys, kw.value.values):
-                        if (
-                            isinstance(key, ast.Constant)
-                            and key.value == "shell"
-                            and _shell_is_truthy(value)
-                        ):
-                            add(
-                                node,
-                                "shell_true",
-                                "shell=True via **kwargs",
-                                "shell=True",
-                            )
+                if kw.arg is None:
+                    if isinstance(kw.value, ast.Dict) and _dict_has_truthy_shell(
+                        kw.value
+                    ):
+                        add(
+                            node,
+                            "shell_true",
+                            "shell=True via **kwargs",
+                            "shell=True",
+                        )
+                    elif (
+                        isinstance(kw.value, ast.Name)
+                        and kw.value.id in shell_kwargs_vars
+                    ):
+                        add(
+                            node,
+                            "shell_true",
+                            "shell=True via **kwargs dict variable",
+                            "shell=True",
+                        )
 
             # --- pickle deserialization (aliased import / from-import) ------
             if isinstance(func, ast.Name) and func.id in pickle_loaded_names:

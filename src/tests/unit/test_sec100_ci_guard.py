@@ -138,6 +138,20 @@ def test_indirect_eval_exec_spellings_are_flagged(tmp_path: Path) -> None:
     assert _kinds(guard.find_patterns(root)).count("eval_exec") == 2
 
 
+def test_exec_alias_assignment_is_flagged(tmp_path: Path) -> None:
+    """Non-vacuous: binding the exec builtin to another name before calling it
+    is an indirect dispatch that a name-only detector silently misses.
+    """
+    root = _tree(
+        tmp_path,
+        {
+            "a.py": "run = exec\nrun(user_code)\n",
+            "b.py": "def safe():\n    pass\nrun = safe\nrun(user_code)\n",  # clean
+        },
+    )
+    assert _kinds(_guard().find_patterns(root)).count("eval_exec") == 1
+
+
 def test_indirect_os_system_spellings_are_flagged(tmp_path: Path) -> None:
     root = _tree(
         tmp_path,
@@ -162,6 +176,29 @@ def test_shell_true_via_variable_and_kwargs_is_flagged(tmp_path: Path) -> None:
     assert _kinds(_guard().find_patterns(root)).count("shell_true") == 2
 
 
+def test_shell_true_via_dict_variable_is_flagged(tmp_path: Path) -> None:
+    """Non-vacuous: splatting a dict variable built with a truthy shell key is
+    the same shell sink as ``**{"shell": True}`` but evades a literal-only
+    ``**kwargs`` check. A dict with shell=False must stay clean.
+    """
+    root = _tree(
+        tmp_path,
+        {
+            "a.py": (
+                "import subprocess\n"
+                'opts = {"shell": True, "check": False}\n'
+                "subprocess.run(cmd, **opts)\n"
+            ),
+            "b.py": (
+                "import subprocess\n"
+                'opts = {"shell": False}\n'
+                "subprocess.run(cmd, **opts)\n"
+            ),
+        },
+    )
+    assert _kinds(_guard().find_patterns(root)).count("shell_true") == 1
+
+
 def test_pickle_deserialization_is_flagged_including_alias(tmp_path: Path) -> None:
     root = _tree(
         tmp_path,
@@ -173,6 +210,30 @@ def test_pickle_deserialization_is_flagged_including_alias(tmp_path: Path) -> No
     )
     guard = _guard()
     assert guard.PREFILTER.search("import pickle as p")
+    assert _kinds(guard.find_patterns(root)).count("pickle_load") == 2
+
+
+def test_pickle_unpickler_load_zero_arg_is_flagged(tmp_path: Path) -> None:
+    """Non-vacuous: Unpickler(f).load() takes no args and was dead code under
+    an ``if node.args`` gate. This is the common byte-buffer deserialization
+    spelling and a direct RCE sink, so it must be reported.
+    """
+    root = _tree(
+        tmp_path,
+        {
+            "a.py": "import pickle\npickle.Unpickler(f).load()\n",
+            "b.py": "import pickle, io\npickle.Unpickler(io.BytesIO(payload)).load()\n",
+            "c.py": "import json\nobj = json.load(f)\n",  # stays clean
+        },
+    )
+    guard = _guard()
+    assert all(
+        guard.PREFILTER.search(s)
+        for s in (
+            "pickle.Unpickler(f).load()",
+            "pickle.Unpickler(io.BytesIO(payload)).load()",
+        )
+    )
     assert _kinds(guard.find_patterns(root)).count("pickle_load") == 2
 
 
