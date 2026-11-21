@@ -57,16 +57,39 @@ async def get_audit_log(
             if e.target_type == "member" and e.target_id:
                 user_ids.add(int(e.target_id))
 
+        # Deferred on purpose (avoids a module-level circular import), but it
+        # only needs resolving once per request, not once per distinct user id.
+        from ..users import _user_to_public_response
+
         users_map = {}
         if auth_mod:
             users_dict = auth_mod.get_users_bulk(list(user_ids))
             for uid, u in users_dict.items():
-                from ..users import _user_to_public_response
-
                 users_map[int(uid)] = _user_to_public_response(u)
 
+        # Role and channel target names used to be resolved with one get_role /
+        # get_channel call per distinct target id — an N+1 fan-out that grew
+        # with the page size (up to 100 extra lookups for a full page). Both
+        # bulk APIs are permission-aware, cached and scoped to this server, so
+        # a single call each resolves every name in the page. A failed bulk
+        # lookup (e.g. the viewer lacks the higher list permission) fails closed
+        # to an empty map: the entry is still returned, just without a name —
+        # identical to the old behaviour when an individual lookup failed.
         role_map = {}
+        try:
+            roles = servers_mod.get_roles(current_user.user_id, sid)
+            if roles:
+                role_map = {int(role.id): role.name for role in roles}
+        except Exception:
+            role_map = {}
+
         channel_map = {}
+        try:
+            channels = servers_mod.get_channels(current_user.user_id, sid)
+            if channels:
+                channel_map = {int(channel.id): channel.name for channel in channels}
+        except Exception:
+            channel_map = {}
 
         result = []
         for e in entries:
@@ -77,23 +100,9 @@ async def get_audit_log(
                     target_user.username if target_user else f"User {e.target_id}"
                 )
             elif e.target_type == "role" and e.target_id:
-                rid = int(e.target_id)
-                if rid not in role_map:
-                    try:
-                        role = servers_mod.get_role(rid, current_user.user_id)
-                        role_map[rid] = role.name if role else None
-                    except Exception:
-                        role_map[rid] = None
-                target_name = role_map[rid]
+                target_name = role_map.get(int(e.target_id))
             elif e.target_type == "channel" and e.target_id:
-                cid = int(e.target_id)
-                if cid not in channel_map:
-                    try:
-                        channel = servers_mod.get_channel(cid, current_user.user_id)
-                        channel_map[cid] = channel.name if channel else None
-                    except Exception:
-                        channel_map[cid] = None
-                target_name = channel_map[cid]
+                target_name = channel_map.get(int(e.target_id))
 
             result.append(
                 AuditLogEntryResponse(
