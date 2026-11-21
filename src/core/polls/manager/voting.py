@@ -201,14 +201,20 @@ class VotingMixin(PollManagerBase):
                     auto_commit=False,
                 )
 
-            for option_id in unique_option_ids:
-                vote_id = self._generate_id()
-                self._db.execute(
-                    """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (vote_id, poll_id, option_id, user_id, now),
-                    auto_commit=False,
-                )
+            # One batched INSERT for every selected option, matching vote().
+            # Still inside the same transaction, so a constraint failure rolls
+            # the whole replacement back (fail-closed): the user's previous
+            # selections are not lost on a partial write.
+            vote_rows = [
+                (self._generate_id(), poll_id, option_id, user_id, now)
+                for option_id in unique_option_ids
+            ]
+            self._db.execute_many(
+                """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                vote_rows,
+                auto_commit=False,
+            )
             self._db.commit()
         except Exception as exc:
             self._db.rollback()
