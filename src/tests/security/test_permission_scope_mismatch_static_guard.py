@@ -28,6 +28,11 @@ closes that gap by reading the source instead of executing it:
    ("a", "b")`` enum literal (so the slowmode loop that was fixed is covered).
    Calls whose permission cannot be resolved to a catalog key are *skipped* --
    they are wrappers/forwarders, not gates -- which keeps false positives low.
+   LOCAL ALIASES are resolved as well: check-shaped wrappers that forward their
+   ``permission`` argument to a canonical gate (transitively) and plain aliases
+   (``check = has_permission``) are mapped to their canonical check and their
+   own call-site argument layout. Check-shaped names that cannot be resolved
+   are still scanned as canonical checks (fail closed).
 
 3. MISMATCH + ALLOWLIST -- a check whose scope differs from its catalog scope
    is a finding, unless its exact ``(path, function, call, permission, scope)``
@@ -232,6 +237,32 @@ DOCUMENTED_MISMATCHES = {
         "deferred. NOTE: the destructive channel-write gates (delete/update/move "
         "/overrides) are deliberately NOT allowlisted -- see 72d3f648."
     ),
+    (
+        "core/threads/manager/permissions.py",
+        "_can_view_thread_row",
+        "_check_permission",
+        "channels.view",
+        _CHANNEL,
+    ): (
+        "Public-thread visibility mirrors can_view_thread: channels.view is "
+        "evaluated for the thread's backing channel so a caller without view "
+        "cannot see the thread. Non-authoritative visibility check, the same "
+        "per-channel pattern as the other channels.view entries."
+    ),
+    (
+        "core/threads/manager/permissions.py",
+        "can_manage_thread",
+        "_check_permission",
+        "threads.manage",
+        _CHANNEL,
+    ): (
+        "Thread management is channel-bounded: archive/lock/rename/delete and "
+        "roster changes affect one thread in the granted channel, gated further "
+        "by _can_view_thread_row and private-thread membership. A channel-only "
+        "grant cannot perform a server-level destructive write (unlike the "
+        "72d3f648 channels.manage case). The catalog's coarse section comment "
+        "marks threads.manage server-scoped; here channel scope is intentional."
+    ),
 }
 
 
@@ -295,7 +326,136 @@ def _call_name(node):
     return None
 
 
-def _resolve_permissions(call, ancestors, scopes):
+# A local wrapper/alias is any name that reads like a permission check. We only
+# treat it as a check if we can prove it delegates to a canonical gate (or, for
+# unresolvable names, fail closed -- see ``_analyze_source``). The name filter
+# keeps unrelated helpers (``get_my_permissions``, ``validate_permissions``,
+# ``grant_permission`` ...) out of the alias set.
+CHECK_ALIAS_RE = re.compile(
+    r"(check|require|has|verify|assert|ensure)[_]?perm|perm(ission)?[_]?(check|require)",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_check(name):
+    return bool(name and CHECK_ALIAS_RE.search(name))
+
+
+@dataclass(frozen=True)
+class CheckLayout:
+    """Where permission/channel arguments live at a check's call site."""
+
+    perm_index: int = 2
+    perm_kwarg: str = "permission"
+    channel_index: int = 3
+    channel_kwargs: frozenset = CHANNEL_KWARGS
+
+
+CANONICAL_LAYOUT = CheckLayout()
+
+
+def _arg_at(call, index, kwarg=None, kwargs=frozenset()):
+    """Return the expression passed in a given argument slot, or None."""
+    if index is not None and len(call.args) > index:
+        return call.args[index]
+    for kw in call.keywords:
+        if (kwarg and kw.arg == kwarg) or kw.arg in kwargs:
+            return kw.value
+    return None
+
+
+def _wrapper_params(fn):
+    """Wrapper parameters as seen at a call site (a bound ``self``/``cls`` is not passed)."""
+    params = [a.arg for a in list(fn.args.posonlyargs) + list(fn.args.args)]
+    if params and params[0] in ("self", "cls"):
+        params = params[1:]
+    return params
+
+
+def _resolve_wrapper(fn, aliases):
+    """Resolve a permission-check wrapper to ``(canonical, call-site layout)``.
+
+    Only wrappers that FORWARD their permission argument are resolved: when a
+    wrapper hardcodes the permission (e.g. ``_check_embed_links_permission``),
+    its own internal canonical call already carries the scope and there is
+    nothing to scan at its call sites. Delegation is followed transitively
+    through other already-resolved aliases (bounded by the caller's passes).
+    """
+    params = _wrapper_params(fn)
+    for sub in ast.walk(fn):
+        if not isinstance(sub, ast.Call):
+            continue
+        name = _call_name(sub)
+        if name in CHECK_NAMES:
+            canonical, inner = name, CANONICAL_LAYOUT
+        elif name in aliases:
+            canonical, inner = aliases[name]
+        else:
+            continue
+        perm_expr = _arg_at(sub, inner.perm_index, inner.perm_kwarg)
+        if not isinstance(perm_expr, ast.Name) or perm_expr.id not in params:
+            continue
+        channel_expr = _arg_at(
+            sub, inner.channel_index, None, inner.channel_kwargs
+        )
+        channel_param = (
+            channel_expr.id
+            if isinstance(channel_expr, ast.Name) and channel_expr.id in params
+            else None
+        )
+        return (
+            canonical,
+            CheckLayout(
+                perm_index=params.index(perm_expr.id),
+                perm_kwarg=perm_expr.id,
+                channel_index=params.index(channel_param) if channel_param else None,
+                channel_kwargs=frozenset({channel_param}) if channel_param else frozenset(),
+            ),
+        )
+    return None
+
+
+def _resolve_alias_definitions(tree):
+    """Return ``(aliases, unresolved_names)`` for one parsed source tree.
+
+    ``aliases`` maps a local check name to ``(canonical, layout)``. Support both
+    wrappers (``def _check_permission(...): return ...has_permission(...)``) and
+    plain module-level aliases (``check = has_permission``).
+    """
+    functions = {}
+    aliases = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _looks_like_check(node.name):
+                functions[node.name] = node
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                # The RHS proves this is an alias regardless of the target's
+                # name (e.g. ``check = has_permission``), so no name filter here.
+                if not isinstance(target, ast.Name):
+                    continue
+                rhs = node.value
+                if isinstance(rhs, ast.Name) and rhs.id in CHECK_NAMES:
+                    aliases[target.id] = (rhs.id, CANONICAL_LAYOUT)
+                elif isinstance(rhs, ast.Attribute) and rhs.attr in CHECK_NAMES:
+                    aliases[target.id] = (rhs.attr, CANONICAL_LAYOUT)
+
+    # Bounded transitive resolution (a wrapper may delegate via another alias).
+    for _ in range(8):
+        changed = False
+        for name, fn in functions.items():
+            if name in aliases:
+                continue
+            resolved = _resolve_wrapper(fn, aliases)
+            if resolved:
+                aliases[name] = resolved
+                changed = True
+        if not changed:
+            break
+    return aliases, set(functions) - set(aliases)
+
+
+def _resolve_permissions(call, ancestors, scopes, layout=CANONICAL_LAYOUT):
     """Resolve a call's permission to catalog literals (or an empty list).
 
     Literal argument, ``permission=`` keyword, and ``for name in ("a", "b")``
@@ -303,10 +463,14 @@ def _resolve_permissions(call, ancestors, scopes):
     is skipped so wrappers/forwarders never produce findings.
     """
     candidates = []
-    if len(call.args) >= 3:
-        candidates.append(call.args[2])
+    perm_expr = _arg_at(call, layout.perm_index, layout.perm_kwarg)
+    if perm_expr is not None:
+        candidates.append(perm_expr)
+    # A ``permission=`` keyword is accepted regardless of layout: wrappers that
+    # forward by name keep the canonical keyword even when their positional
+    # order differs.
     for kw in call.keywords:
-        if kw.arg == "permission":
+        if kw.arg == "permission" and kw.value is not perm_expr:
             candidates.append(kw.value)
 
     perms = []
@@ -329,11 +493,11 @@ def _resolve_permissions(call, ancestors, scopes):
     return list(dict.fromkeys(p for p in perms if p in scopes))
 
 
-def _call_scope(call):
+def _call_scope(call, layout=CANONICAL_LAYOUT):
     """Channel scope iff a channel argument is present; otherwise server."""
-    if len(call.args) >= 4:
+    if layout.channel_index is not None and len(call.args) > layout.channel_index:
         return _CHANNEL
-    if any(kw.arg in CHANNEL_KWARGS for kw in call.keywords):
+    if any(kw.arg in layout.channel_kwargs for kw in call.keywords):
         return _CHANNEL
     return _SERVER
 
@@ -344,9 +508,12 @@ def _analyze_source(source, path, scopes=None):
     ``path`` is the repository-relative path used as the finding identity.
     The same function is used for the real tree and for every synthetic
     self-test, so the self-tests genuinely exercise the production logic.
+    Local aliases/wrappers are resolved against the same source tree, so their
+    call sites are scanned with the wrapper's own argument layout.
     """
     scopes = scopes if scopes is not None else catalog_scopes()
     tree = ast.parse(textwrap.dedent(source))
+    aliases, unresolved = _resolve_alias_definitions(tree)
     findings = []
     stats = Stats(parsed_files=1)
     for node, ancestors in _walk_with_ancestors(tree):
@@ -355,18 +522,31 @@ def _analyze_source(source, path, scopes=None):
         name = _call_name(node)
         if name is None:
             continue
+
         is_manage = name.startswith(MANAGE_PREFIX)
-        if name not in CHECK_NAMES and not is_manage:
+        if name in CHECK_NAMES:
+            layout = CANONICAL_LAYOUT
+        elif name in aliases:
+            layout = aliases[name][1]  # canonical + call-site layout
+        elif is_manage:
+            layout = CANONICAL_LAYOUT
+        elif name in unresolved:
+            # Fail closed: an unresolvable permission-check-shaped call is
+            # treated like a canonical check. If its arguments carry a catalog
+            # permission and a channel scope that mismatches, flag it for
+            # review rather than silently dropping it.
+            layout = CANONICAL_LAYOUT
+        else:
             continue
         if is_manage:
             stats.manage_calls += 1
         else:
             stats.permission_checks += 1
 
-        perms = _resolve_permissions(node, ancestors, scopes)
+        perms = _resolve_permissions(node, ancestors, scopes, layout)
         if not perms:
             continue  # wrapper/forwarder -- not a scope-bearing gate
-        scope = _call_scope(node)
+        scope = _call_scope(node, layout)
         funcs = [
             a
             for a in ancestors
@@ -465,7 +645,11 @@ def test_documented_exceptions_are_precise_and_reasoned():
         path, function, call, permission, scope = key
         assert path.startswith(("core/", "api/"))
         assert function and function != "<module>"
-        assert call in CHECK_NAMES or call.startswith(MANAGE_PREFIX)
+        assert (
+            call in CHECK_NAMES
+            or call.startswith(MANAGE_PREFIX)
+            or _looks_like_check(call)
+        )
         assert permission and "." in permission or permission == "administrator"
         assert scope in (_SERVER, _CHANNEL)
         assert isinstance(reason, str) and len(reason.strip()) >= 30
@@ -627,3 +811,93 @@ def test_selftest_mislabeled_destructive_permission_is_invisible_to_analyser():
     channel = {p for p, s in scopes.items() if s == _CHANNEL}
     assert channel != set(EXPECTED_CHANNEL_SCOPED)
     assert destructive in channel - set(EXPECTED_CHANNEL_SCOPED)
+
+
+# ---------------------------------------------------------------------------
+# Alias / wrapper resolution self-tests
+# ---------------------------------------------------------------------------
+
+_ALIAS_WRAPPER = '''
+    class Gate:
+        def _check_permission(self, user, server, permission, channel_id=None):
+            return self._servers.has_permission(user, server, permission, channel_id)
+
+        def bad(self, user, server, cid):
+            return self._check_permission(user, server, "channels.manage", cid)
+
+        def ok(self, user, server, cid):
+            self._check_permission(user, server, "messages.send", cid)
+            self._check_permission(user, server, "channels.manage")
+'''
+
+
+def test_selftest_alias_mismatch_is_flagged():
+    """A server-scoped permission checked via a local wrapper fails closed."""
+    aliases, unresolved = _resolve_alias_definitions(ast.parse(textwrap.dedent(_ALIAS_WRAPPER)))
+    assert "_check_permission" in aliases, "wrapper must be resolved to canonical"
+    assert "_check_permission" not in unresolved
+
+    findings, stats = _analyze_source(_ALIAS_WRAPPER, _NOVEL_PATH)
+    assert stats.permission_checks >= 3  # two call sites in ok/bad + wrapper forward
+    bad = [f for f in findings if f.function == "bad"]
+    assert len(bad) == 1
+    f = bad[0]
+    assert (f.call, f.permission, f.scope, f.intended) == (
+        "_check_permission",
+        "channels.manage",
+        _CHANNEL,
+        _SERVER,
+    )
+    assert not _is_documented(f), "a novel alias mismatch must fail closed"
+    assert not [f for f in findings if f.function == "ok"], "correct alias scopes accepted"
+
+
+def test_selftest_assignment_alias_is_scanned():
+    """``check = has_permission`` aliases are resolved from the RHS."""
+    source = '''
+    check = has_permission
+
+    def gate(user, server, cid):
+        check(user, server, "channels.manage", cid)
+    '''
+    aliases, _ = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
+    assert aliases["check"][0] == "has_permission"
+    findings, _ = _analyze_source(source, _NOVEL_PATH)
+    assert len(findings) == 1
+    assert (findings[0].call, findings[0].permission, findings[0].scope) == (
+        "check",
+        "channels.manage",
+        _CHANNEL,
+    )
+
+
+def test_selftest_unresolvable_check_alias_fails_closed():
+    """A check-shaped alias we cannot resolve is still scanned, not dropped."""
+    source = '''
+    def _check_permission(user, server, permission, channel_id=None):
+        return external_policy.allow(user, server, permission, channel_id)
+
+    def gate(user, server, cid):
+        return _check_permission(user, server, "channels.manage", cid)
+    '''
+    aliases, unresolved = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
+    assert "_check_permission" not in aliases
+    assert "_check_permission" in unresolved
+    findings, _ = _analyze_source(source, _NOVEL_PATH)
+    assert len(findings) == 1
+    assert (findings[0].call, findings[0].permission, findings[0].scope) == (
+        "_check_permission",
+        "channels.manage",
+        _CHANNEL,
+    )
+
+
+def test_alias_resolution_is_active_on_real_tree():
+    """Alias findings must be live, or the allowlist entries go stale."""
+    findings, _ = _scan_tree()
+    alias_findings = [
+        f for f in findings if f.call in {"_check_permission", "_require_permission"}
+    ]
+    assert alias_findings, "no alias checks enumerated -- resolution is vacuous"
+    assert all(_is_documented(f) for f in alias_findings)
+    assert {f.permission for f in alias_findings} >= {"channels.view", "threads.manage"}
