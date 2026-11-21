@@ -27,6 +27,24 @@ def _hash_admin_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _otp_challenge_fingerprint(challenge_token: str) -> str:
+    """Deterministic one-way fingerprint for a live OTP challenge token.
+
+    The challenge token is returned to the admin client after the password
+    phase and, until it expires, is the only thing binding an OTP code to that
+    login attempt. Writing it verbatim into a cache key copies the credential
+    into Valkey's keyspace (``KEYS admin_otp_challenge:*``) and into any
+    process-local cache dump, where operators and log shippers with no need to
+    know the secret can read it. Hash it first, mirroring ``_hash_admin_token``;
+    callers still present the raw token and every lookup re-derives the same
+    fingerprint, so the one-way store is transparent to the flow. Fail closed
+    on malformed input rather than ever echoing it.
+    """
+    if not isinstance(challenge_token, str) or not challenge_token:
+        return "invalid"
+    return hashlib.sha256(challenge_token.encode("utf-8")).hexdigest()
+
+
 def _create_otp_challenge(admin_id: int, is_setup: bool, ttl_seconds: int = 300) -> str:
     """Create a short-lived challenge token for OTP verification binding."""
     from src.core.database import cache_set
@@ -38,7 +56,12 @@ def _create_otp_challenge(admin_id: int, is_setup: bool, ttl_seconds: int = 300)
         "is_setup": is_setup,
         "expires_at": expires_at,
     }
-    cache_set(f"admin_otp_challenge:{token}", payload, ttl=ttl_seconds)
+    # The raw token never enters the cache keyspace.
+    cache_set(
+        f"admin_otp_challenge:{_otp_challenge_fingerprint(token)}",
+        payload,
+        ttl=ttl_seconds,
+    )
     return token
 
 
@@ -49,11 +72,13 @@ def _validate_otp_challenge(
     from src.core.database import cache_get
 
     now = int(time.time())
-    key = f"admin_otp_challenge:{challenge_token}"
+    key = f"admin_otp_challenge:{_otp_challenge_fingerprint(challenge_token)}"
     payload = cache_get(key)
 
     if not payload:
-        logger.debug(f"OTP validation failed: No payload for key {key}")
+        # Never log the key: it used to embed the raw challenge token, which
+        # copied a live second-factor credential into shipped debug logs.
+        logger.debug("OTP validation failed: unknown challenge")
         return False
 
     if payload["expires_at"] < now:
@@ -84,7 +109,7 @@ def _check_otp_attempt_limit(
 def _consume_otp_challenge(challenge_token: str) -> None:
     from src.core.database import cache_delete
 
-    cache_delete(f"admin_otp_challenge:{challenge_token}")
+    cache_delete(f"admin_otp_challenge:{_otp_challenge_fingerprint(challenge_token)}")
     # The atomic rate-limit bucket expires naturally; explicitly deleting the
     # challenge is sufficient and avoids a second non-atomic counter path.
 

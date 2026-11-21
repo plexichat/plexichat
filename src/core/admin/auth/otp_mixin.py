@@ -15,6 +15,7 @@ from .helpers import (
     _consume_otp_challenge,
     _validate_otp_challenge,
     _check_otp_attempt_limit,
+    _otp_challenge_fingerprint,
 )
 from .session_mixin import SessionMixin
 from .password_mixin import PasswordMixin
@@ -75,7 +76,10 @@ class OTPMixin(SessionMixin, PasswordMixin):
         if not _check_admin_otp_budget(admin_id):
             _consume_otp_challenge(challenge_token)
             return AdminLoginResult(success=False, error="Too many OTP attempts")
-        if not _check_otp_attempt_limit(challenge_token):
+        # Scope the per-challenge budget to a one-way fingerprint: the raw
+        # challenge token is a live credential and must never become a
+        # rate-limit/cache key visible to cache operators.
+        if not _check_otp_attempt_limit(_otp_challenge_fingerprint(challenge_token)):
             _consume_otp_challenge(challenge_token)
             return AdminLoginResult(success=False, error="Too many OTP attempts")
         # OTP challenges are single-attempt credentials. Consuming the
@@ -177,7 +181,10 @@ class OTPMixin(SessionMixin, PasswordMixin):
         if not _check_admin_otp_budget(admin_id):
             _consume_otp_challenge(challenge_token)
             return AdminLoginResult(success=False, error="Too many OTP attempts")
-        if not _check_otp_attempt_limit(challenge_token):
+        # Scope the per-challenge budget to a one-way fingerprint: the raw
+        # challenge token is a live credential and must never become a
+        # rate-limit/cache key visible to cache operators.
+        if not _check_otp_attempt_limit(_otp_challenge_fingerprint(challenge_token)):
             _consume_otp_challenge(challenge_token)
             return AdminLoginResult(success=False, error="Too many OTP attempts")
         # OTP challenges are single-attempt credentials. Consuming the
