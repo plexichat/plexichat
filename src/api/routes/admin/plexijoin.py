@@ -7,7 +7,6 @@ from typing import Optional
 
 from .utils import (
     check_host_restriction,
-    get_admin_from_token,  # noqa: F401 - retained for callers/tests that patch it
     require_admin_permission,
 )
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam

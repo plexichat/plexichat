@@ -17,8 +17,6 @@ from src.api.schemas.admin import (
 from src.api.schemas.common import ErrorResponse
 from .utils import (
     check_host_restriction,
-    # Kept for existing test doubles that patch this module attribute.
-    get_admin_from_token,  # noqa: F401
     require_admin_permission,
 )
 from . import _summary_cache

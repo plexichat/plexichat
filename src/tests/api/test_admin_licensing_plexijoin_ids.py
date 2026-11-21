@@ -26,10 +26,9 @@ class TestPlexiJoinIdContract:
         app.include_router(plexijoin_routes.router, prefix="/api/v1/admin")
         patchers = (
             patch.object(plexijoin_routes, "check_host_restriction"),
-            patch.object(plexijoin_routes, "get_admin_from_token", return_value=1),
-            # The connections endpoints authorize through require_admin_permission,
-            # which resolves the token inside ``admin.utils``; the route module's
-            # own reference is what has to be stubbed here.
+            # The connections endpoints authorize through require_admin_permission;
+            # the handlers call their own imported reference, so that module
+            # attribute is what has to be stubbed here.
             patch.object(plexijoin_routes, "require_admin_permission", return_value=1),
             patch.object(
                 plexijoin_routes, "_get_plexijoin_manager", return_value=manager
