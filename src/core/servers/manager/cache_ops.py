@@ -190,6 +190,18 @@ class CacheOpsMixin(ServerProtocol):
         # for every viewer, so evict every cached member-list page here too.
         invalidate_pattern("server_members_api:*")
         cache_delete(f"user_servers:{user_id}")
+        # The bound ``get_servers`` tier (``@cached(ttl=15,
+        # prefix="user_servers")``) never writes the plain ``user_servers:<uid>``
+        # key deleted above: it keys entries as ``user_servers:int:<uid>``
+        # (default limit) or ``user_servers:int:<uid>:...`` (explicit limit).
+        # That list is derived entirely from ``srv_members``, so a kick/ban/
+        # leave/reap that only reaches this core funnel left the removed
+        # member reading a still-warm server list (including the server they
+        # just lost) for the full 15s TTL. Drop the real decorator keys too;
+        # the exact and scoped-wildcard forms cover both call shapes without
+        # evicting another user's entry.
+        cache_delete(f"user_servers:int:{user_id}")
+        invalidate_pattern(f"user_servers:int:{user_id}:*")
         # The search layer memoizes each target user's *set of server ids*
         # under a separate key (SearchAccessMixin._get_user_servers_map) so it
         # can compute mutual-server counts without one query per hit. That
