@@ -131,16 +131,39 @@ _REGISTRY = Path(registry_routes.__file__).resolve()
 
 
 def _uses_caller_identity(node):
+    """Match ``<name>.user_id`` on any local name, not just ``current_user``.
+
+    Do not hard-code the dependency's parameter name: a future handler that
+    renames it or binds an alias (``caller = current_user``) would otherwise
+    slip past the completeness scan. This deliberately errs toward false
+    positives, which only demand a gate and never hide a missing one.
+    """
     return any(
         isinstance(child, ast.Attribute)
         and child.attr == "user_id"
         and isinstance(child.value, ast.Name)
-        and child.value.id == "current_user"
         for child in ast.walk(node)
     )
 
 
+def _is_get_current_user_dep(call):
+    return (
+        isinstance(call, ast.Call)
+        and getattr(call.func, "id", None) == "Depends"
+        and any(
+            isinstance(a, ast.Name) and a.id == "get_current_user" for a in call.args
+        )
+    )
+
+
 def _has_user_token_dependency(node):
+    """Match a ``TokenInfo`` dependency on ``get_current_user``.
+
+    The annotation may be plain ``TokenInfo``, a subscript (``TokenInfo[str]``)
+    or ``Annotated[TokenInfo, Depends(get_current_user)]``; the ``Depends`` may
+    live in the defaults or inside the annotation. All are accepted so a future
+    handler cannot dodge the scan by changing its declaration style.
+    """
     for arg in node.args.args:
         if arg.annotation is None:
             continue
@@ -149,29 +172,37 @@ def _has_user_token_dependency(node):
             for c in ast.walk(arg.annotation)
         ):
             continue
-        for default in node.args.defaults:
-            if not isinstance(default, ast.Call):
-                continue
-            if getattr(default.func, "id", None) != "Depends":
-                continue
-            if (
-                default.args
-                and getattr(default.args[0], "id", None) == "get_current_user"
-            ):
-                return True
+        if any(_is_get_current_user_dep(c) for c in ast.walk(arg.annotation)):
+            return True
+        if any(_is_get_current_user_dep(d) for d in node.args.defaults):
+            return True
     return False
 
 
 def _calls_require_user_token(node):
-    return any(
-        isinstance(child, ast.Call)
-        and getattr(child.func, "id", None) == "require_user_token"
-        for child in ast.walk(node)
-    )
+    """Only count a gate on the handler's own execution path.
+
+    Descend through statement-level nesting (if/for/with/try) but skip nested
+    function and lambda bodies: a call there is dead until that callable runs
+    and must not mark the route as protected.
+    """
+    stack = [node]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if (
+                isinstance(child, ast.Call)
+                and getattr(child.func, "id", None) == "require_user_token"
+            ):
+                return True
+            stack.append(child)
+    return False
 
 
-def test_every_owner_scoped_suite_feed_handler_rejects_bot_tokens():
-    tree = ast.parse(_REGISTRY.read_text(encoding="utf-8"))
+def _scan_owner_scoped(tree):
+    """Return (matched handler names, names missing ``require_user_token``)."""
     owner_scoped = set()
     omissions = []
     for node in ast.walk(tree):
@@ -182,9 +213,99 @@ def test_every_owner_scoped_suite_feed_handler_rejects_bot_tokens():
         owner_scoped.add(node.name)
         if not _calls_require_user_token(node):
             omissions.append(node.name)
+    return owner_scoped, omissions
+
+
+def test_every_owner_scoped_suite_feed_handler_rejects_bot_tokens():
+    owner_scoped, omissions = _scan_owner_scoped(
+        ast.parse(_REGISTRY.read_text(encoding="utf-8"))
+    )
 
     # Guard against a vacuous scan (e.g. a refactor that removes every match).
     assert {handler.__name__ for handler, _ in _HANDLERS} <= owner_scoped, (
         f"expected feed handlers missing from owner-scoped set: {sorted(owner_scoped)}"
     )
     assert not omissions, f"Suite feed handlers without require_user_token: {omissions}"
+
+
+def test_ast_completeness_detector_is_non_vacuous():
+    """The scan flags a real-shaped unguarded handler in every declaration style.
+
+    This exercises the exact helpers the registry scan uses, so widening the
+    matchers cannot silently turn the completeness test into a no-op.
+    """
+
+    def omissions(source):
+        return _scan_owner_scoped(ast.parse(source))[1]
+
+    # Baseline: a new handler keying a feed cache on the caller id, no gate.
+    assert omissions(
+        """
+async def future_handler(current_user: TokenInfo = Depends(get_current_user)):
+    return (int(current_user.user_id), "recent", 10)
+"""
+    ) == ["future_handler"]
+
+    # The same handler with a real gate is accepted.
+    assert (
+        omissions(
+            """
+async def future_handler(current_user: TokenInfo = Depends(get_current_user)):
+    require_user_token(current_user)
+    return (int(current_user.user_id), "recent", 10)
+"""
+        )
+        == []
+    )
+
+    # Renamed parameter and local alias must still be detected.
+    assert omissions(
+        """
+async def alias_handler(current_user: TokenInfo = Depends(get_current_user)):
+    caller = current_user
+    return (int(caller.user_id), "recent", 10)
+"""
+    ) == ["alias_handler"]
+    assert omissions(
+        """
+async def renamed_handler(user: TokenInfo = Depends(get_current_user)):
+    return (int(user.user_id), "recent", 10)
+"""
+    ) == ["renamed_handler"]
+
+    # Plain, subscript and Annotated TokenInfo declarations are all recognised.
+    assert omissions(
+        """
+async def subscript_handler(current_user: TokenInfo[str] = Depends(get_current_user)):
+    return (int(current_user.user_id), "recent", 10)
+"""
+    ) == ["subscript_handler"]
+    assert omissions(
+        """
+async def annotated_handler(
+    current_user: Annotated[TokenInfo, Depends(get_current_user)],
+):
+    return (int(current_user.user_id), "recent", 10)
+"""
+    ) == ["annotated_handler"]
+
+    # A gate only inside a never-called nested callable is not protection.
+    assert omissions(
+        """
+async def dead_guard_handler(current_user: TokenInfo = Depends(get_current_user)):
+    def never_called():
+        require_user_token(current_user)
+    return (int(current_user.user_id), "recent", 10)
+"""
+    ) == ["dead_guard_handler"]
+    assert (
+        omissions(
+            """
+async def live_guard_handler(current_user: TokenInfo = Depends(get_current_user)):
+    if current_user:
+        require_user_token(current_user)
+    return (int(current_user.user_id), "recent", 10)
+"""
+        )
+        == []
+    )
