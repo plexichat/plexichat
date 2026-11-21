@@ -121,6 +121,46 @@ def _is_server_message_moderator(user_id, conversation_id) -> bool:
         return False
 
 
+def _can_view_conversation_messages(user_id, conversation_id) -> bool:
+    """Fail closed when a conversation is backed by a channel the caller can't view.
+
+    Message routes accept the conversation id backing a server channel as an
+    alias for that channel. A live view gate keyed only on the URL id misses
+    that alias: ``channel_exists``/``get_channel`` report "not a channel" for
+    the conversation id, so a member denied ``channels.view`` on a private
+    channel could still bulk-delete its messages -- including other users'
+    messages when they hold the OWNER role seeded on channel creation. Resolve
+    the backing channel membership-agnostically and require a live view grant
+    on it. A conversation with no backing channel is a genuine DM/group and
+    stays gated by participation alone.
+    """
+    servers = _get_servers_module()
+    if servers is None:
+        return True
+    reverse = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(reverse):
+        return True  # legacy/stub store: only the URL-id gate can be checked
+    try:
+        info = reverse(int(conversation_id))
+    except Exception:
+        return False  # unproven alias must never grant access
+    if info is None:
+        return True  # DM/group conversation
+    if isinstance(info, dict):
+        channel_id = info.get("id")
+    else:
+        channel_id = getattr(info, "id", None)
+    if channel_id is None:
+        return False
+    get_channel = getattr(servers, "get_channel", None)
+    if not callable(get_channel):
+        return False
+    try:
+        return get_channel(int(channel_id), int(user_id)) is not None
+    except Exception:
+        return False
+
+
 class EditDeleteMixin(BaseService, MessageServiceProtocol):
     @staticmethod
     def _cleanup_thread_links(message_id) -> None:
@@ -630,6 +670,11 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         if conversation_id is not None:
             scope = _resolve_channel_conversation_scope(int(conversation_id))
 
+        # Cache the per-conversation backing-channel view decision: a batch
+        # usually targets one channel, and no request may drive unbounded
+        # server lookups.
+        view_cache: Dict[int, bool] = {}
+
         success_count = 0
         deleted_ids: List[SnowflakeID] = []
         failed_ids: List[SnowflakeID] = []
@@ -643,6 +688,19 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                     continue
 
                 if scope is not None and int(msg_row["conversation_id"]) not in scope:
+                    failed_ids.append(message_id)
+                    continue
+
+                # Participation (and even a seeded OWNER role) is not proof of
+                # channels.view. The URL-id gate can be addressed by the
+                # conversation alias, so re-check the live view grant on the
+                # channel backing this message's conversation here as well.
+                msg_conv = int(msg_row["conversation_id"])
+                if msg_conv not in view_cache:
+                    view_cache[msg_conv] = _can_view_conversation_messages(
+                        user_id, msg_conv
+                    )
+                if not view_cache[msg_conv]:
                     failed_ids.append(message_id)
                     continue
 
