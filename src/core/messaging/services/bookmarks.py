@@ -153,6 +153,77 @@ class BookmarkService:
         except Exception:
             return False
 
+    def _conversation_read_allowed(self, user_id: int, conversation_id: int) -> bool:
+        """Whether messages in the server channel behind ``conversation_id`` may be read.
+
+        ``is_participant`` grants every member of a server participation in all
+        of its channel conversations, so it is NOT a read boundary. The normal
+        channel message listing path additionally requires the per-channel
+        ``messages.read`` grant; bookmark listing must do the same or a member
+        denied read by a role/channel override can read bookmarked message
+        content from a private channel. Resolve the backing channel
+        membership-agnostically (both the channel-id and conversation-id forms
+        are accepted on this API) and require a live read grant. A genuine
+        DM/group has no backing channel and needs no extra gate. Fails closed
+        whenever the channel or its permission cannot be resolved.
+        """
+        try:
+            import src.api as api
+
+            servers = api.get_servers()
+        except Exception:
+            return False
+        if servers is None or getattr(servers, "_setup_complete", True) is False:
+            return True  # no server store: only DM/group conversations exist
+
+        channel_id = None
+        server_id = None
+        channel_exists = getattr(servers, "channel_exists", None)
+        if callable(channel_exists):
+            try:
+                if channel_exists(conversation_id):
+                    channel_id = conversation_id
+            except Exception:
+                return False
+        if channel_id is None:
+            reverse = getattr(servers, "get_channel_by_conversation", None)
+            if callable(reverse):
+                try:
+                    info = reverse(conversation_id)
+                except Exception:
+                    return False
+                if isinstance(info, dict):
+                    channel_id = info.get("id")
+                    server_id = info.get("server_id")
+        if channel_id is None:
+            return True  # genuine DM/group conversation
+
+        if server_id is None:
+            get_channel = getattr(servers, "get_channel", None)
+            if not callable(get_channel):
+                return False
+            try:
+                channel = get_channel(channel_id, user_id)
+            except Exception:
+                return False
+            if channel is None:
+                return False
+            server_id = (
+                channel.get("server_id")
+                if isinstance(channel, dict)
+                else getattr(channel, "server_id", None)
+            )
+        if not server_id:
+            return False
+
+        has_permission = getattr(servers, "has_permission", None)
+        if not callable(has_permission):
+            return False
+        try:
+            return bool(has_permission(user_id, server_id, "messages.read", channel_id))
+        except Exception:
+            return False
+
     def _ensure_list_access(self, user_id: int, conversation_id: Optional[int]) -> None:
         """Gate conversation-scoped bookmark listing on participation.
 
@@ -181,6 +252,11 @@ class BookmarkService:
             allowed = False
         if not allowed:
             raise PermissionError("Not a participant in this conversation")
+        # Participation alone does not authorize a server-channel read (see
+        # _conversation_read_allowed). Keep the denial as PermissionError so the
+        # route's existing 404 oracle contract is unchanged.
+        if not self._conversation_read_allowed(user_id, conversation_id):
+            raise PermissionError("No read access to this conversation")
 
     def add_bookmark(
         self,
@@ -375,6 +451,13 @@ class BookmarkService:
                 if not msg:
                     # Not viewable (deleted or no longer a participant):
                     # drop rather than leak metadata.
+                    continue
+                # The bulk resolver's gate is participation-only; a server
+                # member denied messages.read on the backing channel must not
+                # receive this row's content from an unfiltered listing either.
+                if not self._conversation_read_allowed(
+                    user_id, data["conversation_id"]
+                ):
                     continue
                 data["content_preview"] = (msg.content or "")[:200]
                 data["author_id"] = msg.author_id
