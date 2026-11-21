@@ -802,6 +802,20 @@ async def get_reaction_users(
                 detail={"error": {"code": 400, "message": "Invalid message ID"}},
             )
 
+        # The channel id is part of this route's authorization scope, so it
+        # must be parsed by the same ASCII snowflake gate as every other
+        # reaction route. It used to be accepted verbatim and then ignored.
+        try:
+            cid = parse_id(channel_id, "channel_id")
+        except (ValueError, TypeError):
+            logger.warning(
+                f"Invalid channel ID format for reaction users: {channel_id}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+            )
+
         try:
             # ``after`` is a user-id pagination cursor, so it must pass the
             # same ASCII-only snowflake gate as ``message_id`` above. Bare
@@ -833,6 +847,20 @@ async def get_reaction_users(
 
             decoded_emoji = _validated_emoji(emoji)
 
+            # Live object-level authorization before any cached roster read.
+            # The production manager always exposes this gate; the guard keeps
+            # lightweight test stubs (whose get_reaction_users still performs
+            # its own participant check) working with an interface they never
+            # implemented.
+            gate = getattr(reactions, "can_access_message", None)
+            if gate is not None and not gate(current_user.user_id, mid):
+                raise MessageNotFoundError("Message not found")
+
+            # Never trust the URL channel id: verify the message really lives
+            # in it, exactly as the add/remove/clear routes do.
+            if hasattr(reactions, "resolve_message_channel"):
+                _validate_message_in_channel(reactions, mid, cid)
+
             users = reactions.get_reaction_users(
                 user_id=current_user.user_id,
                 message_id=mid,
@@ -847,6 +875,9 @@ async def get_reaction_users(
                 )
                 for u in users
             ]
+        except HTTPException:
+            # _validate_message_in_channel already produced the right status.
+            raise
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
