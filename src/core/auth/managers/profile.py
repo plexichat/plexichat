@@ -157,6 +157,19 @@ class ProfileMixin(AuthManagerProtocol):
                     "AND used = 0",
                     (user_id,),
                 )
+
+                # An address change is a credential transition: the email is
+                # the account's recovery identifier and the destination for
+                # password-reset links. Every session created while the old
+                # address was on file must die with it, otherwise a stale or
+                # hijacked session keeps full authenticated access after the
+                # account has moved to a new address. Mirror the password
+                # change/reset revocation so the switch actually re-secures
+                # the account.
+                self._db.execute(
+                    "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?",
+                    (user_id,),
+                )
         if permissions is not None:
             from ..permissions import PERMISSIONS, BOT_RESTRICTED_PERMISSIONS
 
