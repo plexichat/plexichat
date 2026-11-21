@@ -312,9 +312,19 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
 
     participant_ids: List[int] = []
     for value in participants:
-        pid = _as_id(value)
-        if pid is not None and pid not in participant_ids:
-            participant_ids.append(pid)
+        # SECURITY: this loop builds the POSITIVE audience. participants comes
+        # from raw DB projections (msg_participants.user_id / srv_members.user_id /
+        # private-thread member rows) with no type filtering. The tolerant
+        # _as_id() coercion below is deliberately reserved for block-set
+        # COMPARISON keys, where accepting a string-stored legacy block id is
+        # required for blocking to keep working. Using it here would launder
+        # "05"->5, 7.9->7 and " 8 "->8 into principals that never proved
+        # participation -- and it runs BEFORE _final(), so _final() strict guard
+        # cannot catch it. Require a genuine int (type() also rejects bool).
+        if type(value) is not int:
+            continue
+        if value not in participant_ids:
+            participant_ids.append(value)
 
     excluded: set = set()
 
