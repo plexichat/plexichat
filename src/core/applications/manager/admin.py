@@ -13,6 +13,24 @@ from .protocol import ApplicationManagerProtocol
 MAX_ADMIN_PAGE_SIZE = 100
 
 
+# Scalar counters produced by the single batched dashboard feature-stats
+# query in ``get_admin_dashboard_feature_stats``. ``report_categories`` is a
+# grouped list and is fetched separately.
+_FEATURE_COUNT_COLUMNS = (
+    "bookmarks",
+    "scheduled_messages_pending",
+    "forwarded_messages",
+    "voice_messages",
+    "profiles_with_status",
+    "push_tokens",
+    "webhook_retries_pending",
+    "webhook_retries_retrying",
+    "webhook_retries_dead_letter",
+    "dm_spam_filters_active",
+    "threads_with_slowmode",
+)
+
+
 @dataclass
 class AdminBotStats:
     total_applications: int = 0
@@ -82,45 +100,131 @@ class AdminMixin(ApplicationManagerProtocol):
         }
 
     def get_admin_dashboard_feature_stats(self) -> Dict[str, Any]:
-        feature_stats: Dict[str, Any] = {}
-        feature_stats["bookmarks"] = self._count_rows("user_bookmarks")
-        feature_stats["scheduled_messages_pending"] = self._count_rows_any(
-            ["msg_scheduled", "scheduled_messages"], "status = 'pending'"
+        """Build the admin dashboard's feature counters.
+
+        The cold dashboard build used to issue one COUNT query (plus a
+        table-existence probe) per feature. All of the scalar counters are
+        now folded into a single batched query: each count is a derived table
+        LEFT JOINed onto a one-row seed, and the three webhook-retry states
+        come from one conditional-aggregation pass over the queue table. A
+        missing table contributes a literal ``0`` column, so partial schemas
+        and the two legacy alias tables still behave exactly as before.
+        """
+        # Legacy alias tables: first present wins, matching _count_rows_any.
+        scheduled_table = next(
+            (
+                table
+                for table in ("msg_scheduled", "scheduled_messages")
+                if self._db.table_exists(table)
+            ),
+            None,
         )
-        feature_stats["forwarded_messages"] = self._count_rows_any(
-            ["msg_forwarded", "forwarded_messages"]
+        forwarded_table = next(
+            (
+                table
+                for table in ("msg_forwarded", "forwarded_messages")
+                if self._db.table_exists(table)
+            ),
+            None,
         )
-        feature_stats["voice_messages"] = self._maybe_count_rows(
-            "SELECT COUNT(*) as count FROM msg_messages WHERE message_type = 'voice'"
+
+        core_tables = (
+            "user_bookmarks",
+            "msg_messages",
+            "user_profiles",
+            "push_tokens",
+            "webhook_retry_queue",
+            "message_reports",
+            "dm_spam_filters",
+            "thread_threads",
         )
-        feature_stats["profiles_with_status"] = self._count_rows(
-            "user_profiles", "custom_status_text IS NOT NULL"
+        present = {table: self._db.table_exists(table) for table in core_tables}
+
+        projections: List[str] = []
+        joins: List[str] = []
+
+        def add_count(column: str, table: Optional[str], where: str = "") -> None:
+            if table is None:
+                projections.append(f"0 AS {column}")
+                return
+            sql = f"SELECT COUNT(*) AS c FROM {table}"
+            if where:
+                sql = f"{sql} WHERE {where}"
+            joins.append(f"LEFT JOIN ({sql}) AS c_{column} ON 1=1")
+            projections.append(f"COALESCE(c_{column}.c, 0) AS {column}")
+
+        add_count(
+            "bookmarks", "user_bookmarks" if present["user_bookmarks"] else None
         )
-        feature_stats["push_tokens"] = self._count_rows("push_tokens")
-        feature_stats["webhook_retries_pending"] = self._count_rows(
-            "webhook_retry_queue", "status = 'pending'"
+        add_count("scheduled_messages_pending", scheduled_table, "status = 'pending'")
+        add_count("forwarded_messages", forwarded_table)
+        add_count(
+            "voice_messages",
+            "msg_messages" if present["msg_messages"] else None,
+            "message_type = 'voice'",
         )
-        feature_stats["webhook_retries_retrying"] = self._count_rows(
-            "webhook_retry_queue", "status = 'retrying'"
+        add_count(
+            "profiles_with_status",
+            "user_profiles" if present["user_profiles"] else None,
+            "custom_status_text IS NOT NULL",
         )
-        feature_stats["webhook_retries_dead_letter"] = self._count_rows(
-            "webhook_retry_queue", "status = 'dead_letter'"
+        add_count("push_tokens", "push_tokens" if present["push_tokens"] else None)
+
+        if present["webhook_retry_queue"]:
+            joins.append(
+                "LEFT JOIN (SELECT "
+                "SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, "
+                "SUM(CASE WHEN status = 'retrying' THEN 1 ELSE 0 END) AS retrying, "
+                "SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END) AS dead_letter "
+                "FROM webhook_retry_queue) AS c_webhook ON 1=1"
+            )
+            projections.extend(
+                (
+                    "COALESCE(c_webhook.pending, 0) AS webhook_retries_pending",
+                    "COALESCE(c_webhook.retrying, 0) AS webhook_retries_retrying",
+                    "COALESCE(c_webhook.dead_letter, 0) AS webhook_retries_dead_letter",
+                )
+            )
+        else:
+            projections.extend(
+                (
+                    "0 AS webhook_retries_pending",
+                    "0 AS webhook_retries_retrying",
+                    "0 AS webhook_retries_dead_letter",
+                )
+            )
+
+        add_count(
+            "dm_spam_filters_active",
+            "dm_spam_filters" if present["dm_spam_filters"] else None,
+            "enabled = 1",
         )
-        if self._db.table_exists("message_reports"):
-            rows = self._db.fetch_all(
+        add_count(
+            "threads_with_slowmode",
+            "thread_threads" if present["thread_threads"] else None,
+            "slowmode_interval_ms > 0",
+        )
+
+        query = (
+            "SELECT "
+            + ", ".join(projections)
+            + " FROM (SELECT 1) AS seed "
+            + " ".join(joins)
+        )
+        row = self._db.fetch_one(query) or {}
+        feature_stats: Dict[str, Any] = {
+            column: int(row.get(column) or 0) for column in _FEATURE_COUNT_COLUMNS
+        }
+
+        if present["message_reports"]:
+            report_rows = self._db.fetch_all(
                 "SELECT category, COUNT(*) as count FROM message_reports GROUP BY category ORDER BY count DESC LIMIT 10"
             )
             feature_stats["report_categories"] = [
-                {"category": row["category"], "count": row["count"]} for row in rows
+                {"category": r["category"], "count": r["count"]} for r in report_rows
             ]
         else:
             feature_stats["report_categories"] = []
-        feature_stats["dm_spam_filters_active"] = self._count_rows(
-            "dm_spam_filters", "enabled = 1"
-        )
-        feature_stats["threads_with_slowmode"] = self._count_rows(
-            "thread_threads", "slowmode_interval_ms > 0"
-        )
         return feature_stats
 
     def get_admin_dashboard_counts(self) -> Dict[str, Any]:
