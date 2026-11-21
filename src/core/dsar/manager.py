@@ -591,9 +591,21 @@ class DSARManager:
         # is still possible, so keep the local fallback below
         # reachable regardless.
         try:
-            from .export_formats import ExportFormatGenerator
+            # Build the storage-backend generator once per manager and reuse it
+            # across a batch of scrubs. Each construction re-reads the DSAR/media
+            # config and builds a storage backend (for S3 that also creates a
+            # boto3 client and issues a HeadBucket call), so a batch caller such
+            # as the expiry sweep -- which uses ONE DSARManager for all expired
+            # rows -- previously paid that cost once per row. Deletion is keyed
+            # by the path argument and the backend config is identical for every
+            # row, so sharing one generator is safe.
+            generator = getattr(self, "_scrub_generator", None)
+            if generator is None:
+                from .export_formats import ExportFormatGenerator
 
-            if ExportFormatGenerator(db=self._db).delete(str(storage_path)):
+                generator = ExportFormatGenerator(db=self._db)
+                self._scrub_generator = generator
+            if generator.delete(str(storage_path)):
                 removed = True
                 logger.info(
                     f"DSAR: scrubbed export object for request "
