@@ -37,6 +37,25 @@ from .exceptions import (
 )
 
 
+# One statement re-checks the per-pack sticker cap at the instant of the
+# insert. The old flow ran a ``SELECT COUNT(*)`` quota check and only then
+# issued a separate bare INSERT; two concurrent creators could both read a
+# below-cap count and both insert, pushing the pack over ``max_stickers_per_pack``
+# (a TOCTOU quota bypass of the same class already fixed for custom emoji). The
+# guard subquery sees the table state *before* the new row exists, so exactly the
+# callers that still fit get a row and ``rowcount == 0`` is an authoritative
+# "limit reached" signal. SQLite serialises this single statement with its write
+# lock; PostgreSQL needs the advisory xact lock in ``add_sticker`` because READ
+# COMMITTED would let two statements both see a stale count.
+_ATOMIC_STICKER_INSERT_SQL = """
+INSERT INTO sticker_stickers
+    (id, pack_id, name, format, description, tags, related_emoji, url, size,
+     width, height, created_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE (SELECT COUNT(*) FROM sticker_stickers WHERE pack_id = ?) < ?
+"""
+
+
 class StickerManager(StickerUsageDiscoveryMixin):
     def __init__(
         self, db, messaging_module=None, servers_module=None, media_module=None
@@ -497,6 +516,10 @@ class StickerManager(StickerUsageDiscoveryMixin):
             raise StickerTooLargeError(
                 f"Sticker exceeds maximum size of {max_size} bytes", max_size, size
             )
+        # Advisory early feedback only (avoids an expensive media upload for an
+        # obviously-full pack). It is NOT the authoritative check: two concurrent
+        # creators can both pass it, so the atomic guarded INSERT below enforces
+        # the cap.
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM sticker_stickers WHERE pack_id = ?",
             (pack_id,),
@@ -513,26 +536,65 @@ class StickerManager(StickerUsageDiscoveryMixin):
         # L1: the ``description`` column was declared in the schema but never
         # written — persist the (plaintext) sticker description so the column
         # is not dead schema and the model field round-trips.
-        self._db.execute(
-            "INSERT INTO sticker_stickers (id, pack_id, name, format, description, tags, related_emoji, url, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                sticker_id,
-                pack_id,
-                name,
-                format.value,
-                description,
-                json.dumps(tags) if tags else None,
-                related_emoji,
-                url,
-                size,
-                width,
-                height,
-                now,
-            ),
-        )
-        self._db.execute(
-            "UPDATE sticker_packs SET updated_at = ? WHERE id = ?", (now, pack_id)
-        )
+
+        # PostgreSQL READ COMMITTED would let two concurrent guarded INSERT
+        # statements both see a stale count. Serialise per pack with an advisory
+        # xact lock inside the transaction. Namespace 102 stays clear of the
+        # custom-emoji (100/101) and invite (1/2) quota locks; masking to 30 bits
+        # keeps the second key in signed int4 range.
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (102, int(pack_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self._db.begin_transaction()
+
+            cursor = self._db.execute(
+                _ATOMIC_STICKER_INSERT_SQL,
+                (
+                    sticker_id,
+                    pack_id,
+                    name,
+                    format.value,
+                    description,
+                    json.dumps(tags) if tags else None,
+                    related_emoji,
+                    url,
+                    size,
+                    width,
+                    height,
+                    now,
+                    pack_id,
+                    max_stickers,
+                ),
+            )
+            # rowcount 0 means the count guard found the pack already at (or
+            # over) its cap at insert time — a concurrent creator lost the race.
+            # Roll back and surface the same quota error the advisory check would
+            # have raised.
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise StickerLimitError(
+                    f"Pack has reached maximum of {max_stickers} stickers",
+                    max_stickers,
+                    max_stickers,
+                )
+
+            self._db.execute(
+                "UPDATE sticker_packs SET updated_at = ? WHERE id = ?", (now, pack_id)
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+
         result = self.get_sticker(sticker_id)
         assert result is not None  # Should exist since we just created it
         return result
