@@ -63,16 +63,28 @@ class MentionValidationMixin(NotificationProtocol):
                     m.error = "User not found"
 
             elif mention.mention_type == MentionType.ROLE:
-                role = (
-                    _role_row(mention.target_id)
-                    if mention.target_id is not None
-                    else None
-                )
-                if role is None:
+                # SECURITY: roles are server-scoped. In a DM/server-less
+                # context there is no server against which to resolve the
+                # role, so a ``<@&role_id>`` cannot be authorized. Prior code
+                # skipped every check when ``server_id`` was unset, marking
+                # the mention valid; the fan-out then notified *every* member
+                # of that role in whatever server it belonged to, and the
+                # channel-view recipient filter is a no-op for DMs (no
+                # channel id). That leaked a DM's content preview to complete
+                # strangers. Fail closed: reject role mentions in DMs.
+                if server_id is None:
                     m.valid = False
-                    m.error = "Role not found"
-                elif server_id:
-                    if role["server_id"] != server_id:
+                    m.error = "Cannot mention roles without a server context"
+                else:
+                    role = (
+                        _role_row(mention.target_id)
+                        if mention.target_id is not None
+                        else None
+                    )
+                    if role is None:
+                        m.valid = False
+                        m.error = "Role not found"
+                    elif role["server_id"] != server_id:
                         m.valid = False
                         m.error = "Role not in this server"
                     elif not bool(role["mentionable"]):
