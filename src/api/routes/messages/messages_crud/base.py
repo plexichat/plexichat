@@ -128,6 +128,63 @@ class MessagesCRUDBase:
             )
         raise ValueError(f"Unmapped messaging error: {type(e).__name__}")
 
+    def _require_alias_send_access(
+        self, addressed_id: int, user_id: int, servers_mod: Any
+    ) -> None:
+        """Fail closed when ``addressed_id`` is a server channel's linked
+        conversation id used as a URL alias and the caller cannot post there.
+
+        See the alias-gate comment in ``_send_message_with_fallback``. The
+        reverse lookup is membership-agnostic; the backing channel is gated
+        with a live ``get_channel`` (view) and ``messages.send`` decision. Any
+        lookup/permission that cannot be resolved denies the send.
+        """
+        if not servers_mod:
+            return  # no servers store => the id can only be a DM/group conversation
+        if getattr(servers_mod, "_setup_complete", True) is False:
+            # Present but uninitialized: no server-channel store exists here.
+            return
+
+        def _deny() -> HTTPException:
+            return HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+
+        lookup = getattr(servers_mod, "get_channel_by_conversation", None)
+        if not callable(lookup):
+            raise _deny()
+        try:
+            info = lookup(int(addressed_id))
+        except Exception:
+            raise _deny()
+        if info is None:
+            return  # DM/group conversation: participation gates it in messaging
+        channel_id = info.get("id") if isinstance(info, dict) else None
+        server_id = info.get("server_id") if isinstance(info, dict) else None
+        if channel_id is None or server_id is None:
+            raise _deny()
+
+        get_channel = getattr(servers_mod, "get_channel", None)
+        timed_out = getattr(servers_mod, "is_timed_out", None)
+        has_permission = getattr(servers_mod, "has_permission", None)
+        if not (callable(get_channel) and callable(timed_out) and callable(has_permission)):
+            raise _deny()
+        try:
+            if get_channel(int(channel_id), user_id) is None:
+                raise _deny()
+            if timed_out(user_id, int(server_id)):
+                raise _deny()
+            allowed = bool(
+                has_permission(user_id, int(server_id), "messages.send", int(channel_id))
+            )
+        except HTTPException:
+            raise
+        except Exception:
+            raise _deny()
+        if not allowed:
+            raise _deny()
+
     async def _send_message_with_fallback(
         self,
         channel_id: int,
@@ -153,6 +210,7 @@ class MessagesCRUDBase:
         """
         msg = None
         server_id = None
+        server_channel_resolved = False
 
         if servers_mod:
             try:
@@ -161,6 +219,7 @@ class MessagesCRUDBase:
                 else:
                     channel = servers_mod.get_channel(channel_id, user_id)
                 if channel:
+                    server_channel_resolved = True
                     server_id = getattr(channel, "server_id", None)
                     conversation_id = getattr(channel, "conversation_id", None)
 
@@ -328,6 +387,20 @@ class MessagesCRUDBase:
                 msg = None
 
         if msg is None and messaging:
+            # Message routes also accept a server channel's linked
+            # ``conversation_id`` in the ``channel_id`` slot. When that alias is
+            # used, ``get_channel(alias, user)`` returns None (an alias is not a
+            # ``srv_channels`` row id), so the per-channel ``messages.send`` and
+            # timeout checks above never ran and this DM-style fallback is the
+            # only remaining gate. Participation is seeded for every server
+            # member on join and is NOT a send grant, so posting through the
+            # alias would bypass ``messages.send``. Reverse-resolve the alias
+            # membership-agnostically and require a live view + send grant on
+            # the real backing channel before falling through. A conversation
+            # with no backing channel is a genuine DM/group, gated by the
+            # messaging layer's participation check.
+            if not server_channel_resolved:
+                self._require_alias_send_access(channel_id, user_id, servers_mod)
             try:
                 msg = messaging.send_message(
                     user_id=user_id,
