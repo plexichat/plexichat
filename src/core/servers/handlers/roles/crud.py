@@ -26,6 +26,25 @@ from .authz import role_edit_decision
 from .protocol import RoleHandlerProtocol
 
 
+# One statement re-checks the per-server role cap at the instant of the insert.
+# The old flow ran a separate ``SELECT COUNT(*)`` for ``max_roles_per_server``
+# and only then issued a separate bare ``INSERT``; two concurrent creators could
+# both read a below-cap count and both insert, pushing a server over
+# ``max_roles_per_server`` (a TOCTOU quota bypass). The guard subquery sees the
+# table state *before* the new row exists, so exactly the callers that still fit
+# get a row and ``rowcount == 0`` is an authoritative "limit reached" signal.
+# SQLite serialises this single statement with its write lock; PostgreSQL's
+# READ COMMITTED snapshot would let two statements both see a stale count, so
+# create_role() additionally takes an advisory xact lock (see there).
+_ATOMIC_ROLE_INSERT_SQL = """
+INSERT INTO srv_roles
+    (id, server_id, name, permissions, color, hoist, mentionable, position,
+     created_at, updated_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE (SELECT COUNT(*) FROM srv_roles WHERE server_id = ? AND deleted = 0) < ?
+"""
+
+
 class RoleCrudMixin(RoleHandlerProtocol):
     def validate_role_name(self, name: str) -> str:
         """Validate and sanitize role name."""
@@ -68,8 +87,11 @@ class RoleCrudMixin(RoleHandlerProtocol):
         editor_perms = self.get_permissions(user_id, server_id)
         check_permissions_grantable(editor_perms, permissions)
 
-        # L2: the configured per-server role cap was never consulted on the
-        # creation path, so a server could grow unbounded roles.
+        # L2: the configured per-server role cap. This early read is only
+        # advisory feedback (it avoids an expensive insert for an obviously
+        # full server); it is NOT the authoritative check. Two concurrent
+        # creators can both read a below-cap count, so the atomic guarded
+        # INSERT below is what actually enforces `max_roles_per_server`.
         max_roles = self.manager._config.get("max_roles_per_server", 250)
         count_row = self.db.fetch_one(
             "SELECT COUNT(*) as count FROM srv_roles "
@@ -102,23 +124,56 @@ class RoleCrudMixin(RoleHandlerProtocol):
         now = self.manager._get_timestamp()
         role_id = self.manager._generate_id()
 
-        self.db.execute(
-            """INSERT INTO srv_roles 
-               (id, server_id, name, permissions, color, hoist, mentionable, position, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                role_id,
-                server_id,
-                name,
-                json.dumps(permissions or {}),
-                color,
-                1 if hoist else 0,
-                1 if mentionable else 0,
-                position,
-                now,
-                now,
-            ),
-        )
+        # PostgreSQL READ COMMITTED would let two concurrent guarded INSERTs
+        # both see a stale count. Serialise per server with an advisory xact
+        # lock. Namespace 140 stays clear of the invite (1/2), emoji (100/101),
+        # sticker (102), soundboard (120) and webhook (130) quota locks; masking
+        # to 30 bits keeps the second key in signed int4 range.
+        is_postgres = getattr(self.db, "type", "") == "postgres"
+        if is_postgres:
+            self.db.begin_transaction()
+            try:
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (140, int(server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self.db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self.db.begin_transaction()
+
+            cursor = self.db.execute(
+                _ATOMIC_ROLE_INSERT_SQL,
+                (
+                    role_id,
+                    server_id,
+                    name,
+                    json.dumps(permissions or {}),
+                    color,
+                    1 if hoist else 0,
+                    1 if mentionable else 0,
+                    position,
+                    now,
+                    now,
+                    server_id,
+                    max_roles,
+                ),
+            )
+            # rowcount 0 means the count guard found the server already at (or
+            # over) its role cap at insert time — a concurrent creator won the
+            # race. Roll back and surface the same quota error the advisory
+            # check would have raised.
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise ServerLimitReachedError(
+                    f"Server has reached the maximum of {max_roles} roles",
+                    limit=max_roles,
+                )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
         self.manager._log_audit(
             server_id, user_id, AuditLogAction.ROLE_CREATE, "role", role_id
