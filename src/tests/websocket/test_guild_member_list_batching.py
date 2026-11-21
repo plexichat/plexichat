@@ -108,7 +108,16 @@ def _servers(members):
 
 
 def _connection():
-    return SimpleNamespace(is_authenticated=True, user_id=VIEWER)
+    # Presence is a privileged payload; the handler now only resolves it when
+    # the connection declared GUILD_PRESENCES. These parity tests exercise the
+    # presence path, so the test viewer must carry that bit.
+    from src.core.events.types import GatewayIntent
+
+    return SimpleNamespace(
+        is_authenticated=True,
+        user_id=VIEWER,
+        intents=int(GatewayIntent.GUILD_PRESENCES),
+    )
 
 
 async def _run(monkeypatch, members, auth, presence):

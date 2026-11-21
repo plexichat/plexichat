@@ -236,13 +236,29 @@ class GuildHandler:
                     # lookups.
                     logger.debug(f"guild member user lookup failed: {user_error}")
 
+        # Presence is a SEPARATE privileged payload. ``GUILD_MEMBERS_CHUNK`` is
+        # authorized at dispatch time only by ``GUILD_MEMBERS`` (see
+        # ``EVENT_INTENT_MAP``), so without an explicit gate here a connection
+        # holding GUILD_MEMBERS but not GUILD_PRESENCES would still receive
+        # every member's real presence status inside the chunk -- a privileged
+        # data fetch the connection never declared the intent for. Fail closed:
+        # an absent/invalid mask or no GUILD_PRESENCES bit skips the lookup and
+        # leaves every member at "offline" below.
+        from src.api.websocket.intents import validate_intents
+        from src.core.events.types import GatewayIntent
+
+        connection_intents = getattr(connection, "intents", 0)
+        include_presences = validate_intents(connection_intents) and bool(
+            connection_intents & GatewayIntent.GUILD_PRESENCES
+        )
+
         presences_map: Dict[int, Any] = {}
         visible_presences = (
             getattr(presence_module, "get_visible_presences_bulk", None)
             if presence_module
             else None
         )
-        if callable(visible_presences):
+        if include_presences and callable(visible_presences):
             for chunk in _chunk_ids(user_ids):
                 try:
                     # ``user_id`` is the authenticated viewer: the bulk helper
