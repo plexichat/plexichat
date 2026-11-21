@@ -325,54 +325,61 @@ class TemplateManager:
         if not data_row:
             raise TemplateError("Template data not found")
 
-        server = self._server_manager.create_server(
-            owner_id=user_id,
-            name=server_name,
-            description=server_description,
-        )
-
-        categories = (
-            json.loads(data_row["categories"]) if data_row["categories"] else []
-        )
-        channels = json.loads(data_row["channels"]) if data_row["channels"] else []
-        roles = json.loads(data_row["roles"]) if data_row["roles"] else []
-
-        category_map: Dict[int, int] = {}
-        for cat_data in sorted(categories, key=lambda x: x.get("position", 0)):
-            cat = self._server_manager.create_category(
-                user_id=user_id,
-                server_id=server.id,
-                name=cat_data["name"],
-            )
-            category_map[cat_data["position"]] = cat.id
-
-        for ch_data in sorted(channels, key=lambda x: x.get("position", 0)):
-            cat_pos = ch_data.get("category_position")
-            category_id = category_map.get(cat_pos) if cat_pos is not None else None
-
-            self._server_manager.create_channel(
-                user_id=user_id,
-                server_id=server.id,
-                name=ch_data["name"],
-                channel_type=ChannelType(ch_data.get("channel_type", "text")),
-                category_id=category_id,
-                topic=ch_data.get("topic"),
-                nsfw=ch_data.get("nsfw", False),
-                slowmode_seconds=ch_data.get("slowmode_seconds", 0),
+        # Applying a template emits one srv_audit_log row per created channel
+        # and role (plus the server-create row).  A full-sized template can hit
+        # the configured 100-channel / 50-role ceiling, so writing each of those
+        # rows with its own INSERT+autocommit dominated this synchronous request.
+        # Buffer them for the whole operation: the bounded buffer flushes on
+        # context exit (also on error), so every accepted audit row still lands.
+        with self._server_manager._buffered_audit():
+            server = self._server_manager.create_server(
+                owner_id=user_id,
+                name=server_name,
+                description=server_description,
             )
 
-        for role_data in sorted(
-            roles, key=lambda x: x.get("position", 0), reverse=True
-        ):
-            self._server_manager.create_role(
-                user_id=user_id,
-                server_id=server.id,
-                name=role_data["name"],
-                permissions=role_data.get("permissions"),
-                color=role_data.get("color"),
-                hoist=role_data.get("hoist", False),
-                mentionable=role_data.get("mentionable", False),
+            categories = (
+                json.loads(data_row["categories"]) if data_row["categories"] else []
             )
+            channels = json.loads(data_row["channels"]) if data_row["channels"] else []
+            roles = json.loads(data_row["roles"]) if data_row["roles"] else []
+
+            category_map: Dict[int, int] = {}
+            for cat_data in sorted(categories, key=lambda x: x.get("position", 0)):
+                cat = self._server_manager.create_category(
+                    user_id=user_id,
+                    server_id=server.id,
+                    name=cat_data["name"],
+                )
+                category_map[cat_data["position"]] = cat.id
+
+            for ch_data in sorted(channels, key=lambda x: x.get("position", 0)):
+                cat_pos = ch_data.get("category_position")
+                category_id = category_map.get(cat_pos) if cat_pos is not None else None
+
+                self._server_manager.create_channel(
+                    user_id=user_id,
+                    server_id=server.id,
+                    name=ch_data["name"],
+                    channel_type=ChannelType(ch_data.get("channel_type", "text")),
+                    category_id=category_id,
+                    topic=ch_data.get("topic"),
+                    nsfw=ch_data.get("nsfw", False),
+                    slowmode_seconds=ch_data.get("slowmode_seconds", 0),
+                )
+
+            for role_data in sorted(
+                roles, key=lambda x: x.get("position", 0), reverse=True
+            ):
+                self._server_manager.create_role(
+                    user_id=user_id,
+                    server_id=server.id,
+                    name=role_data["name"],
+                    permissions=role_data.get("permissions"),
+                    color=role_data.get("color"),
+                    hoist=role_data.get("hoist", False),
+                    mentionable=role_data.get("mentionable", False),
+                )
 
         self._db.execute(
             "UPDATE srv_templates SET usage_count = usage_count + 1 WHERE id = ?",
