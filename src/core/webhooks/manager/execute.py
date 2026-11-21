@@ -133,12 +133,37 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         if avatar_url:
             avatar_url = self._validate_avatar_url(avatar_url)
 
+        # Resolve the webhook's delivery channel and the optional thread target
+        # in ONE query. Each execution used to issue two separate srv_channels
+        # reads (channel, then thread) that select the same columns and run
+        # back-to-back on the hot path. Batching them into a single
+        # ``WHERE id IN (...)`` halves the channel-resolution round-trips
+        # whenever a thread target is supplied. Both rows are still checked
+        # independently below, so the cross-tenant guarantees are unchanged --
+        # no mutable state is cached here.
         channel_id_for_conv = row["channel_id"]
         conversation_id = channel_id_for_conv
-        channel_row = self._db.fetch_one(
-            "SELECT server_id, conversation_id FROM srv_channels WHERE id = ?",
-            (channel_id_for_conv,),
+        resolution_ids: List[Any] = [channel_id_for_conv]
+        if thread_id and thread_id not in resolution_ids:
+            resolution_ids.append(thread_id)
+        placeholders = ",".join("?" for _ in resolution_ids)
+        resolved_rows = self._db.fetch_all(
+            "SELECT id, server_id, conversation_id FROM srv_channels "
+            f"WHERE id IN ({placeholders})",
+            tuple(resolution_ids),
         )
+        resolved_by_id: Dict[int, Dict[str, Any]] = {}
+        for resolved in resolved_rows:
+            if resolved.get("id") is not None:
+                resolved_by_id[int(resolved["id"])] = resolved
+
+        def _resolved(channel_id: Any) -> Optional[Dict[str, Any]]:
+            try:
+                return resolved_by_id.get(int(channel_id))
+            except (TypeError, ValueError):
+                return None
+
+        channel_row = _resolved(channel_id_for_conv)
         # SECURITY: ``row["channel_id"]`` is the webhook's delivery target. It
         # must resolve to a channel on the SAME server as the webhook. Without
         # this check, a webhook record whose channel_id points at another
@@ -163,10 +188,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
             # the webhook. Ids that resolve to no channel never move the
             # conversation and are left untouched (they are only recorded on
             # the webhook_messages tracking row).
-            thread_row = self._db.fetch_one(
-                "SELECT server_id, conversation_id FROM srv_channels WHERE id = ?",
-                (thread_id,),
-            )
+            thread_row = _resolved(thread_id)
             if thread_row and int(thread_row["server_id"]) != int(row["server_id"]):
                 raise InvalidWebhookContentError(
                     "Thread does not belong to the webhook's server",
@@ -198,40 +220,22 @@ class WebhookExecutionMixin(WebhookManagerTrait):
             ]
 
         if self._messaging:
-            try:
-                msg = self._messaging.send_message(
-                    user_id=row["creator_id"],
-                    conversation_id=conversation_id,
-                    content=content or "",
-                    embeds=safe_embeds,
-                    webhook_id=webhook_id,
-                )
-                message_id = msg.id
-            except Exception as e:
-                logger.error(
-                    f"Failed to send webhook message via messaging module: {e}"
-                )
-                fallback_id = self._generate_id()
-                try:
-                    self._db.execute(
-                        """INSERT INTO msg_messages
-                           (id, conversation_id, author_id, content, created_at, updated_at,
-                            deleted, edited, webhook_id)
-                           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
-                        (
-                            fallback_id,
-                            conversation_id,
-                            row["creator_id"],
-                            content or "",
-                            now,
-                            now,
-                            webhook_id,
-                        ),
-                    )
-                    message_id = fallback_id
-                except Exception as fe:
-                    logger.error(f"Fallback webhook message insert also failed: {fe}")
-                    raise
+            # SECURITY: fail CLOSED if the messaging layer rejects the send.
+            # The old code swallowed *every* exception here (including
+            # ``ConversationAccessDeniedError`` and ``InvalidContentError``)
+            # and inserted a raw row straight into ``msg_messages``. That
+            # fallback let a webhook post into a conversation its creator was
+            # no longer authorized to write, and persist content the normal
+            # send path's XSS/SQLi filter had rejected. A rejected send must
+            # propagate instead of being laundered through a raw insert.
+            msg = self._messaging.send_message(
+                user_id=row["creator_id"],
+                conversation_id=conversation_id,
+                content=content or "",
+                embeds=safe_embeds,
+                webhook_id=webhook_id,
+            )
+            message_id = msg.id
 
         self._db.execute(
             """INSERT INTO webhook_messages
