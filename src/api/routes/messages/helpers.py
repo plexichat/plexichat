@@ -7,9 +7,10 @@ from src.core.security.hardening import parse_id
 
 import src.api as api
 import utils.logger as logger
-from src.api.schemas.messages import MessageResponse, AttachmentResponse
+from src.api.schemas.messages import MessageResponse, AttachmentResponse, ReaderInfo
 from src.api.schemas.polls import PollResponse, PollOptionResponse
 from src.api.schemas.common import SnowflakeID
+from src.core.notifications.parser import USER_MENTION_PATTERN
 from src.core.polls import PollResultsVisibility
 
 
@@ -276,8 +277,6 @@ def _message_to_response(
                         if isinstance(metadata, dict):
                             file_id = metadata.get("file_id")
                         elif isinstance(metadata, str):
-                            import json
-
                             try:
                                 meta = json.loads(metadata)
                                 file_id = meta.get("file_id")
@@ -348,8 +347,6 @@ def _message_to_response(
         or 0
     )
 
-    from src.api.schemas.messages import ReaderInfo
-
     read_by = []
     if read_by_data:
         read_by = [
@@ -368,8 +365,6 @@ def _message_to_response(
     metadata = get_attr(msg, "metadata")
     if metadata and isinstance(metadata, str):
         try:
-            import json
-
             metadata = json.loads(metadata)
         except Exception:
             metadata = None
@@ -444,8 +439,6 @@ def _message_to_response(
     # payloads carry the same array without extra service plumbing.
     mention_ids: List[str] = []
     try:
-        from src.core.notifications.parser import USER_MENTION_PATTERN
-
         raw_content = content if isinstance(content, str) else ""
         mention_ids = [m for m in USER_MENTION_PATTERN.findall(raw_content)]
     except Exception as e:
