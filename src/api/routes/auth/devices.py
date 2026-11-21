@@ -39,7 +39,7 @@ class TrustDeviceRequest(BaseModel):
     fingerprint: str = Field(..., min_length=8, max_length=256)
 
 
-def _get_devices(user_id: int):
+def _get_auth():
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -47,6 +47,14 @@ def _get_devices(user_id: int):
             status_code=500,
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
+    return auth
+
+
+def _get_devices(user_id: int):
+    # Only the listing endpoint needs the rows. Callers that just mutate a
+    # device use _get_auth() directly so they do not pay for a full
+    # SELECT * FROM auth_devices plus a decrypt of every device's PII fields.
+    auth = _get_auth()
     return auth, auth.get_devices(user_id)
 
 
@@ -94,7 +102,7 @@ async def rename_device(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     require_user_token(current_user)
-    auth, _ = _get_devices(current_user.user_id)
+    auth = _get_auth()
     if not auth.rename_device(current_user.user_id, int(device_id), body.name):
         raise HTTPException(
             status_code=404,
@@ -123,7 +131,7 @@ async def revoke_device(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     require_user_token(current_user)
-    auth, _ = _get_devices(current_user.user_id)
+    auth = _get_auth()
     if not auth.revoke_device(current_user.user_id, int(device_id)):
         raise HTTPException(
             status_code=404,
@@ -153,7 +161,7 @@ async def trust_device(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     require_user_token(current_user)
-    auth, _ = _get_devices(current_user.user_id)
+    auth = _get_auth()
     if not auth.trust_device(current_user.user_id, body.fingerprint):
         raise HTTPException(
             status_code=404,
@@ -178,7 +186,7 @@ async def untrust_device(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     require_user_token(current_user)
-    auth, _ = _get_devices(current_user.user_id)
+    auth = _get_auth()
     if not auth.untrust_device(current_user.user_id, body.fingerprint):
         raise HTTPException(
             status_code=404,
