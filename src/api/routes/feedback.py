@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 import utils.config as config
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.feedback import (
     FeedbackCreate,
     FeedbackResponse,
@@ -121,6 +122,11 @@ async def submit_feedback(
 
     Rate limited to prevent spam.
     """
+    # A bot token's ``user_id`` is its human owner (the bot id lives in
+    # ``account_id``). The per-account rate-limit bucket below is keyed on that
+    # id, so without this gate a bot credential would spend the owner's
+    # feedback quota -- and let a bot evade its own. Reject bots first.
+    require_user_token(current_user)
     user_id = current_user.user_id
 
     # Defence in depth: the schema bounds content and category shape, but a
@@ -256,6 +262,10 @@ async def get_feedback_status(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> FeedbackStatusResponse:
     """Get feedback submission status for current user."""
+    # Same owner-identity confusion as the submit route: this reads the
+    # ``POST /feedback`` bucket keyed on ``current_user.user_id``. A bot token
+    # would otherwise disclose how much of its owner's quota is left.
+    require_user_token(current_user)
     user_id = current_user.user_id
 
     try:
