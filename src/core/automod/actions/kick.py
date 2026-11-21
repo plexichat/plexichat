@@ -74,6 +74,11 @@ class KickUserAction(BaseAction):
                     "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                     (violation.server_id, violation.user_id),
                 )
+                # This system path bypasses the permission-checked
+                # kick_member(), so replay the cache invalidation it would
+                # have done. Otherwise the removed member's cached channel
+                # permissions keep granting access until their TTL expires.
+                self._invalidate_member_authz(violation.server_id, violation.user_id)
 
             logger.debug(
                 f"Kicked user {violation.user_id} from server {violation.server_id} "

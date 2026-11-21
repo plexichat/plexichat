@@ -9,6 +9,8 @@ from typing import Dict, Any, Optional
 
 from ..models import ACTION_TYPE_VALUES, ActionType, RuleAction, Violation
 
+import utils.logger as logger
+
 
 class BaseAction(ABC):
     """Abstract base class for all automod actions."""
@@ -31,6 +33,38 @@ class BaseAction(ABC):
         self._servers = servers_module
         self._messaging = messaging_module
         self._notifications = notifications_module
+
+    def _invalidate_member_authz(self, server_id, user_id) -> None:
+        """Replay the cache invalidation a raw-SQL member removal bypasses.
+
+        The system-context ban/kick executors write ``srv_members`` and
+        ``srv_member_roles`` directly (there is no permission-checked manager
+        call for a system actor), so they skip the servers layer's
+        ``_invalidate_member_caches``. Without this replay every authorization
+        tier -- the ``perms:``/``srv_permission:`` snapshots, the ``has_perm:*``
+        decorator tier, the bounded ``channel_access_cache`` L1, the
+        member-role-row cache, ``is_member`` and the roster pages -- keeps
+        answering with the removed member's old GRANT until its TTL expires.
+
+        ``self._servers`` is the servers module in production and a manager
+        instance in unit tests; resolve whichever exposes the invalidator.
+        A failure here must surface (the caller's handler logs it and refuses
+        to report success), so no stale grant is silently left in place.
+        """
+        servers = self._servers
+        if servers is None:
+            return
+        manager = getattr(servers, "_get_manager", None)
+        manager = manager() if callable(manager) else servers
+        invalidator = getattr(manager, "_invalidate_member_caches", None)
+        if not callable(invalidator):
+            return
+        logger.debug(
+            "Invalidating cached authorization state for removed member %s in server %s",
+            user_id,
+            server_id,
+        )
+        invalidator(server_id, user_id)
 
     @abstractmethod
     def execute(
