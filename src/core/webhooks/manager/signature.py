@@ -278,6 +278,22 @@ class SignatureMixin(WebhookManagerTrait):
                    WHERE id = ?""",
                 (public_key, private_key_encrypted, now, webhook_id),
             )
+            # A queued delivery carries the signing headers captured at
+            # enqueue time. The delivery worker reuses them verbatim while
+            # their timestamp is inside the replay window, so a delivery
+            # queued seconds before this rotation would still be POSTed with
+            # a signature made by the RETIRED key -- a grace window the swap
+            # above is supposed to forbid. Drop the captured headers on every
+            # still-claimable row so delivery re-signs with the NEW key
+            # (WebhookDeliverer._effective_signing_headers re-signs whenever
+            # the stored timestamp is missing or stale). Rows already claimed
+            # as 'delivering' are in flight and cannot be recalled here.
+            self._db.execute(
+                """UPDATE webhook_retry_queue
+                   SET metadata = NULL
+                   WHERE webhook_id = ? AND status IN ('pending', 'retrying')""",
+                (webhook_id,),
+            )
         logger.info(f"Rotated signing key for webhook {webhook_id}")
         return public_key
 
