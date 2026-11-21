@@ -91,15 +91,27 @@ def _build_payload() -> Dict[str, Any]:
             }
         capabilities_dict[feature] = payload
 
-    def _state_of(feature: str) -> Any:
+    # Extract each feature's state string once. The old summary helper
+    # re-read ``capabilities[feature].state`` and re-converted the enum for
+    # every comparison: available, unavailable, and once per enum member in
+    # ``by_state`` -- roughly O(states * features) lookups for a map that
+    # never changes during this build. One pass keeps the output identical.
+    state_by_feature: Dict[str, Any] = {}
+    for feature in capabilities_dict:
         state = capabilities[feature].state
-        return state.value if isinstance(state, CapabilityState) else state
+        state_by_feature[feature] = (
+            state.value if isinstance(state, CapabilityState) else state
+        )
 
     available = [
-        f for f in capabilities_dict if _state_of(f) == CapabilityState.AVAILABLE.value
+        f
+        for f, state_value in state_by_feature.items()
+        if state_value == CapabilityState.AVAILABLE.value
     ]
     unavailable = [
-        f for f in capabilities_dict if _state_of(f) != CapabilityState.AVAILABLE.value
+        f
+        for f, state_value in state_by_feature.items()
+        if state_value != CapabilityState.AVAILABLE.value
     ]
 
     summary = {
@@ -109,7 +121,11 @@ def _build_payload() -> Dict[str, Any]:
         "available": available,
         "unavailable": unavailable,
         "by_state": {
-            state.value: [f for f in capabilities_dict if _state_of(f) == state.value]
+            state.value: [
+                f
+                for f, state_value in state_by_feature.items()
+                if state_value == state.value
+            ]
             for state in CapabilityState
         },
     }
