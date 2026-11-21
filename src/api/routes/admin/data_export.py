@@ -58,6 +58,16 @@ REQUEST_RESPONSE_COLUMNS = (
     "error_message",
 )
 
+# The detail read used ``SELECT *``, pulling ``storage_path`` (server
+# filesystem layout), ``checksum`` and ``metadata`` into the process on every
+# view even though ``_serialize_request`` never emits them. Project exactly the
+# allowlisted columns at the SQL boundary: fewer bytes off disk and no needless
+# copy of internal-only fields into the admin response path. Derived from the
+# allowlist so the projection can never drift from what the route serializes.
+_REQUEST_DETAIL_SQL = (
+    "SELECT " + ", ".join(REQUEST_RESPONSE_COLUMNS) + " FROM dsar_requests"
+)
+
 
 def _serialize_request(row: dict) -> dict:
     record = dict(row or {})
@@ -80,7 +90,7 @@ def _get_request_or_404(request_id: int) -> dict:
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
-    row = db.fetch_one("SELECT * FROM dsar_requests WHERE id = ?", (request_id,))
+    row = db.fetch_one(_REQUEST_DETAIL_SQL + " WHERE id = ?", (request_id,))
     if not row:
         raise HTTPException(
             status_code=404,
