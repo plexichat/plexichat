@@ -32,9 +32,15 @@ xact locks. It fails if:
   * a site taking both shared permission locks acquires them out of order,
   * a lock key degenerates to a bare constant (no resource derivation),
   * a single-key (64-bit) lock silently becomes a namespaced two-key lock.
+
+The order and guarded-write checks carry non-vacuity self-tests that feed a
+synthetic reversed-order site and a synthetic bare ``WHERE id = ?`` write
+through the very same checker used on production code, so a checker that
+silently passes everything cannot keep the suite green.
 """
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -262,31 +268,78 @@ def test_shared_permission_namespaces_have_exact_path_inventory():
         )
 
 
+def _shared_lock_sequence(tree, fn):
+    """Shared namespaces acquired by ``fn``, in source (line) order."""
+    pairs = []
+    for call, params in _advisory_lock_calls(fn):
+        if _arg_count(call.args[0]) < 2:
+            continue
+        pairs.append((call.lineno, _namespace_from_tuple(tree, params)))
+    pairs.sort()
+    return [
+        ns
+        for _, ns_set in pairs
+        for ns in sorted(ns_set & _SHARED_PERMISSION_NAMESPACES)
+    ]
+
+
+def _is_ascending(shared):
+    """True when distinct namespaces are first acquired in ascending order."""
+    first_seen = []
+    for ns in shared:
+        if ns not in first_seen:
+            first_seen.append(ns)
+    return first_seen == sorted(first_seen)
+
+
+def _shared_order_violations(tree, functions):
+    """Return ``(violations, checked)`` for multi-shared-namespace functions."""
+    violations = []
+    checked = 0
+    for fn in functions:
+        shared = _shared_lock_sequence(tree, fn)
+        if len(set(shared)) < 2:
+            continue
+        checked += 1
+        if not _is_ascending(shared):
+            violations.append(f"{getattr(fn, 'name', '?')}: {shared}")
+    return violations, checked
+
+
 def test_multi_namespace_sites_acquire_locks_in_fixed_order():
     """Deadlock avoidance: a site taking both shared locks takes 142 first."""
     checked = 0
     for paths in _SHARED_LOCK_PATHS.values():
         for rel in paths:
             tree = _parse(rel)
-            for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
-                pairs = []
-                for call, params in _advisory_lock_calls(fn):
-                    if _arg_count(call.args[0]) < 2:
-                        continue
-                    pairs.append((call.lineno, _namespace_from_tuple(tree, params)))
-                pairs.sort()
-                shared = [
-                    ns
-                    for _, ns_set in pairs
-                    for ns in sorted(ns_set & _SHARED_PERMISSION_NAMESPACES)
-                ]
-                if len(set(shared)) < 2:
-                    continue
-                checked += 1
-                assert shared.index(142) < shared.index(143), (
-                    f"{rel}:{fn.name} acquires shared locks out of order {shared}"
-                )
+            functions = (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+            violations, count = _shared_order_violations(tree, functions)
+            checked += count
+            assert not violations, f"{rel}: shared locks out of order: {violations}"
     assert checked >= 3, "no site takes both shared locks - order guard vacuous"
+
+
+def test_lock_order_guard_flags_synthetic_reversed_site():
+    """Non-vacuity: a synthetic 143-then-142 site is flagged, 142-then-143 is not."""
+    reversed_src = """
+def reversed_order(db):
+    db.execute("SELECT pg_advisory_xact_lock(?, ?)", (143, 1))
+    db.execute("SELECT pg_advisory_xact_lock(?, ?)", (142, 1))
+"""
+    ordered_src = """
+def ordered_ok(db):
+    db.execute("SELECT pg_advisory_xact_lock(?, ?)", (142, 1))
+    db.execute("SELECT pg_advisory_xact_lock(?, ?)", (143, 1))
+"""
+    for src, expect_flagged in ((reversed_src, True), (ordered_src, False)):
+        tree = ast.parse(src)
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+        violations, checked = _shared_order_violations(tree, [fn])
+        assert checked == 1, f"synthetic site not recognized as multi-namespace: {src}"
+        assert bool(violations) is expect_flagged, (
+            f"order checker disagreed on synthetic site (expect flagged="
+            f"{expect_flagged}): {violations}"
+        )
 
 
 def test_single_arg_locks_have_no_namespace_to_collide():
@@ -311,3 +364,158 @@ def test_lock_keys_derive_from_resource():
                     isinstance(key, ast.Constant) and isinstance(key.value, int)
                 ), f"{rel_path}: advisory-lock key must derive from a resource id"
             assert two_key or _arg_count(call.args[0]) == 1
+
+
+# ---------------------------------------------------------------------------
+# TOCTOU guarded-write structural guard
+# ---------------------------------------------------------------------------
+# The behavioural race tests (test_server_delete_owner_toctou.py,
+# test_transfer_ownership_guarded_write_toctou.py,
+# test_template_creator_guarded_write_toctou.py) inject in-memory mutations to
+# prove the fixes work at runtime. Those mutations cannot catch a source
+# regression that slips past review, so this registry captures the structural
+# shape of each fix. Register every new check-then-write site here (and add its
+# behavioural race test); the tests below then fail if the authoritative
+# ownership/creator predicate or the rowcount fail-closed guard is dropped, or
+# if the write degenerates to a bare ``WHERE id = ?``.
+#
+# Each entry: site name -> (path relative to src/, function name, guard
+# substrings that must appear in one of the function's SQL string literals).
+_GUARDED_WRITE_SITES = {
+    "delete_server": (
+        "core/servers/manager/server_ops.py",
+        "delete_server",
+        ("AND owner_id = ?",),
+    ),
+    "transfer_ownership": (
+        "core/servers/manager/server_ops.py",
+        "transfer_ownership",
+        ("AND owner_id = ?", "EXISTS"),
+    ),
+    "delete_template": (
+        "core/servers/manager/template_ops.py",
+        "delete_template",
+        ("AND creator_id = ?", "EXISTS"),
+    ),
+    "update_template": (
+        "core/servers/manager/template_ops.py",
+        "update_template",
+        ("AND creator_id = ?",),
+    ),
+}
+
+_MUTATING_SQL_RE = re.compile(r"^\s*(UPDATE|DELETE)\b", re.IGNORECASE)
+_BARE_ID_WRITE_RE = re.compile(
+    r"^\s*(UPDATE|DELETE)\b.*\bWHERE\s+id\s*=\s*\?\s*$", re.IGNORECASE | re.DOTALL
+)
+
+
+def _string_literals(node):
+    return [
+        n.value
+        for n in ast.walk(node)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+
+
+def _find_function(tree, name):
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
+            return node
+    return None
+
+
+def _references_rowcount(node):
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Attribute) and sub.attr == "rowcount":
+            return True
+        if isinstance(sub, ast.Call) and any(
+            isinstance(a, ast.Constant) and a.value == "rowcount" for a in sub.args
+        ):
+            return True
+    return False
+
+
+def _has_rowcount_fail_closed(fn):
+    """True when the function compares a rowcount against 0 (fail closed)."""
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Compare):
+            continue
+        operands = [node.left] + list(node.comparators)
+        if not any(_references_rowcount(op) for op in operands):
+            continue
+        if any(isinstance(op, ast.Constant) and op.value == 0 for op in operands):
+            return True
+    return False
+
+
+def _guarded_write_violations(site, fn, markers):
+    """Structural violations for one registered guarded-write function."""
+    strings = _string_literals(fn)
+    violations = []
+    if not any(_MUTATING_SQL_RE.match(s) for s in strings):
+        violations.append(f"{site}: no mutating UPDATE/DELETE statement found")
+    for marker in markers:
+        if not any(marker in s for s in strings):
+            violations.append(f"{site}: missing guard marker {marker!r}")
+    if not _has_rowcount_fail_closed(fn):
+        violations.append(f"{site}: missing rowcount fail-closed check")
+    for s in strings:
+        if _BARE_ID_WRITE_RE.match(s):
+            violations.append(f"{site}: bare id-only write regressed: {s!r}")
+    return violations
+
+
+def test_guarded_write_pattern_present_at_registered_sites():
+    """TOCTOU fixes: every registered check-then-write site keeps its guard."""
+    assert _GUARDED_WRITE_SITES, "guarded-write registry is empty - guard is vacuous"
+    for site, (rel_path, func_name, markers) in _GUARDED_WRITE_SITES.items():
+        tree = _parse(rel_path)
+        fn = _find_function(tree, func_name)
+        assert fn is not None, f"{site}: {func_name} not found in {rel_path}"
+        violations = _guarded_write_violations(site, fn, markers)
+        assert not violations, "; ".join(violations)
+
+
+def test_guarded_write_guard_flags_regressions():
+    """Non-vacuity: checker passes a guarded write and flags regressions."""
+    markers = ("AND owner_id = ?",)
+    guarded = """
+def guarded(db, user_id, server_id):
+    cursor = db.execute(
+        "UPDATE srv_servers SET deleted = 1 WHERE id = ? AND owner_id = ?",
+        (server_id, user_id),
+    )
+    if getattr(cursor, "rowcount", 0) == 0:
+        raise RuntimeError("concurrent change")
+"""
+    bare_write = """
+def bare(db, server_id):
+    cursor = db.execute(
+        "UPDATE srv_servers SET deleted = 1 WHERE id = ?",
+        (server_id,),
+    )
+    if getattr(cursor, "rowcount", 0) == 0:
+        raise RuntimeError("concurrent change")
+"""
+    no_fail_closed = """
+def no_guard(db, user_id, server_id):
+    db.execute(
+        "UPDATE srv_servers SET deleted = 1 WHERE id = ? AND owner_id = ?",
+        (server_id, user_id),
+    )
+"""
+
+    def _fn(src):
+        return next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef))
+
+    assert _guarded_write_violations("guarded", _fn(guarded), markers) == []
+    bare_violations = _guarded_write_violations("bare", _fn(bare_write), markers)
+    assert any("bare id-only write" in v for v in bare_violations), bare_violations
+    no_fc_violations = _guarded_write_violations(
+        "no_guard", _fn(no_fail_closed), markers
+    )
+    assert any("rowcount fail-closed" in v for v in no_fc_violations), no_fc_violations
