@@ -25,6 +25,7 @@ zero offenders.
 
 import ast
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -134,9 +135,9 @@ def test_self_test_detector_flags_prints_but_not_loggers_or_strings():
     def complete():
         builtins.print("debug")
     """
-    assert _print_calls(ast.parse(clean)) == []
+    assert _print_calls(ast.parse(textwrap.dedent(clean))) == []
     for source in (bare, nested, builtins_print):
-        assert len(_print_calls(ast.parse(source))) == 1, source
+        assert len(_print_calls(ast.parse(textwrap.dedent(source)))) == 1, source
 
 
 def test_self_test_documenting_a_print_is_required_to_allow_it():
@@ -145,9 +146,9 @@ def test_self_test_documenting_a_print_is_required_to_allow_it():
         print("DBG", repr(code))
     """
     files = ("src/core/auth/managers/_synthetic.py",)
-    reader = lambda path: source  # noqa: E731 - tiny synthetic reader
+    reader = lambda path: textwrap.dedent(source)  # noqa: E731 - synthetic reader
     assert _offenders(files, reader)  # undocumented: flagged
-    documented = (("src/core/auth/managers/_synthetic.py", 'print("DBG", repr(code))', "CLI entry point"),)
+    documented = (("src/core/auth/managers/_synthetic.py", "print('DBG', repr(code))", "CLI entry point"),)
     assert _offenders(files, reader, documented) == []
 
 
