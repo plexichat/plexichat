@@ -29,6 +29,14 @@ class ThreadSlowmode:
     # (previously 6h, which outlived the thread itself).
     CACHE_TTL = 300  # 5 minutes
 
+    # The last-send marker must outlive the longest slowmode window it can be
+    # used for. Retaining it for only CACHE_TTL let the marker expire after five
+    # minutes even for a six-hour interval: a member could delete their message
+    # (which removes the thread_messages fallback row), wait out the marker TTL
+    # and post again while the real window was still open. Keep the marker for
+    # at least the full maximum interval so deletion cannot shorten the limit.
+    LAST_SEND_TTL = MAX_INTERVAL_MS // 1000  # 6 hours
+
     def __init__(self, db):
         self._db = db
 
@@ -177,11 +185,18 @@ class ThreadSlowmode:
         last_msg_time = cache_get(last_msg_key)
 
         if last_msg_time is None:
-            # Fall back to database query
+            # Fall back to a durable send record. ``thread_messages`` rows are
+            # deleted when a message is deleted, so reading MAX(created_at)
+            # there let a member reset the window simply by deleting their
+            # message. The underlying ``msg_messages`` row is only soft-deleted
+            # and is reached through the thread's conversation, so the send
+            # time survives -- include deleted rows on purpose: the send
+            # happened and must still count toward the interval.
             row = self._db.fetch_one(
-                """SELECT MAX(tm.created_at) as last_msg_at
-                   FROM thread_messages tm
-                   WHERE tm.thread_id = ? AND tm.user_id = ?""",
+                """SELECT MAX(m.created_at) AS last_msg_at
+                   FROM msg_messages m
+                   JOIN thread_threads t ON t.conversation_id = m.conversation_id
+                   WHERE t.id = ? AND m.author_id = ?""",
                 (thread_id, user_id),
             )
             last_msg_time = row["last_msg_at"] if row and row["last_msg_at"] else 0
@@ -190,8 +205,9 @@ class ThreadSlowmode:
         remaining = interval_ms - elapsed
 
         if remaining <= 0:
-            # User can send - update last message time in cache
-            cache_set(last_msg_key, now, ttl=self.CACHE_TTL)
+            # User can send - keep the marker for the whole maximum window so
+            # deleting the message cannot expire it out from under the limit.
+            cache_set(last_msg_key, now, ttl=self.LAST_SEND_TTL)
             return {"allowed": True, "retry_after_ms": 0}
 
         return {"allowed": False, "retry_after_ms": remaining}
@@ -205,4 +221,4 @@ class ThreadSlowmode:
         """
         now = self._get_timestamp()
         last_msg_key = f"thread_last_msg:{thread_id}:{user_id}"
-        cache_set(last_msg_key, now, ttl=self.CACHE_TTL)
+        cache_set(last_msg_key, now, ttl=self.LAST_SEND_TTL)
