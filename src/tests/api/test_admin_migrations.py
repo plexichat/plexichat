@@ -47,6 +47,23 @@ def client(test_app):
     return TestClient(test_app)
 
 
+@pytest.fixture(autouse=True)
+def _stub_live_admin_scope(monkeypatch):
+    """Keep the live-role re-check from short-circuiting these tests.
+
+    Every test here stubs session authentication with a patched
+    ``get_admin_from_token``; there is no seeded role row for that stubbed
+    admin. The demotion re-check in ``get_admin_user`` is exercised in its own
+    regression module, so stub it here to preserve the path-traversal and
+    host-restriction behaviour these tests actually assert.
+    """
+    import src.api.routes.admin.migrations as migrations_route
+
+    monkeypatch.setattr(
+        migrations_route, "_admin_has_live_scope", lambda admin_id: True
+    )
+
+
 class TestAuthentication:
     """Test that authentication is required for all migration endpoints."""
 
