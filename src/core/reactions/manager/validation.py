@@ -13,6 +13,24 @@ from .protocol import ReactionProtocol
 CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:([a-zA-Z0-9_]+):(\d+)>$")
 SHORTCODE_EMOJI_PATTERN = re.compile(r"^:([a-zA-Z0-9_]{1,32}):$")
 KEYCAP_EMOJI_PATTERN = re.compile(r"^[#*0-9]\uFE0F?\u20E3$")
+ASCII_WORD_PATTERN = re.compile(r"[A-Za-z0-9_]+")
+
+# These tables are immutable and are consulted on every unicode-emoji reaction
+# (add/remove).  Building the list/sets and the per-character ``any()`` generator
+# inside the hot method made every validation allocate ~a dozen short-lived
+# objects.  Hoisting them to module scope removes that steady-state churn.
+VALID_EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF),
+    (0x1FB00, 0x1FBFF),
+    (0x2600, 0x26FF),
+    (0x2700, 0x27BF),
+    (0x2300, 0x23FF),
+    (0x2B00, 0x2BFF),
+    (0xFE00, 0xFE0F),
+    (0xE0020, 0xE007F),
+)
+SINGLETON_CHARS = frozenset({0x20E3, 0xA9, 0xAE})
+REJECTED_CHARS = frozenset({0x200B, 0x200C, 0x202E, 0x202D, 0xFEFF})
 
 
 class ReactionValidationMixin(ReactionProtocol):
@@ -61,27 +79,6 @@ class ReactionValidationMixin(ReactionProtocol):
         return (False, None, emoji)
 
     def _is_valid_unicode_emoji(self, text: str) -> bool:
-        VALID_EMOJI_RANGES = [
-            (0x1F000, 0x1FAFF),
-            (0x1FB00, 0x1FBFF),
-            (0x2600, 0x26FF),
-            (0x2700, 0x27BF),
-            (0x2300, 0x23FF),
-            (0x2B00, 0x2BFF),
-            (0xFE00, 0xFE0F),
-            (0xE0020, 0xE007F),
-        ]
-
-        SINGLETON_CHARS = {0x20E3, 0xA9, 0xAE}
-
-        REJECTED_CHARS = {
-            0x200B,
-            0x200C,
-            0x202E,
-            0x202D,
-            0xFEFF,
-        }
-
         if not text:
             return False
 
@@ -93,7 +90,7 @@ class ReactionValidationMixin(ReactionProtocol):
         # Fail closed (M1): plain ASCII words are never emoji. The range
         # check below already rejects them, but reject explicitly so a
         # future range edit cannot reopen arbitrary-text reactions.
-        if re.fullmatch(r"[A-Za-z0-9_]+", text):
+        if ASCII_WORD_PATTERN.fullmatch(text):
             return False
 
         zwj_count = 0
@@ -112,9 +109,14 @@ class ReactionValidationMixin(ReactionProtocol):
             if code in REJECTED_CHARS:
                 return False
 
-            in_valid_range = any(
-                start <= code <= end for start, end in VALID_EMOJI_RANGES
-            )
+            # Inline the range scan instead of ``any(generator)``: the latter
+            # allocates a fresh generator object for every character on this
+            # hot path.  Iterate the module-level tuple directly.
+            in_valid_range = False
+            for start, end in VALID_EMOJI_RANGES:
+                if start <= code <= end:
+                    in_valid_range = True
+                    break
 
             if code in SINGLETON_CHARS:
                 in_valid_range = True
