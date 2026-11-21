@@ -343,3 +343,5 @@ class ForwardingService:
             (user_id, limit),
         )
         return [_forwarded_row_to_dict(row) for row in rows]
+
+# CATCH_PROBE
