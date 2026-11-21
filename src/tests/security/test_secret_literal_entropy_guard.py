@@ -15,10 +15,13 @@ is not a reviewed, documented false positive contains either:
   a credential-looking name -- a Shannon-entropy + keyword/shape heuristic.
 
 Known false positives from N537 are handled by ``ALLOWLIST`` below: KDF/KEK
-test vectors, schema examples, scrubbing regexes and credential-looking strings
-in docstrings.  Test fixtures are waived wholesale, mirroring the
+test vectors (test fixtures), scrubbing regexes and a credential-looking string
+in a licensing docstring.  Test fixtures are waived wholesale, mirroring the
 ``detect-secrets`` pre-commit exclusion and the SEC100 ``hardcoded_secret``
-waiver; production code under ``src/`` is still fully checked.
+waiver.  Production code -- including ``src/api/schemas/**`` -- is deliberately
+NOT path-exempt: a documented example value there is waived only by the
+value-level placeholder heuristic, so a real credential literal committed to a
+schema file is still flagged.
 
 Non-vacuity is asserted at the bottom: a synthetic high-entropy literal and a
 synthetic PEM block in a fresh temp file are flagged, while the same literal
@@ -59,6 +62,11 @@ SECRET_NAME_RE = re.compile(
     r"signing[_-]?key|session[_-]?key|encryption[_-]?key"
 )
 VALUE_SHAPE_RE = re.compile(r"^[A-Za-z0-9_\-+/=]{16,}$")
+# A long all-hex literal is a credential by construction (128-bit+ keys, API
+# tokens and digests are routinely hex-encoded).  Shannon entropy over the hex
+# alphabet caps at 4.0 bits/char -- a random 32-char hex key averages ~3.6 --
+# so a flat Shannon floor of 4.0 silently misses this entire, common class.
+HEX_SECRET_RE = re.compile(r"^[0-9a-fA-F]{32,}$")
 PLACEHOLDER_RE = re.compile(
     r"(?i)example|placeholder|sample|dummy|fake|your|changeme|xxx|todo|"
     r"redacted|insert|replace|deadbeef|\btest\b|[{}]"
@@ -95,11 +103,6 @@ ALLOWLIST: tuple[tuple[str, str], ...] = (
         "(deterministic high-entropy keys), example tokens and detector "
         "scaffolding. detect-secrets' own hook excludes src/tests/** for the "
         "same reason; production code under src/ is still checked.",
-    ),
-    (
-        "src/api/schemas/**",
-        "N537: schema examples -- documented example credential shapes used "
-        "to illustrate API request/response fields, not deployable secrets.",
     ),
     (
         "src/core/telemetry/scrubbing.py",
@@ -139,17 +142,41 @@ def _shannon(value: str) -> float:
     return -sum((n / total) * math.log2(n / total) for n in counts.values())
 
 
+def _is_documentation_placeholder(value: str) -> bool:
+    """True for template/example values that should not trip the gate.
+
+    A marker such as ``your_`` or ``example`` is only a placeholder when the
+    value is *template-shaped*: braces, or low entropy.  A 24+ char value with
+    Shannon entropy >= 4.5 is a random-looking real secret in which a marker
+    like ``your``/``xxx`` is a coincidental substring, not a documentation
+    cue; suppressing that would hide a live credential (N537 follow-up).
+    """
+    if not PLACEHOLDER_RE.search(value):
+        return False
+    if "{" in value or "}" in value:
+        return True
+    if len(value) >= 24 and _shannon(value) >= 4.5:
+        return False
+    return True
+
+
 def _high_entropy_credential(value: str) -> bool:
     """Keyword heuristic's value side: credential-shaped + high entropy.
 
-    Placeholder/documentation markers (``example``, ``your_``, ``{...}`` ...)
-    are excluded so docstring templates do not trip the gate.
+    Hex-encoded credentials are accepted by shape+length alone because their
+    Shannon score is capped below the generic floor.  Everything else needs a
+    high Shannon score and must not be a documentation placeholder.
     """
     if not (MIN_LEN <= len(value) <= MAX_LEN):
         return False
     if not VALUE_SHAPE_RE.match(value):
         return False
-    if PLACEHOLDER_RE.search(value):
+    # Hex secrets check first: they cannot contain letters outside a-f, and
+    # treating them as "high entropy by construction" closes the Shannon gap
+    # without lowering the floor for random alphanumeric prose.
+    if HEX_SECRET_RE.match(value):
+        return True
+    if _is_documentation_placeholder(value):
         return False
     return _shannon(value) >= MIN_ENTROPY
 
@@ -276,7 +303,14 @@ def scan_files(root: Path, rels: Iterable[str]) -> list[Finding]:
 
 
 def tracked_files(root: Path) -> list[str]:
-    """Tracked source files only -- untracked peer work is out of scope."""
+    """Tracked files under ``src/`` only.
+
+    Scope note (N537 follow-up): this intentionally does NOT scan tracked config
+    outside ``src/`` (root ``config.yaml``, ``.github/``, ``ci-tooling/``,
+    ``docker-compose.yml``, ...).  N537 scanned those with gitleaks and found no
+    live secret; widening the path scope here would add prose/config false
+    positives.  This guard's claim is limited to "tracked src".
+    """
     result = subprocess.run(
         ["git", "ls-files", "--", SCAN_SUBDIR],
         cwd=root,
@@ -363,11 +397,14 @@ def test_all_scanned_extensions_are_covered(tmp_path: Path) -> None:
 
 
 def test_allowlisted_false_positive_paths_pass(tmp_path: Path) -> None:
-    """Each documented N537 false-positive path suppresses the same literal."""
+    """Each documented N537 false-positive path suppresses the same literal.
+
+    ``src/api/schemas/**`` is intentionally absent: schema files are production
+    code and are checked like any other source file (see the dedicated test).
+    """
     secret = "dBJf8sK2mQ9xL4pR7vT1wY6zA3cN5hE"
     paths = [
         "src/tests/fixtures/fake_creds.py",  # KDF vectors / test fixtures
-        "src/api/schemas/example_token.py",  # schema examples
         "src/core/telemetry/scrubbing.py",  # scrubbing regexes
         "src/utils/common_utils/utils/licensing/__init__.py",  # docstring
     ]
@@ -383,5 +420,59 @@ def test_allowlisted_false_positive_paths_pass(tmp_path: Path) -> None:
 
 def test_allowlist_documents_n537_false_positive_categories() -> None:
     text = " ".join(reason for _, reason in ALLOWLIST).lower()
-    for category in ("kdf", "schema", "scrubbing", "docstring"):
+    for category in ("kdf", "scrubbing", "docstring"):
         assert category in text, f"allowlist must document {category} false positives"
+    # A blanket path exemption over production schema code would silently hide
+    # any real credential committed there; it must never be allowlisted.
+    assert not any(
+        fnmatch.fnmatchcase("src/api/schemas/example_token.py", glob)
+        for glob, _ in ALLOWLIST
+    ), "src/api/schemas/** must not be path-exempt"
+
+
+def test_high_entropy_secret_in_schema_file_is_flagged(tmp_path: Path) -> None:
+    """Non-vacuous: a real secret in a schema file is caught, not suppressed."""
+    secret = "dBJf8sK2mQ9xL4pR7vT1wY6zA3cN5hE"
+    for rel in (
+        "src/api/schemas/auth.py",
+        "src/api/schemas/admin/access_tokens.py",
+        "src/api/schemas/config.py",
+    ):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'api_key = "{secret}"\n', encoding="utf-8")
+    findings = filter_findings(scan_files(tmp_path, _tree_files(tmp_path)))
+    assert {f.path for f in findings} == {
+        "src/api/schemas/auth.py",
+        "src/api/schemas/admin/access_tokens.py",
+        "src/api/schemas/config.py",
+    }, findings
+
+
+def test_hex_encoded_secret_below_shannon_floor_is_flagged(tmp_path: Path) -> None:
+    """A 32-char hex key (entropy ~3.95 < 4.0) must not slip the Shannon floor."""
+    hex_secret = "a3f1c9e7b2d408f6a1e53c7d90b24f8e"
+    assert _shannon(hex_secret) < MIN_ENTROPY  # guard the premise
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(f'api_key = "{hex_secret}"\n', encoding="utf-8")
+    findings = filter_findings(scan_files(tmp_path, ["app/config.py"]))
+    assert any(f.kind == "secret_literal" for f in findings), findings
+
+
+def test_placeholder_substring_in_real_secret_is_flagged(tmp_path: Path) -> None:
+    """A marker like ``your`` inside an otherwise-random value is not a template."""
+    secret = "dBJf8sK2mQ9xL4yourpR7vT1wY6zA3cN5hE"
+    assert PLACEHOLDER_RE.search(secret)  # guard the premise
+    assert _shannon(secret) >= 4.5
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(f'token = "{secret}"\n', encoding="utf-8")
+    findings = filter_findings(scan_files(tmp_path, ["app/config.py"]))
+    assert any(f.kind == "secret_literal" for f in findings), findings
+
+
+def test_low_entropy_documentation_placeholder_is_still_ignored() -> None:
+    """Templates remain exempt: tightening must not flag real doc examples."""
+    assert _is_documentation_placeholder("your_api_key_here_000000000000")
+    assert not _high_entropy_credential("your_api_key_here_000000000000")
