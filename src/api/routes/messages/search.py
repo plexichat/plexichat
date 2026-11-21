@@ -194,16 +194,53 @@ async def search_messages(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        # Resolve channel_id to conversation_id for server channels
-        conv_id = cid
+        # Resolve channel_id to conversation_id for server channels.
+        channel = None
         if servers_mod:
             channel = servers_mod.get_channel(cid, current_user.user_id)
-            if (
-                channel
-                and hasattr(channel, "conversation_id")
-                and channel.conversation_id
-            ):
-                conv_id = channel.conversation_id
+
+        # A server channel's messages require a per-channel read grant, not
+        # merely membership of the parent server. The participant check below
+        # (is_participant) only proves DM participation or server membership,
+        # so on its own it lets a member read a channel whose ``messages.read``
+        # is denied by a role/channel override -- the same hole the channel
+        # message *listing* path closes with require_permission. Check the
+        # channel grant live here, before the cached read, and fail closed when
+        # the backing channel or its permission cannot be established.
+        channel_exists = getattr(servers_mod, "channel_exists", None)
+        is_server_channel = (
+            bool(channel_exists(cid))
+            if callable(channel_exists)
+            else channel is not None
+        )
+        if is_server_channel:
+            if servers_mod is None or channel is None:
+                raise _not_found()
+            server_id = getattr(channel, "server_id", None)
+            if not server_id:
+                raise _not_found()
+            try:
+                can_read = bool(
+                    servers_mod.has_permission(
+                        current_user.user_id,
+                        server_id,
+                        "messages.read",
+                        cid,
+                    )
+                )
+            except Exception as perm_error:
+                logger.debug(
+                    f"message search read-permission check failed for channel "
+                    f"{cid}: {perm_error}"
+                )
+                can_read = False
+            if not can_read:
+                raise _not_found()
+            conv_id = getattr(channel, "conversation_id", None) or cid
+        else:
+            # DM / group conversation: no separate channel grant applies; the
+            # participant gate below is the visibility boundary.
+            conv_id = cid
 
         # LIVE GATE before the cached read. The participant check used to live
         # only inside the @cached handler (and inside core.search_messages), so
