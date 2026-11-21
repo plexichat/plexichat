@@ -315,9 +315,10 @@ async def upload_my_avatar(
         )
         raise HTTPException(
             status_code=400,
-            detail={
-                "error": {"code": 400, "message": f"Failed to read file: {str(e)}"}
-            },
+            # Fail closed: the raw exception detail (which can embed an
+            # absolute filesystem path) was logged above with exc_info and
+            # must never be echoed to the client (CWE-209).
+            detail={"error": {"code": 400, "message": "Failed to read file"}},
         )
 
     # Hardened validation: allowed MIME, magic-byte/content-type verification,
@@ -771,9 +772,10 @@ async def upload_server_icon(
             )
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "error": {"code": 400, "message": f"Failed to read file: {str(e)}"}
-                },
+                # Fail closed: the raw exception detail (which can embed an
+                # absolute filesystem path) was logged above with exc_info and
+                # must never be echoed to the client (CWE-209).
+                detail={"error": {"code": 400, "message": "Failed to read file"}},
             )
 
         # Hardened validation: allowed MIME, magic-byte/content-type verification,
