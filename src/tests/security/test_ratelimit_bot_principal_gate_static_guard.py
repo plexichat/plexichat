@@ -13,6 +13,8 @@ It is a pure-AST, whole-tree check (no app import/config/DB) with four halves:
    ``acheck_rate_limit`` / ``acheck`` / ``check_rate_limit`` /
    ``aincrement_custom_usage`` names plus any ``acheck*`` / ``*rate_limit`` /
    ``*custom_usage`` variant -- that actually carries a principal argument.
+   Call names are resolved back through import aliases first, so
+   ``from ... import acheck_rate_limit as arl`` cannot escape the vocabulary.
    Decorator-style/config calls (``@rate_limit(...)``, ``RateLimitConfig(...)``,
    ``is_rate_limited(exc)``) carry no principal and are ignored.
 
@@ -22,7 +24,9 @@ It is a pure-AST, whole-tree check (no app import/config/DB) with four halves:
    sites is CU-param; a SHA-256 token fingerprint or trusted client IP is an
    authoritative non-owner key. ``current_user.user_id`` is deliberately
    distinguished from other ids (``reported_user_id``, ``admin_id``, a raw
-   request field, an interaction token).
+   request field, an interaction token). CU-param resolution walks helper
+   chains: an ungated intermediate hop is followed back to its CU source and
+   cannot hide behind a gated sibling call site.
 
 3. Require a ``require_user_token(<same token>)`` statement to appear *before*
    the limiter spend in the same function (line/statement order, not just
@@ -174,6 +178,40 @@ def _call_name(func: ast.AST) -> str:
     if isinstance(func, ast.Name):
         return func.id
     if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _import_aliases(tree: ast.AST) -> dict[str, str]:
+    """Map local call names back to canonical symbol names.
+
+    ``from src.core.ratelimit import acheck_rate_limit as arl`` makes the
+    limiter reachable as ``arl(...)``. Resolving the alias keeps such a call
+    inside the vocabulary instead of letting a rename silently escape it.
+    Module aliases (``import src.core.ratelimit as rl``) are recorded too;
+    their method calls keep the canonical attribute name anyway.
+    """
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name:
+                    out[a.asname or a.name] = a.name
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname and a.name:
+                    out[a.asname] = a.name
+    return out
+
+
+def _canonical_call_name(func: ast.AST, aliases: dict[str, str]) -> str:
+    """Name of a call after resolving any import alias at its use site."""
+    if isinstance(func, ast.Name):
+        return aliases.get(func.id, func.id)
+    if isinstance(func, ast.Attribute):
+        # Attribute/method calls keep their canonical name regardless of a
+        # module alias on the receiver (``rl.acheck_rate_limit`` stays
+        # ``acheck_rate_limit``), so no extra resolution is needed here.
         return func.attr
     return ""
 
@@ -334,10 +372,16 @@ def _classify(expr: ast.AST, fn: ast.AST, before_line: int):
     return "other", set()
 
 
-def _gate_before(fn: ast.AST, call: ast.Call, tokens: set[str]) -> bool:
+def _gate_before(
+    fn: ast.AST,
+    call: ast.Call,
+    tokens: set[str],
+    aliases: dict[str, str] | None = None,
+) -> bool:
     """True iff require_user_token(<token>) is in ``fn`` before ``call``."""
+    aliases = aliases or {}
     for gate in _own_calls(fn):
-        if _call_name(gate.func) != GATE_NAME:
+        if _canonical_call_name(gate.func, aliases) != GATE_NAME:
             continue
         if gate.lineno >= call.lineno:  # gate AFTER the spend does not count
             continue
@@ -418,17 +462,21 @@ def _arg_for_param(ccall: ast.Call, fn: ast.AST, param: str):
 def _audit(sources) -> AuditResult:
     sources = tuple(sources)
     parsed: dict[str, tuple[str, ast.Module]] = {}
+    aliases_by_rel: dict[str, dict[str, str]] = {}
     for rel, source in sources:
         try:
-            parsed[rel] = (source, ast.parse(source))
+            tree = ast.parse(source)
         except SyntaxError:
             continue
+        parsed[rel] = (source, tree)
+        aliases_by_rel[rel] = _import_aliases(tree)
 
     funcs: list[tuple[str, ast.AST, str]] = []
     funcs_by_name: dict[str, list[tuple[str, ast.AST, str]]] = {}
     helper_sources: dict[str, str] = {}
     callsites: dict[str, list[tuple[str, ast.AST, ast.Call, str]]] = {}
     for rel, (source, tree) in parsed.items():
+        aliases = aliases_by_rel[rel]
         for fn in _functions(tree):
             funcs.append((rel, fn, source))
             funcs_by_name.setdefault(fn.name, []).append((rel, fn, source))
@@ -436,16 +484,56 @@ def _audit(sources) -> AuditResult:
                 ast.get_source_segment(source, fn) or ""
             )
             for call in _own_calls(fn):
-                name = _call_name(call.func)
+                name = _canonical_call_name(call.func, aliases)
                 if name:
                     callsites.setdefault(name, []).append((rel, fn, call, source))
 
     findings: list[str] = []
     records: list[CallRecord] = []
 
+    def walk_helper(callee_fn, param, where, seen, state):
+        """Follow a helper parameter back to its current-user entry points.
+
+        A call site passing a direct ``current_user.user_id`` must carry the
+        gate before the call. A call site passing a further CU-derived
+        parameter is followed up the chain, so an ungated intermediate hop
+        cannot hide behind a gated sibling call site. Fails closed when no
+        terminal CU source is reachable at all.
+        """
+        if (callee_fn.name, param) in seen:
+            return
+        seen = seen | {(callee_fn.name, param)}
+        for crel, caller, ccall, csrc in callsites.get(callee_fn.name, []):
+            arg = _arg_for_param(ccall, callee_fn, param)
+            if arg is None:
+                # e.g. **kwargs unpack or a default: cannot prove gating.
+                continue
+            ckind, ctokens = _classify(arg, caller, ccall.lineno)
+            if ckind == "cu_direct":
+                state["verified"] = True
+                if not _gate_before(caller, ccall, ctokens, aliases_by_rel.get(crel, {})):
+                    state["gated"] = False
+                    findings.append(
+                        f"{crel}:{ccall.lineno} ({caller.name}): call to "
+                        f"{callee_fn.name} feeds a current-user-id principal "
+                        f"{ast.get_source_segment(csrc, arg) or ast.unparse(arg)!r} "
+                        f"without require_user_token() BEFORE it "
+                        f"(needed by {where})"
+                    )
+            elif ckind == "cu_param":
+                # Intermediate helper: recurse for every caller parameter that
+                # carries the CU-derived principal into this call.
+                caller_params = {a.arg for a in _all_args(caller)}
+                for p in sorted(ctokens & caller_params):
+                    walk_helper(caller, p, where, seen, state)
+            # kind == "other": not a CU source; nothing to gate here. The
+            # limiter-level fail-closed check below still requires that some
+            # terminal cu_direct path exists.
+
     for rel, fn, source in funcs:
+        aliases = aliases_by_rel[rel]
         for call in _own_calls(fn):
-            name = _call_name(call.func)
+            name = _canonical_call_name(call.func, aliases)
             if not _is_limiter_name(name):
                 continue
             principal = _principal_arg(call, name)
@@ -462,7 +550,7 @@ def _audit(sources) -> AuditResult:
             kind, roots = _classify(expr, fn, call.lineno)
 
             if kind == "cu_direct":
-                gated = _gate_before(fn, call, roots)
+                gated = _gate_before(fn, call, roots, aliases)
                 records.append(
                     CallRecord(rel, fn.name, call.lineno, name, text, kind, gated)
                 )
@@ -473,27 +561,12 @@ def _audit(sources) -> AuditResult:
                     )
 
             elif kind == "cu_param":
-                gated = True
-                verified = False
+                state = {"verified": False, "gated": True}
                 params = {a.arg for a in _all_args(fn)}
                 for param in sorted(roots & params):
-                    for crel, caller, ccall, csrc in callsites.get(fn.name, []):
-                        arg = _arg_for_param(ccall, fn, param)
-                        if arg is None:
-                            continue
-                        ckind, ctokens = _classify(arg, caller, ccall.lineno)
-                        if ckind != "cu_direct":
-                            continue
-                        verified = True
-                        if not _gate_before(caller, ccall, ctokens):
-                            gated = False
-                            findings.append(
-                                f"{crel}:{ccall.lineno} ({caller.name}): call to "
-                                f"{fn.name} feeds a current-user-id principal "
-                                f"{ast.get_source_segment(csrc, arg) or ast.unparse(arg)!r} "
-                                f"without require_user_token() BEFORE it "
-                                f"(needed by {where})"
-                            )
+                    walk_helper(fn, param, where, frozenset(), state)
+                gated = state["gated"]
+                verified = state["verified"]
                 records.append(
                     CallRecord(rel, fn.name, call.lineno, name, text, kind, gated)
                 )
@@ -611,6 +684,36 @@ _NOVEL_HELPER_GATED = _NOVEL_HELPER_UNGATED.replace(
     "    await _check_brand_new_feature_quota(current_user.user_id)\n",
 )
 
+# A symbol-level aliased import must not let a limiter escape the vocabulary.
+_ALIASED_LIMITER_UNGATED = f"""
+from src.core.ratelimit import acheck_rate_limit as arl
+
+
+async def handler(request: Request, {_TOKEN_ARG}):
+    rl = await arl(user_id=current_user.user_id, route="X", is_internal=False)
+"""
+
+# One gated direct call site must not mask an ungated *chained* call site that
+# feeds the same helper a CU-derived principal through an intermediate helper.
+_CHAINED_HELPER_MIXED = f"""
+async def handler_gated(request: Request, {_TOKEN_ARG}):
+    require_user_token(current_user)
+    await _quota_helper(current_user.user_id)
+
+
+async def handler_ungated(request: Request, {_TOKEN_ARG}):
+    await _middle(current_user.user_id)
+
+
+async def _middle(user_id: int):
+    await _quota_helper(user_id)
+
+
+async def _quota_helper(user_id: int):
+    key = f"quota:{{user_id}}"
+    check_rate_limit(key, 5, 60)
+"""
+
 
 def test_detector_flags_synthetic_ungated_user_id_limiter():
     audit = _audit([("api/routes/probe.py", _UNGATED)])
@@ -643,6 +746,22 @@ def test_detector_flags_novel_helper_name_without_gate():
     assert ungated.findings, "novel ungated helper limiter was NOT flagged"
     assert len(ungated.cu_param) == 1
     assert not gated.findings, "gating the novel helper call should clear the finding"
+
+
+def test_detector_resolves_import_alias_to_canonical_limiter_name():
+    """An aliased import must not let a limiter escape the name vocabulary."""
+    audit = _audit([("api/routes/probe.py", _ALIASED_LIMITER_UNGATED)])
+    assert len(audit.cu_direct) == 1, "aliased limiter escaped the detector entirely"
+    assert audit.findings, "ungated aliased limiter was NOT flagged"
+
+
+def test_detector_follows_interprocedural_helper_chain_for_gate():
+    """An ungated chained call site must not hide behind a gated sibling."""
+    audit = _audit([("api/routes/probe.py", _CHAINED_HELPER_MIXED)])
+    assert any("handler_ungated" in f for f in audit.findings), (
+        "ungated chained helper call site was silently skipped: "
+        + repr(audit.findings)
+    )
 
 
 def test_classifier_distinguishes_current_user_from_other_principals():
