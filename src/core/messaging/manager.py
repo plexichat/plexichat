@@ -752,10 +752,13 @@ class MessagingManager(BaseManager):
         return self._pin_svc.unpin_message(user_id, message_id)
 
     def get_pinned_messages(
-        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        limit: int = 200,
     ) -> List[Message]:
-        """Get all pinned messages in a conversation."""
-        return self._pin_svc.get_pinned_messages(user_id, conversation_id)
+        """Get the most recently pinned messages in a conversation (bounded)."""
+        return self._pin_svc.get_pinned_messages(user_id, conversation_id, limit)
 
     # === Content Filtering ===
 

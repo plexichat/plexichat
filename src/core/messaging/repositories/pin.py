@@ -9,6 +9,14 @@ from .base import BaseRepository
 from src.core.base import SnowflakeID
 
 
+# The pins listing route caps its response at 200 messages. Bound the storage
+# read to the same ceiling so a conversation with a very large pin set cannot
+# make the cold path fetch (and hydrate into Message models) every pin only for
+# the route to discard all but one page. SQLite treats LIMIT -1 as *unlimited*,
+# so clamp explicitly rather than trusting the caller.
+MAX_PIN_FETCH = 200
+
+
 class PinRepository(BaseRepository[PinnedMessage]):
     """Repository for pinned message data access."""
 
@@ -75,14 +83,25 @@ class PinRepository(BaseRepository[PinnedMessage]):
             auto_commit=auto_commit,
         )
 
-    def get_pinned_messages(self, conversation_id: SnowflakeID) -> List[Dict[str, Any]]:
-        """Get all pinned messages in a conversation with message data."""
+    def get_pinned_messages(
+        self,
+        conversation_id: SnowflakeID,
+        limit: int = MAX_PIN_FETCH,
+    ) -> List[Dict[str, Any]]:
+        """Get the most recently pinned messages in a conversation (bounded).
+
+        Ordered by ``pinned_at DESC`` so the cap keeps exactly the rows the
+        listing route would return; the route's own slice stays as a defensive
+        no-op. The participant gate still lives in the service, so bounding the
+        read does not change who may see the rows.
+        """
+        limit = max(1, min(int(limit), MAX_PIN_FETCH))
         return self._fetch_all(
             """SELECT m.*, p.pinned_by, p.pinned_at FROM msg_messages m
                INNER JOIN msg_pinned p ON m.id = p.message_id
                WHERE p.conversation_id = ? AND m.deleted = 0
-               ORDER BY p.pinned_at DESC""",
-            (conversation_id,),
+               ORDER BY p.pinned_at DESC LIMIT ?""",
+            (conversation_id, limit),
         )
 
     def row_to_model(self, row: Dict[str, Any]) -> PinnedMessage:

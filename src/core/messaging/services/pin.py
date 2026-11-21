@@ -5,7 +5,7 @@ Pin service - Business logic for pinned messages.
 from typing import Any, Dict, List, Optional
 
 from ..models import Message
-from ..repositories.pin import PinRepository
+from ..repositories.pin import PinRepository, MAX_PIN_FETCH
 from ..repositories.message import MessageRepository
 from ..exceptions import (
     ConversationAccessDeniedError,
@@ -101,15 +101,18 @@ class PinService(BaseService):
         return True
 
     def get_pinned_messages(
-        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        limit: int = MAX_PIN_FETCH,
     ) -> List[Message]:
-        """Get all pinned messages in a conversation."""
+        """Get the most recently pinned messages in a conversation (bounded)."""
         if not self._participant_svc.is_participant(conversation_id, user_id):
             raise ConversationAccessDeniedError(
                 "Not a participant in this conversation"
             )
 
-        rows = self._repo.get_pinned_messages(conversation_id)
+        rows = self._repo.get_pinned_messages(conversation_id, limit)
 
         messages = []
         for row in rows:
