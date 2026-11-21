@@ -1,15 +1,22 @@
-"""Assigning a member role must not be driven by a bot token.
+"""Member-mutation routes must not be driven by a bot token.
 
 A bot token's ``TokenInfo.user_id`` is its *human owner* (the bot's own id is
-in ``account_id``).  ``assign_role_to_member`` passes ``current_user.user_id``
-straight into ``servers.assign_role``, which treats it as the acting member.
+in ``account_id``).  Three handlers in ``servers.members`` pass
+``current_user.user_id`` straight into a servers operation that treats it as
+the acting member:
+
+* ``assign_role_to_member``   -> ``servers.assign_role``
+* ``remove_role_from_member`` -> ``servers.remove_role``
+* ``update_server_member``    -> ``servers.update_member``
+
 Without an explicit ``require_user_token`` gate a narrow-scope bot credential
 therefore acts as its owner: if that owner manages (or owns) the server, the
-bot can grant privileged roles - a privilege-escalation path.
+bot can grant/revoke privileged roles or rename/mute/timeout members - a
+privilege-escalation path.
 
-These tests verify the gate is present and actually refuses the bot token
-before any backend lookup, while a normal user token still reaches the
-handler. Run with::
+These tests verify the gate is present on all three handlers and actually
+refuses the bot token before any backend lookup, while a normal user token
+still reaches the handler. Run with::
 
     pytest src/tests/security/test_member_role_assignment_bot_token_guard.py -q -n 0
 """
@@ -51,11 +58,21 @@ def _call(method, **kwargs):
     return result
 
 
-# Bot 500 is owned by user 100. Without the guard the handler resolves the
-# owner's identity (user 100) and wields whatever authority that owner has.
+# Bot 500 is owned by user 100. Without the guard the handlers resolve the
+# owner's identity (user 100) and wield whatever authority that owner has.
 _BOT = _token(100, token_type="bot", account_id=500)
 _USER = _token(100, token_type="user")
-_ROUTE_KWARGS = {"server_id": "42", "member_id": "7", "role_id": "9"}
+_ROLE_KWARGS = {"server_id": "42", "member_id": "7", "role_id": "9"}
+# ``payload`` is never read before the gate, so a bare Mock is sufficient.
+_UPDATE_KWARGS = {"server_id": "42", "member_id": "7", "payload": Mock()}
+
+# (handler, route kwargs, backend method the handler would call as the actor)
+_HANDLERS = [
+    (members_routes.assign_role_to_member, _ROLE_KWARGS, "assign_role"),
+    (members_routes.remove_role_from_member, _ROLE_KWARGS, "remove_role"),
+    (members_routes.update_server_member, _UPDATE_KWARGS, "update_member"),
+]
+_HANDLER_IDS = ["assign", "remove", "update"]
 
 
 @pytest.fixture
@@ -70,31 +87,32 @@ def no_backend_lookup(monkeypatch):
     return _unexpected
 
 
-def test_bot_token_refused_before_backend_lookup(no_backend_lookup):
+@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+def test_bot_token_refused_before_backend_lookup(
+    handler, route_kwargs, backend_method, no_backend_lookup
+):
     with pytest.raises(HTTPException) as exc:
-        _call(
-            members_routes.assign_role_to_member,
-            current_user=_BOT,
-            **_ROUTE_KWARGS,
-        )
+        _call(handler, current_user=_BOT, **route_kwargs)
     assert exc.value.status_code == 403
     assert exc.value.detail["error"]["code"] == 403
 
 
-def test_user_token_passes_the_identity_gate(monkeypatch):
+@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+def test_user_token_passes_the_identity_gate(
+    handler, route_kwargs, backend_method, monkeypatch
+):
     """Control: a user token is not rejected by the identity gate."""
     monkeypatch.setattr(api, "get_servers", lambda: None)
     with pytest.raises(HTTPException) as exc:
-        _call(
-            members_routes.assign_role_to_member,
-            current_user=_USER,
-            **_ROUTE_KWARGS,
-        )
+        _call(handler, current_user=_USER, **route_kwargs)
     # It got past the gate to the "servers module unavailable" 500 check.
     assert exc.value.status_code == 500
 
 
-def test_bot_token_does_not_grant_role_as_owner(monkeypatch):
+@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+def test_bot_token_does_not_wield_owner_authority(
+    handler, route_kwargs, backend_method, monkeypatch
+):
     servers = Mock()
     db = Mock()
     db.fetch_one.return_value = {"user_id": 7}
@@ -102,16 +120,13 @@ def test_bot_token_does_not_grant_role_as_owner(monkeypatch):
     monkeypatch.setattr(api, "get_db", lambda: db)
 
     with pytest.raises(HTTPException) as exc:
-        _call(
-            members_routes.assign_role_to_member,
-            current_user=_BOT,
-            **_ROUTE_KWARGS,
-        )
+        _call(handler, current_user=_BOT, **route_kwargs)
     assert exc.value.status_code == 403
-    servers.assign_role.assert_not_called()
+    getattr(servers, backend_method).assert_not_called()
 
 
-def test_handler_source_calls_require_user_token():
+@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+def test_handler_source_calls_require_user_token(handler, route_kwargs, backend_method):
     """Static guard so the runtime checks cannot silently stop covering it."""
-    body = inspect.getsource(members_routes.assign_role_to_member)
+    body = inspect.getsource(handler)
     assert "require_user_token(current_user)" in body

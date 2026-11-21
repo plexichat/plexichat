@@ -310,6 +310,11 @@ async def update_server_member(
     payload: MemberUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> MemberResponse:
+    # A bot token's user_id is its human owner (the bot id lives in
+    # account_id). Passing it to update_member would let a narrow-scope bot
+    # credential wield the owner's server authority - including renaming,
+    # muting/deafening and timing out members - in a server it does not manage.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -589,6 +594,11 @@ async def remove_role_from_member(
     role_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    # A bot token's user_id is its human owner (the bot id lives in
+    # account_id). Passing it to remove_role would let a narrow-scope bot
+    # credential wield the owner's server authority - including revoking
+    # privileged roles - in a server it does not manage.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
