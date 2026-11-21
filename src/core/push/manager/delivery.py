@@ -158,6 +158,31 @@ def _bounded_data(value: Any) -> Dict[str, Any]:
     return bounded
 
 
+def _notification_server_id(data: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Return the server scope carried by a notification push payload.
+
+    Notification payloads include ``server_id`` (stringified by
+    ``stringify_snowflake_ids``). Notification preferences are per-server
+    capable, so the ``mobile_push`` check must resolve the recipient's setting
+    at the same scope the notification was generated for. Looking up only the
+    global row silently discards a per-server ``mobile_push=False`` opt-out:
+    the device still gets a ping the user explicitly turned off for that
+    server. Non-notification push callers omit ``server_id`` and keep the
+    historical global-only behaviour. Unknown/malformed values degrade to a
+    global lookup rather than raising out of the delivery path.
+    """
+    if not data:
+        return None
+    raw = data.get("server_id")
+    if raw is None:
+        return None
+    try:
+        server_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return server_id if server_id > 0 else None
+
+
 def _bounded_unique_users(user_ids, limit: int):
     """Dedupe a bulk audience (first-seen order) and hard-cap it.
 
@@ -235,10 +260,14 @@ class DeliveryMixin(PushManagerBase):
         if not tokens:
             return 0
 
-        # Check user's notification settings
+        # Check user's notification settings at the server scope the payload
+        # originated from. A per-server mobile_push=False must suppress the
+        # device push even when no global settings row exists.
         if self._notifications:
             try:
-                settings = self._notifications.get_notification_settings(user_id)
+                settings = self._notifications.get_notification_settings(
+                    user_id, _notification_server_id(data)
+                )
                 if not settings.mobile_push:
                     return 0
             except Exception as e:
@@ -317,7 +346,9 @@ class DeliveryMixin(PushManagerBase):
         if self._notifications:
             try:
                 settings = await asyncio.to_thread(
-                    self._notifications.get_notification_settings, user_id
+                    self._notifications.get_notification_settings,
+                    user_id,
+                    _notification_server_id(data),
                 )
                 if not settings.mobile_push:
                     return 0
