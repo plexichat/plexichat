@@ -46,7 +46,18 @@ class MemberBanMixin:
             raise BanPurgeNotSupportedError(
                 "delete_message_days (message purge on ban) is not supported; pass 0"
             )
-        if server.owner_id == member_user_id:
+        owner_id = server.owner_id
+        # SECURITY: both ids are authoritative DB values -- owner_id is projected
+        # from the srv_servers row, member_user_id is the target resolved by the
+        # API route. Loose ``==`` let a text/float encoded owner id ("5", 5.9)
+        # compare unequal to the genuine int target, skipping this "owner is
+        # untouchable" rule and letting a moderator ban the server owner.
+        # Fail closed: only a genuine int attests to identity (type() also
+        # rejects bool). A malformed owner/target id cannot prove the target is
+        # NOT the owner, so deny the ban rather than granting the bypass.
+        if type(owner_id) is not int or type(member_user_id) is not int:
+            raise CannotModifyOwnerError("Cannot verify server owner identity")
+        if owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot ban the server owner")
 
         # Require ban permission
@@ -144,8 +155,16 @@ class MemberBanMixin:
         self.manager.require_permission(user_id, server_id, "members.ban")
 
         server = self.manager.get_server(server_id, user_id)
-        is_owner = server is not None and server.owner_id == user_id
-        target_is_owner = server is not None and server.owner_id == banned_user_id
+        owner_id = server.owner_id if server is not None else None
+        # SECURITY: fail-closed owner/target id typing, mirroring ban_member.
+        # A malformed owner or banned-user id could otherwise make the loose
+        # ``==`` below evaluate False and skip the "owner is untouchable" rule.
+        if server is not None and type(owner_id) is not int:
+            raise CannotModifyOwnerError("Cannot verify server owner identity")
+        if type(banned_user_id) is not int:
+            raise CannotModifyOwnerError("Cannot verify target identity")
+        is_owner = server is not None and owner_id == user_id
+        target_is_owner = server is not None and owner_id == banned_user_id
 
         # The owner can never be banned; guard against it regardless.
         if target_is_owner:
