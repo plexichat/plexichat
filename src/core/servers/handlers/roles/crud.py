@@ -268,8 +268,15 @@ class RoleCrudMixin(RoleHandlerProtocol):
             set_columns.append("updated_at")
             set_params.append(now)
             set_clause = ", ".join(f"{col} = ?" for col in set_columns)
-            query = "UPDATE srv_roles SET " + set_clause + " WHERE id = ?"
-            self.db.execute(query, (*set_params, role_id))
+            # Re-assert the position the hierarchy decision was made against at
+            # write time. Without this CAS predicate the read-then-write window
+            # lets a concurrent promotion turn a previously-authorized edit of
+            # a lower role into an edit of a role at/above the actor's rank.
+            query = "UPDATE srv_roles SET " + set_clause + " WHERE id = ? AND position = ?"
+            cursor = self.db.execute(query, (*set_params, role_id, role.position))
+            rowcount = getattr(cursor, "rowcount", None)
+            if isinstance(rowcount, int) and rowcount <= 0:
+                raise RoleHierarchyError("Role changed concurrently, retry")
 
             self.manager._log_audit(
                 role.server_id,
