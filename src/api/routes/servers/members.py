@@ -173,6 +173,66 @@ def _public_identity_map(auth, user_ids) -> dict:
     return result
 
 
+def _require_member_list_access(
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> None:
+    """Live, per-request membership gate for the cached roster response.
+
+    ``get_server_members`` memoizes each viewer's page in the
+    ``server_members_api`` namespace. The only membership check it performs
+    lives inside ``servers_mod.get_members``, which is called inside the cached
+    body -- so a warm hit returns from the ``@cached`` wrapper before that check
+    ever runs. A member removed by a path that does not invalidate this HTTP
+    cache (automod, an admin action, or a bot calling the core manager) kept
+    reading a still-warm 200 roster for the whole TTL.
+
+    FastAPI resolves dependencies *before* entering the endpoint (and thus
+    before the ``@cached`` wrapper reads the cache), so enforcing membership
+    here keeps the gate on every request while the roster fetch stays cached.
+    This does not replace or weaken the in-body check, which still runs on cold
+    reads as defence in depth.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Servers module not available"}},
+        )
+    try:
+        sid = parse_id(server_id, "server ID")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
+    try:
+        member = servers_mod.get_member(sid, current_user.user_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Membership check failed for member-list read of server %s: %s",
+            sid,
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": "Failed to verify server membership",
+                }
+            },
+        ) from exc
+    if not member:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Not a member of this server"}},
+        )
+
+
 @router.get(
     "/{server_id}/members",
     response_model=MemberListResponse,
@@ -195,6 +255,7 @@ def get_server_members(
     limit: int = Query(100, ge=1, le=200),
     after: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
+    _member_gate: None = Depends(_require_member_list_access),
 ) -> MemberListResponse:
     servers_mod = api.get_servers()
     auth = api.get_auth()
