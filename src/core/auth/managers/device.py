@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import utils.logger as logger
 from src.core.database import invalidate_pattern
@@ -7,6 +7,13 @@ from ..models import AuditEventType, Device
 
 
 from .protocol import AuthManagerProtocol
+
+
+# Keep batched lookups inside SQLite's classic bind-parameter ceiling and well
+# within PostgreSQL's. The admin device overview walks up to MAX_OVERVIEW_USERS
+# ids; one bounded IN chunk per batch replaces its former two queries *per
+# user* without changing the generated SQL shape as the user set grows.
+_BULK_IN_CHUNK = 500
 
 
 class DeviceMixin(AuthManagerProtocol):
@@ -22,29 +29,57 @@ class DeviceMixin(AuthManagerProtocol):
                 logger.warning(f"Failed to decrypt {field} for device {row['id']}: {e}")
         return row.get(field)
 
+    def _device_from_row(self, r) -> Device:
+        """Build one Device from a row; shared by the single and bulk paths."""
+        return Device(
+            id=r["id"],
+            user_id=r["user_id"],
+            fingerprint=self._decrypt_device_field(
+                r, "fingerprint", "fingerprint_encrypted"
+            )
+            or "",
+            name=self._decrypt_device_field(r, "name", "name_encrypted"),
+            device_type=self._decrypt_device_field(
+                r, "device_type", "device_type_encrypted"
+            ),
+            trusted=bool(r.get("trusted", 0)),
+            trusted_at=r.get("trusted_at"),
+            first_seen_at=r["first_seen_at"],
+            last_seen_at=r["last_seen_at"],
+        )
+
     def get_devices(self, user_id: int) -> List[Device]:
         rows = self._db.fetch_all(
             "SELECT * FROM auth_devices WHERE user_id = ?", (user_id,)
         )
-        return [
-            Device(
-                id=r["id"],
-                user_id=r["user_id"],
-                fingerprint=self._decrypt_device_field(
-                    r, "fingerprint", "fingerprint_encrypted"
-                )
-                or "",
-                name=self._decrypt_device_field(r, "name", "name_encrypted"),
-                device_type=self._decrypt_device_field(
-                    r, "device_type", "device_type_encrypted"
-                ),
-                trusted=bool(r.get("trusted", 0)),
-                trusted_at=r.get("trusted_at"),
-                first_seen_at=r["first_seen_at"],
-                last_seen_at=r["last_seen_at"],
+        return [self._device_from_row(r) for r in rows]
+
+    def get_devices_bulk(self, user_ids) -> Dict[int, List[Device]]:
+        """Fetch devices for many users in bounded IN chunks.
+
+        Every row is grouped by the ``user_id`` it carries *and* checked
+        against the explicit requested set, so a row belonging to a user
+        outside that set is dropped instead of leaking into another user's
+        group. Live DB reads (no process-local cache) keep this correct across
+        workers: a trust/revoke on another node is visible on the next call.
+        """
+        ids = sorted({int(uid) for uid in user_ids})
+        by_user: Dict[int, List[Device]] = {uid: [] for uid in ids}
+        if not ids:
+            return by_user
+        for start in range(0, len(ids), _BULK_IN_CHUNK):
+            chunk = ids[start : start + _BULK_IN_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                f"SELECT * FROM auth_devices WHERE user_id IN ({placeholders})",
+                tuple(chunk),
             )
-            for r in rows
-        ]
+            for r in rows:
+                uid = int(r["user_id"])
+                if uid not in by_user:
+                    continue  # fail closed: never group an unrequested row
+                by_user[uid].append(self._device_from_row(r))
+        return by_user
 
     def rename_device(self, user_id: int, device_id: int, name: str) -> bool:
         name_encrypted = None

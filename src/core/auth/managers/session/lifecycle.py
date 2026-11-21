@@ -27,6 +27,12 @@ from ...permissions import permissions_from_json
 from ...tokens import create_ws_ticket
 
 
+# Bounded IN chunk for cross-user session reads (see get_sessions_bulk). Under
+# SQLite's classic 999-parameter ceiling and PostgreSQL's limit alike, 500
+# binds per query keeps the admin overview's fan-out constant in the user set.
+_SESSION_BULK_IN_CHUNK = 500
+
+
 class LifecycleMixin(AuthManagerProtocol):
     def _session_expire_hours(
         self,
@@ -641,44 +647,74 @@ class LifecycleMixin(AuthManagerProtocol):
         logger.info("Site-wide session purge: all users logged out")
         return 1
 
+    def _session_from_row(self, r) -> Session:
+        """Build one (live, non-revoked) Session from a row.
+
+        Shared by get_sessions and get_sessions_bulk so batching cannot drift
+        from the single-user path (same fields, same crypto contexts).
+        """
+        ip_address = None
+        if r.get("ip_encrypted"):
+            try:
+                ip_address = self.crypto.decrypt_data(
+                    r["ip_encrypted"], context=str(r["id"])
+                )
+            except Exception:
+                ip_address = "[decryption failed]"
+
+        ua = None
+        if r.get("ua_encrypted"):
+            try:
+                ua = self.crypto.decrypt_data(r["ua_encrypted"], context=str(r["id"]))
+            except Exception:
+                ua = "[decryption failed]"
+
+        return Session(
+            id=r["id"],
+            user_id=r["user_id"],
+            device_id=r["device_id"],
+            ip_address=ip_address,
+            user_agent=ua,
+            created_at=r["created_at"],
+            expires_at=r["expires_at"],
+            last_activity=r["last_activity"],
+            revoked=bool(r["revoked"]),
+        )
+
     def get_sessions(self, user_id: int) -> List[Session]:
         rows = self._db.fetch_all(
             "SELECT * FROM auth_sessions WHERE user_id = ? AND revoked = 0", (user_id,)
         )
-        sessions = []
-        for r in rows:
-            ip_address = None
-            if r.get("ip_encrypted"):
-                try:
-                    ip_address = self.crypto.decrypt_data(
-                        r["ip_encrypted"], context=str(r["id"])
-                    )
-                except Exception:
-                    ip_address = "[decryption failed]"
+        return [self._session_from_row(r) for r in rows]
 
-            ua = None
-            if r.get("ua_encrypted"):
-                try:
-                    ua = self.crypto.decrypt_data(
-                        r["ua_encrypted"], context=str(r["id"])
-                    )
-                except Exception:
-                    ua = "[decryption failed]"
+    def get_sessions_bulk(self, user_ids) -> Dict[int, List[Session]]:
+        """Fetch live sessions for many users in bounded IN chunks.
 
-            sessions.append(
-                Session(
-                    id=r["id"],
-                    user_id=r["user_id"],
-                    device_id=r["device_id"],
-                    ip_address=ip_address,
-                    user_agent=ua,
-                    created_at=r["created_at"],
-                    expires_at=r["expires_at"],
-                    last_activity=r["last_activity"],
-                    revoked=bool(r["revoked"]),
-                )
+        The revoked predicate is repeated in every chunk, and rows are grouped
+        by the row's own ``user_id`` after checking it against the requested
+        set. A caller can therefore only receive sessions for users it asked
+        for; an unexpected row can never be attributed to a different user.
+        No results are cached in-process, so revocations on other workers are
+        reflected on the very next call.
+        """
+        ids = sorted({int(uid) for uid in user_ids})
+        by_user: Dict[int, List[Session]] = {uid: [] for uid in ids}
+        if not ids:
+            return by_user
+        for start in range(0, len(ids), _SESSION_BULK_IN_CHUNK):
+            chunk = ids[start : start + _SESSION_BULK_IN_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._db.fetch_all(
+                "SELECT * FROM auth_sessions "
+                f"WHERE user_id IN ({placeholders}) AND revoked = 0",
+                tuple(chunk),
             )
-        return sessions
+            for r in rows:
+                uid = int(r["user_id"])
+                if uid not in by_user:
+                    continue  # fail closed: never group an unrequested row
+                by_user[uid].append(self._session_from_row(r))
+        return by_user
 
     def revoke_session(self, user_id: int, session_id: int) -> bool:
         cursor = self._db.execute(

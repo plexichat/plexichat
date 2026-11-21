@@ -33,6 +33,39 @@ _DEFAULTS = {
 MAX_OVERVIEW_USERS = 1000
 
 
+def _bulk_lookup(
+    auth_manager: Any, bulk_name: str, single_name: str, user_ids: list
+) -> Dict[int, list]:
+    """Resolve one row set for many users in as few queries as possible.
+
+    The manager's bulk accessor owns the bounded IN chunking and the
+    fail-closed row grouping (a row for a user outside ``user_ids`` is dropped
+    there). We repeat the key check here so a non-conforming manager cannot
+    leak a row into another user's group. If no bulk accessor exists, or it
+    fails, fall back to the original per-user calls rather than silently
+    dropping rows -- an unavailable optimization must never change the data
+    an admin sees.
+    """
+    bulk = getattr(auth_manager, bulk_name, None)
+    if callable(bulk):
+        try:
+            result = bulk(user_ids)
+            if isinstance(result, dict):
+                return {uid: (result.get(uid) or []) for uid in user_ids}
+        except Exception as e:
+            logger.warning(f"Device overview: {bulk_name} failed: {e}")
+
+    single = getattr(auth_manager, single_name)
+    rows: Dict[int, list] = {}
+    for uid in user_ids:
+        try:
+            rows[uid] = single(uid)
+        except Exception as e:
+            logger.warning(f"Device overview: {single_name}({uid}) failed: {e}")
+            rows[uid] = []
+    return rows
+
+
 def _sessions_policy(config: Dict[str, Any]) -> Dict[str, Any]:
     """Return the effective session-duration policy with defaults applied.
 
@@ -131,23 +164,22 @@ def get_device_trust_overview(
         logger.warning(f"Device overview: failed to enumerate users: {e}")
         user_ids = []
 
+    devices_by_user = _bulk_lookup(
+        auth_manager, "get_devices_bulk", "get_devices", user_ids
+    )
+    sessions_by_user = _bulk_lookup(
+        auth_manager, "get_sessions_bulk", "get_sessions", user_ids
+    )
+
     for uid in user_ids:
-        try:
-            devices = auth_manager.get_devices(uid)
-        except Exception as e:
-            logger.warning(f"Device overview: get_devices({uid}) failed: {e}")
-            devices = []
+        devices = devices_by_user.get(uid) or []
 
         # Trust lookup by device id (server-side row), mirroring session.py.
         trusted_by_id: Dict[Any, bool] = {}
         for d in devices:
             trusted_by_id[d.id] = bool(d.trusted)
 
-        try:
-            sessions = auth_manager.get_sessions(uid)
-        except Exception as e:
-            logger.warning(f"Device overview: get_sessions({uid}) failed: {e}")
-            sessions = []
+        sessions = sessions_by_user.get(uid) or []
 
         device_rows = [
             {
