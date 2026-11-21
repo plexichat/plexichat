@@ -25,6 +25,7 @@ import utils.logger as logger
 import src.api as api
 from src.api.lru_cache import LRUCache
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.core.config.snapshot import VersionedConfigSnapshot, file_version
 from src.api.schemas.media import (
     HashReportRequest,
@@ -241,6 +242,9 @@ async def report_content_hash(
     Multiple reports on the same hash may trigger automatic blocking.
     Supports both SHA-256 and perceptual hashes for image similarity detection.
     """
+    # A bot token's ``user_id`` is its human owner. Reject bot credentials
+    # before charging the owner's ``media:hash_report:<id>`` bucket.
+    require_user_token(user)
     from src.core import media
 
     # Per-user throttle and reporter-level dedup run BEFORE any moderation
@@ -692,6 +696,9 @@ async def get_proxied_content(
     rejection) and served to the client so the origin never learns the
     client's address. Results are cached by the media proxy.
     """
+    # A bot token's ``user_id`` is its human owner. Reject bot credentials
+    # before charging the owner's ``media:proxy:user:<id>`` bucket.
+    require_user_token(user)
     if not url or len(url) > 2048:
         raise HTTPException(
             status_code=400,
