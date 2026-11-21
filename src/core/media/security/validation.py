@@ -35,6 +35,15 @@ import utils.config as config
 from src.core.media.security.settings import FileSecuritySettings
 
 
+# defusedxml blocks entity expansion (billion-laughs / XXE) but places no limit
+# on the number of elements a document may contain. A small SVG built from many
+# tiny elements is expanded by the parser into a huge ElementTree, pinning a
+# worker's CPU and RAM (a ~200 KB payload of 200k ``<g/>`` nodes already takes
+# ~20 s and tens of MiB). Bound the element budget and fail closed. Legitimate
+# icons are far below this; keep it generous to avoid false rejections.
+MAX_SVG_ELEMENTS = 10_000
+
+
 # Magic byte signatures for common file types
 MAGIC_SIGNATURES = {
     # Images
@@ -636,6 +645,12 @@ class FileValidator:
                 text = file_data[: 4 * 1024 * 1024].decode("utf-8", errors="replace")
             except Exception:
                 return False, "decode_failed"
+            # Cheap, fail-closed pre-parse guard: every element needs at least
+            # one '<' in well-formed XML, so this over-counts (closing tags,
+            # comments, CDATA) but never under-counts. Reject before the parser
+            # is allowed to allocate a giant tree for the payload.
+            if text.count("<") > MAX_SVG_ELEMENTS * 2:
+                return False, "too_many_elements"
             try:
                 root = _dx_fromstring(text)
             except Exception as parse_exc:
@@ -649,8 +664,12 @@ class FileValidator:
             # attribute that is event-handler (``on*``) or that
             # carries a non-allow-listed URI scheme.
             stack = [root]
+            visited = 0
             while stack:
                 elem = stack.pop()
+                visited += 1
+                if visited > MAX_SVG_ELEMENTS:
+                    return False, "too_many_elements"
                 tag = elem.tag
                 # ElementTree tags are ``{namespace}localname``.
                 if isinstance(tag, str) and tag.startswith("{"):
