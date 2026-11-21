@@ -13,12 +13,14 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, List, Tuple
 
-from src.core.security.hardening import reject_control_characters
+from src.core.security.hardening import (
+    reject_control_characters,
+    strip_control_characters,
+)
 
 MAX_HEADER_NAME_LENGTH = 128
 MAX_HEADER_VALUE_LENGTH = 1024
 _HEADER_TOKEN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 Header = Tuple[bytes, bytes]
 
@@ -94,7 +96,7 @@ def safe_header_value(
     try:
         return validate_header_value(value, field=field, max_length=max_length)
     except HeaderValidationError:
-        clean = _CONTROL.sub("", str(value or ""))[:max_length]
+        clean = strip_control_characters(value)[:max_length]
         return clean if clean else fallback
 
 

@@ -85,6 +85,36 @@ class TestSafeHeaderValue:
     def test_truncates(self):
         assert len(safe_header_value("a" * 5000, max_length=50)) == 50
 
+    @pytest.mark.parametrize(
+        "separator",
+        [
+            "\u0085",  # NEL: a line break for many log shippers and proxies
+            "\u2028",  # Unicode LINE SEPARATOR
+            "\u2029",  # Unicode PARAGRAPH SEPARATOR
+            "\u2066",  # bidi isolate: renders the value as something else
+            "\ufeff",  # BOM
+        ],
+    )
+    def test_fallback_strips_full_control_set(self, separator):
+        """The safe fallback must never return characters the validator rejects.
+
+        ``safe_header_value`` degrades to a stripping fallback when the value
+        is invalid. That fallback used a narrow ``[\\x00-\\x1f\\x7f]`` regex,
+        so a value carrying NEL/U+2028/U+2029/bidi controls passed through as
+        "safe" even though ``validate_header_value`` (and the shared hardening
+        primitive) treat them as header-splitting/spoofing vectors. An ASGI
+        server or downstream proxy that normalises those characters to a
+        newline can then split the header.
+        """
+        with pytest.raises(HeaderValidationError):
+            validate_header_value("ok" + separator + "X-Evil: 1")
+
+        cleaned = safe_header_value("ok" + separator + "X-Evil: 1")
+        assert separator not in cleaned
+        assert cleaned == "okX-Evil: 1"
+        # Whatever the fallback returns must itself satisfy the validator.
+        assert validate_header_value(cleaned) == cleaned
+
 
 class TestValidatedHeaders:
     def test_roundtrip(self):

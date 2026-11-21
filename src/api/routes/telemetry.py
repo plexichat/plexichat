@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from typing import Any, Optional
 import hashlib
 import json
+import re
 
 import utils.config as config
 import utils.logger as logger
@@ -160,22 +161,45 @@ async def submit_response_times(
         return TelemetryResponse(accepted=0, message="Telemetry processing failed")
 
 
+# A CSP report is an attacker-controlled JSON document that is written straight
+# to the application log. Two fields of it are dangerous even after the old
+# length cap: URL-valued fields (``blocked-url`` / ``blocked-uri`` are the URL of
+# the resource that triggered the violation and commonly carry query-string
+# credentials) and any string containing C0/DEL controls (a newline in
+# ``script-sample`` forges an extra log line). The previous sanitizer only
+# matched ``*-uri`` and ``referrer``, so ``blocked-url`` was logged verbatim and
+# no field had its control characters escaped (CWE-117/CWE-532).
+_CSP_URL_KEY_SUFFIXES = ("-uri", "-url")
+_CSP_URL_KEYS = frozenset({"referrer", "source-file", "source_file"})
+_LOG_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _safe_log_string(value: str) -> str:
+    """Cap a log string and escape control characters before it reaches a log."""
+    text = str(value)[:_MAX_CSP_URI_CHARS]
+    return _LOG_CONTROL_RE.sub(lambda match: f"\\x{ord(match.group(0)):02x}", text)
+
+
 def _redact_uri(value: str) -> str:
-    """Strip query strings (which can embed session/access tokens) and cap length."""
-    return str(value).split("?", 1)[0][:_MAX_CSP_URI_CHARS]
+    """Strip query/fragment (which can embed tokens), then make the value log-safe."""
+    return _safe_log_string(str(value).split("#", 1)[0].split("?", 1)[0])
 
 
 def _sanitize_csp_report(report: Any) -> Any:
     """
-    Redact attacker-controlled URIs/referrers before logging: query strings
-    are stripped and every string value is size-capped.
+    Redact attacker-controlled URIs/log-forcing characters before logging.
+
+    URL-bearing fields have their query and fragment stripped; *every* string
+    is length-capped and has C0/DEL controls escaped so one report cannot forge
+    additional log lines. Nested dicts/lists are sanitized recursively.
     """
     if isinstance(report, dict):
         sanitized = {}
         for key, value in report.items():
             lower_key = str(key).lower()
             if isinstance(value, str) and (
-                lower_key.endswith("-uri") or lower_key == "referrer"
+                lower_key in _CSP_URL_KEYS
+                or lower_key.endswith(_CSP_URL_KEY_SUFFIXES)
             ):
                 sanitized[key] = _redact_uri(value)
             else:
@@ -184,7 +208,7 @@ def _sanitize_csp_report(report: Any) -> Any:
     if isinstance(report, list):
         return [_sanitize_csp_report(item) for item in report]
     if isinstance(report, str):
-        return report[:_MAX_CSP_URI_CHARS]
+        return _safe_log_string(report)
     return report
 
 
