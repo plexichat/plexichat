@@ -202,6 +202,16 @@ class CacheOpsMixin(ServerProtocol):
         # from the HTTP one above; a join/kick/ban/leave changes it for every
         # viewer, so drop it here too.
         self._invalidate_roster_caches(server_id)
+        # ``ChannelHandler.get_channels`` memoizes the permission-filtered
+        # channel list with the membership gate *inside* the cached body, so a
+        # warm entry keeps serving a removed member the server's channels for
+        # the whole 30s TTL without re-checking membership. Role mutations drop
+        # this namespace via ``_invalidate_roles_listing_cache``, but core-only
+        # membership writes (kick/ban/leave/temporary reaping, including the
+        # automod/admin/bot callers that never reach the HTTP revocation
+        # helper) rely on this funnel alone. Evict it here so every revocation
+        # closes the stale channel-list access at the core tier too.
+        invalidate_pattern("server_channels:*")
         self._invalidate_permission_caches(server_id, user_id)
 
     def _validate_server_name(self, name: str) -> str:
