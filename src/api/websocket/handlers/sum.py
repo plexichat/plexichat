@@ -131,6 +131,24 @@ class SumHandler:
         if workbook_id is None:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
+        # SUM_OP gates this same replay cursor through ``bounded_int``; keep the
+        # subscribe path on the identical boundary. Bare ``int()`` accepted
+        # Unicode digit homoglyphs (``"٥"`` -> 5), PEP 515 separators (``"1_0"``
+        # -> 10), signs, booleans and values past 2**63-1, and its ValueError on
+        # a 5000-digit token used to fall back to 0 -- silently replaying every
+        # stored operation instead of resuming. Reject malformed cursors with
+        # this opcode's DECODE_ERROR contract, before the subscription is
+        # registered so a refused frame cannot leave a stale subscription.
+        base_revision = 0
+        raw_revision = data.get("base_revision")
+        if raw_revision is not None:
+            try:
+                base_revision = bounded_int(
+                    raw_revision, "base_revision", minimum=0, maximum=2**63 - 1
+                )
+            except (TypeError, ValueError):
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
         try:
             manager = self._manager()
             workbook = manager.get_workbook(int(connection.user_id), workbook_id)
@@ -160,12 +178,6 @@ class SumHandler:
             )
             return None, None, None
         logger.debug(f"User {connection.user_id} subscribed to workbook {workbook_id}")
-
-        base_revision = 0
-        try:
-            base_revision = max(0, int(data.get("base_revision") or 0))
-        except (TypeError, ValueError):
-            base_revision = 0
 
         # Replay persisted operations after the client's last acknowledged
         # revision so a late joiner can catch up without refetching cells.
