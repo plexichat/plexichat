@@ -109,6 +109,13 @@ DM_EVENT_INTENT_MAP = {
     EventType.MESSAGE_CREATE: GatewayIntent.DIRECT_MESSAGES,
     EventType.MESSAGE_UPDATE: GatewayIntent.DIRECT_MESSAGES,
     EventType.MESSAGE_DELETE: GatewayIntent.DIRECT_MESSAGES,
+    # Bulk delete is the DM twin of MESSAGE_DELETE: emit_message_delete_bulk
+    # emits it with ``server_id=None`` for DM channels, so without this entry
+    # the router classified it as a DM event, found no DM intent, and delivered
+    # it unconditionally -- leaking the ids of messages deleted in a private
+    # conversation to a client that never requested DIRECT_MESSAGES. Its guild
+    # gate is unchanged (GUILD_MESSAGE_EVENTS -> GUILD_MESSAGES).
+    EventType.MESSAGE_DELETE_BULK: GatewayIntent.DIRECT_MESSAGES,
     EventType.MESSAGE_REACTION_ADD: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE_EMOJI: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
