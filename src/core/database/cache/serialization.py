@@ -10,7 +10,7 @@ import hashlib
 import dataclasses
 import typing
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import utils.logger as logger
 
@@ -181,6 +181,51 @@ def generate_cache_key(prefix: str, *args, **kwargs) -> str:
     return ":".join(key_parts)
 
 
+# ``ensure_serializable`` runs on every cache *write*. For a cached dataclass it
+# called ``dataclasses.fields(obj)`` (which allocates a fresh tuple of ``Field``
+# objects on every call) and rebuilt the ``module.Name`` ``__type__`` tag with
+# an f-string, even though both depend only on the class definition, never on
+# the instance. Both are pure, process-local metadata keyed by the class object
+# -- bounded by the finite set of cached model types, never by user input -- so
+# compute them once per class and reuse. This is the serialize-side counterpart
+# to the reconstruct-side enum-field memo below; it touches a different hot path
+# (cache_set/ensure_serializable, not cache_get/reconstruct_object).
+_serialized_dataclass_fields_cache: Dict[type, Tuple[str, ...]] = {}
+_serialized_type_tag_cache: Dict[type, str] = {}
+
+
+def _serialized_dataclass_fields(cls: type) -> Tuple[str, ...]:
+    """Return the field names to serialize for ``cls`` (InitVars excluded).
+
+    The ``dataclasses.fields`` tuple and the per-field ``InitVar`` checks are
+    computed once per class; every later serialization just iterates names.
+    """
+    fields = _serialized_dataclass_fields_cache.get(cls)
+    if fields is None:
+        fields = tuple(
+            f.name
+            for f in dataclasses.fields(cls)
+            if not isinstance(f.type, dataclasses.InitVar)
+        )
+        _serialized_dataclass_fields_cache[cls] = fields
+    return fields
+
+
+def _serialized_type_tag(cls: type) -> str:
+    """Return the ``module.Name`` ``__type__`` tag for ``cls``, computed once."""
+    tag = _serialized_type_tag_cache.get(cls)
+    if tag is None:
+        tag = f"{cls.__module__}.{cls.__name__}"
+        _serialized_type_tag_cache[cls] = tag
+    return tag
+
+
+def reset_serialization_meta_cache_internal() -> None:
+    """Test helper: drop memoized serialize-side metadata."""
+    _serialized_dataclass_fields_cache.clear()
+    _serialized_type_tag_cache.clear()
+
+
 def ensure_serializable(obj: Any) -> Any:
     """Ensure an object is JSON serializable, recursively converting complex types."""
     if obj is None or isinstance(obj, (bool, int, float, str)):
@@ -193,14 +238,12 @@ def ensure_serializable(obj: Any) -> Any:
         # Recurse field-by-field instead of ``asdict`` so nested dataclass
         # instances are serialized (and tagged) as objects rather than being
         # flattened into plain dicts and losing their type on reconstruction.
+        # Field names (InitVars excluded) and the type tag are class-level
+        # metadata memoized once instead of rebuilt on every cache write.
         data = {}
-        for field in dataclasses.fields(obj):
-            if isinstance(field.type, dataclasses.InitVar):
-                # InitVar pseudo-fields are not stored as instance
-                # attributes and are not part of the serialized state.
-                continue
-            data[field.name] = ensure_serializable(getattr(obj, field.name))
-        data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        for name in _serialized_dataclass_fields(type(obj)):
+            data[name] = ensure_serializable(getattr(obj, name))
+        data["__type__"] = _serialized_type_tag(type(obj))
         return data
 
     if isinstance(obj, (list, tuple, set)):
@@ -213,15 +256,13 @@ def ensure_serializable(obj: Any) -> Any:
     if callable(model_dump):
         data = ensure_serializable(model_dump())
         if isinstance(data, dict):
-            obj_type = type(obj)
-            data["__type__"] = f"{obj_type.__module__}.{obj_type.__name__}"
+            data["__type__"] = _serialized_type_tag(type(obj))
         return data
     dict_method = getattr(obj, "dict", None)
     if callable(dict_method):
         data = ensure_serializable(dict_method())
         if isinstance(data, dict):
-            obj_type = type(obj)
-            data["__type__"] = f"{obj_type.__module__}.{obj_type.__name__}"
+            data["__type__"] = _serialized_type_tag(type(obj))
         return data
 
     if hasattr(obj, "__str__") and not isinstance(obj, (dict, list, tuple)):
