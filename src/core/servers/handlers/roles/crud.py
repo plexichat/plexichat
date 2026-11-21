@@ -350,6 +350,13 @@ class RoleCrudMixin(RoleHandlerProtocol):
             (position, self.manager._get_timestamp(), role_id),
         )
 
+        # Position is the tie-breaker for channel overrides (a higher role's
+        # deny wins an allow from a lower role) and for role hierarchy. Moving
+        # a role therefore changes resolved permissions for every member who
+        # holds it, so retire the server's cached snapshots and decision epochs
+        # or the old ordering keeps serving stale grants/denials until TTL.
+        self.manager._invalidate_server_permission_caches(role.server_id)
+
         result = self.get_role(role_id, user_id)
         assert result is not None
         return result
