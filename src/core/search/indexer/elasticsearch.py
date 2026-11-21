@@ -23,7 +23,7 @@ from ..models import (
 )
 from ..exceptions import SearchIndexError, SearchBackendError
 from src.core.security.hardening import HardeningViolation
-from src.utils.outbound import urlopen
+from src.utils.outbound import pinned_urlopen
 
 
 class ElasticsearchIndexer(BaseIndexer):
@@ -128,17 +128,12 @@ class ElasticsearchIndexer(BaseIndexer):
         if self._http_client is None:
             try:
                 url = self._validate_http_url(f"{self._hosts[0]}{path}")
-                from src.utils.security import URLValidator
-
-                URLValidator().validate_url_for_request(url)
                 data = json.dumps(body).encode() if body else None
                 headers = {"Content-Type": "application/json"}
 
-                req = urllib.request.Request(
-                    url, data=data, headers=headers, method=method
-                )
-
-                with urlopen(req, timeout=30) as response:
+                with pinned_urlopen(
+                    url, timeout=30, method=method, data=data, headers=headers
+                ) as response:
                     return json.loads(response.read().decode())
 
             except urllib.error.HTTPError as e:
@@ -320,17 +315,14 @@ class ElasticsearchIndexer(BaseIndexer):
             import urllib.request
 
             url = self._validate_http_url(f"{self._hosts[0]}/_bulk")
-            from src.utils.security import URLValidator
 
-            URLValidator().validate_url_for_request(url)
-            req = urllib.request.Request(
+            with pinned_urlopen(
                 url,
+                timeout=60,
+                method="POST",
                 data=bulk_data.encode(),
                 headers={"Content-Type": "application/x-ndjson"},
-                method="POST",
-            )
-
-            with urlopen(req, timeout=60) as response:
+            ) as response:
                 result = json.loads(response.read().decode())
 
             if result.get("errors"):

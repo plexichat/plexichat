@@ -23,7 +23,7 @@ from ..models import (
 )
 from ..exceptions import SearchIndexError, SearchBackendError
 from src.core.security.hardening import HardeningViolation
-from src.utils.outbound import urlopen
+from src.utils.outbound import pinned_urlopen
 
 
 class MeilisearchIndexer(BaseIndexer):
@@ -145,18 +145,15 @@ class MeilisearchIndexer(BaseIndexer):
             return self._http_client.request(method, path, body)
         try:
             url = self._validate_http_url(f"{self._host}{path}")
-            from src.utils.security import URLValidator
-
-            URLValidator().validate_url_for_request(url)
             data = json.dumps(body).encode() if body else None
             headers = {"Content-Type": "application/json"}
 
             if self._api_key:
                 headers["Authorization"] = f"Bearer {self._api_key}"
 
-            req = urllib.request.Request(url, data=data, headers=headers, method=method)
-
-            with urlopen(req, timeout=30) as response:
+            with pinned_urlopen(
+                url, timeout=30, method=method, data=data, headers=headers
+            ) as response:
                 response_data = response.read().decode()
                 if response_data:
                     return json.loads(response_data)
