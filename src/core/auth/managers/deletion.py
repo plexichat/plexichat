@@ -87,6 +87,24 @@ class DeletionMixin(AuthManagerProtocol):
 
         invalidate_pattern(f"user_profile:{user_id}")
         invalidate_pattern(f"user_data:*{user_id}*")
+        # A force purge is immediate; unlike the reaper's frozen-account
+        # harvest (whose sessions were revoked at scheduling time) a
+        # bearer/cookie token used moments before this call still has a warm
+        # ``token_verify:*`` verdict carrying the deleted user's id, permissions
+        # and account flags. Without dropping it, the credential keeps
+        # authenticating from cache after the account and session rows are gone.
+        # Clear the auth/authorization caches so the next verify does a fresh
+        # lookup, finds no session row and fails closed.
+        try:
+            from src.core.auth.privilege_cache import invalidate_privilege_caches
+
+            invalidate_privilege_caches()
+        except Exception as cache_exc:  # pragma: no cover - best effort
+            logger.warning(
+                "Force purge: auth privilege cache invalidation failed for %s: %s",
+                user_id,
+                cache_exc,
+            )
 
         logger.info(
             f"Account scheduled for deletion: user_id={user_id}, scheduled_at={now}, deletion_at={deletion_at}"
