@@ -88,6 +88,10 @@ EVENT_INTENT_MAP = {
     EventType.MESSAGE_REACTION_REMOVE: GatewayIntent.GUILD_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE_ALL: GatewayIntent.GUILD_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE_EMOJI: GatewayIntent.GUILD_MESSAGE_REACTIONS,
+    # A poll is attached to a message, so poll changes are message activity.
+    # Without this entry a guild-scoped POLL_UPDATE fell through the map to
+    # "no intent required" and reached sockets with no messaging intent.
+    EventType.POLL_UPDATE: GatewayIntent.GUILD_MESSAGES,
     EventType.TYPING_START: GatewayIntent.GUILD_MESSAGE_TYPING,
     # TYPING_STOP is the other half of the same gateway pair (the gateway
     # dispatches it from ``clear_all_typing`` and the presence handler), so
@@ -116,6 +120,11 @@ DM_EVENT_INTENT_MAP = {
     # conversation to a client that never requested DIRECT_MESSAGES. Its guild
     # gate is unchanged (GUILD_MESSAGE_EVENTS -> GUILD_MESSAGES).
     EventType.MESSAGE_DELETE_BULK: GatewayIntent.DIRECT_MESSAGES,
+    # emit_poll_update stamps a channel_id but never a server_id, so every
+    # poll update is DM-classified by the router. With no DM entry it hit the
+    # default-allow and disclosed a conversation's poll/message activity to
+    # connections that never requested DIRECT_MESSAGES.
+    EventType.POLL_UPDATE: GatewayIntent.DIRECT_MESSAGES,
     EventType.MESSAGE_REACTION_ADD: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     # DM twin of the guild map's REMOVE_ALL entry: ``clear_reactions`` emits
