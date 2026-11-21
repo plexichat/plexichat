@@ -9,6 +9,7 @@ numeric too. These tests pin both halves of that contract over HTTP-shaped
 calls to the real handlers.
 """
 
+import json
 from typing import cast
 
 import pytest
@@ -25,12 +26,14 @@ class _FakeClient:
 
 class _FakeRequest:
     def __init__(self, body=None):
-        self._body = body or {}
+        # read_body_capped() returns a cached _body verbatim; the route then
+        # calls .decode()/json.loads() on it, so cache real JSON bytes.
+        self._body = json.dumps(body or {}).encode("utf-8")
         self.client = _FakeClient()
         self.headers = {}
 
     async def json(self):
-        return self._body
+        return json.loads(self._body)
 
 
 class _FakeManager:
@@ -147,7 +150,7 @@ async def test_admin_create_connection_keeps_rowid_numeric(monkeypatch):
             {
                 "remote_instance_id": "remote:example",
                 "remote_url": "https://remote.example",
-                "shared_key": "sekret",
+                "shared_key": "a-strong-shared-key-value-1234567890",
             }
         ),
     )

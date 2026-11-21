@@ -14,6 +14,7 @@ from .utils import (
 )
 from src.api.request_guards import read_body_capped
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
+from src.core.plexijoin.validation import validate_shared_key
 import utils.logger as logger
 
 router = APIRouter()
@@ -323,6 +324,14 @@ async def create_connection(request: Request):
                     }
                 },
             )
+
+        # The operator-supplied shared key is the HMAC signing key for every
+        # federation envelope on this connection. The manager's validator only
+        # shape-checks imported keys (``require_strong=False``) to preserve
+        # legacy deployments, so enforce the generated-key strength floor here
+        # at the one caller-supplied entry point. HardeningViolation subclasses
+        # ValueError and is turned into a clean 400 by the handler below.
+        shared_key = validate_shared_key(shared_key, require_strong=True)
 
         manager = _get_plexijoin_manager(request)
 
