@@ -20,6 +20,7 @@ from src.api.schemas.messages import (
     TranscriptExportStatusResponse,
 )
 from src.api.schemas.common import ErrorResponse
+from src.api.routes.users.helpers import require_user_token
 from .helpers import require_snowflake
 
 router = APIRouter(tags=["Messages"])
@@ -135,6 +136,11 @@ async def request_transcript_export(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> TranscriptExportResponse:
     """Request a chat transcript export for a channel."""
+    # A bot token's ``user_id`` is its human owner, and this handler stores the
+    # export under that id (and gates later reads/downloads on it). Transcript
+    # export is an owner-scoped, human-only feature: reject bot credentials
+    # before they can create an export in the owner's name.
+    require_user_token(current_user)
     msg_manager = api.get_messaging()
     servers_mod = api.get_servers()
 
@@ -391,6 +397,10 @@ async def get_export_status(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> TranscriptExportStatusResponse:
     """Get the status of a transcript export request."""
+    # ``status["user_id"] == current_user.user_id`` below is the ownership
+    # gate. For a bot credential ``user_id`` is the owner, so without this
+    # guard a bot passes the gate and reads the owner's private export status.
+    require_user_token(current_user)
     require_snowflake(channel_id, "channel_id", "Invalid channel ID")
     export_id = _validate_export_id(export_id)
     try:
@@ -454,6 +464,10 @@ async def download_transcript_export(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Download a completed transcript export."""
+    # The file path is resolved with ``current_user.user_id`` and the same
+    # value is used as the ownership gate. For a bot that is the owner, so a
+    # bot credential could otherwise download the owner's private transcript.
+    require_user_token(current_user)
     require_snowflake(channel_id, "channel_id", "Invalid channel ID")
     export_id = _validate_export_id(export_id)
     try:
