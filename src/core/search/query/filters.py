@@ -166,12 +166,20 @@ class FilterProcessor:
         if identifier in self._user_cache:
             return self._user_cache[identifier]
 
+        # Numeric identifiers must pass the same ASCII-only, snowflake-bounded
+        # gate as every other id in the API. A bare ``int()`` accepted Unicode
+        # decimal homoglyphs (``"٤٢"``), PEP 515 separators (``"1_0"``),
+        # negatives and values past 2**63-1, so a single filter token could be
+        # read as a different id by this processor than by the storage/client
+        # layers that use the shared parser. Rejected tokens fall through to
+        # the (parameterised) username lookup below.
         try:
-            user_id = int(identifier)
+            user_id = parse_id(identifier, "user_id")
+        except HardeningViolation:
+            pass
+        else:
             self._user_cache[identifier] = user_id
             return user_id
-        except ValueError:
-            pass
 
         if self._db:
             row = self._db.fetch_one(
