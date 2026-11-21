@@ -129,16 +129,26 @@ class ReactionOpsMixin(ReactionProtocol):
                 self._db.rollback()
                 raise ReactionExistsError("You have already reacted with this emoji")
 
-            unique_count = self._get_unique_emoji_count(message_id)
-            # NOTE: this is a MESSAGE-wide lookup, not a per-user one -- it
+            # All three quota gates below read the same ``message_id`` slice of
+            # react_reactions. Fold them into one conditional-aggregate pass
+            # instead of scanning the rows three separate times (message-wide
+            # distinct count, "is this emoji already on the message", and this
+            # user's distinct count).
+            quota = self._db.fetch_one(
+                """SELECT COUNT(DISTINCT emoji) AS unique_count,
+                          MAX(CASE WHEN emoji = ? THEN 1 ELSE 0 END) AS emoji_on_message,
+                          COUNT(DISTINCT CASE WHEN user_id = ? THEN emoji END) AS user_unique_count
+                   FROM react_reactions WHERE message_id = ?""",
+                (normalized_emoji, user_id, message_id),
+            )
+            unique_count = quota["unique_count"] if quota else 0
+            # NOTE: this is a MESSAGE-wide flag, not a per-user one -- it
             # answers "is this emoji already present on the message at all?".
             # It is the right gate for the message-level cap below (only a
             # genuinely new distinct emoji consumes a message slot), but it
             # must never gate the per-user cap.
-            emoji_on_message = self._db.fetch_one(
-                "SELECT 1 FROM react_reactions WHERE message_id = ? AND emoji = ?",
-                (message_id, normalized_emoji),
-            )
+            emoji_on_message = bool(quota["emoji_on_message"]) if quota else False
+            user_unique_count = quota["user_unique_count"] if quota else 0
 
             if not emoji_on_message and unique_count >= max_reactions:
                 self._db.rollback()
@@ -147,11 +157,6 @@ class ReactionOpsMixin(ReactionProtocol):
                     max_reactions,
                     unique_count,
                 )
-
-            user_unique_count = self._db.fetch_one(
-                "SELECT count(DISTINCT emoji) as count FROM react_reactions WHERE message_id = ? AND user_id = ?",
-                (message_id, user_id),
-            )["count"]
 
             # The per-user cap counts THIS user's distinct emoji, so it must be
             # evaluated unconditionally. It previously reused the
