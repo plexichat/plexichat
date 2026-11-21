@@ -14,6 +14,12 @@ from ..models import Poll
 from .base import PollManagerBase
 
 
+# A single expiry sweep can span thousands of polls. Bound both the ``IN``
+# lists and the executemany batches so a burst of expiries cannot blow a
+# driver's bind-variable limit or hold an unbounded parameter list in memory.
+_SWEEP_BATCH_SIZE = 400
+
+
 class LifecycleMixin(PollManagerBase):
     """Close, delete, and expire polls and broadcast the updates."""
 
@@ -117,9 +123,26 @@ class LifecycleMixin(PollManagerBase):
             (now,),
         )
 
+        if not rows:
+            return 0
+
+        # The old loop called _end_poll() once per row: one UPDATE *and one
+        # full poll-read-cache clear* per poll, so a sweep over N expired
+        # polls issued N writes and N whole-cache invalidations. Both collapse
+        # to a bounded batch write and a single clear below.
+        ended_at = bound_timestamp(now, "poll ended_at")
+        ended_ids = self._end_expired_poll_batch(rows, ended_at)
+        # clear() drops every viewer's cached body; doing it once per poll was
+        # pure overhead (the first call already invalidated everything).
+        self._invalidate_poll_read_cache()
+
         count = 0
         for row in rows:
-            self._end_poll(row["id"])
+            if int(row["id"]) not in ended_ids:
+                # Another worker transitioned this poll between our SELECT
+                # and the guarded UPDATE. It owns the POLL_UPDATE event, so
+                # this sweep must not emit a second one or count it as ours.
+                continue
             try:
                 channel_id = None
                 if self._messaging:
@@ -146,6 +169,36 @@ class LifecycleMixin(PollManagerBase):
             logger.debug(f"Ended {count} expired polls")
 
         return count
+
+    def _end_expired_poll_batch(self, rows, ended_at: SnowflakeID) -> set:
+        """End every still-open poll in ``rows``; return the ids we ended.
+
+        The ``ended_at IS NULL`` predicate makes the write multi-node safe:
+        two workers sweeping the same due rows cannot both transition one.
+        A bounded re-read afterwards tells us which ids are still open, so
+        only the worker that actually changed a row emits its event and
+        counts it. A miss is always recomputed from the authoritative table,
+        never assumed from the earlier SELECT.
+        """
+        ids = [int(row["id"]) for row in rows]
+        params = [(ended_at, poll_id) for poll_id in ids]
+        for start in range(0, len(params), _SWEEP_BATCH_SIZE):
+            self._db.execute_many(
+                "UPDATE poll_polls SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+                params[start : start + _SWEEP_BATCH_SIZE],
+            )
+
+        still_open = set()
+        for start in range(0, len(ids), _SWEEP_BATCH_SIZE):
+            chunk = ids[start : start + _SWEEP_BATCH_SIZE]
+            placeholders = ",".join("?" for _ in chunk)
+            open_rows = self._db.fetch_all(
+                "SELECT id FROM poll_polls "
+                f"WHERE ended_at IS NULL AND id IN ({placeholders})",
+                tuple(chunk),
+            )
+            still_open.update(int(row["id"]) for row in open_rows)
+        return set(ids) - still_open
 
     def _end_poll(self, poll_id: SnowflakeID):
         """Mark a poll as ended."""

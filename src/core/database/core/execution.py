@@ -424,6 +424,30 @@ class DatabaseExecutionMixin:
         if self.transaction_depth > 0:
             self._validate_transaction_state()
 
+        # A batched write is still a write. execute() clears the query-result
+        # cache for INSERT/UPDATE/... so a later SELECT cannot be served a
+        # pre-write snapshot; executemany must do the same. Without this, a
+        # sweep that updates rows via execute_many leaves every cached SELECT
+        # over those rows stale until its short TTL expires -- e.g. the poll
+        # expiry sweep would re-select the same "still open" rows forever.
+        # One clear per batch is strictly cheaper than the N clears the old
+        # per-row execute() loop paid.
+        upper_query = query.strip().upper()
+        if any(
+            upper_query.startswith(word)
+            for word in [
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "REPLACE",
+                "DROP",
+                "CREATE",
+                "ALTER",
+            ]
+        ):
+            with self._query_cache_lock:
+                self._query_cache.clear()
+
         # executemany always binds parameters; reuse the prepared text just as
         # execute() does (the whole batch shares one conversion).
         query_conv = self._prepare_query(query, True)
