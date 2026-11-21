@@ -27,7 +27,17 @@ class UserSearchMixin(SearchManagerBase):
         fails closed (returns False) rather than widening visibility.
         """
         try:
-            return int(user_id) in {int(uid) for uid in server_members}
+            # SECURITY: a srv_members.user_id vouches for the caller's scope
+            # only while it is a genuine integer id. Coercing a malformed
+            # value with int() (e.g. "05"/5.9/True) would let a corrupt row
+            # admit a caller who is not really a member, turning a guessed
+            # server id into a roster-enumeration oracle. The try/except only
+            # caught wholly non-numeric values, not coercible-malformed ones.
+            # Fail closed: only exact integer ids from live rows may satisfy
+            # the gate.
+            return int(user_id) in {
+                uid for uid in server_members if type(uid) is int
+            }
         except (TypeError, ValueError):
             return False
 

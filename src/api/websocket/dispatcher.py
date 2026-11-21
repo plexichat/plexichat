@@ -628,7 +628,16 @@ class GatewayDispatcher:
             )
             return set()
         try:
-            return {int(uid) for uid in servers_module.get_member_user_ids(server_id)}
+            # SECURITY: a live roster value vouches for a member only while it
+            # is a genuine integer id. Coercing a malformed value with int()
+            # (e.g. "05"->5, True->1, 5.9->5) would admit a non-member to the
+            # broadcast allow set. Fail closed: only exact int ids from the
+            # authoritative projection may enter the audience.
+            return {
+                uid
+                for uid in servers_module.get_member_user_ids(server_id)
+                if type(uid) is int
+            }
         except Exception as e:
             logger.warning(
                 f"GatewayDispatcher: failed to list members of server {server_id}: {e}"
@@ -800,7 +809,15 @@ class GatewayDispatcher:
         try:
             from src.core.messaging import get_participant_ids
 
-            participant_ids = {int(pid) for pid in get_participant_ids(conversation_id)}
+            # SECURITY: only genuine integer ids from the live participant rows
+            # may form the authoritative audience; coercing a malformed value
+            # ("05"/5.9/True) would keep a non-member connection in the fan-out
+            # and leak private ratchet metadata. Fail closed.
+            participant_ids = {
+                pid
+                for pid in get_participant_ids(conversation_id)
+                if type(pid) is int
+            }
         except Exception as e:
             logger.warning(
                 f"Failed to resolve participants for RATCHET_UPDATE "
