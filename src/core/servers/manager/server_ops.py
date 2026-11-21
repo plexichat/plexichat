@@ -71,6 +71,13 @@ class ServerOpsMixin(ServerProtocol):
         # Enforce the per-user server limit. A finite license "max_servers"
         # value overrides the configured "max_servers_per_user"; free tier is
         # not restricted (preserves prior behaviour).
+        #
+        # Fail CLOSED when the license gate cannot be evaluated: an unavailable
+        # licensing module or an uninitialised license manager used to be
+        # swallowed by ``except: pass``, which dropped *every* cap and let a
+        # single owner create unlimited servers (bypassing a paid license's
+        # ``max_servers`` ceiling). Fall back to the configured baseline cap.
+        _server_cap = -1
         try:
             from utils.licensing import (
                 get_license_limit,
@@ -78,25 +85,29 @@ class ServerOpsMixin(ServerProtocol):
                 is_limit_enforced,
             )
 
-            _server_cap = -1
             if not is_free_tier():
                 _server_cap = get_license_limit("max_servers", default=-1)
                 if not is_limit_enforced(_server_cap):
                     _server_cap = int(self._config.get("max_servers_per_user", 100))
-            if is_limit_enforced(_server_cap):
-                _row = self._db.fetch_one(
-                    "SELECT COUNT(*) AS c FROM srv_servers WHERE owner_id = ?",
-                    (owner_id,),
-                )
-                _owned = int(_row["c"]) if _row else 0
-                if _owned >= _server_cap:
-                    raise ServerLimitReachedError(
-                        f"Server limit reached: you may create at most "
-                        f"{_server_cap} servers.",
-                        _server_cap,
-                    )
         except (RuntimeError, ImportError):
-            pass
+            # Licensing is unavailable/misconfigured: do not grant an unbounded
+            # allowance. Enforce the operator-configured per-user cap instead.
+            _server_cap = int(self._config.get("max_servers_per_user", 100))
+
+        # ``is_limit_enforced(int)`` is exactly ``value >= 0``; by this point
+        # ``_server_cap`` is always an int (license value or configured cap).
+        if _server_cap >= 0:
+            _row = self._db.fetch_one(
+                "SELECT COUNT(*) AS c FROM srv_servers WHERE owner_id = ?",
+                (owner_id,),
+            )
+            _owned = int(_row["c"]) if _row else 0
+            if _owned >= _server_cap:
+                raise ServerLimitReachedError(
+                    f"Server limit reached: you may create at most "
+                    f"{_server_cap} servers.",
+                    _server_cap,
+                )
 
         description = validate_server_description(description)
 
