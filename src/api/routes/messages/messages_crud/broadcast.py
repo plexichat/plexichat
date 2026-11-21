@@ -131,8 +131,8 @@ def _resolve_recipients(
         # Reuse the router's two-way block filter: a blocked party must not
         # receive the actor's message events just because this emitter hands
         # the dispatcher an explicit user_ids list instead of routing by
-        # server_id. Fails open only when the relationship source is absent,
-        # matching the router's own behaviour.
+        # server_id. The helper keeps the audience when no relationship source
+        # is wired (matching the router), but a failing filter must fail closed.
         if user_ids:
             try:
                 from src.core.events.gateway_emit import (
@@ -142,6 +142,10 @@ def _resolve_recipients(
                 user_ids = _dm_participants_without_blocks(user_ids, actor_id)
             except Exception as filter_error:
                 logger.debug(f"DM block filter unavailable: {filter_error}")
+                # The block filter is authoritative for an explicit audience.
+                # Without it no participant is proven safe, so deliver to
+                # nobody rather than widening back to the unfiltered list.
+                user_ids = []
 
     return user_ids, server_id
 
