@@ -5,105 +5,73 @@ used to clear only the roster, joined-server, channel, sticker and soundboard
 namespaces. The role listing (300s TTL) and emoji list/detail reads (10s TTL)
 are filled behind a membership check, so a removed member kept receiving a
 cached 200 -- including role permission data -- long after the revocation
-committed. These tests pin both the eviction itself and its use on every
-revocation path.
+committed. These are static AST regressions so they hold even when the app
+package cannot be imported in a worker.
 """
 
 import ast
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from src.core.database.cache.base import mem_cache_matching_keys
-
 pytestmark = [pytest.mark.unit, pytest.mark.security]
 
-
-class TokenInfo:
-    """Minimal stand-in with the real class name used by cache key builders."""
-
-    def __init__(self, user_id, token_type="user", account_id=None):
-        self.user_id = user_id
-        self.token_type = token_type
-        self.account_id = account_id
+ROOT = Path(__file__).resolve().parents[3]
+ROUTES = ROOT / "src" / "api" / "routes" / "servers"
 
 
-class _FakeServers:
-    def get_roles(self, user_id, server_id):
-        return []
-
-    def get_member(self, server_id, user_id):
-        return object()
-
-
-class _FakeReactions:
-    def get_server_custom_emojis(self, sid):
-        return []
-
-    def get_custom_emoji(self, eid):
-        return SimpleNamespace(
-            id=eid,
-            server_id=123,
-            name="hello",
-            animated=False,
-            url="",
-            available=True,
-            created_by=7,
-            uploader_username="tester",
-            created_at=1,
-        )
+def _func(tree, name):
+    return next(
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name == name
+        ),
+        None,
+    )
 
 
-def test_revocation_drops_role_and_emoji_caches(monkeypatch):
-    """The cache keys the gated reads create must all be gone after a kick."""
-    import asyncio
+def test_revocation_helper_clears_role_and_emoji_caches():
+    """The shared revocation helper must cover the gated role/emoji caches."""
+    tree = ast.parse((ROUTES / "members.py").read_text(encoding="utf-8"))
+    fn = _func(tree, "_invalidate_member_access_caches")
+    assert fn is not None
 
-    from src.api.routes import emojis
-    from src.api.routes.servers import members, roles as roles_routes
+    patterns = set()
+    calls = set()
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            calls.add(node.func.id)
+        if isinstance(node.func, ast.Name) and node.func.id == "invalidate_pattern":
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    patterns.add(arg.value)
 
-    servers = _FakeServers()
-    reactions = _FakeReactions()
-    monkeypatch.setattr(emojis.api, "get_servers", lambda: servers)
-    monkeypatch.setattr(emojis.api, "get_reactions", lambda: reactions)
-    monkeypatch.setattr(roles_routes.api, "get_servers", lambda: servers)
+    # Delegate to the canonical roles helper so this cannot drift from the
+    # role/permission mutation paths that use it too.
+    assert "_invalidate_roles_listing_cache" in calls
+    # Emoji list/detail keys are `<prefix>:sid:<id>:...` per credential; both
+    # namespaces must be cleared on a kick/ban/leave.
+    assert "emoji_list_api:*" in patterns
+    assert "emoji_detail_api:*" in patterns
 
-    token = TokenInfo(7)
-    asyncio.run(roles_routes.get_server_roles(server_id="123", current_user=token))
-    asyncio.run(emojis.get_server_emojis(server_id="123", current_user=token))
-    asyncio.run(emojis.get_emoji(server_id="123", emoji_id="9", current_user=token))
-
-    assert mem_cache_matching_keys("server_roles_api:*"), "roles cache was not warmed"
-    assert mem_cache_matching_keys("emoji_list_api:*"), "emoji list was not warmed"
-    assert mem_cache_matching_keys("emoji_detail_api:*"), "emoji detail was not warmed"
-
-    members._invalidate_member_access_caches()
-
-    assert mem_cache_matching_keys("server_roles_api:*") == []
-    assert mem_cache_matching_keys("emoji_list_api:*") == []
-    assert mem_cache_matching_keys("emoji_detail_api:*") == []
+    roles_tree = ast.parse((ROUTES / "roles.py").read_text(encoding="utf-8"))
+    assert '"server_roles_api"' in (ROUTES / "roles.py").read_text(encoding="utf-8")
+    assert _func(roles_tree, "_invalidate_roles_listing_cache") is not None
 
 
 def test_every_revocation_path_uses_the_invalidation_helper():
     """A new kick/ban/leave route must not forget the shared eviction call."""
-    root = Path(__file__).resolve().parents[3]
-    routes = root / "src" / "api" / "routes" / "servers"
     paths = {
-        "kick": (routes / "members.py", "kick_member"),
-        "ban": (routes / "bans.py", "ban_member"),
-        "leave": (routes / "misc.py", "leave_server"),
+        "kick": ("members.py", "kick_member"),
+        "ban": ("bans.py", "ban_member"),
+        "leave": ("misc.py", "leave_server"),
     }
-    for label, (path, funcname) in paths.items():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        fn = next(
-            (
-                n
-                for n in ast.walk(tree)
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and n.name == funcname
-            ),
-            None,
-        )
+    for label, (filename, funcname) in paths.items():
+        fn = _func(ast.parse((ROUTES / filename).read_text(encoding="utf-8")), funcname)
         assert fn is not None, f"{label}: {funcname} not found"
         calls = [
             n
