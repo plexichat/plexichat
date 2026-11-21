@@ -564,11 +564,17 @@ class OpenAIWhisperProvider(TranscriptionProvider):
                 self._config.get("openai_connect_timeout", 10) or 10
             )
             read_timeout = float(self._config.get("openai_read_timeout", 600) or 600)
+            # Refuse redirects at the transport: requests follows them by
+            # default, which would let a 3xx from the (validated) endpoint
+            # steer the connection to an internal address such as the cloud
+            # metadata service and replay the multipart recording body there.
+            # This mirrors the no-redirect policy in src.utils.outbound.
             response = requests.post(
                 self._api_url,
                 files=form,
                 headers=headers,
                 timeout=(connect_timeout, read_timeout),
+                allow_redirects=False,
             )
 
         if response.status_code != 200:
@@ -844,7 +850,16 @@ class AzureSpeechProvider(TranscriptionProvider):
                 "diarizationEnabled": self._wants_diarize(opts),
             },
         }
-        create = requests.post(base_url, headers=headers, json=definition, timeout=60)
+        # A 3xx must not redirect this request (and the
+        # Ocp-Apim-Subscription-Key header, which requests does not strip on a
+        # cross-host redirect) to a host the SSRF gate never approved.
+        create = requests.post(
+            base_url,
+            headers=headers,
+            json=definition,
+            timeout=60,
+            allow_redirects=False,
+        )
         if create.status_code not in (200, 201):
             raise RuntimeError(
                 f"Azure transcription create failed: HTTP {create.status_code} "
@@ -865,7 +880,10 @@ class AzureSpeechProvider(TranscriptionProvider):
 
         files_url = None
         for _ in range(60):
-            status = requests.get(status_url, headers=headers, timeout=60)
+            # Same no-redirect policy as the create call above.
+            status = requests.get(
+                status_url, headers=headers, timeout=60, allow_redirects=False
+            )
             if status.status_code != 200:
                 raise RuntimeError(
                     f"Azure status poll failed: HTTP {status.status_code}"
