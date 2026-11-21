@@ -290,11 +290,25 @@ class OnboardingManager:
             # low-ranked moderator holding onboarding.manage could whitelist a
             # role above their own rank and self-assign it through onboarding,
             # bypassing the role hierarchy entirely.
-            from ..permission_utils import can_manage_role
+            #
+            # Rank alone is not enough. ``assign_roles_from_whitelist`` is the
+            # only role-grant path that skips ``check_permissions_grantable``:
+            # the whitelist *is* the authorization. A moderator who holds
+            # onboarding.manage but not roles.manage could otherwise whitelist a
+            # role carrying roles.manage (positioned below their own, so the rank
+            # gate passes), complete the step themselves and self-assign it --
+            # gaining a permission they cannot grant by any other route. Require
+            # the step author to possess every permission the whitelisted roles
+            # carry, mirroring the grantability rule the normal assign/create/
+            # update paths already enforce.
+            from ..permission_utils import can_manage_role, check_permissions_grantable
 
             server = self._server_manager.get_server(server_id, user_id)
             is_owner = server is not None and server.owner_id == user_id
             user_roles = self._server_manager._get_member_role_rows(server_id, user_id)
+            creator_permissions = self._server_manager.get_permissions(
+                user_id, server_id
+            )
 
             # Whitelist validation used to call ``get_role`` once per option;
             # each call issued a role read plus a membership read, so a full
@@ -320,6 +334,20 @@ class OnboardingManager:
                     raise OnboardingError(
                         f"Cannot offer role {role_id} at or above your own rank"
                     )
+                # The self-service assign path hands out whatever the role
+                # carries, so a whitelist author must hold those grants. This
+                # closes the gap where a moderator with only onboarding.manage
+                # could self-assign a lower-ranked role that grants powers they
+                # do not have (roles.manage, members.manage_roles, ...).
+                role_permissions = role["permissions"]
+                if isinstance(role_permissions, str):
+                    try:
+                        role_permissions = (
+                            json.loads(role_permissions) if role_permissions else {}
+                        )
+                    except (TypeError, ValueError):
+                        raise OnboardingError(f"Role {role_id} has invalid permissions")
+                check_permissions_grantable(creator_permissions, role_permissions)
 
         elif step_type == OnboardingStepType.VISIT_CHANNEL:
             channel_id = options.get("channel_id")
