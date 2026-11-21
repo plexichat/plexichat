@@ -115,6 +115,15 @@ class _ResolutionEntry:
     size: int
 
 
+@dataclass
+class _PreviewFlight:
+    """One shared outcome for concurrent identical URL resolutions."""
+
+    event: threading.Event
+    metadata: Optional[PreviewMetadata] = None
+    error: Optional[BaseException] = None
+
+
 class ResolutionCache:
     """Thread-safe, bounded, short-TTL cache of resolved preview metadata.
 
@@ -315,6 +324,19 @@ class LinkPreviewService:
             max_entries=self._config["resolution_cache_max_entries"],
             max_bytes=self._config["resolution_cache_max_bytes"],
         )
+
+        # Bounded in-flight registry for concurrent identical resolutions. The
+        # resolution cache absorbs *sequential* repeats, but a burst of requests
+        # for the same cold URL used to each pay for a full remote fetch + parse
+        # + image proxy. One leader resolves; the rest wait and share its result.
+        # The key is the normalized URL (never a user id): every caller has
+        # already cleared the per-request SSRF gate and rate limiter for that
+        # same URL, and results are handed out detached, so no user can observe
+        # or poison another's resolution. The cap bounds waiter state.
+        self._flights: Dict[str, _PreviewFlight] = {}
+        self._flights_lock = threading.Lock()
+        self._max_inflight_resolutions = 64
+        self._flight_stats = {"led": 0, "joined": 0, "rejected": 0, "peak": 0}
 
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration with defaults."""
@@ -917,6 +939,77 @@ class LinkPreviewService:
                 )
                 return cached.metadata
 
+        # Both caches missed. Coalesce concurrent identical resolutions so a
+        # burst for the same cold URL pays for one remote fetch/parse/proxy.
+        # Every caller above has already consumed its own rate-limit budget and
+        # cleared the SSRF gate for this exact URL, so sharing the pure-derived
+        # preview metadata cannot bypass either check. Waiters get a detached
+        # copy, and the registry is capped so hostile distinct-URL floods cannot
+        # pin unbounded waiter state.
+        flight: Optional[_PreviewFlight] = None
+        leader = False
+        with self._flights_lock:
+            # A forced refresh must never ride a flight started before it.
+            existing = None if skip_cache else self._flights.get(key)
+            if existing is not None:
+                flight = existing
+                self._flight_stats["joined"] += 1
+            elif len(self._flights) >= self._max_inflight_resolutions:
+                # At the bound: resolve independently instead of registering.
+                self._flight_stats["rejected"] += 1
+                leader = True
+            else:
+                flight = _PreviewFlight(threading.Event())
+                self._flights[key] = flight
+                leader = True
+                self._flight_stats["led"] += 1
+                self._flight_stats["peak"] = max(
+                    self._flight_stats["peak"], len(self._flights)
+                )
+
+        if not leader:
+            assert flight is not None
+            # The leader cleared the gate with the same validated URL. Only
+            # successful results are published; a failure is re-raised to every
+            # waiter but never cached, so a later request can retry cleanly.
+            flight.event.wait()
+            if flight.error is not None:
+                raise flight.error
+            assert flight.metadata is not None
+            return _clone_preview_metadata(flight.metadata)
+
+        try:
+            metadata = self._resolve_preview(
+                url, key, validated_url, hostname, resolved_ip
+            )
+        except BaseException as exc:
+            if flight is not None:
+                with self._flights_lock:
+                    flight.error = exc
+                    if self._flights.get(key) is flight:
+                        self._flights.pop(key, None)
+                flight.event.set()
+            raise
+
+        if flight is not None:
+            with self._flights_lock:
+                # Store a detached copy so a later mutation of the leader's
+                # returned object cannot race a waiter's clone.
+                flight.metadata = _clone_preview_metadata(metadata)
+                if self._flights.get(key) is flight:
+                    self._flights.pop(key, None)
+            flight.event.set()
+        return metadata
+
+    def _resolve_preview(
+        self,
+        url: str,
+        key: str,
+        validated_url: str,
+        hostname: str,
+        resolved_ip: str,
+    ) -> PreviewMetadata:
+        """Perform the expensive, cache-miss resolution (leader path only)."""
         # Fetch with secure redirect handling
         html, final_url, content_type = self._fetch_with_redirects(
             validated_url, hostname, resolved_ip
@@ -959,6 +1052,13 @@ class LinkPreviewService:
 
         logger.debug(f"Generated preview for: {url}")
         return metadata
+
+    def resolution_inflight_stats(self) -> Dict[str, Any]:
+        """Expose in-flight coalescing counters for observability and tests."""
+        with self._flights_lock:
+            result = dict(self._flight_stats)
+            result["inflight"] = len(self._flights)
+            return result
 
     def resolution_cache_stats(self) -> Dict[str, Any]:
         """Expose resolution-cache counters for observability and tests."""
