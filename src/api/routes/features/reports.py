@@ -16,6 +16,7 @@ from src.core.security.hardening import (
     reject_control_characters,
     require_http_url,
 )
+from src.core.security.hardening.text import strip_control_characters
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.api.routes.users.helpers import require_user_token
 from .common import (
@@ -275,6 +276,28 @@ MAX_DETAILS_LENGTH = 2000
 MAX_RESOLUTION_LENGTH = 2000
 MAX_EVIDENCE_URLS = 5
 MAX_EVIDENCE_URL_LENGTH = 2048
+# Plaintext preview of the reported message copied into the moderation queue.
+MAX_MESSAGE_CONTENT_PREVIEW = 500
+
+
+def _safe_message_content(content) -> Optional[str]:
+    """Return a bounded, control-free preview of a reported message.
+
+    ``message_content`` is persisted in the reports table and later rendered in
+    moderator/admin UIs and log lines. The plain report route sanitises this
+    field through ``_bounded_report_field`` (which rejects control characters);
+    the enhanced route previously sliced the raw message content instead, so a
+    reported message containing a C0 control (e.g. ESC / NUL), a C1 or Unicode
+    NEL line break, or a U+202E bidi override was stored verbatim. That lets a
+    reporter forge a line in a moderation log or disguise a URL/name when the
+    row is rendered to a moderator -- the exact parser differential the shared
+    hardening gate exists to close. Strip the same character set, then bound the
+    preview so a single report cannot stuff an arbitrarily large body here.
+    """
+    if not isinstance(content, str) or not content:
+        return None
+    cleaned = strip_control_characters(content)
+    return cleaned[:MAX_MESSAGE_CONTENT_PREVIEW] or None
 
 
 def _bounded_text(value, field: str, maximum: int) -> Optional[str]:
@@ -483,7 +506,7 @@ async def submit_enhanced_report(
         # REP-3: reporters may not report their own content
         if reported_user_id == current_user.user_id:
             raise_bad_request("You cannot report your own message")
-        message_content = msg.content[:500] if msg.content else None
+        message_content = _safe_message_content(msg.content)
     elif body.target_type == "user":
         reported_user_id = target_id
         # REP-4: the reported user must actually exist
