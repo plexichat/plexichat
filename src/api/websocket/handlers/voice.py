@@ -74,6 +74,34 @@ def _clamp_volume(raw: Any) -> float:
     return max(0.0, min(volume, 1.0))
 
 
+def _exclude_blocked_voice_recipients(actor_id: int, recipients: List[int]) -> List[int]:
+    """Drop recipients with a two-way block relationship to ``actor_id``.
+
+    Voice state and speaking frames are published with an *explicit* recipient
+    list, so the event router's DM block filter never sees them. Channel viewers
+    are resolved from ``channels.view`` alone and a blocked pair can still share
+    a server/voice channel; without this gate a user who blocked the speaker --
+    or whom the speaker blocked -- keeps receiving that speaker's voice state
+    and speaking frames. ``get_all_blocked_ids`` is the authoritative two-way
+    block set. A failed lookup fails closed (withhold the audience); an absent
+    relationship module keeps the audience, matching the DM/private-thread
+    audience helpers.
+    """
+    if not recipients:
+        return recipients
+    import src.api as api
+
+    relationships = api.get_relationships()
+    if not relationships:
+        return recipients
+    try:
+        blocked_ids = {int(x) for x in relationships.get_all_blocked_ids(actor_id)}
+    except Exception as e:
+        logger.debug(f"voice audience block lookup failed: {e}")
+        return []
+    return [uid for uid in recipients if int(uid) not in blocked_ids]
+
+
 class VoiceHandler:
     """Handles voice-related opcodes."""
 
@@ -724,7 +752,12 @@ class VoiceHandler:
     def _get_typing_recipient_ids(
         self, user_id: int, channel_id: int, server_id: int, include_self: bool = False
     ) -> List[int]:
-        """Return only members who can still view a channel."""
+        """Return channel viewers, minus anyone blocked with the actor.
+
+        The two-way block gate is applied here, on the single audience shared
+        by the voice-state and speaking dispatches, so neither frame can reach
+        a blocked participant merely for sharing the voice channel.
+        """
         if not self._servers:
             return []
 
@@ -741,4 +774,4 @@ class VoiceHandler:
                 logger.debug(f"voice state visibility check failed: {member_error}")
                 continue
 
-        return visible_user_ids
+        return _exclude_blocked_voice_recipients(user_id, visible_user_ids)
