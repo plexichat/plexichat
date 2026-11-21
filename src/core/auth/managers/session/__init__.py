@@ -9,11 +9,14 @@ working unchanged.
 
 from .lifecycle import LifecycleMixin
 from .login import LoginMixin
+from .rotation import RotationMixin
 from .tickets import TicketMixin
 from .verification import VerificationMixin
 
 
-class SessionMixin(LoginMixin, VerificationMixin, TicketMixin, LifecycleMixin):
+class SessionMixin(
+    LoginMixin, VerificationMixin, TicketMixin, LifecycleMixin, RotationMixin
+):
     """Compose the session mixins into the class ``AuthManager`` inherits."""
 
 

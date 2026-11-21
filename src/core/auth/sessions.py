@@ -83,6 +83,11 @@ def revoke_session(user_id: int, session_id: int) -> bool:
     return _get_auth_manager().get_instance().revoke_session(user_id, session_id)
 
 
+def rotate_session_id(user_id: int, session_id: int) -> Session:
+    """Revoke ``session_id`` and mint a fresh session (new id + new secret)."""
+    return _get_auth_manager().get_instance().rotate_session_id(user_id, session_id)
+
+
 def revoke_sessions_bulk(
     user_id: int,
     session_ids: List[int],
@@ -148,6 +153,7 @@ __all__ = [
     "logout_all_users",
     "get_sessions",
     "revoke_session",
+    "rotate_session_id",
     "revoke_sessions_bulk",
     "create_ws_ticket_for_session",
     "schedule_account_deletion",

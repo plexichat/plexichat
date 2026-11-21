@@ -390,7 +390,9 @@ async def enable_2fa(
 )
 @(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def confirm_2fa_setup(
-    body: TwoFactorConfirmRequest, current_user: TokenInfo = Depends(get_current_user)
+    body: TwoFactorConfirmRequest,
+    response: Response = None,  # type: ignore[assignment]  # injected by FastAPI
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     require_user_token(current_user)
     auth = api.get_auth()
@@ -453,6 +455,17 @@ async def confirm_2fa_setup(
 
     if success:
         logger.info(f"2FA confirmed and enabled for user {current_user.user_id}")
+        # Privilege transition (password-only -> 2FA): rotate the session id.
+        # The session that just proved possession of the TOTP code was minted
+        # BEFORE 2FA existed, so it may be a bearer an attacker already knows;
+        # keeping that id alive would let a fixated/stolen pre-2FA token ride
+        # the newly enabled second factor. Revoke it and hand the legitimate
+        # user a brand-new session (new id + secret) via a fresh Set-Cookie.
+        rotated = auth.rotate_session_id(
+            current_user.user_id, current_user.session_id
+        )
+        if response is not None:
+            set_session_cookie(response, rotated.token, session_expiry_seconds(rotated))
         return SuccessResponse(success=True, message=None)
     else:
         logger.warning(
@@ -479,7 +492,9 @@ async def confirm_2fa_setup(
 )
 @(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def disable_2fa(
-    body: TwoFactorDisableRequest, current_user: TokenInfo = Depends(get_current_user)
+    body: TwoFactorDisableRequest,
+    response: Response = None,  # type: ignore[assignment]  # injected by FastAPI
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     require_user_token(current_user)
     auth = api.get_auth()
@@ -512,6 +527,14 @@ async def disable_2fa(
             except_session_id=current_user.session_id,
         )
         logger.info(f"2FA disabled for user {current_user.user_id}")
+        # Disabling 2FA is also a privilege transition: the preserved current
+        # session was minted under the old (2FA) policy and must not keep its id
+        # across the switch. Rotate it and re-issue the HttpOnly cookie.
+        rotated = auth.rotate_session_id(
+            current_user.user_id, current_user.session_id
+        )
+        if response is not None:
+            set_session_cookie(response, rotated.token, session_expiry_seconds(rotated))
         return SuccessResponse(success=True, message=None)
     except InvalidCredentialsError:
         logger.warning(
