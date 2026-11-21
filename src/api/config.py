@@ -103,6 +103,19 @@ def _build_api_config() -> APIConfig:
 
     # SECURITY: Validate CORS origins - reject wildcards unless explicitly allowed
     cors_origins = api_conf.get("cors_origins", [])
+    # Normalise the allowlist to literal strings BEFORE it reaches Starlette's
+    # CORSMiddleware. That middleware tests ``origin in allow_origins``; when
+    # the config value is a scalar string (a realistic YAML shorthand, already
+    # accepted by the CSRF and error-response CORS helpers) the membership test
+    # becomes a SUBSTRING match. A configured ``https://good.example`` would
+    # then also accept/reflect ``https://good`` with credentials. Non-string
+    # entries are dropped so a malformed allowlist fails closed.
+    if isinstance(cors_origins, str):
+        cors_origins = [cors_origins]
+    elif isinstance(cors_origins, (list, tuple)):
+        cors_origins = [o for o in cors_origins if isinstance(o, str) and o]
+    else:
+        cors_origins = []
     # Fallback to safe explicit origins if the config omitted them entirely
     # (an empty/None list would otherwise fail closed and break the browser
     # client, which is served from a different origin than the API).
