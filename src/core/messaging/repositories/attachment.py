@@ -9,6 +9,11 @@ from .base import BaseRepository
 from src.core.base import SnowflakeID
 from src.utils.encryption import decrypt_data
 
+# Bound bulk write batches so one request cannot hold an unbounded in-memory
+# list or exceed SQLite/Postgres bind-parameter limits. Matches the sibling
+# repositories' chunk size.
+_MAX_BULK_CHUNK = 500
+
 
 class AttachmentRepository(BaseRepository[Attachment]):
     """Repository for attachment data access."""
@@ -55,7 +60,16 @@ class AttachmentRepository(BaseRepository[Attachment]):
         attachments: List[Dict[str, Any]],
         auto_commit: bool = True,
     ) -> None:
-        """Create multiple attachments in batch."""
+        """Create multiple attachments in batch.
+
+        The old loop issued one ``INSERT`` (and statement round-trip) per
+        attachment, so a multi-attachment message grew linearly in row count.
+        The rows are now folded into bounded ``executemany`` chunks: N
+        statements become ``ceil(N / _MAX_BULK_CHUNK)`` calls. The SQL text,
+        column order, plain (non-``OR IGNORE``) conflict semantics, optional
+        field handling and the explicit transaction boundary are unchanged --
+        a duplicate primary key still raises and rolls the whole batch back.
+        """
         if not attachments:
             return
         normalized_attachments = []
@@ -74,12 +88,13 @@ class AttachmentRepository(BaseRepository[Attachment]):
         if not in_trans:
             self.begin_transaction()
 
+        query = """INSERT INTO msg_attachments 
+                   (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata, checksum)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
         try:
-            for att in normalized_attachments:
-                self._execute(
-                    """INSERT INTO msg_attachments 
-                       (id, message_id, filename, content_type, size, url, url_encrypted, created_at, metadata, checksum)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            for start in range(0, len(normalized_attachments), _MAX_BULK_CHUNK):
+                chunk = normalized_attachments[start : start + _MAX_BULK_CHUNK]
+                data = [
                     (
                         att["id"],
                         att["message_id"],
@@ -91,9 +106,10 @@ class AttachmentRepository(BaseRepository[Attachment]):
                         att["created_at"],
                         self._json_dumps(att.get("metadata")),
                         att.get("checksum"),
-                    ),
-                    auto_commit=False,
-                )
+                    )
+                    for att in chunk
+                ]
+                self._db.execute_many(query, data, auto_commit=False)
             if auto_commit and not in_trans:
                 self.commit()
         except Exception:
