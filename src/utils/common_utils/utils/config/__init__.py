@@ -26,7 +26,12 @@ _setup_called = False
 # list inherits defaults); for an allowlist that is a fail-open widening - an
 # operator who narrows the list silently gets the broader defaults back. The
 # keys below are restored verbatim from the raw config file after merge.
-_EXPLICIT_ALLOWLIST_PATHS = (("api", "cors_origins"),)
+_EXPLICIT_ALLOWLIST_PATHS = (
+    ("api", "cors_origins"),
+    # URL-preview scheme gate (SSRF): an operator narrowing to https-only must
+    # not have http silently re-added by the deep merge.
+    ("embeds", "url_preview", "allowed_schemes"),
+)
 
 
 def _apply_explicit_allowlists(instance: ConfigLoader) -> None:
@@ -72,9 +77,7 @@ def _apply_explicit_allowlists(instance: ConfigLoader) -> None:
             if not isinstance(node, list):
                 continue
             explicit = [
-                resolve(item)
-                if isinstance(item, str) and callable(resolve)
-                else item
+                resolve(item) if isinstance(item, str) and callable(resolve) else item
                 for item in node
             ]
             parent: Any = merged
