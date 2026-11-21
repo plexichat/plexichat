@@ -49,7 +49,7 @@ class _RecordingDB:
         self.queries.append((" ".join(query.split()), tuple(params or ())))
         # Return only rows for the authorized server ids (WHERE server_id IN),
         # ordered like the endpoint's ORDER BY created_at DESC.
-        server_ids = set(params[: -1]) if params else set()
+        server_ids = set(params[:-1]) if params else set()
         rows = [row for row in self._rows if row["server_id"] in server_ids]
         return sorted(rows, key=lambda r: r["created_at"], reverse=True)
 
@@ -215,13 +215,14 @@ async def test_no_cross_user_leak_via_other_users_server():
 
 # --- Resolver-level parity (the real PermissionOpsMixin.get_permissions_bulk) ---
 
+
 class _ResolverDB:
     """Minimal fake of the owner/member/role tables used by get_permissions_bulk."""
 
     def __init__(self, owners, members, roles):
-        self.owners = owners          # server_id -> owner_id
-        self.members = members        # (server_id, user_id) -> member_id
-        self.roles = roles            # member_id -> list[JSON permission str]
+        self.owners = owners  # server_id -> owner_id
+        self.members = members  # (server_id, user_id) -> member_id
+        self.roles = roles  # member_id -> list[JSON permission str]
         self.member_server = {mid: sid for (sid, _uid), mid in members.items()}
         self.calls = 0
 

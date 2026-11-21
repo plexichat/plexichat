@@ -491,9 +491,7 @@ class ReactionOpsMixin(ReactionProtocol):
         )
         return self._cached_reaction_read(key, _load_user_reactions)
 
-    def _accessible_reaction_message_ids(
-        self, user_id: int, message_ids: List[int]
-    ):
+    def _accessible_reaction_message_ids(self, user_id: int, message_ids: List[int]):
         """Live authorization gate for a batch reaction read.
 
         One bounded query resolves which of the requested messages this viewer

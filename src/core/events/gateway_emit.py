@@ -268,6 +268,26 @@ def _known_private_thread_members(channel_id: Optional[int]) -> Optional[List[in
     return None
 
 
+def _module_is_live(module: Any) -> bool:
+    """True when *module* exists **and** its backing store is initialized.
+
+    The ``core`` packages are importable long before ``setup()`` runs, so a
+    truthy module proves nothing: every lookup on an uninitialized one raises
+    ``Module not initialized``. Callers that treat a module as an audience
+    source must fall back to their no-source path for it, rather than read the
+    failure as an authoritative empty answer.
+    """
+    if module is None:
+        return False
+    guard = getattr(module, "is_setup", None)
+    if callable(guard):
+        try:
+            return bool(guard())
+        except Exception:
+            return False
+    return True
+
+
 def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> List[int]:
     """Drop DM participants who have a block relationship with the actor.
 
@@ -295,7 +315,11 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
         relationships = api.get_relationships()
     except Exception:
         relationships = None
-    if relationships is None:
+    if not _module_is_live(relationships):
+        # No relationship store at all (module absent, or imported but never
+        # set up): there are no block rows to apply, so the audience is kept --
+        # the same fallback the router uses. Only a *live* store whose lookup
+        # fails is treated as unknowable and fails closed further down.
         return list(participants)
 
     def _as_id(value: Any) -> Optional[int]:
@@ -328,8 +352,7 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
     if callable(bulk_lookup):
         try:
             blocked_by_id = {
-                int(uid): values
-                for uid, values in bulk_lookup(participant_ids).items()
+                int(uid): values for uid, values in bulk_lookup(participant_ids).items()
             }
         except Exception as e:
             logger.debug(f"bulk blocked-id lookup failed for DM audience: {e}")
@@ -429,6 +452,15 @@ def resolve_channel_event_recipients(
     except Exception:
         servers = None
         messaging = None
+        relationships = None
+
+    # An imported-but-uninitialized module has no store to read. Treat it as
+    # absent so a DM audience is not silenced by a lookup that could only fail.
+    if not _module_is_live(servers):
+        servers = None
+    if not _module_is_live(messaging):
+        messaging = None
+    if not _module_is_live(relationships):
         relationships = None
 
     cache_parts = (

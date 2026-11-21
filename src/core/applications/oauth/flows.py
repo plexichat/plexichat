@@ -349,9 +349,7 @@ class OAuth2Flow:
             ) from exc
         if allowed_uris:
             try:
-                redirect_uri = require_exact_redirect_match(
-                    redirect_uri, allowed_uris
-                )
+                redirect_uri = require_exact_redirect_match(redirect_uri, allowed_uris)
             except HardeningViolation as exc:
                 raise InvalidRedirectUriError(str(exc)) from exc
         scopes = self._require_scopes_for_app(

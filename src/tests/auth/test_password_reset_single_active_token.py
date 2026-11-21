@@ -32,7 +32,9 @@ class _CapturingSender:
         return True
 
     def tokens(self):
-        return [m.group(1) for body in self.bodies for m in [_TOKEN_RE.search(body)] if m]
+        return [
+            m.group(1) for body in self.bodies for m in [_TOKEN_RE.search(body)] if m
+        ]
 
 
 def _register(auth_manager):
@@ -121,7 +123,14 @@ def test_successful_reset_retires_sibling_tokens(db, auth_manager):
         "INSERT INTO auth_email_tokens "
         "(id, user_id, token_hash, token_type, created_at, expires_at, used) "
         "VALUES (?, ?, ?, ?, ?, ?, 0)",
-        (sibling_id, user.id, hash_token(secret), "reset_password", now_ms, now_ms + 3600000),
+        (
+            sibling_id,
+            user.id,
+            hash_token(secret),
+            "reset_password",
+            now_ms,
+            now_ms + 3600000,
+        ),
     )
     sibling = f"email.{sibling_id}.{secret}"
 

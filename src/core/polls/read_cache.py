@@ -27,7 +27,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Hashable, Optional
+from typing import Any, Hashable
 
 
 def _value_size(value: Any) -> int:

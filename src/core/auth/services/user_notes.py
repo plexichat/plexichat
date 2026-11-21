@@ -184,9 +184,7 @@ class UserNotesService:
         """
         kwargs = {} if chunk_size is None else {"chunk_size": chunk_size}
         rows = self._repo.get_many(user_id, target_user_ids, **kwargs)
-        return {
-            target_id: self._note_from_row(row) for target_id, row in rows.items()
-        }
+        return {target_id: self._note_from_row(row) for target_id, row in rows.items()}
 
     def get_all_notes(self, user_id: SnowflakeID) -> List[Dict[str, Any]]:
         """

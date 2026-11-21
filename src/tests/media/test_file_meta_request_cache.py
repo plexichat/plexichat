@@ -160,9 +160,7 @@ def test_scan_status_is_never_served_from_cache(media_manager, db, test_user):
     )
 
     assert media_manager.get_file(result.file_id).scan_status is ScanStatus.CLEAN
-    assert (
-        media_manager.get_file_by_filename(stored).scan_status is ScanStatus.CLEAN
-    )
+    assert media_manager.get_file_by_filename(stored).scan_status is ScanStatus.CLEAN
 
 
 @pytest.mark.media

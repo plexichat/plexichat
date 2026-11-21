@@ -44,9 +44,7 @@ class TestSendDmBlockFailClosed:
 
         # Simulate the optional relationships module failing to initialise.
         # The block row is still authoritative in the database.
-        monkeypatch.setattr(
-            send_service, "_get_relationships_module", lambda: None
-        )
+        monkeypatch.setattr(send_service, "_get_relationships_module", lambda: None)
 
         with pytest.raises(ConversationAccessDeniedError):
             messaging_manager.send_message(user1.id, dm.id, "still talking")
@@ -58,9 +56,7 @@ class TestSendDmBlockFailClosed:
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
-        monkeypatch.setattr(
-            send_service, "_get_relationships_module", lambda: None
-        )
+        monkeypatch.setattr(send_service, "_get_relationships_module", lambda: None)
 
         msg = messaging_manager.send_message(user1.id, dm.id, "hello")
         assert msg is not None
@@ -81,9 +77,7 @@ class TestSendDmBlockFailClosed:
                 raise RuntimeError("database unavailable")
             return real_fetch_one(query, *args, **kwargs)
 
-        monkeypatch.setattr(
-            send_service, "_get_relationships_module", lambda: None
-        )
+        monkeypatch.setattr(send_service, "_get_relationships_module", lambda: None)
         monkeypatch.setattr(messaging_manager._db, "fetch_one", _broken_fetch_one)
 
         with pytest.raises(ConversationAccessDeniedError):

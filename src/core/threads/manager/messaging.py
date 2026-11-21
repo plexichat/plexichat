@@ -54,14 +54,10 @@ def _v3_interval_ids(rows) -> set:
     interval_ids = set()
     for row in rows:
         content = row.get("content")
-        if not isinstance(content, str) or not content.startswith(
-            _RATCHET_WIRE_PREFIX
-        ):
+        if not isinstance(content, str) or not content.startswith(_RATCHET_WIRE_PREFIX):
             continue
         try:
-            interval_ids.add(
-                int(content[len(_RATCHET_WIRE_PREFIX) :].split(":", 1)[0])
-            )
+            interval_ids.add(int(content[len(_RATCHET_WIRE_PREFIX) :].split(":", 1)[0]))
         except (ValueError, IndexError):
             # Malformed envelope: leave it to decrypt_message to fail (and
             # be logged) in the normal per-message path.

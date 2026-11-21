@@ -39,11 +39,7 @@ HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "opti
 
 
 def _is_id_or_cursor(name: str) -> bool:
-    return (
-        name == "id"
-        or name.endswith("_id")
-        or name in {"cursor", "after", "before"}
-    )
+    return name == "id" or name.endswith("_id") or name in {"cursor", "after", "before"}
 
 
 def _annotation_is_str(annotation) -> bool:
@@ -114,7 +110,9 @@ def _scan_tree():
     scanned = []
     for relative in HARDENED_SERVER_ID_MODULES:
         tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-        scanned.append((relative, _bare_int_on_param_violations(tree), _parse_id_calls(tree)))
+        scanned.append(
+            (relative, _bare_int_on_param_violations(tree), _parse_id_calls(tree))
+        )
     return scanned
 
 

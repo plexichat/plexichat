@@ -11,7 +11,6 @@ import asyncio
 import uuid
 from types import SimpleNamespace
 
-import pytest
 
 from src.api.routes import notifications as notif_route
 
@@ -105,7 +104,9 @@ def test_listing_batches_unread_aggregate_queries(
     try:
         response = asyncio.run(
             notif_route.get_notifications(
-                limit=20, unread_only=False, current_user=SimpleNamespace(user_id=recipient.id)
+                limit=20,
+                unread_only=False,
+                current_user=SimpleNamespace(user_id=recipient.id),
             )
         )
     finally:
@@ -164,9 +165,7 @@ def test_push_delivery_batches_per_notification_enrichment(
     assert len(notifications) == 12
 
     # Parity: single-item payload building is the authoritative expectation.
-    expected = [
-        notification_manager.prepare_push_payload(n) for n in notifications
-    ]
+    expected = [notification_manager.prepare_push_payload(n) for n in notifications]
 
     real_db = notification_manager._db
     spy = _QuerySpy(real_db)
@@ -200,9 +199,7 @@ def test_push_enrichment_never_crosses_users(
     )
     assert recipient_a.id != recipient_b.id
 
-    names = notification_manager._get_push_sender_names(
-        [author_a.id, author_b.id]
-    )
+    names = notification_manager._get_push_sender_names([author_a.id, author_b.id])
     assert names[author_a.id].startswith("batchauthor")
     assert names[author_b.id].startswith("batchauthor")
 
@@ -215,4 +212,7 @@ def test_push_enrichment_never_crosses_users(
     # No rows for an unknown id: fail closed to the neutral defaults.
     unknown = 9_999_999_999
     assert notification_manager._get_push_sender_names([unknown]).get(unknown) is None
-    assert notification_manager._get_push_unread_mention_counts([unknown]).get(unknown, 0) == 0
+    assert (
+        notification_manager._get_push_unread_mention_counts([unknown]).get(unknown, 0)
+        == 0
+    )

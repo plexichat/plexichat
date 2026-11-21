@@ -190,7 +190,9 @@ class TestMutatorsFailClosedWithoutLock:
         _wire(monkeypatch, client)
         storage = ValkeyStorage()
 
-        with pytest.raises(RateLimitStoreUnavailable, match="distributed rate-limit lock"):
+        with pytest.raises(
+            RateLimitStoreUnavailable, match="distributed rate-limit lock"
+        ):
             getattr(storage, method)("user:7", *args)
 
         # No read/write happened: the failure is loud, never a silent 0.
@@ -206,7 +208,9 @@ class TestMutatorsFailClosedWithoutLock:
         _wire(monkeypatch, client)
         storage = ValkeyStorage()
 
-        with pytest.raises(RateLimitStoreUnavailable, match="distributed rate-limit lock"):
+        with pytest.raises(
+            RateLimitStoreUnavailable, match="distributed rate-limit lock"
+        ):
             await getattr(storage, method)("user:7", *args)
 
         assert client.get_calls == 0
@@ -263,9 +267,7 @@ class TestMutatorConcurrency:
             else:
                 storage.add_to_list("shared:bucket", "events", index, max_size=100)
 
-        threads = [
-            threading.Thread(target=worker, args=(i,)) for i in range(workers)
-        ]
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(workers)]
         for thread in threads:
             thread.start()
         for thread in threads:

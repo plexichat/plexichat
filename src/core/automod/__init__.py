@@ -363,9 +363,7 @@ def schedule_ai_check(
     # collapses to a single pass, while genuinely new content always gets its
     # own check (never suppressing moderation of a later revision).
     key = (server_id, message_id, content)
-    accepted = _get_ai_dispatcher().submit(
-        job, key=key, timeout=AI_CHECK_JOB_TIMEOUT
-    )
+    accepted = _get_ai_dispatcher().submit(job, key=key, timeout=AI_CHECK_JOB_TIMEOUT)
     if not accepted:
         import utils.logger as logger
 

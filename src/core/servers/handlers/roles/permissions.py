@@ -280,9 +280,7 @@ class RolePermissionMixin(RoleHandlerProtocol):
         decides grant-vs-deny: a broken memo can never synthesize a grant.
         """
         if channel_id is None:
-            return self._compute_has_permission(
-                user_id, server_id, permission, None
-            )
+            return self._compute_has_permission(user_id, server_id, permission, None)
 
         cache = get_channel_access_cache()
         try:
@@ -296,9 +294,7 @@ class RolePermissionMixin(RoleHandlerProtocol):
             pass
 
         decision = bool(
-            self._compute_has_permission(
-                user_id, server_id, permission, channel_id
-            )
+            self._compute_has_permission(user_id, server_id, permission, channel_id)
         )
         try:
             cache.put(

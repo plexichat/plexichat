@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 import pytest
 
-from src.core.applications.manager import ApplicationManager
 from src.core.applications.manager.bot_management import (
     BotManagementMixin,
     invalidate_bot_directory_cache,
@@ -94,14 +93,18 @@ class TestPerManagerDirectoryCache:
         assert second == first
         assert app_manager._get_directory_cache().stats()["hits"] >= 1
 
-    def test_mutation_invalidates_cached_slice(self, app_manager, auth_manager, test_user):
+    def test_mutation_invalidates_cached_slice(
+        self, app_manager, auth_manager, test_user
+    ):
         """A directory-visible write refreshes the slice without manual help."""
         db = app_manager._db
         app = app_manager.create_application(owner_id=test_user.id, name="Cached Bot")
         bot = auth_manager.create_bot(
             owner_id=test_user.id, username="cached_perf_bot", display_name="Cached Bot"
         )
-        db.execute("UPDATE app_applications SET bot_id = ? WHERE id = ?", (bot.id, app.id))
+        db.execute(
+            "UPDATE app_applications SET bot_id = ? WHERE id = ?", (bot.id, app.id)
+        )
         db.execute(
             """INSERT INTO app_bot_profiles
                (application_id, short_description, tags, nsfw, private, updated_at)
@@ -127,14 +130,18 @@ class TestPerManagerDirectoryCache:
         assert b.get_bot_directory()["bot_list"][0]["name"] == "BobBot"
         assert a._get_directory_cache() is not b._get_directory_cache()
 
-    def test_public_filter_keeps_private_bots_hidden(self, app_manager, auth_manager, test_user):
+    def test_public_filter_keeps_private_bots_hidden(
+        self, app_manager, auth_manager, test_user
+    ):
         """Private bots stay out of public results across cache keys."""
         db = app_manager._db
         app = app_manager.create_application(owner_id=test_user.id, name="Hidden Bot")
         bot = auth_manager.create_bot(
             owner_id=test_user.id, username="hidden_perf_bot", display_name="Hidden Bot"
         )
-        db.execute("UPDATE app_applications SET bot_id = ? WHERE id = ?", (bot.id, app.id))
+        db.execute(
+            "UPDATE app_applications SET bot_id = ? WHERE id = ?", (bot.id, app.id)
+        )
         db.execute(
             """INSERT INTO app_bot_profiles
                (application_id, short_description, tags, nsfw, private, updated_at)
@@ -143,8 +150,14 @@ class TestPerManagerDirectoryCache:
         )
 
         # An internal caller asking for all bots sees the private entry.
-        all_names = [b["name"] for b in app_manager.get_bot_directory(include_public=False)["bot_list"]]
+        all_names = [
+            b["name"]
+            for b in app_manager.get_bot_directory(include_public=False)["bot_list"]
+        ]
         assert "Hidden Bot" in all_names
         # The public route's key is distinct and must never reuse that slice.
-        public_names = [b["name"] for b in app_manager.get_bot_directory(include_public=True)["bot_list"]]
+        public_names = [
+            b["name"]
+            for b in app_manager.get_bot_directory(include_public=True)["bot_list"]
+        ]
         assert "Hidden Bot" not in public_names

@@ -122,8 +122,7 @@ def _count_rows(db, server_id):
     # Use a raw cursor: fetch_one() has a short-lived result cache and would
     # otherwise return the pre-flush count on the second measurement.
     cursor = db.execute(
-        "SELECT COUNT(*) AS c FROM srv_audit_log "
-        "WHERE server_id = ? AND action = ?",
+        "SELECT COUNT(*) AS c FROM srv_audit_log WHERE server_id = ? AND action = ?",
         (server_id, AuditLogAction.MEMBER_ROLE_ADD.value),
     )
     row = cursor.fetchone()

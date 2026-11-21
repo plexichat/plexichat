@@ -211,9 +211,7 @@ def safe_token_cache_key(token: Any) -> str:
     return f"token_verify:str:{hashlib.sha256(token.encode('utf-8')).hexdigest()}"
 
 
-def safe_token_binding_key(
-    ip_address: Optional[str], user_agent: Optional[str]
-) -> str:
+def safe_token_binding_key(ip_address: Optional[str], user_agent: Optional[str]) -> str:
     """Return a bounded, hash-only suffix scoping a verify-cache key to IP/UA.
 
     ``verify_token`` enforces IP/User-Agent binding against the session row when

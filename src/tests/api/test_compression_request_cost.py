@@ -69,7 +69,9 @@ def _drive(middleware_cls, scope: dict) -> List[Message]:
                 "headers": [(b"content-type", b"application/json")],
             }
         )
-        await send({"type": "http.response.body", "body": b"x" * 2048, "more_body": False})
+        await send(
+            {"type": "http.response.body", "body": b"x" * 2048, "more_body": False}
+        )
 
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}

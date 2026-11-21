@@ -36,7 +36,9 @@ def _patch_accessors(monkeypatch, calls, delay=0.0):
 
         return fake
 
-    monkeypatch.setattr(route.licensing_module, "has_feature", recorder("has_feature", True))
+    monkeypatch.setattr(
+        route.licensing_module, "has_feature", recorder("has_feature", True)
+    )
     monkeypatch.setattr(
         route.licensing_module,
         "get_feature_config",
@@ -118,8 +120,10 @@ def test_cold_vs_warm_timing(monkeypatch):
     # Every warm read is a pure detached-cache hit: no licensing work at all.
     assert len(calls) == expected_calls
 
-    print(f"\n  cold build: {cold_ms:.2f} ms | warm read: {warm_ms:.4f} ms | "
-          f"speedup: {cold_ms / warm_ms:.1f}x")
+    print(
+        f"\n  cold build: {cold_ms:.2f} ms | warm read: {warm_ms:.4f} ms | "
+        f"speedup: {cold_ms / warm_ms:.1f}x"
+    )
     # A cold build performs 48 delayed accessor calls; a warm read performs
     # none. The ratio is the point - the absolute numbers depend on the host.
     assert cold_ms > warm_ms * 10
@@ -227,7 +231,10 @@ def test_cached_response_matches_a_fresh_computation(monkeypatch):
 
     assert cached == fresh
     assert set(cached) == {"features"}
-    assert all(set(row) == {"key", "label", "enabled", "config", "limit"} for row in cached["features"])
+    assert all(
+        set(row) == {"key", "label", "enabled", "config", "limit"}
+        for row in cached["features"]
+    )
 
 
 def test_cached_payload_is_detached_from_callers(monkeypatch):

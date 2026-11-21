@@ -57,8 +57,7 @@ def test_checksum_uses_constant_time_comparison():
             ):
                 offenders.append(f"line {node.lineno}: {left} ... {right}")
     assert not offenders, (
-        "chain checksum compared with a short-circuit operator: "
-        + "; ".join(offenders)
+        "chain checksum compared with a short-circuit operator: " + "; ".join(offenders)
     )
 
 
@@ -78,17 +77,13 @@ def test_tampered_checksum_still_rejected(tmp_path):
 
     rows = _rows(path)
     rows[0]["checksum"] = "0" * 64
-    path.write_text(
-        "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
-    )
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     valid, _count, error = log.verify_chain()
     assert valid is False
     assert "checksum invalid" in error
 
 
-@pytest.mark.parametrize(
-    "bad_checksum", [None, 12345, {"x": 1}, [1, 2], "\u00e9" * 64]
-)
+@pytest.mark.parametrize("bad_checksum", [None, 12345, {"x": 1}, [1, 2], "\u00e9" * 64])
 def test_malformed_checksum_fails_closed_without_raising(tmp_path, bad_checksum):
     """A log line with a non-string/missing checksum is a break, not a 500."""
     path = tmp_path / "dsar_audit.jsonl"
@@ -97,9 +92,7 @@ def test_malformed_checksum_fails_closed_without_raising(tmp_path, bad_checksum)
 
     rows = _rows(path)
     rows[0]["checksum"] = bad_checksum
-    path.write_text(
-        "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
-    )
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     valid, _count, error = log.verify_chain()
     assert valid is False
     assert "checksum invalid" in error

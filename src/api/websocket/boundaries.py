@@ -274,9 +274,9 @@ class _PayloadSizeMemo:
                 self._entries.popitem(last=False)
 
     def record_hit(self) -> None:
+        """Count a hit; ``lookup`` counts a miss only when it really missed."""
         with self._lock:
             self._hits += 1
-            self._misses -= 1  # lookup counted this call as a miss
 
     def clear(self) -> None:
         with self._lock:

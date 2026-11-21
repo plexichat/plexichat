@@ -111,8 +111,7 @@ def test_recent_chats_query_count_is_independent_of_page_size(
     assert returned.issubset(set(seeded_ids))
 
     print(
-        f"\nRECENT_CHATS_QUERY_COUNT small_page={two_queries} "
-        f"large_page={ten_queries}"
+        f"\nRECENT_CHATS_QUERY_COUNT small_page={two_queries} large_page={ten_queries}"
     )
     assert ten_queries <= two_queries + 1, (
         "recent-chats participation check reverted to an N+1: "

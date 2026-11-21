@@ -103,9 +103,7 @@ class MutualInfoMixin(RelationshipHelpersMixin):
         """
         viewer = int(user_id)
         targets = list(dict.fromkeys(int(tid) for tid in target_ids))
-        result: Dict[SnowflakeID, List[SnowflakeID]] = {
-            tid: [] for tid in targets
-        }
+        result: Dict[SnowflakeID, List[SnowflakeID]] = {tid: [] for tid in targets}
         if not targets or not self._servers:
             return result
 

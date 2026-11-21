@@ -29,7 +29,10 @@ REQUIRED_LIMITS = frozenset({"max_entries", "max_bytes", "ttl_seconds"})
 
 def _find_function(node, name):
     for child in ast.walk(node):
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == name:
+        if (
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child.name == name
+        ):
             return child
     return None
 
@@ -75,7 +78,9 @@ def _init_guards_missing(cls):
     if init is None:
         return ["__init__ method"]
     joined = " ".join(_raised_messages(init))
-    return [f"{limit} guard" for limit in sorted(REQUIRED_LIMITS) if limit not in joined]
+    return [
+        f"{limit} guard" for limit in sorted(REQUIRED_LIMITS) if limit not in joined
+    ]
 
 
 def _set_guards_missing(cls):
@@ -213,19 +218,24 @@ def test_self_test_detectors_catch_synthetic_violations():
 def test_scan_is_not_vacuous():
     assert _CORE_CLASS is not None, "BoundedLRU primitive not found"
     # At least the database dialect and artifact capability caches adopt it.
-    assert len(_ADOPTIONS) >= 2, f"only {len(_ADOPTIONS)} BoundedLRU adopters discovered"
+    assert len(_ADOPTIONS) >= 2, (
+        f"only {len(_ADOPTIONS)} BoundedLRU adopters discovered"
+    )
     assert any(rel.endswith("dialect.py") for rel, _, _ in _ADOPTIONS)
 
 
 def test_bounded_lru_primitive_enforces_all_three_limits():
     assert not _init_guards_missing(_CORE_CLASS), (
-        "constructor lost a bound guard:\n  " + "\n  ".join(_init_guards_missing(_CORE_CLASS))
+        "constructor lost a bound guard:\n  "
+        + "\n  ".join(_init_guards_missing(_CORE_CLASS))
     )
     assert not _set_guards_missing(_CORE_CLASS), (
-        "set() lost an eviction marker:\n  " + "\n  ".join(_set_guards_missing(_CORE_CLASS))
+        "set() lost an eviction marker:\n  "
+        + "\n  ".join(_set_guards_missing(_CORE_CLASS))
     )
     assert not _get_guards_missing(_CORE_CLASS), (
-        "get() lost expiry handling:\n  " + "\n  ".join(_get_guards_missing(_CORE_CLASS))
+        "get() lost expiry handling:\n  "
+        + "\n  ".join(_get_guards_missing(_CORE_CLASS))
     )
 
 

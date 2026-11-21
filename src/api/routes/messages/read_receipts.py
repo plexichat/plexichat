@@ -76,9 +76,7 @@ def _filter_blocked_dm_ack_recipients(actor_id, user_ids, relationships=None):
             return user_ids
         relationships = rel_module
     try:
-        blocked_ids = {
-            int(x) for x in relationships.get_all_blocked_ids(actor_id)
-        }
+        blocked_ids = {int(x) for x in relationships.get_all_blocked_ids(actor_id)}
     except Exception as e:
         logger.debug(f"read receipt DM block lookup failed: {e}")
         return []
@@ -484,9 +482,7 @@ async def _dispatch_message_ack_broadcast(
                 user_ids = msg_manager.get_manager().get_participant_ids(channel_id)
                 # Bulk ACK uses the same explicit-audience dispatch, so apply the
                 # same two-way DM block filter as the single-channel path.
-                user_ids = _filter_blocked_dm_ack_recipients(
-                    current_user_id, user_ids
-                )
+                user_ids = _filter_blocked_dm_ack_recipients(current_user_id, user_ids)
         except Exception as e:
             logger.debug(
                 f"Bulk ACK: failed to resolve MESSAGE_ACK targets for {channel_id}: {e}"

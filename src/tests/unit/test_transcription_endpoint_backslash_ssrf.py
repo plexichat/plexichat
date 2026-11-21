@@ -66,6 +66,7 @@ def test_endpoint_rejects_backslash_credential_smuggling(url):
 )
 def test_endpoint_still_accepts_public_urls(url):
     assert _require_public_https_endpoint(url, "openai_api_base") == url
-    assert OpenAIWhisperProvider(
-        {"openai_api_key": "k", "openai_api_base": url}
-    )._api_url == url
+    assert (
+        OpenAIWhisperProvider({"openai_api_key": "k", "openai_api_base": url})._api_url
+        == url
+    )

@@ -35,12 +35,15 @@ def _body(data):
         {"attachments": [{}] * (routes.MAX_CALLBACK_ATTACHMENTS + 1)},
         {"choices": [{}] * (routes.MAX_CALLBACK_CHOICES + 1)},
         # One oversized complex object.
-        {"allowed_mentions": {"parse": "x" * (routes.MAX_CALLBACK_COMPLEX_JSON_LENGTH + 1)}},
+        {
+            "allowed_mentions": {
+                "parse": "x" * (routes.MAX_CALLBACK_COMPLEX_JSON_LENGTH + 1)
+            }
+        },
         # Per-field limits are fine individually but the total is too large.
         {
             "embeds": [
-                {"description": "x" * 7000}
-                for _ in range(routes.MAX_CALLBACK_EMBEDS)
+                {"description": "x" * 7000} for _ in range(routes.MAX_CALLBACK_EMBEDS)
             ]
         },
     ],

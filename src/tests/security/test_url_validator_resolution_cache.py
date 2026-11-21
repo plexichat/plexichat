@@ -25,8 +25,13 @@ def _public_resolver(host, port, *a, **k):
 def _resolver_for(*ips):
     def resolver(host, port, *a, **k):
         return [
-            (socket.AF_INET6 if ":" in ip else socket.AF_INET,
-             socket.SOCK_STREAM, 6, "", (ip, 0))
+            (
+                socket.AF_INET6 if ":" in ip else socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                (ip, 0),
+            )
             for ip in ips
         ]
 
@@ -185,7 +190,8 @@ def test_host_that_turns_public_is_re_resolved(monkeypatch):
         v.validate_url_for_request(url)
     state["ips"] = ["93.184.216.34"]
     assert v.validate_url_for_request(url) == (
-        "was-private.example.com", "93.184.216.34"
+        "was-private.example.com",
+        "93.184.216.34",
     )
     assert calls["n"] == 2
 

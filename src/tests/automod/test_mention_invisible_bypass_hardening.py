@@ -58,8 +58,7 @@ SEPARATORS = [
 
 def _mentions(count, separator=""):
     return " ".join(
-        "<@" + separator.join(str(100000000000000000 + i)) + ">"
-        for i in range(count)
+        "<@" + separator.join(str(100000000000000000 + i)) + ">" for i in range(count)
     )
 
 
@@ -97,14 +96,11 @@ def test_fullwidth_digit_mentions_are_still_counted():
 
 @pytest.mark.parametrize("separator", SEPARATORS)
 def test_invisible_separators_do_not_hide_everyone_mentions(separator):
-    rule = MentionSpamRule(
-        _rule({"max_total_mentions": 100, "block_everyone": True})
-    )
+    rule = MentionSpamRule(_rule({"max_total_mentions": 100, "block_everyone": True}))
     # @everyone/@here were the other silent bypass: "@e<ZWSP>veryone" did not
     # match the EVERYONE_PATTERN at all.
     payload = " ".join(
-        f"@e{separator}veryone" if i % 2 == 0 else f"@h{separator}ere"
-        for i in range(6)
+        f"@e{separator}veryone" if i % 2 == 0 else f"@h{separator}ere" for i in range(6)
     )
     match = rule.check(payload, 1, 1)
     assert match.matched, repr(separator)

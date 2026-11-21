@@ -39,7 +39,10 @@ MUTATION_ROUTES = (
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -83,14 +86,26 @@ def _collection_size(tree, name):
 
 def _auth_invalidation_missing(fn):
     names = _referenced(fn) if fn is not None else set()
-    return [m for m in ("_AUTH_CACHE_PREFIXES", "invalidate_pattern", "invalidate_grant_cache") if m not in names]
+    return [
+        m
+        for m in (
+            "_AUTH_CACHE_PREFIXES",
+            "invalidate_pattern",
+            "invalidate_grant_cache",
+        )
+        if m not in names
+    ]
 
 
 def _admin_invalidation_missing(fn):
     names = _referenced(fn) if fn is not None else set()
     return [
         m
-        for m in ("clear_session_roles", "invalidate_position_cache", "invalidate_grant_cache")
+        for m in (
+            "clear_session_roles",
+            "invalidate_position_cache",
+            "invalidate_grant_cache",
+        )
         if m not in names
     ]
 
@@ -128,7 +143,9 @@ _SCAN = {
     "admin_missing": _admin_invalidation_missing(
         _find_function(_perms_tree, "invalidate_admin_permission_caches")
     ),
-    "log_missing": _log_admin_action_missing(_find_function(_perms_tree, "log_admin_action")),
+    "log_missing": _log_admin_action_missing(
+        _find_function(_perms_tree, "log_admin_action")
+    ),
     "prefix_count": _collection_size(_priv_tree, "_AUTH_CACHE_PREFIXES"),
     "mutating_count": _collection_size(_perms_tree, "PRIVILEGE_MUTATING_ACTIONS"),
     "route_calls": {rel: _invalidation_call_count(rel) for rel in MUTATION_ROUTES},
@@ -153,10 +170,15 @@ def test_self_test_detectors_catch_synthetic_violations():
                 invalidate_pattern(pattern)
         """
     )
-    assert _auth_invalidation_missing(_find_function(ast.parse(good_auth), "invalidate_privilege_caches")) == []
-    assert _auth_invalidation_missing(_find_function(ast.parse(bad_auth), "invalidate_privilege_caches")) == [
-        "invalidate_grant_cache"
-    ]
+    assert (
+        _auth_invalidation_missing(
+            _find_function(ast.parse(good_auth), "invalidate_privilege_caches")
+        )
+        == []
+    )
+    assert _auth_invalidation_missing(
+        _find_function(ast.parse(bad_auth), "invalidate_privilege_caches")
+    ) == ["invalidate_grant_cache"]
 
     good_admin = textwrap.dedent(
         """
@@ -198,22 +220,30 @@ def test_self_test_detectors_catch_synthetic_violations():
                 write_audit(action)
         """
     )
-    assert _log_admin_action_missing(_find_function(ast.parse(good_log), "log_admin_action")) == []
-    assert _log_admin_action_missing(_find_function(ast.parse(bad_log), "log_admin_action")) == [
-        "invalidate_admin_permission_caches"
-    ]
+    assert (
+        _log_admin_action_missing(
+            _find_function(ast.parse(good_log), "log_admin_action")
+        )
+        == []
+    )
+    assert _log_admin_action_missing(
+        _find_function(ast.parse(bad_log), "log_admin_action")
+    ) == ["invalidate_admin_permission_caches"]
 
 
 def test_scan_is_not_vacuous():
     assert _SCAN["prefix_count"] is not None and _SCAN["prefix_count"] >= 4
     assert _SCAN["mutating_count"] is not None and _SCAN["mutating_count"] >= 3
     assert sum(_SCAN["route_calls"].values()) >= 5, _SCAN["route_calls"]
-    assert all(count > 0 for count in _SCAN["route_calls"].values()), _SCAN["route_calls"]
+    assert all(count > 0 for count in _SCAN["route_calls"].values()), _SCAN[
+        "route_calls"
+    ]
 
 
 def test_user_auth_invalidation_also_drops_grant_cache():
     assert not _SCAN["auth_missing"], (
-        "invalidate_privilege_caches lost a link:\n  " + "\n  ".join(_SCAN["auth_missing"])
+        "invalidate_privilege_caches lost a link:\n  "
+        + "\n  ".join(_SCAN["auth_missing"])
     )
 
 

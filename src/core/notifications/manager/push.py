@@ -163,15 +163,15 @@ class PushMixin(NotificationProtocol):
             return 0
 
         batch = [
-            n for n in list(notifications)[: self.PUSH_DELIVERY_BATCH_LIMIT] if n is not None
+            n
+            for n in list(notifications)[: self.PUSH_DELIVERY_BATCH_LIMIT]
+            if n is not None
         ]
         if not batch:
             return 0
 
         sender_names = self._get_push_sender_names(n.author_id for n in batch)
-        unread_mentions = self._get_push_unread_mention_counts(
-            n.user_id for n in batch
-        )
+        unread_mentions = self._get_push_unread_mention_counts(n.user_id for n in batch)
 
         sent = 0
         for notification in batch:
@@ -301,9 +301,7 @@ class PushMixin(NotificationProtocol):
         does not pay those reads once per notification.
         """
         sender_names = self._get_push_sender_names([notification.author_id])
-        unread_mentions = self._get_push_unread_mention_counts(
-            [notification.user_id]
-        )
+        unread_mentions = self._get_push_unread_mention_counts([notification.user_id])
         return self._build_push_payload(
             notification,
             sender_name=sender_names.get(notification.author_id, "Someone"),

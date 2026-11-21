@@ -53,9 +53,7 @@ def _count_queries(db):
 
 def _agg_queries(calls):
     return [
-        q
-        for q in calls["all"]
-        if "COUNT(*) as count" in q and "react_reactions r" in q
+        q for q in calls["all"] if "COUNT(*) as count" in q and "react_reactions r" in q
     ]
 
 
@@ -84,7 +82,9 @@ def seeded_messages(messaging_manager, reaction_manager, three_users):
 # --- parity + query reduction ------------------------------------------------
 
 
-def test_batch_warm_hit_is_parity_and_reduces_queries(db, reaction_manager, seeded_messages):
+def test_batch_warm_hit_is_parity_and_reduces_queries(
+    db, reaction_manager, seeded_messages
+):
     owner, second, third, msg = seeded_messages
 
     with _count_queries(db) as cold_calls:
@@ -97,6 +97,7 @@ def test_batch_warm_hit_is_parity_and_reduces_queries(db, reaction_manager, seed
     # Cold path runs the expensive GROUP BY once; the warm path never does.
     assert len(_agg_queries(cold_calls)) == 1
     assert _agg_queries(warm_calls) == []
+
     # Cold path enforces access inline in the aggregation query.  A warm hit
     # runs a separate, cheap LIVE gate instead of re-aggregating -- gate before
     # cache, so a revoked viewer cannot read the memoized body.
@@ -109,7 +110,9 @@ def test_batch_warm_hit_is_parity_and_reduces_queries(db, reaction_manager, seed
     assert len(gate_warm) == 1
 
 
-def test_count_helpers_cache_without_losing_parity(db, reaction_manager, seeded_messages):
+def test_count_helpers_cache_without_losing_parity(
+    db, reaction_manager, seeded_messages
+):
     owner, second, third, msg = seeded_messages
 
     with _count_queries(db) as cold_calls:
@@ -146,7 +149,9 @@ def test_reactor_list_is_cached_and_identical(db, reaction_manager, seeded_messa
 # --- no cross-user / cross-credential leak ----------------------------------
 
 
-def test_blocked_user_filter_is_partitioned_per_viewer(reaction_manager, seeded_messages, rel_manager):
+def test_blocked_user_filter_is_partitioned_per_viewer(
+    reaction_manager, seeded_messages, rel_manager
+):
     owner, second, third, msg = seeded_messages
     # Block BEFORE the first read: relationship changes are not reaction writes.
     rel_manager.block_user(owner.id, second.id)
@@ -172,8 +177,12 @@ def test_credential_discriminator_partitions_the_same_viewer(
 ):
     owner, second, third, msg = seeded_messages
 
-    user_key = reaction_read_key("reaction_count", owner.id, msg.id, credential=f"user:{owner.id}")
-    bot_key = reaction_read_key("reaction_count", owner.id, msg.id, credential=f"bot:999:{owner.id}")
+    user_key = reaction_read_key(
+        "reaction_count", owner.id, msg.id, credential=f"user:{owner.id}"
+    )
+    bot_key = reaction_read_key(
+        "reaction_count", owner.id, msg.id, credential=f"bot:999:{owner.id}"
+    )
     assert user_key != bot_key
 
     with _count_queries(db) as first:
@@ -195,7 +204,9 @@ def test_credential_discriminator_partitions_the_same_viewer(
 
 def test_every_reaction_mutation_invalidates(db, reaction_manager, seeded_messages):
     owner, second, third, msg = seeded_messages
-    count = lambda: reaction_manager.get_reaction_count(msg.id, viewer_id=owner.id)
+
+    def count():
+        return reaction_manager.get_reaction_count(msg.id, viewer_id=owner.id)
 
     assert count() == 2  # warm
 
@@ -229,18 +240,26 @@ def test_delete_custom_emoji_invalidates(
         (emoji_id, owner.id),
     )
     reaction_manager.add_reaction(second.id, msg.id, f"<:cacheemoji:{emoji_id}>")
-    assert reaction_manager.get_reaction_count_by_emoji(
-        msg.id, f"<:cacheemoji:{emoji_id}>", viewer_id=owner.id
-    ) == 1  # warm
+    assert (
+        reaction_manager.get_reaction_count_by_emoji(
+            msg.id, f"<:cacheemoji:{emoji_id}>", viewer_id=owner.id
+        )
+        == 1
+    )  # warm
 
     # The permission check is exercised elsewhere; here we only assert that a
     # successful delete drops the warm aggregation body.
-    monkeypatch.setattr(reaction_manager, "_require_manage_server", lambda *a, **k: None)
+    monkeypatch.setattr(
+        reaction_manager, "_require_manage_server", lambda *a, **k: None
+    )
     assert reaction_manager.delete_custom_emoji(owner.id, emoji_id) is True
 
-    assert reaction_manager.get_reaction_count_by_emoji(
-        msg.id, f"<:cacheemoji:{emoji_id}>", viewer_id=owner.id
-    ) == 0
+    assert (
+        reaction_manager.get_reaction_count_by_emoji(
+            msg.id, f"<:cacheemoji:{emoji_id}>", viewer_id=owner.id
+        )
+        == 0
+    )
 
 
 # --- authz gate stays in front of the cache ---------------------------------

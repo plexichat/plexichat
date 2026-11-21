@@ -162,11 +162,7 @@ class BaseService:
     def _compose_id(self, timestamp: int, counter: int) -> SnowflakeID:
         """Pack a reserved (timestamp, sequence) pair into a snowflake id."""
         # Snowflake format: timestamp (42 bits) | machine_id (10 bits) | sequence (12 bits)
-        return (
-            ((timestamp - 1420070400000) << 22)
-            | (self._machine_id << 12)
-            | counter
-        )
+        return ((timestamp - 1420070400000) << 22) | (self._machine_id << 12) | counter
 
     def _generate_id(self) -> SnowflakeID:
         """Generate a unique Snowflake ID.

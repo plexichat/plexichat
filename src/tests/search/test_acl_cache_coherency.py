@@ -32,7 +32,9 @@ class TestMembershipRevocationDropsSearchMemo:
         deleted = []
         patterns = []
         monkeypatch.setattr(dbmod, "cache_delete", lambda key: deleted.append(key))
-        monkeypatch.setattr(dbmod, "invalidate_pattern", lambda pat: patterns.append(pat))
+        monkeypatch.setattr(
+            dbmod, "invalidate_pattern", lambda pat: patterns.append(pat)
+        )
         monkeypatch.setattr(
             member_count_cache, "invalidate_member_count_cache", lambda: None
         )

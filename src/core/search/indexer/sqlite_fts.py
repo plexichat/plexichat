@@ -254,9 +254,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                 _DELETE_MESSAGE_SQL,
                 (str(message.message_id),),
             )
-            self._db.execute(
-                _INSERT_MESSAGE_SQL, self._message_insert_params(message)
-            )
+            self._db.execute(_INSERT_MESSAGE_SQL, self._message_insert_params(message))
 
             return True
 

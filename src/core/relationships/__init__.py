@@ -129,6 +129,16 @@ def _get_manager():
     return _manager
 
 
+def is_setup() -> bool:
+    """True once :func:`setup` has installed the manager.
+
+    Audience resolvers use this to tell "no relationship store at all" (there
+    are no block rows to apply, so the audience is kept) apart from "the store
+    exists but its lookup failed" (fail closed).
+    """
+    return bool(_setup_complete and _manager is not None)
+
+
 # === Friend Request Operations ===
 
 
@@ -283,7 +293,9 @@ def get_mutual_servers(user_id: int, target_id: int) -> List[int]:
     return _get_manager().get_mutual_servers(user_id, target_id)
 
 
-def get_mutual_servers_bulk(user_id: int, target_ids: List[int]) -> Dict[int, List[int]]:
+def get_mutual_servers_bulk(
+    user_id: int, target_ids: List[int]
+) -> Dict[int, List[int]]:
     """Get batched shared-server sets between one viewer and many targets."""
     return _get_manager().get_mutual_servers_bulk(user_id, target_ids)
 

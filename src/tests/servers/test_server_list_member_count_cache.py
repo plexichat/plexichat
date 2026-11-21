@@ -57,8 +57,7 @@ class _FakeDB:
         assert "COUNT(*)" in query
         assert "GROUP BY" in query
         return [
-            {"server_id": sid, "c": self.counts.get(sid, 0)}
-            for sid in (params or ())
+            {"server_id": sid, "c": self.counts.get(sid, 0)} for sid in (params or ())
         ]
 
 
@@ -88,11 +87,18 @@ class _SQLSpy:
         self.db.fetch_one = self._orig_one
 
     def member_count_statements(self):
-        return [
-            s
-            for s in self.statements
-            if "srv_members" in s and "COUNT" in s
-        ]
+        """Only the member-count probes, not the listing query around them.
+
+        ``get_servers`` selects ``channel_count``/``role_count`` and its
+        ``EXISTS`` clause touches ``srv_members`` too, so a bare substring test
+        counted one statement per listing and could never show the cache
+        working. The batch probe is the ``GROUP BY`` form documented in
+        ``member_count_cache``; a regression back to an inline correlated
+        count leaves this list empty and trips the ``cold_statements >= 1``
+        assertion below.
+        """
+        probe = "SELECT server_id, COUNT(*) AS c FROM srv_members"
+        return [s for s in self.statements if probe in s]
 
 
 def _add_members(servers, auth_manager, server_id, n):
@@ -207,7 +213,9 @@ class TestServerListMemberCountCache:
         def count_for_owner():
             _clear_db_query_cache(db)
             invalidate_pattern("user_servers:*")
-            row = next(s for s in server_manager.get_servers(owner.id) if s.id == server_id)
+            row = next(
+                s for s in server_manager.get_servers(owner.id) if s.id == server_id
+            )
             return row.member_count
 
         # Seed the cache: owner is the only member.

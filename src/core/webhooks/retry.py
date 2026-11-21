@@ -167,9 +167,7 @@ class WebhookRetryQueue:
         metadata = {}
         if not signing_headers and self._webhook_manager is not None:
             try:
-                sign_bytes = getattr(
-                    self._webhook_manager, "sign_payload_bytes", None
-                )
+                sign_bytes = getattr(self._webhook_manager, "sign_payload_bytes", None)
                 if callable(sign_bytes):
                     # Manager supports pre-serialized bytes: no second encode.
                     signing_headers = sign_bytes(webhook_id, payload_bytes)

@@ -72,7 +72,9 @@ class HashReportRequest(BaseModel):
         if not value:
             return value
         if not _PHASH_HEX_RE.fullmatch(value):
-            raise ValueError("phash_value must be an anchored hex string of at most 64 characters")
+            raise ValueError(
+                "phash_value must be an anchored hex string of at most 64 characters"
+            )
         return value
 
     @field_validator("attachment_url")

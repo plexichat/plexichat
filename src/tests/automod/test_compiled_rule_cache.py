@@ -170,9 +170,7 @@ def test_evaluate_rule_compiles_real_regex_once():
     rule = _rule(
         rule_type=RuleType.REGEX,
         config={
-            "patterns": [
-                {"name": "cc", "pattern": r"\b\d{16}\b", "severity": "high"}
-            ]
+            "patterns": [{"name": "cc", "pattern": r"\b\d{16}\b", "severity": "high"}]
         },
     )
 

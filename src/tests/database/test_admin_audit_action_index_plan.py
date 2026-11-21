@@ -52,20 +52,20 @@ ACTION_FEED_PARAMS = ("cross_worker_tuning_update", 20)
 # Other hot audit filters must keep their own indexes; the new leading-action
 # index must not steal them.
 STATUS_FILTER_QUERY = (
-    "SELECT id FROM admin_audit_log WHERE status = ? "
-    "ORDER BY created_at DESC LIMIT ?"
+    "SELECT id FROM admin_audit_log WHERE status = ? ORDER BY created_at DESC LIMIT ?"
 )
 STATUS_FILTER_PARAMS = ("success", 20)
 ADMIN_FILTER_QUERY = (
-    "SELECT id FROM admin_audit_log WHERE admin_id = ? "
-    "ORDER BY created_at DESC LIMIT ?"
+    "SELECT id FROM admin_audit_log WHERE admin_id = ? ORDER BY created_at DESC LIMIT ?"
 )
 ADMIN_FILTER_PARAMS = (7, 20)
 
 
 def _load_migration():
     path = Path(pkg.__file__).parent / "011_admin_audit_action_created_index.py"
-    spec = importlib.util.spec_from_file_location("migration_011_admin_audit_index", path)
+    spec = importlib.util.spec_from_file_location(
+        "migration_011_admin_audit_index", path
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -180,7 +180,9 @@ class TestAdminAuditActionIndex:
             (ADMIN_FILTER_QUERY, ADMIN_FILTER_PARAMS, "idx_admin_audit_admin_created"),
         ],
     )
-    def test_other_filters_keep_their_index(self, indexed_db, query, params, index_name):
+    def test_other_filters_keep_their_index(
+        self, indexed_db, query, params, index_name
+    ):
         plan = _plan(indexed_db, query, params)
         assert index_name in plan, f"expected {index_name} in plan:\n{plan}"
         assert "idx_admin_audit_action_created" not in plan, (
@@ -194,8 +196,13 @@ class TestAdminAuditActionIndex:
         try:
             _seed(baseline)
             _seed(indexed)
-            before = [tuple(r) for r in baseline.execute(ACTION_FEED_QUERY, ACTION_FEED_PARAMS)]
-            after = [tuple(r) for r in indexed.execute(ACTION_FEED_QUERY, ACTION_FEED_PARAMS)]
+            before = [
+                tuple(r)
+                for r in baseline.execute(ACTION_FEED_QUERY, ACTION_FEED_PARAMS)
+            ]
+            after = [
+                tuple(r) for r in indexed.execute(ACTION_FEED_QUERY, ACTION_FEED_PARAMS)
+            ]
             assert before == after
             assert before, "parity check needs at least one row to be meaningful"
         finally:

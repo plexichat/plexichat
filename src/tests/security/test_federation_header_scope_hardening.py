@@ -57,7 +57,10 @@ def test_authenticate_accepts_a_well_signed_envelope():
     body = b'{"message_type": "ping"}'
     sig, ts, nonce = _headers(body)
     mgr = _Manager()
-    assert mod._authenticate(mgr, body, sig, ts, nonce) == {"id": 1, "shared_key": "k" * 32}
+    assert mod._authenticate(mgr, body, sig, ts, nonce) == {
+        "id": 1,
+        "shared_key": "k" * 32,
+    }
     assert mgr.nonce_calls == [(1, nonce, 1700000000)]
 
 

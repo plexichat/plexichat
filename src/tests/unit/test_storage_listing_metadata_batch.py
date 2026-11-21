@@ -52,9 +52,7 @@ class _CountingDB:
                 object.__setattr__(
                     self, "reads", self.reads + [(name, args[0] if args else "")]
                 )
-                object.__setattr__(
-                    self, "sql", self.sql + [args[0] if args else ""]
-                )
+                object.__setattr__(self, "sql", self.sql + [args[0] if args else ""])
             return attr(*args, **kwargs)
 
         return wrapped
@@ -156,6 +154,5 @@ def test_storage_listing_query_count_is_independent_of_page_size(db):
         )
         assert len(result["files"]) == limit
         assert len(counting.reads) == 1, (
-            f"page size {limit} issued {len(counting.reads)} reads: "
-            f"{counting.reads}"
+            f"page size {limit} issued {len(counting.reads)} reads: {counting.reads}"
         )

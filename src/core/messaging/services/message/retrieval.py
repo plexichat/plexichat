@@ -136,7 +136,9 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
         # ``get_message`` (deleted tombstones remain readable to participants).
         rows: List[Dict[str, Any]] = []
         for start in range(0, len(unique_ids), _BULK_ID_CHUNK):
-            rows.extend(self._repo.get_batch_by_ids(unique_ids[start : start + _BULK_ID_CHUNK]))
+            rows.extend(
+                self._repo.get_batch_by_ids(unique_ids[start : start + _BULK_ID_CHUNK])
+            )
         if not rows:
             return {}
 

@@ -35,7 +35,10 @@ REQUEST_ROLES = "src/core/admin/request_roles.py"
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -60,7 +63,11 @@ def _grant_key_missing(fn):
     if fn is None:
         return ["_make_key function"]
     names = _loaded_names(fn)
-    return [f"key component {m}" for m in ("credential", "subject", "DIRECT_CREDENTIAL") if m not in names]
+    return [
+        f"key component {m}"
+        for m in ("credential", "subject", "DIRECT_CREDENTIAL")
+        if m not in names
+    ]
 
 
 def _grant_use_missing(fn):
@@ -76,7 +83,9 @@ def _request_roles_gate_missing(fn):
     if fn is None:
         return ["cached_session_roles function"]
     names = _loaded_names(fn)
-    return [m for m in ("_bound_request_context", "id", "cached_admin_id") if m not in names]
+    return [
+        m for m in ("_bound_request_context", "id", "cached_admin_id") if m not in names
+    ]
 
 
 def _tree(relative):
@@ -89,7 +98,9 @@ def _scan():
     constants = _module_constants(grant_tree)
     return {
         "key_missing": _grant_key_missing(_find_function(grant_tree, "_make_key")),
-        "use_missing": _grant_use_missing(_find_function(grant_tree, "get_cached_grants")),
+        "use_missing": _grant_use_missing(
+            _find_function(grant_tree, "get_cached_grants")
+        ),
         "gate_missing": _request_roles_gate_missing(
             _find_function(roles_tree, "cached_session_roles")
         ),
@@ -118,7 +129,9 @@ def test_self_test_detectors_catch_synthetic_violations():
         """
     )
     assert _grant_key_missing(_find_function(ast.parse(good_key), "_make_key")) == []
-    bad_key_missing = _grant_key_missing(_find_function(ast.parse(bad_key), "_make_key"))
+    bad_key_missing = _grant_key_missing(
+        _find_function(ast.parse(bad_key), "_make_key")
+    )
     assert "key component credential" in bad_key_missing
     assert "key component DIRECT_CREDENTIAL" in bad_key_missing
 
@@ -142,8 +155,13 @@ def test_self_test_detectors_catch_synthetic_violations():
             return value
         """
     )
-    assert _grant_use_missing(_find_function(ast.parse(good_use), "get_cached_grants")) == []
-    assert set(_grant_use_missing(_find_function(ast.parse(bad_use), "get_cached_grants"))) == {
+    assert (
+        _grant_use_missing(_find_function(ast.parse(good_use), "get_cached_grants"))
+        == []
+    )
+    assert set(
+        _grant_use_missing(_find_function(ast.parse(bad_use), "get_cached_grants"))
+    ) == {
         "_MAX_ENTRIES",
         "ttl",
         "frozenset",

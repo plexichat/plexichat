@@ -33,8 +33,7 @@ class _FakeDB:
     def fetch_all(self, sql, params=()):
         self.calls.append((sql, tuple(params)))
         return [
-            {"id": rid, "server_id": params[-1], "position": rid}
-            for rid in params[:-1]
+            {"id": rid, "server_id": params[-1], "position": rid} for rid in params[:-1]
         ]
 
 
@@ -168,6 +167,7 @@ def test_validation_applies_hierarchy_to_every_resolved_role(
         return target["position"] < 5
 
     monkeypatch.setattr(permission_utils, "can_manage_role", _can_manage)
+
     # Per-role resolution must be gone from the validation path entirely.
     def _unexpected_get_role(*args, **kwargs):
         raise AssertionError("_validate_step_options must not call get_role")
@@ -198,8 +198,9 @@ def test_validation_when_all_roles_manageable_makes_one_batch(
     monkeypatch.setattr(
         permission_utils,
         "can_manage_role",
-        lambda user_roles, target, is_owner: decisions.append(target["position"])
-        or True,
+        lambda user_roles, target, is_owner: (
+            decisions.append(target["position"]) or True
+        ),
     )
 
     spy = _ReadSpy(db)

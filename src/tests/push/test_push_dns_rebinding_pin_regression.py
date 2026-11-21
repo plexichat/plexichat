@@ -91,9 +91,7 @@ class TestResolverReturnsPinnedAddress:
 
 class TestPinnedTransport:
     def test_session_connects_to_pinned_ip_with_original_tls_identity(self):
-        session = _NoRedirectSession(
-            pinned_ip=PUBLIC_IP, tls_hostname="push.example"
-        )
+        session = _NoRedirectSession(pinned_ip=PUBLIC_IP, tls_hostname="push.example")
         # Environment proxies would resolve the hostname again on our behalf.
         assert session._session.trust_env is False
 
@@ -113,13 +111,17 @@ class TestPinnedTransport:
         assert request.url == "https://push.example/ep"
         session.close()
 
-    def test_rebinding_after_validation_does_not_change_the_connection(self, monkeypatch):
+    def test_rebinding_after_validation_does_not_change_the_connection(
+        self, monkeypatch
+    ):
         """A second DNS answer (private) must never redirect the pinned POST."""
         fake, calls = _resolver(PUBLIC_IP, PRIVATE_IP)
         monkeypatch.setattr(socket, "getaddrinfo", fake)
 
         _, pinned = _resolve_public_endpoint("https://push-pin-4.example/ep")
-        session = _NoRedirectSession(pinned_ip=pinned, tls_hostname="push-pin-4.example")
+        session = _NoRedirectSession(
+            pinned_ip=pinned, tls_hostname="push-pin-4.example"
+        )
         adapter = session._session.get_adapter("https://push-pin-4.example/ep")
 
         # The transport never re-resolves: it still targets the approved IP.

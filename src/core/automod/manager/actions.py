@@ -348,9 +348,7 @@ class ActionMixin(AutoModProtocol):
             ActionType.BAN_USER,
             ActionType.KICK_USER,
             ActionType.TIMEOUT_USER,
-        ) and not self._manual_action_can_moderate(
-            user_id, server_id, target_user_id
-        ):
+        ) and not self._manual_action_can_moderate(user_id, server_id, target_user_id):
             logger.warning(
                 f"AutoMod manual action REFUSED: user {user_id} cannot "
                 f"moderate {target_user_id} in server {server_id} "

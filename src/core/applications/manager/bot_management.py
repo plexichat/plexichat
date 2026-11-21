@@ -1,7 +1,7 @@
 import json
 import threading
 import weakref
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger

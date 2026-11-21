@@ -204,9 +204,7 @@ def test_clear_forces_a_fresh_resolution():
 
 def test_underlying_cache_is_bounded_and_copy_safe():
     """The presence cache uses the shared bounded, copy-safe primitive."""
-    cache = RecipientResolutionCache(
-        max_entries=2, ttl_seconds=100, clock=lambda: 0.0
-    )
+    cache = RecipientResolutionCache(max_entries=2, ttl_seconds=100, clock=lambda: 0.0)
     for key in range(5):
         cache.put((key,), [key])
     assert cache.stats()["size"] == 2

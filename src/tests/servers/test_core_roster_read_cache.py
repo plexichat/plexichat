@@ -77,10 +77,14 @@ class _CountingDb:
         self.queries.append(sql)
         if "srv_members" in sql and "SELECT 1" in sql:
             sid, uid = params
-            return {"1": 1} if any(
-                r["server_id"] == sid and r["user_id"] == uid
-                for r in self.member_rows
-            ) else None
+            return (
+                {"1": 1}
+                if any(
+                    r["server_id"] == sid and r["user_id"] == uid
+                    for r in self.member_rows
+                )
+                else None
+            )
         return None
 
     def fetch_all(self, sql, params):
@@ -160,9 +164,7 @@ def test_warm_read_matches_cold_and_eliminates_roster_queries(cached_env):
 
 def test_no_cross_user_leak(cached_env):
     """Two credentials get distinct keys; a poisoned key is never replayed."""
-    db = _CountingDb(
-        [_member_row(10, 101), _member_row(11, 102)], {10: [7]}
-    )
+    db = _CountingDb([_member_row(10, 101), _member_row(11, 102)], {10: [7]})
     mgr = _Manager(db)
 
     alice = mgr.get_members(101, SERVER_ID)
@@ -260,9 +262,7 @@ def test_all_roster_mutations_reach_the_invalidation_helper():
 
 def test_invalidation_glob_matches_credential_partitioned_keys(cached_env):
     """The mutation glob reaches every viewer's key for the changed server."""
-    keys = [
-        _roster_cache_key(None, viewer, SERVER_ID) for viewer in (101, 102, 999)
-    ]
+    keys = [_roster_cache_key(None, viewer, SERVER_ID) for viewer in (101, 102, 999)]
     for key in keys:
         mem_cache_set(key, [{"poison": True}], 60)
         assert mem_cache_get(key) is not None

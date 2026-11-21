@@ -79,6 +79,8 @@ def test_c0_controls_still_removed_no_weakening():
 
 def test_clean_values_and_redaction_unchanged():
     assert bound_field("user logged in") == "user logged in"
-    record = sanitise_audit_entry({"session_cookie": "abcdef0123456789", "user": "alice"})
+    record = sanitise_audit_entry(
+        {"session_cookie": "abcdef0123456789", "user": "alice"}
+    )
     assert record["session_cookie"] == REDACTED
     assert record["user"] == "alice"

@@ -96,12 +96,12 @@ def test_websearch_probe_cache_result_parity_and_reset():
 # --- paged ACL memo -------------------------------------------------------
 
 _USER_CHANNELS = {
-    1: {42},   # user 1 may read channel 42 only
-    2: {43},   # user 2 may read channel 43 only
+    1: {42},  # user 1 may read channel 42 only
+    2: {43},  # user 2 may read channel 43 only
 }
 _USER_CONVERSATIONS = {
-    1: {7},    # user 1 may read conversation 7 only
-    2: {8},    # user 2 may read conversation 8 only
+    1: {7},  # user 1 may read conversation 7 only
+    2: {8},  # user 2 may read conversation 8 only
 }
 
 
@@ -139,12 +139,12 @@ def _hit(message_id, channel_id=None, conversation_id=None):
 def test_acl_memo_result_parity():
     """Memoized verification returns exactly the same subset as un-memoized."""
     hits = [
-        _hit(1, channel_id=42),        # user 1: allowed
-        _hit(2, channel_id=43),        # user 1: denied
-        _hit(3, conversation_id=7),    # user 1: allowed
-        _hit(4, conversation_id=8),    # user 1: denied
-        _hit(5, channel_id=999),       # nonexistent -> denied
-        _hit(6),                       # neither id -> dropped (fail closed)
+        _hit(1, channel_id=42),  # user 1: allowed
+        _hit(2, channel_id=43),  # user 1: denied
+        _hit(3, conversation_id=7),  # user 1: allowed
+        _hit(4, conversation_id=8),  # user 1: denied
+        _hit(5, channel_id=999),  # nonexistent -> denied
+        _hit(6),  # neither id -> dropped (fail closed)
     ]
     mgr = _ACLManager()
     baseline = [r.id for r in mgr._verify_results_visible(1, hits)]

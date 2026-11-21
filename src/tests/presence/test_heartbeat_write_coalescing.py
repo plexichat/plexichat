@@ -145,10 +145,10 @@ def _manager():
         ),
         patch.object(PresenceManager, "_get_timestamp", fake_ts),
         patch.object(PresenceManager, "_validate_user", lambda self, uid: None),
-        patch.object(PresenceManager, "_revalidate_online_users_set", lambda self: None),
-        patch(
-            "src.core.presence.manager.presence.valkey_available", return_value=True
+        patch.object(
+            PresenceManager, "_revalidate_online_users_set", lambda self: None
         ),
+        patch("src.core.presence.manager.presence.valkey_available", return_value=True),
         patch(
             "src.core.presence.manager.presence.get_valkey_client", return_value=valkey
         ),

@@ -86,11 +86,15 @@ def test_repeated_verification_hits_cache_but_rate_limit_still_runs():
         calls["rate"] += 1
         return True, limit
 
-    with patch(
-        "src.core.auth.managers.session.verification.parse_token",
-        return_value=_PARSED,
-    ), patch.object(VerificationMixin, "_verify_session_token", side_effect=count_verify), patch(
-        "src.core.database.cache.check_rate_limit", side_effect=count_rate
+    with (
+        patch(
+            "src.core.auth.managers.session.verification.parse_token",
+            return_value=_PARSED,
+        ),
+        patch.object(
+            VerificationMixin, "_verify_session_token", side_effect=count_verify
+        ),
+        patch("src.core.database.cache.check_rate_limit", side_effect=count_rate),
     ):
         results = [
             stub.verify_token(_TOKEN, ip_address=_IP, user_agent=_UA) for _ in range(5)
@@ -113,22 +117,30 @@ def test_rate_limit_denial_beats_a_warm_cache_hit():
         calls["verify"] += 1
         return info
 
-    with patch(
-        "src.core.auth.managers.session.verification.parse_token",
-        return_value=_PARSED,
-    ), patch.object(VerificationMixin, "_verify_session_token", side_effect=count_verify), patch(
-        "src.core.database.cache.check_rate_limit", return_value=(True, 99)
+    with (
+        patch(
+            "src.core.auth.managers.session.verification.parse_token",
+            return_value=_PARSED,
+        ),
+        patch.object(
+            VerificationMixin, "_verify_session_token", side_effect=count_verify
+        ),
+        patch("src.core.database.cache.check_rate_limit", return_value=(True, 99)),
     ):
         assert stub.verify_token(_TOKEN, _IP, _UA).valid is True
         assert calls["verify"] == 1
 
     # Now the limiter denies. Even with a warm cache entry, verification must
     # fail closed without consuming it.
-    with patch(
-        "src.core.auth.managers.session.verification.parse_token",
-        return_value=_PARSED,
-    ), patch.object(VerificationMixin, "_verify_session_token", side_effect=count_verify), patch(
-        "src.core.database.cache.check_rate_limit", return_value=(False, 0)
+    with (
+        patch(
+            "src.core.auth.managers.session.verification.parse_token",
+            return_value=_PARSED,
+        ),
+        patch.object(
+            VerificationMixin, "_verify_session_token", side_effect=count_verify
+        ),
+        patch("src.core.database.cache.check_rate_limit", return_value=(False, 0)),
     ):
         with pytest.raises(TokenInvalidError):
             stub.verify_token(_TOKEN, _IP, _UA)
@@ -169,7 +181,9 @@ def test_cache_key_is_hashed_and_binding_scoped():
 # ---------------------------------------------------------------------------
 
 
-def test_revocation_invalidates_a_warm_cached_verification(auth_manager, test_user_with_token):
+def test_revocation_invalidates_a_warm_cached_verification(
+    auth_manager, test_user_with_token
+):
     token = test_user_with_token["token"]
     user_id = test_user_with_token["user"].id
 

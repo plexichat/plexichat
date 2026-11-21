@@ -150,9 +150,7 @@ def _seed_large_block_list(db, viewer_id: int, count: int) -> None:
     block_rows = []
     for offset in range(count):
         uid = base_id + offset
-        user_rows.append(
-            (uid, f"scaleblk_{unique}_{offset}", "x", "[]", now, now)
-        )
+        user_rows.append((uid, f"scaleblk_{unique}_{offset}", "x", "[]", now, now))
         block_rows.append((uid, viewer_id, now))
     for row in user_rows:
         db.execute(

@@ -69,6 +69,16 @@ _manager = None
 _setup_complete = False
 
 
+def is_setup() -> bool:
+    """True once :func:`setup` has installed the manager.
+
+    Lets event fan-out tell "no messaging store at all" (there is no
+    conversation to deliver to) apart from "the store exists but the lookup
+    failed".
+    """
+    return bool(_setup_complete and _manager is not None)
+
+
 def setup(db, auth_module=None) -> None:
     """
     Initialize the messaging module.
@@ -425,9 +435,7 @@ def get_message(user_id: int, message_id: int) -> Optional[Message]:
     return _get_manager().get_message(user_id, message_id)
 
 
-def get_messages_by_ids(
-    user_id: int, message_ids: List[int]
-) -> Dict[int, Message]:
+def get_messages_by_ids(user_id: int, message_ids: List[int]) -> Dict[int, Message]:
     """Batch-load viewable messages by ID with bounded IN chunks.
 
     Returns a mapping keyed by message id; ids that are missing or not

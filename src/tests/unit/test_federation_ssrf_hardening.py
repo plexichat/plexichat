@@ -32,6 +32,23 @@ from src.api.routes.federation import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_resolution_cache():
+    """Start every case with an empty resolution memo.
+
+    ``URLValidator`` memoizes a validated ``(hostname, resolved_ip)`` per URL
+    for a few seconds. Without this, an earlier case that approved
+    ``https://peer.example/start`` leaves a hit that skips this case's
+    ``getaddrinfo`` side_effect, so the *first* hop consumes the answer meant
+    for the redirect and the rebinding case can never raise.
+    """
+    from src.utils.security import clear_url_resolution_cache
+
+    clear_url_resolution_cache()
+    yield
+    clear_url_resolution_cache()
+
+
 def _addresses(*ips):
     """Build getaddrinfo-shaped results for the supplied IPv4 literals."""
     return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443)) for ip in ips]

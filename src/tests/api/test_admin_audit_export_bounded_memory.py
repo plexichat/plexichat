@@ -23,7 +23,7 @@ from src.api.routes.admin import audit as audit_routes
 
 
 class _RecordingSQLiteDB:
-    """ Thin adapter exposing the ``fetch_all`` surface over a real SQLite DB. """
+    """Thin adapter exposing the ``fetch_all`` surface over a real SQLite DB."""
 
     def __init__(self, connection):
         self.connection = connection
@@ -169,8 +169,13 @@ def test_export_honours_global_row_cap_across_pages():
         assert emitted_ids == _expected_ids(db)[: audit_routes._MAX_AUDIT_EXPORT_ROWS]
         assert db.max_page_size <= audit_routes._AUDIT_EXPORT_CHUNK_SIZE
         # Stop reading once the cap is reached instead of draining the table.
-        assert len(db.calls) <= (
-            audit_routes._MAX_AUDIT_EXPORT_ROWS // audit_routes._AUDIT_EXPORT_CHUNK_SIZE
-        ) + 1
+        assert (
+            len(db.calls)
+            <= (
+                audit_routes._MAX_AUDIT_EXPORT_ROWS
+                // audit_routes._AUDIT_EXPORT_CHUNK_SIZE
+            )
+            + 1
+        )
     finally:
         _stop(patches)

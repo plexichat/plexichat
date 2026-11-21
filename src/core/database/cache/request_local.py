@@ -80,9 +80,7 @@ def _store(create: bool) -> Optional[Dict[str, Any]]:
     return _FALLBACK_STORE.get()
 
 
-def coalesced_cache_get(
-    key: str, *, loader: Optional[Callable[[], Any]] = None
-) -> Any:
+def coalesced_cache_get(key: str, *, loader: Optional[Callable[[], Any]] = None) -> Any:
     """Return a cache value, issuing at most one backing read per key/request.
 
     ``None`` (a cache miss) is memoised too: a second lookup of the same absent

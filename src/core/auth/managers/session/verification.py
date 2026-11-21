@@ -83,8 +83,7 @@ class VerificationMixin(AuthManagerProtocol):
         # verification of the same token within a request/connection paid for a
         # full DB lookup + constant-time hash comparison again.
         key_builder=lambda self, token, ip_address=None, user_agent=None: (
-            safe_token_cache_key(token)
-            + safe_token_binding_key(ip_address, user_agent)
+            safe_token_cache_key(token) + safe_token_binding_key(ip_address, user_agent)
         ),
         # Only single-use WS tickets and malformed input bypass the cache. A
         # replay of a ticket within the TTL would bypass its atomic consumption;

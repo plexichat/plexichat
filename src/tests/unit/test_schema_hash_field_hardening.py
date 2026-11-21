@@ -71,7 +71,10 @@ def test_attachment_hash_stays_optional():
 
 def test_hash_report_accepts_a_hex_hash():
     assert HashReportRequest.model_validate(_report()).hash_value == "a" * 64
-    assert HashReportRequest.model_validate(_report(hash_value="b" * 32)).hash_value == "b" * 32
+    assert (
+        HashReportRequest.model_validate(_report(hash_value="b" * 32)).hash_value
+        == "b" * 32
+    )
 
 
 def test_hash_report_rejects_control_and_bidi_characters_in_hash_value():
@@ -81,16 +84,19 @@ def test_hash_report_rejects_control_and_bidi_characters_in_hash_value():
 
 
 def test_hash_report_phash_accepts_hex_and_blank_clear():
-    assert HashReportRequest.model_validate(_report(phash_value="b" * 16)).phash_value == "b" * 16
+    assert (
+        HashReportRequest.model_validate(_report(phash_value="b" * 16)).phash_value
+        == "b" * 16
+    )
     assert HashReportRequest.model_validate(_report(phash_value="")).phash_value == ""
 
 
 def test_hash_report_phash_rejects_non_hex_control_and_unanchored_values():
     for hostile in (
-        "zzzz",                 # not hex
-        "prefix-" + "a" * 16,   # contains hex but is not anchored hex
-        "a" * 16 + "\x00",      # control character
-        "a" * 65,               # over max_length=64
+        "zzzz",  # not hex
+        "prefix-" + "a" * 16,  # contains hex but is not anchored hex
+        "a" * 16 + "\x00",  # control character
+        "a" * 65,  # over max_length=64
     ):
         with pytest.raises(ValidationError):
             HashReportRequest.model_validate(_report(phash_value=hostile))

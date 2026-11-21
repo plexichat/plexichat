@@ -102,7 +102,9 @@ def test_stamped_payload_matches_uncached_shape(client):
 
     # A repeat reuses the template but still mints a fresh id; every other
     # field is byte-identical to the first publication.
-    em._publish_cross_worker(_event({"user_id": 5, "nested": {"ids": [7, 8]}}), [1, 2, 3])
+    em._publish_cross_worker(
+        _event({"user_id": 5, "nested": {"ids": [7, 8]}}), [1, 2, 3]
+    )
     parsed2 = json.loads(client.published[-1][1])
     assert parsed2["id"] != parsed["id"]
     assert {k: v for k, v in parsed2.items() if k != "id"} == {
