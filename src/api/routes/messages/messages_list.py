@@ -40,92 +40,10 @@ from .helpers import (
 router = APIRouter(tags=["Messages"])
 
 
-def _channel_messages_not_found() -> HTTPException:
-    return HTTPException(
-        status_code=404,
-        detail={"error": {"code": 404, "message": "Channel not found"}},
-    )
-
-
-def _require_channel_messages_view(
-    cid: SnowflakeID, user_id: SnowflakeID, servers_mod: Any
-) -> None:
-    """Fail closed when ``cid`` addresses a server channel the caller can't view.
-
-    ``get_channel`` returns ``None`` (rather than raising) when ``channels.view``
-    is denied, which the servers message reader surfaces as
-    ``ChannelNotFoundError``. The list route treats that as "not a server
-    channel" and falls back to the messaging service, where participation is
-    granted to every server member -- independent of ``channels.view``. The URL
-    id may also be the channel's linked *conversation* id, so gate both spellings
-    membership-agnostically before any private page can be served.
-    """
-    if not servers_mod:
-        return
-    get_channel = getattr(servers_mod, "get_channel", None)
-    channel_exists = getattr(servers_mod, "channel_exists", None)
-    reverse = getattr(servers_mod, "get_channel_by_conversation", None)
-
-    # 1) cid used directly as a channel id.
-    if callable(get_channel):
-        try:
-            if get_channel(cid, user_id) is not None:
-                return  # live view grant on the addressed channel
-        except Exception:
-            raise _channel_messages_not_found()
-    if callable(channel_exists):
-        try:
-            if channel_exists(cid):
-                raise _channel_messages_not_found()
-        except HTTPException:
-            raise
-        except Exception:
-            # Cannot prove it is NOT a server channel; fall through to the
-            # reverse lookup rather than serving a possibly private page.
-            pass
-
-    # 2) cid used as the linked conversation id (server-channel alias).
-    if callable(reverse):
-        try:
-            channel_row = reverse(cid)
-        except Exception:
-            raise _channel_messages_not_found()
-        if channel_row is not None:
-            channel_id = (
-                channel_row.get("id") if isinstance(channel_row, dict) else None
-            )
-            if channel_id is None or not callable(get_channel):
-                raise _channel_messages_not_found()
-            try:
-                if get_channel(int(channel_id), user_id) is None:
-                    raise _channel_messages_not_found()
-            except HTTPException:
-                raise
-            except Exception:
-                raise _channel_messages_not_found()
-    # No server channel backs this id: a genuine DM/group conversation whose
-    # access is gated by messaging participation.
-
-
-async def _verify_channel_messages_access(
-    channel_id: str,
-    current_user: TokenInfo = Depends(get_current_user),
-) -> None:
-    """Live view gate that runs before the cached message-list body."""
-    try:
-        cid = parse_id(channel_id, "channel_id")
-    except ValueError:
-        return  # the endpoint returns the 400 for a malformed id
-    await run_in_threadpool(
-        _require_channel_messages_view, cid, current_user.user_id, api.get_servers()
-    )
-
-
 @router.get(
     "/channels/{channel_id}/messages",
     response_model=List[MessageResponse],
     summary="Get channel messages",
-    dependencies=[Depends(_verify_channel_messages_access)],
     responses={
         400: {"model": ErrorResponse, "description": "Invalid channel ID"},
         401: {"model": ErrorResponse, "description": "Not authenticated"},
@@ -237,15 +155,6 @@ async def get_channel_messages(
 
         # Fallback to DM/Conversation
         if messages is None and messaging:
-            # The servers reader's ChannelNotFoundError is ambiguous: it is
-            # raised both for "not a server channel" and for a channel the
-            # caller cannot view (get_channel returns None on a channels.view
-            # deny). Before using the URL id as a conversation id, fail closed
-            # if it is a server channel (or its linked-conversation alias) the
-            # caller cannot view — messaging participation alone is not enough.
-            await run_in_threadpool(
-                _require_channel_messages_view, cid, current_user.user_id, servers_mod
-            )
             try:
                 messages = await run_in_threadpool(
                     messaging.get_messages,

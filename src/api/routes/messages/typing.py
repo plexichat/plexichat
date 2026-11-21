@@ -93,13 +93,52 @@ async def trigger_typing(
         channel = None
         user_ids = []
         is_server_channel = False
+        # Message routes accept a channel's linked conversation id as a URL
+        # alias for the channel id. ``channel_cid`` is the id used for the live
+        # channel gate and the channel-view-filtered audience: normally the URL
+        # id, but the real channel id when the URL carried a conversation alias.
+        channel_cid = cid
 
         # Try server channel first
         if servers_mod:
             try:
-                channel = servers_mod.get_channel(cid, current_user.user_id)
+                channel = servers_mod.get_channel(channel_cid, current_user.user_id)
             except Exception:
                 channel = None
+
+            if channel is None:
+                # get_channel/channel_exists only recognise channel ids, so a
+                # member denied channels.view on a private channel could put
+                # that channel's conversation id in the URL and fall through to
+                # the DM audience path below -- broadcasting their typing to
+                # every conversation participant. Resolve the alias
+                # membership-agnostically and re-gate on the REAL channel; a
+                # conversation with no backing channel is a genuine DM.
+                reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+                if callable(reverse):
+                    try:
+                        backing = reverse(cid)
+                    except Exception:
+                        # Cannot prove this id is a genuine DM -> fail closed.
+                        is_server_channel = True
+                        backing = None
+                    if backing is not None:
+                        # A backing row means this is a server channel, never
+                        # a DM: keep it out of the DM audience path regardless
+                        # of whether the caller can view it.
+                        is_server_channel = True
+                        try:
+                            channel_cid = int(backing["id"])
+                        except (KeyError, TypeError, ValueError):
+                            channel_cid = cid
+                        else:
+                            try:
+                                channel = servers_mod.get_channel(
+                                    channel_cid, current_user.user_id
+                                )
+                            except Exception:
+                                channel = None
+
             if channel is not None:
                 is_server_channel = True
                 # Check if this is a voice channel - voice channels don't have typing indicators
@@ -126,7 +165,7 @@ async def trigger_typing(
 
                     try:
                         user_ids, _ = await run_in_threadpool(
-                            _get_channel_recipients, current_user.user_id, cid
+                            _get_channel_recipients, current_user.user_id, channel_cid
                         )
                     except Exception as recipient_error:
                         logger.debug(
@@ -155,7 +194,7 @@ async def trigger_typing(
             channel_exists = getattr(servers_mod, "channel_exists", None)
             if callable(channel_exists):
                 try:
-                    if channel_exists(cid):
+                    if channel_exists(channel_cid):
                         is_server_channel = True
                 except Exception:
                     # Cannot prove it is NOT a server channel -> fail closed.

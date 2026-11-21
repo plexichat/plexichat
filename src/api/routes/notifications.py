@@ -12,7 +12,6 @@ from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.notifications import NotificationsResponse, NotificationInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from src.core.notifications.exceptions import NotificationNotFoundError
@@ -93,7 +92,6 @@ async def get_notifications(
     """
     Get user notifications.
     """
-    require_user_token(current_user)
     notif_mod = api.get_notifications()
     if not notif_mod:
         raise HTTPException(status_code=500, detail="Notification module not available")
@@ -140,7 +138,6 @@ async def mark_all_read(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """Mark all user notifications as read."""
-    require_user_token(current_user)
     notif_mod = api.get_notifications()
     if not notif_mod:
         raise HTTPException(status_code=500, detail="Notification module not available")
@@ -166,7 +163,6 @@ async def mark_read(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """Mark a specific notification as read."""
-    require_user_token(current_user)
     notif_mod = api.get_notifications()
     if not notif_mod:
         raise HTTPException(status_code=500, detail="Notification module not available")
@@ -214,7 +210,6 @@ async def delete_notification(
     but no HTTP endpoint exposed it, so clients could only dismiss
     notifications by marking them read (F13).
     """
-    require_user_token(current_user)
     notif_mod = api.get_notifications()
     if not notif_mod:
         raise HTTPException(status_code=500, detail="Notification module not available")

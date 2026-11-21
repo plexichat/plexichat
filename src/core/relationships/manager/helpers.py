@@ -157,16 +157,6 @@ class RelationshipHelpersMixin(BaseManager):
         """
         from src.core.database import invalidate_cached
 
-        # Presence fan-out targets are a SECURITY verdict: who receives a
-        # user's PRESENCE_UPDATE frames (real status + custom status/emoji).
-        # ``_get_presence_targets(uid)`` memoizes that audience under the
-        # deterministic key ``presence_targets:int:<uid>`` for a short TTL. A
-        # block/friend change alters the audience for *both* parties (the
-        # block lookup is two-way), and every mutation funnels through this
-        # hook with the affected ids. Without an eager evict, a just-blocked
-        # user keeps receiving the blocker's real presence until the TTL lapses
-        # -- the delivery-side twin of the already-handled ``presence_read_api``
-        # cache. Drop the exact keys (no KEYS scan) for each mutated id.
         # Friend-check verdicts are pair-scoped but this hook receives an
         # arbitrary set of mutated user ids (send/accept/remove/block), not a
         # reliable pair, so drop the whole small bounded cache. A miss simply
@@ -183,7 +173,6 @@ class RelationshipHelpersMixin(BaseManager):
                 continue
             seen_ids.add(normalized_id)
             invalidate_cached(f"all_relationships:int:{normalized_id}")
-            invalidate_cached(f"presence_targets:int:{normalized_id}")
 
     # === Row converters ===
 
