@@ -20,6 +20,7 @@ import types
 import pytest
 
 from src.core.push.manager import PushManager
+from src.core.push.manager.apns import _reset_apns_http_client
 
 pytestmark = pytest.mark.unit
 
@@ -87,6 +88,7 @@ def apns_manager(db):
     mgr = PushManager(db, notifications_module=None)
     mgr._apns_available = True
     PushManager._apns_jwt_cache.clear()
+    _reset_apns_http_client()
     _FakeClient.instances.clear()
     return mgr
 
@@ -121,7 +123,10 @@ def test_jwt_cache_reused_while_valid(db, monkeypatch, apns_manager):
     assert apns_manager._send_apns("tok", "t", "b", None, None, "default", cfg) is True
     # Second send reused the cached token instead of re-signing.
     assert len(calls) == 1
-    headers = [_FakeClient.instances[i].posts[0]["headers"] for i in range(2)]
+    # Both sends reuse the single pooled client; each POST is recorded on it.
+    client = _FakeClient.instances[0]
+    assert len(client.posts) == 2
+    headers = [post["headers"] for post in client.posts]
     assert headers[0]["authorization"] == headers[1]["authorization"]
 
 

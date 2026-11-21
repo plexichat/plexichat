@@ -21,6 +21,7 @@ from src.core.push.manager import PushManager
 from src.core.push.manager.apns import (
     MAX_APNS_DATA_KEY_LENGTH,
     MAX_APNS_DATA_KEYS,
+    _reset_apns_http_client,
 )
 from src.core.push.manager.delivery import DeliveryMixin
 from src.core.push.manager.web_push import _require_public_endpoint
@@ -178,6 +179,7 @@ def _install_apns_fakes(monkeypatch):
     fake_httpx.Client = _FakeClient
     monkeypatch.setitem(sys.modules, "jwt", fake_jwt)
     monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    _reset_apns_http_client()
     _FakeClient.instances.clear()
 
 

@@ -4,11 +4,54 @@ from src.core.security.hardening import require_https_url
 
 import json
 import re
+import threading
 from typing import Any, Dict, Optional
 
 import utils.logger as logger
 
 from .base import PushManagerBase
+
+# One connection-pooled HTTP/2 client is shared by every APNs send. The old
+# code built (and tore down) a fresh ``httpx.Client`` inside ``_send_apns`` for
+# EACH device token, so a bulk push to N iOS devices paid N separate TCP + TLS
+# + HTTP/2 handshakes to api.push.apple.com and threw away the warm connection
+# after every single POST. ``httpx.Client`` is safe for concurrent use, so a
+# single process-wide instance (guarded only at construction) is enough even
+# though push delivery fans out across worker threads. The construction counter
+# makes the coalescing measurable (N -> 1 per burst).
+_APNS_HTTP_CLIENT = None
+_APNS_HTTP_CLIENT_LOCK = threading.Lock()
+_APNS_TRANSPORT_STATS = {"client_constructions": 0, "sends": 0}
+
+
+def get_apns_transport_stats() -> Dict[str, int]:
+    """Counters for the shared APNs transport client (monitoring/tests)."""
+    with _APNS_HTTP_CLIENT_LOCK:
+        return dict(_APNS_TRANSPORT_STATS)
+
+
+def _reset_apns_http_client() -> None:
+    """Drop the cached client. Tests use this when swapping in a fake httpx."""
+    global _APNS_HTTP_CLIENT
+    with _APNS_HTTP_CLIENT_LOCK:
+        _APNS_HTTP_CLIENT = None
+
+
+def _get_apns_client():
+    """Return the shared, connection-pooled APNs HTTP/2 client."""
+    global _APNS_HTTP_CLIENT
+    client = _APNS_HTTP_CLIENT
+    if client is None:
+        with _APNS_HTTP_CLIENT_LOCK:
+            client = _APNS_HTTP_CLIENT
+            if client is None:
+                import httpx
+
+                client = httpx.Client(http2=True, timeout=10.0)
+                _APNS_HTTP_CLIENT = client
+                _APNS_TRANSPORT_STATS["client_constructions"] += 1
+    return client
+
 
 # The device token is concatenated into the APNs URL path. Characters that
 # are structural in a URL (``/ ? # @ : % \\``), whitespace and controls must
@@ -90,7 +133,6 @@ class ApnsMixin(PushManagerBase):
             return None
 
         try:
-            import httpx  # already a project dep
             import jwt  # PyJWT, optional dep — see note below
             import time as _time
 
@@ -212,12 +254,17 @@ class ApnsMixin(PushManagerBase):
                 "apns-expiration": str(now_ts + ttl_seconds),
             }
 
-            # httpx >= 0.20 supports http2=True once the optional
-            # ``h2`` package is installed.  Plexichat's requirements
-            # already pin ``h2`` transitively via ``httpx[http2]``.
+            # Reuse ONE connection-pooled client for every device token in the
+            # burst (and across bursts) instead of constructing a new HTTP/2
+            # client per send. The ``sends``/``client_constructions`` counters in
+            # ``get_apns_transport_stats`` expose the coalescing ratio.
+            # ``httpx`` is imported lazily by ``_get_apns_client`` so a missing
+            # dependency still takes the ImportError path below.
             url = require_https_url(url, "APNs URL")
-            with httpx.Client(http2=True, timeout=10.0) as client:
-                response = client.post(url, json=payload_dict, headers=headers)
+            client = _get_apns_client()
+            with _APNS_HTTP_CLIENT_LOCK:
+                _APNS_TRANSPORT_STATS["sends"] += 1
+            response = client.post(url, json=payload_dict, headers=headers)
 
             if response.status_code == 200:
                 logger.debug(
