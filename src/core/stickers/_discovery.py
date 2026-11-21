@@ -193,6 +193,40 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
         """Public-facing variant of :meth:`get_popular_stickers`."""
         return self.get_popular_stickers(limit=max(1, limit))
 
+    def _sticker_pack_id(self, sticker_id: int) -> Optional[int]:
+        """Look up only a sticker's pack id, skipping the usage-count JOIN.
+
+        ``get_sticker`` aggregates ``sticker_usage`` with ``COUNT(u.id)`` to
+        build ``Sticker.usage_count``. Permission checks and the send/existence
+        gate need only the sticker's identity/pack, so paying for that
+        aggregation on every send is wasted work on the usage hot path.
+        """
+        row = self._db.fetch_one(
+            "SELECT pack_id FROM sticker_stickers WHERE id = ?", (sticker_id,)
+        )
+        return int(row["pack_id"]) if row else None
+
+    def _pack_authz(self, pack_id: int):
+        """Return ``(pack_type, server_id, created_by)`` without the count JOIN.
+
+        ``get_pack`` aggregates ``COUNT(s.id)`` for ``StickerPack.sticker_count``
+        and (for SERVER packs) probes membership. Authorization only needs the
+        three authz-relevant columns; membership is checked once explicitly by
+        the caller instead of twice (once here, once in ``get_pack``).
+        """
+        row = self._db.fetch_one(
+            "SELECT pack_type, server_id, created_by FROM sticker_packs WHERE id = ?",
+            (pack_id,),
+        )
+        if not row:
+            return None
+        try:
+            pack_type = PackType(row["pack_type"])
+        except ValueError:
+            # Unknown/corrupt pack type cannot be authorized. Fail closed.
+            return None
+        return pack_type, row["server_id"], row["created_by"]
+
     def can_use_sticker(self, user_id: int, sticker_id: int) -> bool:
         """Permission query used by message senders.
 
@@ -202,24 +236,27 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
         (``created_by == user_id``); default and purchased packs are open to
         everyone.
         """
-        sticker = self.get_sticker(sticker_id)
-        if not sticker:
+        pack_id = self._sticker_pack_id(sticker_id)
+        if pack_id is None:
             return False
-        pack = self.get_pack(sticker.pack_id, user_id)
-        if not pack:
+        authz = self._pack_authz(pack_id)
+        if authz is None:
             return False
-        if pack.pack_type in (PackType.DEFAULT, PackType.PURCHASED):
+        pack_type, server_id, created_by = authz
+        if pack_type in (PackType.DEFAULT, PackType.PURCHASED):
             return True
-        if pack.pack_type == PackType.SERVER and pack.server_id:
-            return self._is_server_member(user_id, pack.server_id)
+        if pack_type == PackType.SERVER and server_id:
+            return self._is_server_member(user_id, server_id)
         # SERVER (no server) and PERSONAL packs require ownership.
-        return pack.created_by == user_id
+        return created_by == user_id
 
     def send_sticker(
         self, user_id: int, message_id: int, sticker_id: int
     ) -> StickerUsage:
-        sticker = self.get_sticker(sticker_id)
-        if not sticker:
+        # Only the sticker's existence is needed here (the converted sticker
+        # object is never used below). Use the lightweight lookup instead of
+        # ``get_sticker``'s usage-count aggregation.
+        if self._sticker_pack_id(sticker_id) is None:
             raise StickerNotFoundError("Sticker not found")
         if self._messaging:
             msg = self._messaging.get_message(user_id, message_id)
