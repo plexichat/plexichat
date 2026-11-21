@@ -12,6 +12,48 @@ from .common import parse_id, call_or_raise, resolve_participant_service
 router = APIRouter()
 
 
+def _require_target_send_access(servers, user_id: int, target_conversation_id: int) -> None:
+    """Fail closed when the forward target is a channel the caller cannot post to.
+
+    Forwarding publishes the new message straight through
+    ``messaging.send_message``. That core path does not apply the REST send
+    route's ``messages.send`` gate (nor its timeout gate), and conversation
+    participation alone is granted to every server member. A member who can
+    view a read-only channel could therefore use /forward to plant forwarded
+    content in a channel they are not allowed to post in.
+
+    ``channels.view`` on the target is checked separately by ForwardingService;
+    this adds the independent ``messages.send`` requirement. A conversation with
+    no backing server channel is a genuine DM/group and needs no further gate.
+    """
+    if not servers:
+        # No servers store => the target can only be a DM/group conversation,
+        # already covered by the service's participation gate.
+        return
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(lookup):
+        raise PermissionError("Cannot verify channel send access")
+    try:
+        info = lookup(target_conversation_id)
+    except Exception:
+        raise PermissionError("Cannot verify channel send access")
+    if info is None:
+        return  # DM/group conversation: participation already gated it
+    channel_id = info.get("id") if isinstance(info, dict) else None
+    server_id = info.get("server_id") if isinstance(info, dict) else None
+    if channel_id is None or server_id is None:
+        raise PermissionError("Cannot verify channel send access")
+    has_permission = getattr(servers, "has_permission", None)
+    if not callable(has_permission):
+        raise PermissionError("Cannot verify channel send access")
+    try:
+        allowed = bool(has_permission(user_id, server_id, "messages.send", channel_id))
+    except Exception:
+        raise PermissionError("Cannot verify channel send access")
+    if not allowed:
+        raise PermissionError("Cannot send messages to the target channel")
+
+
 class ForwardMessageRequest(BaseModel):
     message_id: str = Field(..., description="ID of the message to forward")
     target_conversation_id: str = Field(..., description="Target conversation ID")
@@ -34,12 +76,24 @@ async def forward_message(
     db = api.get_db()
     messaging = api.get_messaging()
     participant_svc = resolve_participant_service(messaging)
+    servers_mod = api.get_servers()
+
+    # A server member may view a read-only channel without being allowed to
+    # post in it. The forward publish path bypasses the REST send route's
+    # messages.send gate, so enforce it here (fail closed) before any forward
+    # is created. channels.view on both sides is still enforced by the service.
+    call_or_raise(
+        _require_target_send_access,
+        servers_mod,
+        current_user.user_id,
+        target_conversation_id,
+    )
 
     # Pass the live servers module so the service can enforce the per-channel
     # channels.view gate on the source and target conversations. Participation
     # alone is granted to every server member, so forwarding would otherwise
     # let a member denied view on a private channel read/export its messages.
-    svc = ForwardingService(db, messaging, participant_svc, api.get_servers())
+    svc = ForwardingService(db, messaging, participant_svc, servers_mod)
 
     result = call_or_raise(
         svc.forward_message,

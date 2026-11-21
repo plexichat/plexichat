@@ -160,7 +160,11 @@ class TestForwardChannelViewGate:
     @pytest.mark.asyncio
     async def test_route_wires_servers_module_into_service(self, monkeypatch):
         """The production route passes api.get_servers() to the gated service."""
-        sentinel = object()
+        class _ServersStub:
+            def get_channel_by_conversation(self, conversation_id):
+                return None  # DM target: no per-channel send gate applies
+
+        sentinel = _ServersStub()
         captured = {}
 
         class _FakeService:
