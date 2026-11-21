@@ -6,10 +6,17 @@ independently of server/channel pins.
 """
 
 import time
+import zlib
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
+
+# Dedicated PostgreSQL advisory-lock namespace for per-user quota enforcement.
+# A fresh namespace (distinct from the migration lock's 12345 and any other key
+# in the tree) means quota locks can never block or be confused with unrelated
+# advisory-lock holders.
+_BOOKMARK_QUOTA_LOCK_NAMESPACE = 0x424F4B4D  # 'BOKM'
 
 
 class BookmarkService:
@@ -31,6 +38,49 @@ class BookmarkService:
 
     def _generate_id(self) -> int:
         return generate_snowflake_id()
+
+    @staticmethod
+    def _quota_lock_key(user_id: int) -> tuple:
+        """Two-int PostgreSQL advisory key: (fresh namespace, hashed user id).
+
+        The 32-bit CRC keeps the key inside pg_advisory_xact_lock(int4, int4)'s
+        two-argument keyspace. A collision between two user ids would only
+        cause harmless extra serialization, never a quota bypass.
+        """
+        return (
+            _BOOKMARK_QUOTA_LOCK_NAMESPACE,
+            zlib.crc32(str(user_id).encode("utf-8")),
+        )
+
+    def _insert_within_quota(self, sql: str, params: tuple, user_id: int) -> int:
+        """Run a self-guarding INSERT and return the number of rows it wrote.
+
+        ``sql`` is an ``INSERT ... SELECT ... WHERE (SELECT COUNT(*)) < cap``
+        statement, so the database re-checks the cap atomically with the write.
+
+        SQLite serializes writers, making that single statement sufficient.
+        PostgreSQL ``READ COMMITTED`` instead gives each statement a fresh
+        snapshot, so two concurrent creates could both observe ``count < cap``
+        before either commits. There we take a transaction-scoped advisory lock
+        keyed by the user before the guarded INSERT: the second caller blocks
+        until the first commits and then sees the new count. The lock is
+        released by the commit below (or by rollback on error).
+        """
+        if getattr(self._db, "type", None) == "postgres":
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)", self._quota_lock_key(user_id)
+                )
+                cursor = self._db.execute(sql, params)
+                rowcount = getattr(cursor, "rowcount", 0)
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
+            return rowcount
+        cursor = self._db.execute(sql, params)
+        return getattr(cursor, "rowcount", 0)
 
     def _channel_owns_conversation(self, channel_id: int, conversation_id: int) -> bool:
         """Return True when ``channel_id`` is a channel backed by ``conversation_id``.
@@ -326,11 +376,31 @@ class BookmarkService:
         now = self._get_timestamp()
         bookmark_id = self._generate_id()
 
-        self._db.execute(
+        # TOCTOU fix: the advisory COUNT above is only a fast-fail (it can be
+        # stale under a concurrent writer). The INSERT itself re-counts in the
+        # same statement, so a user can never be pushed past the cap. A denied
+        # guarded INSERT reports rowcount 0; PostgreSQL additionally serializes
+        # concurrent creates for this user via _insert_within_quota.
+        inserted = self._insert_within_quota(
             """INSERT INTO user_bookmarks (id, user_id, message_id, conversation_id, label, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (bookmark_id, user_id, message_id, conversation_id, label, now),
+               SELECT ?, ?, ?, ?, ?, ?
+               WHERE (SELECT COUNT(*) FROM user_bookmarks WHERE user_id = ?) < ?""",
+            (
+                bookmark_id,
+                user_id,
+                message_id,
+                conversation_id,
+                label,
+                now,
+                user_id,
+                self.MAX_BOOKMARKS_PER_USER,
+            ),
+            user_id,
         )
+        if inserted <= 0:
+            raise ValueError(
+                f"Maximum {self.MAX_BOOKMARKS_PER_USER} bookmarks per user"
+            )
 
         logger.debug(f"User {user_id} bookmarked message {message_id}")
         row = self._db.fetch_one(
