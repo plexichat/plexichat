@@ -44,8 +44,17 @@ class SettingsMixin(NotificationProtocol):
         for chunk in _id_chunks(ids):
             placeholders = ",".join(["?"] * len(chunk))
             if server_id:
+                # SECURITY: settings exist at two levels -- global and
+                # per-server, with the per-server row overriding the global
+                # one. Fetch BOTH scopes in one bounded query and prefer the
+                # server-scoped row. Selecting only ``server_id = ?`` and
+                # fabricating a default for a user without a per-server row
+                # silently discarded their global ``suppress_everyone`` /
+                # ``suppress_roles`` / ``level`` restrictions, so @everyone
+                # and role pings reached users who had opted out everywhere.
                 rows = self._db.fetch_all(
-                    f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) AND server_id = ?",
+                    f"SELECT * FROM notif_settings WHERE user_id IN ({placeholders}) "
+                    "AND (server_id = ? OR server_id IS NULL)",
                     (*chunk, server_id),
                 )
             else:
@@ -54,7 +63,13 @@ class SettingsMixin(NotificationProtocol):
                     tuple(chunk),
                 )
             for row in rows:
-                results[row["user_id"]] = row_to_settings(row)
+                uid = row["user_id"]
+                settings = row_to_settings(row)
+                # A global row (server_id IS NULL) is only a fallback: an
+                # explicit per-server row for the same user always wins,
+                # regardless of the order the rows came back in.
+                if uid not in results or results[uid].server_id is None:
+                    results[uid] = settings
 
         for uid in ids:
             if uid not in results:
@@ -105,10 +120,18 @@ class SettingsMixin(NotificationProtocol):
                 )
 
         if server_id is not None:
+            # Prefer the per-server row, but inherit the global row when the
+            # user has not configured this server specifically (the bulk
+            # resolver used by mention fan-out does the same).
             row = self._db.fetch_one(
                 "SELECT * FROM notif_settings WHERE user_id = ? AND server_id = ?",
                 (user_id, server_id),
             )
+            if row is None:
+                row = self._db.fetch_one(
+                    "SELECT * FROM notif_settings WHERE user_id = ? AND server_id IS NULL",
+                    (user_id,),
+                )
         else:
             row = self._db.fetch_one(
                 "SELECT * FROM notif_settings WHERE user_id = ? AND server_id IS NULL",
