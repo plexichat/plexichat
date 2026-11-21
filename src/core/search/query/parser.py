@@ -41,6 +41,18 @@ DATE_FORMATS = [
 
 RELATIVE_DATE_PATTERN = re.compile(r"^(\d+)(d|w|m|y)$", re.IGNORECASE)
 
+# The two normalization regexes are derived from the (module-level) filter
+# pattern config. They used to be rebuilt in ``QueryParser.__init__``, so
+# every call to the ``parse_query`` convenience helper re-joined
+# FILTER_PATTERNS and paid an ``re.compile`` cache lookup. They are
+# immutable and stateless, so a single shared pair is safe for every
+# parser instance, including the shared default parser below.
+_FILTER_REGEX = re.compile(
+    r"(-?)(" + "|".join(FILTER_PATTERNS.keys()) + r'):(\S+|"[^"]*")',
+    re.IGNORECASE,
+)
+_PHRASE_REGEX = re.compile(r'"([^"]+)"')
+
 # A relative filter ("7d", "2w") is a human convenience, but the digit run is
 # attacker-controlled and ``int()`` parses arbitrarily large values. Passing
 # those straight to ``timedelta`` raises OverflowError (C int conversion) out
@@ -54,11 +66,8 @@ class QueryParser:
     """Parser for advanced search queries with filters."""
 
     def __init__(self):
-        self._filter_regex = re.compile(
-            r"(-?)(" + "|".join(FILTER_PATTERNS.keys()) + r'):(\S+|"[^"]*")',
-            re.IGNORECASE,
-        )
-        self._phrase_regex = re.compile(r'"([^"]+)"')
+        self._filter_regex = _FILTER_REGEX
+        self._phrase_regex = _PHRASE_REGEX
 
     def parse(self, query: str) -> ParsedQuery:
         """
@@ -76,15 +85,20 @@ class QueryParser:
         query = query.strip()
         filters = []
         exact_phrases = []
-        remaining = query
 
-        for match in self._phrase_regex.finditer(query):
+        # Each normalization regex used to be applied twice: ``finditer``
+        # collected the phrases/filters and a second ``sub`` stripped them
+        # from the query. A replacement callback collects and strips in one
+        # pass, halving this work on every search request.
+        def _collect_phrase(match):
             phrase = match.group(1).strip()
             if phrase:
                 exact_phrases.append(phrase)
-        remaining = self._phrase_regex.sub("", remaining)
+            return ""
 
-        for match in self._filter_regex.finditer(remaining):
+        remaining = self._phrase_regex.sub(_collect_phrase, query)
+
+        def _collect_filter(match):
             negated = match.group(1) == "-"
             filter_name = match.group(2).lower()
             value = match.group(3).strip('"')
@@ -100,8 +114,9 @@ class QueryParser:
                             negated=negated,
                         )
                     )
+            return ""
 
-        remaining = self._filter_regex.sub("", remaining)
+        remaining = self._filter_regex.sub(_collect_filter, remaining)
 
         search_terms = [
             term.strip()
@@ -202,11 +217,17 @@ class QueryParser:
         return suggestions
 
 
+# The parser is stateless (all state is local to ``parse``), so one shared
+# instance serves every convenience call. Constructing a parser per call
+# rebuilt the filter pattern string and repeated the regex cache lookups.
+_default_parser = QueryParser()
+
+
 def parse_query(query: str) -> ParsedQuery:
     """
     Parse a search query into structured components.
 
-    Convenience function using default parser.
+    Convenience function using a shared default parser.
 
     Args:
         query: Raw query string
@@ -214,5 +235,4 @@ def parse_query(query: str) -> ParsedQuery:
     Returns:
         ParsedQuery with filters and search terms
     """
-    parser = QueryParser()
-    return parser.parse(query)
+    return _default_parser.parse(query)
