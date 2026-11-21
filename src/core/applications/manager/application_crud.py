@@ -54,6 +54,27 @@ _APP_META_CACHE_MAX_BYTES = 256 * 1024
 _APP_CACHE_INIT_LOCK = threading.Lock()
 
 
+# One statement re-checks the per-user application cap at the instant of the
+# insert. The old flow ran a separate ``SELECT COUNT(*)`` for
+# ``max_applications_per_user`` and only then issued a separate bare ``INSERT``;
+# two concurrent creators could both read a below-cap count and both insert,
+# pushing a user past their quota (a TOCTOU bypass). The guard subquery sees the
+# table state *before* the new row exists, so exactly the callers that still fit
+# get a row and ``rowcount == 0`` is an authoritative "limit reached" signal.
+# SQLite serialises this single statement with its write lock; PostgreSQL needs
+# the advisory xact lock in ``create_application`` because READ COMMITTED would
+# let two statements both see a stale count.
+_ATOMIC_APP_INSERT_SQL = """
+INSERT INTO app_applications
+    (id, owner_id, name, description, icon_url, bot_id, bot_public,
+     bot_require_code_grant, terms_of_service_url, privacy_policy_url,
+     redirect_uris, allowed_scopes, interactions_endpoint_url,
+     client_secret_hash, created_at, updated_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE (SELECT COUNT(*) FROM app_applications WHERE owner_id = ?) < ?
+"""
+
+
 def validate_allowed_scopes_for_app(value: Optional[List[str]]) -> List[str]:
     """Default a new application to all known scopes or validate the ceiling."""
     if value is None:
@@ -115,6 +136,10 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             interactions_endpoint_url, field="interactions_endpoint_url"
         )
 
+        # Fast-fail only: this early count avoids an expensive insert for an
+        # obviously full user, but it is NOT the authoritative quota check. Two
+        # concurrent creators can both read a below-cap count, so the atomic
+        # guarded INSERT below is what actually enforces the cap.
         max_apps = self._config.get("max_applications_per_user", 25)
         count = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM app_applications WHERE owner_id = ?",
@@ -135,32 +160,70 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         uris_json = json.dumps(redirect_uris)
         scopes_json = json.dumps(allowed_scopes)
 
-        self._db.execute(
-            """INSERT INTO app_applications
-               (id, owner_id, name, description, icon_url, bot_id, bot_public,
-                bot_require_code_grant, terms_of_service_url, privacy_policy_url,
-                redirect_uris, allowed_scopes, interactions_endpoint_url,
-                client_secret_hash, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                app_id,
-                owner_id,
-                name,
-                description,
-                None,
-                None,
-                1 if bot_public else 0,
-                1 if bot_require_code_grant else 0,
-                terms_of_service_url,
-                privacy_policy_url,
-                uris_json,
-                scopes_json,
-                interactions_endpoint_url,
-                secret_hash,
-                now,
-                now,
-            ),
-        )
+        # PostgreSQL READ COMMITTED would let two concurrent guarded INSERTs
+        # both see a stale count. Serialise per owner with an advisory xact
+        # lock. Namespace 150 stays clear of the invite (1/2), emoji (100/101),
+        # sticker (102), soundboard (120), webhook (130), role/scheduled-event
+        # (140) quota locks; masking to 30 bits keeps the second key in signed
+        # int4 range.
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (150, int(owner_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self._db.begin_transaction()
+
+            cursor = self._db.execute(
+                _ATOMIC_APP_INSERT_SQL,
+                (
+                    app_id,
+                    owner_id,
+                    name,
+                    description,
+                    None,
+                    None,
+                    1 if bot_public else 0,
+                    1 if bot_require_code_grant else 0,
+                    terms_of_service_url,
+                    privacy_policy_url,
+                    uris_json,
+                    scopes_json,
+                    interactions_endpoint_url,
+                    secret_hash,
+                    now,
+                    now,
+                    owner_id,
+                    max_apps,
+                ),
+            )
+            # rowcount 0 means the count guard found the user already at (or
+            # over) their cap at insert time — a concurrent creator won the
+            # race. Roll back and surface the same quota error the advisory
+            # check would have raised, re-reading the real count (AS c, so it
+            # is never mistaken for the stale advisory read) for the message.
+            if getattr(cursor, "rowcount", 0) == 0:
+                real_row = self._db.fetch_one(
+                    "SELECT COUNT(*) AS c FROM app_applications WHERE owner_id = ?",
+                    (owner_id,),
+                )
+                real_count = real_row["c"] if real_row else max_apps
+                raise ApplicationLimitError(
+                    f"Maximum of {max_apps} applications per user",
+                    max_apps,
+                    real_count,
+                )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         logger.info(f"Application created: {name} (ID: {app_id}) by user {owner_id}")
 
