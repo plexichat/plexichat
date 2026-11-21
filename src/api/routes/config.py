@@ -118,8 +118,6 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
             age_gate_mode=age_gate_mode,
         )
         if not access_required_degraded:
-            if not access_required_degraded:
-            if not access_required_degraded:
             _snapshot_cache = (now, snapshot)
         return snapshot
     except Exception as e:
