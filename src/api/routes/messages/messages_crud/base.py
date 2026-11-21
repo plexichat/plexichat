@@ -164,6 +164,53 @@ class MessagesCRUDBase:
                     server_id = getattr(channel, "server_id", None)
                     conversation_id = getattr(channel, "conversation_id", None)
 
+                    if server_id:
+                        # The REST send route publishes straight through the
+                        # messaging layer instead of the servers manager's
+                        # ``send_channel_message`` gate, which is where
+                        # ``messages.send`` is normally enforced. Conversation
+                        # participation is seeded for every server member on
+                        # join and is NOT an authorization check for a server
+                        # channel, so a member who can view a read-only channel
+                        # could otherwise still post to it through this route.
+                        # Fail closed: no permission API, or a failed lookup,
+                        # denies the send rather than silently granting it.
+                        has_permission = getattr(servers_mod, "has_permission", None)
+                        if has_permission is None:
+                            logger.warning(
+                                "Send denied for channel %s: servers module has "
+                                "no permission API",
+                                channel_id,
+                            )
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "error": {"code": 403, "message": "Access denied"}
+                                },
+                            )
+                        try:
+                            allowed = bool(
+                                has_permission(
+                                    user_id,
+                                    server_id,
+                                    "messages.send",
+                                    channel_id,
+                                )
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Send permission check failed for channel "
+                                f"{channel_id} (failing closed): {e}"
+                            )
+                            allowed = False
+                        if not allowed:
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "error": {"code": 403, "message": "Access denied"}
+                                },
+                            )
+
                     if server_id and hasattr(servers_mod, "is_timed_out"):
                         if servers_mod.is_timed_out(user_id, server_id):
                             raise HTTPException(
