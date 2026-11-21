@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.reports import (
     MessageReportRequest,
     UserReportRequest,
@@ -250,6 +251,11 @@ async def report_message(
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
+    # A bot token's user_id is its human owner, so leaving this handler open
+    # lets a bot credential spend the owner's per-account report quota (and
+    # evade its own). The enhanced-report sibling in features/reports.py
+    # already gates on require_user_token; do the same before the bucket lookup.
+    require_user_token(current_user)
     _check_report_rate_limit(current_user.user_id)
 
     reason = _bounded_report_field(
@@ -445,6 +451,11 @@ async def report_user(
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
+    # A bot token's user_id is its human owner, so leaving this handler open
+    # lets a bot credential spend the owner's per-account report quota (and
+    # evade its own). The enhanced-report sibling in features/reports.py
+    # already gates on require_user_token; do the same before the bucket lookup.
+    require_user_token(current_user)
     _check_report_rate_limit(current_user.user_id)
 
     reason = _bounded_report_field(
