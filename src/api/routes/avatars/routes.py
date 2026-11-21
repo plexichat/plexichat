@@ -35,6 +35,7 @@ from fastapi import (
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.avatars import AvatarUploadResponse, IconUploadResponse
 from src.api.schemas.common import (
     ErrorResponse,
