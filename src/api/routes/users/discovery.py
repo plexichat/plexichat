@@ -11,7 +11,7 @@ import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.users import UserPublicResponse
 from src.core.security.hardening import HardeningViolation, reject_control_characters
-from .helpers import _user_to_public_response
+from .helpers import _user_to_public_response, require_user_token
 
 # M5 FIX: exact-username discovery is an enumeration oracle when unmetered.
 # Throttle lookups per user; the shared cache-backed limiter degrades to
@@ -84,6 +84,12 @@ class DiscoveryMixin:
         username: Optional[str] = None,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> UserPublicResponse:
+        # A bot token's user_id is its human owner, so leaving this handler
+        # open would let a bot credential spend the owner's discovery quota
+        # (and, via the shared bucket, evade its own). Every other user-router
+        # handler that keys off user_id requires a real user session; this one
+        # was the omission. Reject bots before the rate-limit lookup.
+        require_user_token(current_user)
         auth = api.get_auth()
         if not auth:
             logger.error("Auth module not available")
