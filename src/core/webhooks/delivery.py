@@ -580,6 +580,27 @@ def _deliver_one(deliverer: Any, record: Dict[str, Any]) -> Tuple[str, Any]:
         return ("error", str(exc))
 
 
+def _mark_failed(
+    retry_queue: Any,
+    record: Dict[str, Any],
+    response_status: Optional[int],
+    error: Optional[str],
+) -> None:
+    """Resolve a failed delivery without re-reading counters we already own.
+
+    ``retry_queue`` is normally a ``WebhookRetryQueue``; its fast path reuses
+    the ``attempt_count``/``max_attempts`` already loaded by ``SELECT *`` when
+    the record was claimed. Wrappers and injected test doubles that only
+    implement the original three-argument ``mark_failure`` keep working via the
+    fallback, so the queue interface is unchanged.
+    """
+    fast = getattr(retry_queue, "mark_failure_with_counts", None)
+    if callable(fast):
+        fast(record, response_status, error)
+    else:
+        retry_queue.mark_failure(record["id"], response_status, error)
+
+
 def _apply_outcome(
     retry_queue: Any,
     stats: Dict[str, int],
@@ -594,16 +615,16 @@ def _apply_outcome(
             retry_queue.mark_success(record["id"], value)
             stats["delivered"] += 1
         else:
-            retry_queue.mark_failure(record["id"], value, f"HTTP {value}")
+            _mark_failed(retry_queue, record, value, f"HTTP {value}")
             stats["failed"] += 1
     elif kind == "transport":
         stats["transport_errors"] += 1
         stats["failed"] += 1
-        retry_queue.mark_failure(record["id"], None, value)
+        _mark_failed(retry_queue, record, None, value)
     else:
         stats["transport_errors"] += 1
         stats["failed"] += 1
-        retry_queue.mark_failure(record["id"], None, "delivery error")
+        _mark_failed(retry_queue, record, None, "delivery error")
 
 
 def process_due_retries(

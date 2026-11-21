@@ -329,24 +329,70 @@ class WebhookRetryQueue:
 
         If max retries exceeded, moves to dead letter queue.
         Returns updated retry record.
+
+        Callers that only hold a retry id use this entry point, which reads the
+        counters from the row. The delivery loop already owns those counters on
+        the record returned by :meth:`get_pending_retries` (which uses
+        ``SELECT *``), so it can use :meth:`mark_failure_with_counts` to skip
+        the redundant read.
         """
         now = self._get_timestamp()
-
         row = self._db.fetch_one(
             "SELECT attempt_count, max_attempts FROM webhook_retry_queue WHERE id = ?",
             (retry_id,),
         )
         if not row:
             raise ValueError(f"Retry record {retry_id} not found")
+        return self._apply_failure(
+            retry_id,
+            response_status,
+            error,
+            row["attempt_count"],
+            row["max_attempts"],
+            now,
+        )
 
+    def mark_failure_with_counts(
+        self,
+        record: Dict[str, Any],
+        response_status: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fail a claimed delivery without re-reading its counters.
+
+        ``record`` is a row already claimed by :meth:`get_pending_retries`, so
+        it carries ``attempt_count`` and ``max_attempts``. Reusing them removes
+        one database read per failed row from a batch without changing any of
+        the backoff / clamping / dead-letter logic (that lives in
+        :meth:`_apply_failure`, shared with :meth:`mark_failure`).
+        """
+        return self._apply_failure(
+            record["id"],
+            response_status,
+            error,
+            record.get("attempt_count"),
+            record.get("max_attempts"),
+            self._get_timestamp(),
+        )
+
+    def _apply_failure(
+        self,
+        retry_id: int,
+        response_status: Optional[int],
+        error: Optional[str],
+        raw_attempt: Any,
+        raw_max_attempts: Any,
+        now: int,
+    ) -> Dict[str, Any]:
+        """Shared failure transition for both entry points."""
         # Clamp counters read from the DB: a tampered ``max_attempts`` must
         # not turn a transient failure into an unbounded retry loop.
         try:
-            current_attempt = int(row["attempt_count"])
+            current_attempt = int(raw_attempt)
         except (TypeError, ValueError):
             current_attempt = 0
         try:
-            max_attempts = int(row["max_attempts"])
+            max_attempts = int(raw_max_attempts)
         except (TypeError, ValueError):
             max_attempts = self.MAX_RETRIES
         current_attempt = max(0, min(current_attempt, self.MAX_ALLOWED_RETRIES))
