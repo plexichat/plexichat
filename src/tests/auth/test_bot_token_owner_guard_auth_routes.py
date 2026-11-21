@@ -15,6 +15,7 @@ import ast
 import asyncio
 import importlib
 import inspect
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -95,7 +96,32 @@ def test_guard_allows_a_real_user_token():
 # ---------------------------------------------------------------------------
 
 _AUTH_DIR = Path(__file__).resolve().parents[2] / "api" / "routes" / "auth"
-_SCAN_FILES = ("sessions.py", "devices.py")
+
+
+def _iter_auth_modules():
+    """Every shipped auth-route module, discovered structurally.
+
+    The old completeness check hard-coded ``("sessions.py", "devices.py")``.
+    A new owner-scoped handler added to any *other* auth module (or a brand-new
+    module under a novel name) was never examined, so it could key reads and
+    writes off ``current_user.user_id`` without ``require_user_token`` and the
+    guard passed silently.  The file list is replaced by a whole-tree sweep:
+    any ``*.py`` module under ``routes/auth`` is in scope, so a new name cannot
+    escape enumeration.
+    """
+    for path in sorted(_AUTH_DIR.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        yield path.relative_to(_AUTH_DIR).as_posix(), path
+
+
+# Floor pins only; the sweep itself is structural and needs no curated file
+# list.  These assert the tree scan really reaches modules beyond the original
+# two, so reverting the detector to a fixed pair of files fails non-vacuously.
+_KNOWN_OWNER_SCOPED_MODULES = frozenset(
+    {"sessions.py", "devices.py", "passkeys.py", "two_factor.py"}
+)
+_SCAN_FILES_LEGACY = frozenset({"sessions.py", "devices.py"})
 
 
 def _uses_caller_identity(node: ast.AST) -> bool:
@@ -159,17 +185,24 @@ def _own_body_calls_require_user_token(node: ast.AST) -> bool:
     return False
 
 
+def _omissions_in_source(source: str, module: str):
+    """Ungated owner-scoped handlers in one auth-route module's source."""
+    omissions = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not _uses_caller_identity(node) or not _has_user_token_dependency(node):
+            continue
+        if not _own_body_calls_require_user_token(node):
+            omissions.append(f"{module}:{node.name}")
+    return omissions
+
+
 def test_every_owner_scoped_auth_handler_rejects_bot_tokens():
     omissions = []
-    for name in _SCAN_FILES:
-        tree = ast.parse((_AUTH_DIR / name).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not _uses_caller_identity(node) or not _has_user_token_dependency(node):
-                continue
-            if not _own_body_calls_require_user_token(node):
-                omissions.append(f"{name}:{node.name}")
+    for name, path in _iter_auth_modules():
+        omissions += _omissions_in_source(path.read_text(encoding="utf-8"), name)
 
     assert not omissions, (
         "owner-scoped auth handlers without require_user_token:\n  "
@@ -189,9 +222,7 @@ async def handler(current_user: TokenInfo = Depends(get_current_user)):
     return current_user.user_id
 """
     node = next(
-        n
-        for n in ast.walk(ast.parse(source))
-        if isinstance(n, ast.AsyncFunctionDef)
+        n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.AsyncFunctionDef)
     )
     assert _has_user_token_dependency(node)
     assert _uses_caller_identity(node)
@@ -227,3 +258,55 @@ async def live(current_user: TokenInfo = Depends(get_current_user)):
     assert not _own_body_calls_require_user_token(fns["dead_nested"])
     assert not _own_body_calls_require_user_token(fns["dead_lambda"])
     assert _own_body_calls_require_user_token(fns["live"])
+
+
+def test_structural_sweep_covers_the_whole_auth_route_tree():
+    """The completeness scan is not pinned to a fixed two-file list.
+
+    A former version scanned only ``sessions.py`` and ``devices.py``.  A new
+    owner-scoped handler in any other module escaped silently.  The structural
+    discovery must see every shipped auth-route module, including ones the
+    original list never named.
+    """
+    scanned = {name for name, _ in _iter_auth_modules()}
+    assert _KNOWN_OWNER_SCOPED_MODULES <= scanned, (
+        "auth-route sweep is missing known owner-scoped modules: "
+        f"{sorted(_KNOWN_OWNER_SCOPED_MODULES - scanned)}"
+    )
+    # Non-vacuous: the sweep really exercises more than the two old files.
+    assert scanned - _SCAN_FILES_LEGACY, (
+        "auth-route sweep regressed to the old fixed file list"
+    )
+
+
+def test_new_owner_scoped_handler_in_novel_module_is_flagged():
+    """Non-vacuity: a new module/handler under a novel name fails closed.
+
+    The detector must not depend on knowing the module or handler name in
+    advance.  A synthetic auth-route module with an owner-scoped handler that
+    omits ``require_user_token`` is reported by the same helper the real sweep
+    uses, even though neither the file nor the handler has ever been seen.
+    """
+    new_source = textwrap.dedent(
+        """
+        async def future_admin_export(
+            current_user: TokenInfo = Depends(get_current_user),
+        ):
+            return {"owner": current_user.user_id}
+        """
+    )
+    assert _omissions_in_source(
+        new_source, "src/api/routes/auth/future_admin_export.py"
+    ) == ["src/api/routes/auth/future_admin_export.py:future_admin_export"]
+
+    # Same novel handler, but WITH the gate: classified, so it passes.
+    gated_source = textwrap.dedent(
+        """
+        async def future_admin_export(
+            current_user: TokenInfo = Depends(get_current_user),
+        ):
+            require_user_token(current_user)
+            return {"owner": current_user.user_id}
+        """
+    )
+    assert _omissions_in_source(gated_source, "future_admin_export.py") == []
