@@ -388,19 +388,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
-        key="2bcfd736-dm-block-filter-strict-audience",
-        path="src/core/events/gateway_emit.py",
-        marker="if type(value) is not int:",
-        why=(
-            "2bcfd736: the DM block filter builds its POSITIVE participant "
-            "audience from genuine ints only; tolerant _as_id() coercion stays "
-            "only for block-set comparison keys so string-stored legacy block "
-            "ids still block. A stale staged copy restores int() laundering "
-            "BEFORE _final(), admitting a principal that never proved "
-            "participation and bypassing the _final strict guard"
-        ),
-    ),
-    CommittedFixMarker(
         key="98469c69-event-envelope-audience-id-type-confusion",
         path="src/core/events/manager.py",
         marker='"u": [uid for uid in recipients if type(uid) is int],',
@@ -474,6 +461,51 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "copy leaves pre-2FA-trusted sockets authenticated"
         ),
     ),
+    # --- Session-id rotation at 2FA privilege transitions (024ad8a4) ---
+    # The HTTP 2FA enable/disable routes rotate the pre-transition session id
+    # and re-issue the HttpOnly cookie. The manager still preserves
+    # except_session_id for non-HTTP callers, so only the route wiring closes
+    # the fixation gap; a stale staged route file silently reopens it.
+    CommittedFixMarker(
+        key="024ad8a4-confirm-2fa-route-session-rotation",
+        path="src/api/routes/auth/two_factor.py",
+        marker="# Privilege transition (password-only -> 2FA): rotate the session id.",
+        why=(
+            "024ad8a4: confirm_2fa_setup rotates the pre-2FA session id and "
+            "re-issues the cookie; a stale staged copy keeps the fixated id "
+            "valid after the second factor is enabled"
+        ),
+    ),
+    CommittedFixMarker(
+        key="024ad8a4-disable-2fa-route-session-rotation",
+        path="src/api/routes/auth/two_factor.py",
+        marker="# Disabling 2FA is also a privilege transition: the preserved current",
+        why=(
+            "024ad8a4: disable_2fa rotates the pre-transition session id and "
+            "re-issues the cookie; a stale staged copy keeps the old id alive "
+            "after the privilege switch"
+        ),
+    ),
+    CommittedFixMarker(
+        key="024ad8a4-2fa-rotation-cookie-reissue",
+        path="src/api/routes/auth/two_factor.py",
+        marker="set_session_cookie(response, rotated.token, session_expiry_seconds(rotated))",
+        why=(
+            "024ad8a4: both 2FA transitions hand the rotated credential back as "
+            "a fresh HttpOnly Set-Cookie; a stale staged copy rotates the id "
+            "without updating the browser cookie and breaks the session"
+        ),
+    ),
+    CommittedFixMarker(
+        key="024ad8a4-session-rotation-primitive",
+        path="src/core/auth/managers/session/rotation.py",
+        marker="def rotate_session_id(self, user_id: int, old_session_id: int) -> Session:",
+        why=(
+            "024ad8a4: RotationMixin.rotate_session_id revokes the old session "
+            "(closing its socket) and mints a new id+secret; a stale staged "
+            "copy drops the primitive the 2FA routes depend on"
+        ),
+    ),
 )
 
 
@@ -518,13 +550,16 @@ PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
         "bc7d08d9-dispatch-recipient-id-type-confusion",
         "98469c69-event-channel-audience-id-type-confusion",
         "98469c69-event-envelope-audience-id-type-confusion",
-        "2bcfd736-dm-block-filter-strict-audience",
         "8cdcddb0-twofactor-no-debug-print",
         "b71b0d64-targeted-session-socket-close-method",
         "33cf9e7d-refresh-replay-session-socket-close",
         "bb824009-logout-closes-user-sockets",
         "bb824009-revoke-all-closes-user-sockets",
         "bb824009-2fa-enable-closes-user-sockets",
+        "024ad8a4-confirm-2fa-route-session-rotation",
+        "024ad8a4-disable-2fa-route-session-rotation",
+        "024ad8a4-2fa-rotation-cookie-reissue",
+        "024ad8a4-session-rotation-primitive",
     }
 )
 
@@ -707,7 +742,7 @@ def test_private_index_pinned_keys_are_registered() -> None:
         "private-index key set references keys missing from COMMITTED_FIX_MARKERS: "
         f"{sorted(PRIVATE_INDEX_PINNED_KEYS - set(keys))}"
     )
-    assert len(PRIVATE_INDEX_PINNED_KEYS) == 12
+    assert len(PRIVATE_INDEX_PINNED_KEYS) == 15
     for key in PRIVATE_INDEX_PINNED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path.startswith("src/"), f"bad path for {key!r}"

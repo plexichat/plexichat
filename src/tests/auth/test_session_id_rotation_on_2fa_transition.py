@@ -68,7 +68,87 @@ class TestFixedIdSurvivesStepUp:
         assert info.session_id == fixed_sid
 
 
+class _RecordingWS:
+    def __init__(self):
+        self.closed = []
+
+    async def close(self, code=None, reason=None):
+        self.closed.append((code, reason))
+        return True
+
+
+def _fake_conn(user_id, auth_session_id, name):
+    conn = SimpleNamespace(
+        user_id=int(user_id),
+        auth_session_id=int(auth_session_id),
+        connection_id=name,
+        websocket=_RecordingWS(),
+        disconnecting=False,
+        disconnected=False,
+    )
+
+    async def _flush():
+        return None
+
+    conn.flush_outbound = _flush
+    conn.set_disconnecting = lambda: setattr(conn, "disconnecting", True)
+    conn.set_disconnected = lambda: setattr(conn, "disconnected", True)
+    return conn
+
+
+def _install_dispatcher(monkeypatch, conns):
+    from src.api.websocket.dispatcher import GatewayDispatcher
+    import src.api.websocket as ws
+
+    class _FakeSessionManager:
+        def get_all_connections(self):
+            return list(conns)
+
+    dispatcher = GatewayDispatcher(_FakeSessionManager())
+    monkeypatch.setattr(ws, "is_setup", lambda: True)
+    monkeypatch.setattr(ws, "get_dispatcher", lambda: dispatcher)
+    return dispatcher
+
+
 class TestSessionIdRotation:
+    def test_rotation_closes_only_old_socket_and_new_session_stays_valid(
+        self, monkeypatch, db, auth_manager
+    ):
+        """Rotation closes the OLD session's socket, not a sibling's, and the
+        freshly minted session remains a valid credential.
+
+        This is the conflict check: ``rotate_session_id`` revokes via
+        :meth:`revoke_session`, whose targeted close must use the OLD id. The
+        new id is minted after the close, so no socket can be bound to it yet.
+        """
+        from src.api.websocket.dispatcher import GatewayCloseCode
+
+        user, login = _register_and_login(auth_manager, "rotate_socket_target")
+        old_sid = _sid(login.token)
+        sibling = auth_manager.create_session_for_user(user.id)
+        conn_old = _fake_conn(user.id, old_sid, "old")
+        conn_sibling = _fake_conn(user.id, sibling.session.id, "sibling")
+        _install_dispatcher(monkeypatch, [conn_old, conn_sibling])
+
+        async def _main():
+            rotated = auth_manager.rotate_session_id(user.id, old_sid)
+            await asyncio.sleep(0.01)
+            return rotated
+
+        rotated = asyncio.run(_main())
+
+        with pytest.raises(TokenInvalidError):
+            auth_manager.verify_token(login.token)
+        assert auth_manager.verify_token(rotated.token).valid is True
+        assert rotated.id not in (old_sid, sibling.session.id)
+
+        assert conn_old.websocket.closed, "old session's socket must close"
+        code, _reason = conn_old.websocket.closed[0]
+        assert code == int(GatewayCloseCode.AUTHENTICATION_FAILED)
+        assert not conn_sibling.websocket.closed, (
+            "a sibling session's socket must stay connected"
+        )
+
     def test_rotate_session_id_invalidates_old_and_keeps_user_bound(
         self, db, auth_manager
     ):
