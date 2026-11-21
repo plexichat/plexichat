@@ -331,24 +331,56 @@ class RoleCrudMixin(RoleHandlerProtocol):
             query = (
                 "UPDATE srv_roles SET " + set_clause + " WHERE id = ? AND position = ?"
             )
-            cursor = self.db.execute(query, (*set_params, role_id, role.position))
-            rowcount = getattr(cursor, "rowcount", None)
-            if isinstance(rowcount, int) and rowcount <= 0:
-                raise RoleHierarchyError("Role changed concurrently, retry")
 
-            self.manager._log_audit(
-                role.server_id,
-                user_id,
-                AuditLogAction.ROLE_UPDATE,
-                "role",
-                role_id,
-                changes,
-            )
+            # A role update rewrites the permission bits that gate both
+            # ``events.manage`` and ``server.manage``. Take the SAME advisory
+            # locks those gated writes take, keyed by the same server_id, so a
+            # re-check + write in delete_event/update_server cannot race this
+            # revocation. Both locks are always acquired in ascending order
+            # (142 then 143); gated writers take only one of the two, so there
+            # is no lock-order cycle (deadlock avoidance). SQLite serialises
+            # writers with its own write lock.
+            is_postgres = getattr(self.db, "type", "") == "postgres"
+            if is_postgres:
+                self.db.begin_transaction()
+                try:
+                    self.db.execute(
+                        "SELECT pg_advisory_xact_lock(?, ?)",
+                        (142, int(role.server_id) & 0x3FFFFFFF),
+                    )
+                    self.db.execute(
+                        "SELECT pg_advisory_xact_lock(?, ?)",
+                        (143, int(role.server_id) & 0x3FFFFFFF),
+                    )
+                except Exception:
+                    self.db.rollback()
+                    raise
+            try:
+                if not is_postgres:
+                    self.db.begin_transaction()
 
-            # Role permission changes affect every member holding the role, so
-            # the cached permission snapshots for the whole server must be
-            # dropped or revocations would not take effect until the TTL.
-            self.manager._invalidate_server_permission_caches(role.server_id)
+                cursor = self.db.execute(query, (*set_params, role_id, role.position))
+                rowcount = getattr(cursor, "rowcount", None)
+                if isinstance(rowcount, int) and rowcount <= 0:
+                    raise RoleHierarchyError("Role changed concurrently, retry")
+
+                self.manager._log_audit(
+                    role.server_id,
+                    user_id,
+                    AuditLogAction.ROLE_UPDATE,
+                    "role",
+                    role_id,
+                    changes,
+                )
+
+                # Role permission changes affect every member holding the role,
+                # so the cached permission snapshots for the whole server must
+                # be dropped or revocations would not take effect until TTL.
+                self.manager._invalidate_server_permission_caches(role.server_id)
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
         updated_role = self.get_role(role_id, user_id)
         assert updated_role is not None
@@ -379,23 +411,52 @@ class RoleCrudMixin(RoleHandlerProtocol):
         # concurrent promotion between the check above and this write turns a
         # previously-authorized deletion of a lower role into the deletion of a
         # role now at/above the actor's rank.
-        cursor = self.db.execute(
-            "UPDATE srv_roles SET deleted = 1 WHERE id = ? AND position = ?",
-            (role_id, role.position),
-        )
-        rowcount = getattr(cursor, "rowcount", None)
-        if isinstance(rowcount, int) and rowcount <= 0:
-            raise RoleHierarchyError("Role changed concurrently, retry")
+        # Deleting a role revokes its bits for every holder, gating both
+        # ``events.manage`` and ``server.manage``. Take the same two advisory
+        # locks as those gated writes, in the fixed 142 -> 143 order, so no
+        # re-check + write can race this revocation.
+        is_postgres = getattr(self.db, "type", "") == "postgres"
+        if is_postgres:
+            self.db.begin_transaction()
+            try:
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (142, int(role.server_id) & 0x3FFFFFFF),
+                )
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (143, int(role.server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self.db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self.db.begin_transaction()
 
-        self.db.execute("DELETE FROM srv_member_roles WHERE role_id = ?", (role_id,))
+            cursor = self.db.execute(
+                "UPDATE srv_roles SET deleted = 1 WHERE id = ? AND position = ?",
+                (role_id, role.position),
+            )
+            rowcount = getattr(cursor, "rowcount", None)
+            if isinstance(rowcount, int) and rowcount <= 0:
+                raise RoleHierarchyError("Role changed concurrently, retry")
 
-        # Members who held the deleted role lose its permissions immediately;
-        # drop the server's cached permission snapshots so they are recomputed.
-        self.manager._invalidate_server_permission_caches(role.server_id)
+            self.db.execute(
+                "DELETE FROM srv_member_roles WHERE role_id = ?", (role_id,)
+            )
 
-        self.manager._log_audit(
-            role.server_id, user_id, AuditLogAction.ROLE_DELETE, "role", role_id
-        )
+            # Members who held the deleted role lose its permissions
+            # immediately; drop the cached snapshots so they are recomputed.
+            self.manager._invalidate_server_permission_caches(role.server_id)
+
+            self.manager._log_audit(
+                role.server_id, user_id, AuditLogAction.ROLE_DELETE, "role", role_id
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return True
 
     def move_role(

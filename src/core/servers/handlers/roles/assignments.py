@@ -137,35 +137,62 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         if existing:
             return True
 
-        now = self.manager._get_timestamp()
-        self.db.execute(
-            """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
-               VALUES (?, ?, ?, ?, ?)""",
-            (self.manager._generate_id(), member.id, role_id, now, user_id),
-        )
+        # Attaching a role grants ``events.manage``/``server.manage`` (and
+        # others) to the target. Take the same advisory locks as those gated
+        # writes, keyed by the same server_id, in the fixed 142 -> 143 order so
+        # a re-check + write cannot race this grant.
+        is_postgres = getattr(self.db, "type", "") == "postgres"
+        if is_postgres:
+            self.db.begin_transaction()
+            try:
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (142, int(server_id) & 0x3FFFFFFF),
+                )
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (143, int(server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self.db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self.db.begin_transaction()
 
-        # Invalidate caches
-        from src.core.database import invalidate_pattern
+            now = self.manager._get_timestamp()
+            self.db.execute(
+                """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (self.manager._generate_id(), member.id, role_id, now, user_id),
+            )
 
-        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
-        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
-        invalidate_pattern("has_perm:*")
-        invalidate_pattern(f"member_data:*{member_user_id}*")
-        # Retire the target member's cached channel-view decisions; a newly
-        # assigned role can immediately widen (and later revoke) channel access.
-        get_channel_access_cache().bump(server_id, member_user_id)
-        # The cached roster page embeds role ids, so a role change must evict
-        # it for every viewer of this server.
-        self.manager._invalidate_roster_caches(server_id)
+            # Invalidate caches
+            from src.core.database import invalidate_pattern
 
-        self.manager._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.MEMBER_ROLE_ADD,
-            "member",
-            member_user_id,
-            {"role_id": role_id},
-        )
+            self.manager._cache_invalidate(self.manager._permission_cache_prefix)
+            invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+            invalidate_pattern("has_perm:*")
+            invalidate_pattern(f"member_data:*{member_user_id}*")
+            # Retire the target member's cached channel-view decisions; a newly
+            # assigned role can immediately widen (and later revoke) access.
+            get_channel_access_cache().bump(server_id, member_user_id)
+            # The cached roster page embeds role ids, so a role change must
+            # evict it for every viewer of this server.
+            self.manager._invalidate_roster_caches(server_id)
+
+            self.manager._log_audit(
+                server_id,
+                user_id,
+                AuditLogAction.MEMBER_ROLE_ADD,
+                "member",
+                member_user_id,
+                {"role_id": role_id},
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return True
 
     def remove_role(
@@ -202,33 +229,58 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
                 "Cannot remove a role at or above your highest role"
             )
 
-        self.db.execute(
-            "DELETE FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
-            (member.id, role_id),
-        )
+        # Removing a role revokes its bits for the target, so it must serialize
+        # with the same gated writes as ``assign_role`` (fixed 142 -> 143 order).
+        is_postgres = getattr(self.db, "type", "") == "postgres"
+        if is_postgres:
+            self.db.begin_transaction()
+            try:
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (142, int(server_id) & 0x3FFFFFFF),
+                )
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (143, int(server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self.db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self.db.begin_transaction()
 
-        # Invalidate caches
-        from src.core.database import invalidate_pattern
+            self.db.execute(
+                "DELETE FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
+                (member.id, role_id),
+            )
 
-        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
-        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
-        invalidate_pattern("has_perm:*")
-        invalidate_pattern(f"member_data:*{member_user_id}*")
-        # Retire the target member's cached channel-view decisions so a removed
-        # role's access is revoked on the very next check (no stale grant).
-        get_channel_access_cache().bump(server_id, member_user_id)
-        # The cached roster page embeds role ids, so a role change must evict
-        # it for every viewer of this server.
-        self.manager._invalidate_roster_caches(server_id)
+            # Invalidate caches
+            from src.core.database import invalidate_pattern
 
-        self.manager._log_audit(
-            server_id,
-            user_id,
-            AuditLogAction.MEMBER_ROLE_REMOVE,
-            "member",
-            member_user_id,
-            {"role_id": role_id},
-        )
+            self.manager._cache_invalidate(self.manager._permission_cache_prefix)
+            invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+            invalidate_pattern("has_perm:*")
+            invalidate_pattern(f"member_data:*{member_user_id}*")
+            # Retire the target member's cached channel-view decisions so a
+            # removed role's access is revoked on the very next check.
+            get_channel_access_cache().bump(server_id, member_user_id)
+            # The cached roster page embeds role ids, so a role change must
+            # evict it for every viewer of this server.
+            self.manager._invalidate_roster_caches(server_id)
+
+            self.manager._log_audit(
+                server_id,
+                user_id,
+                AuditLogAction.MEMBER_ROLE_REMOVE,
+                "member",
+                member_user_id,
+                {"role_id": role_id},
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return True
 
     def assign_roles_from_whitelist(
@@ -258,78 +310,110 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         now = self.manager._get_timestamp()
         assigned: List[SnowflakeID] = []
 
-        # One audit INSERT per assigned role used to cost one INSERT plus one
-        # autocommit each.  Buffer them for the duration of the loop; the
-        # context manager flushes on exit (including on error), so every
-        # accepted audit row still reaches srv_audit_log.
-        with self.manager._buffered_audit():
-            for role_id in role_ids:
-                if role_id not in allowed:
-                    continue
-                row = self.db.fetch_one(
-                    "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
-                    (role_id,),
-                )
-                if not row or row["server_id"] != server_id:
-                    continue
-                if row["is_default"]:
-                    continue
-
-                permissions = row["permissions"]
-                if isinstance(permissions, str):
-                    try:
-                        permissions = json.loads(permissions) if permissions else {}
-                    except (TypeError, ValueError):
-                        # A corrupt/legacy permission blob must never be treated as
-                        # a harmless empty grant on a self-service path.
-                        continue
-                if not isinstance(permissions, dict):
-                    continue
-                try:
-                    # Wildcards ("*", "namespace.*") expand to full grants in
-                    # has_permission(). They are forbidden in freshly-written
-                    # roles, but a legacy/imported row could still carry one; such
-                    # a role is never safe to hand out through self-service.
-                    validate_permission_dict(permissions)
-                except ValueError:
-                    continue
-                # Checking the literal ``administrator`` key alone missed a role
-                # whose permissions contain a truthy ``*`` wildcard, which grants
-                # every permission (including roles.manage) on lookup.
-                if has_permission(permissions, "administrator"):
-                    continue
-
-                existing = self.db.fetch_one(
-                    "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
-                    (member.id, role_id),
-                )
-                if existing:
-                    assigned.append(role_id)
-                    continue
-
+        # Self-service onboarding grants the same permission bits as
+        # ``assign_role``, so it takes the same two advisory locks (fixed
+        # 142 -> 143 order) and cannot race a gated write's re-check.
+        is_postgres = getattr(self.db, "type", "") == "postgres"
+        if is_postgres:
+            self.db.begin_transaction()
+            try:
                 self.db.execute(
-                    """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (self.manager._generate_id(), member.id, role_id, now, user_id),
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (142, int(server_id) & 0x3FFFFFFF),
                 )
-                self.manager._log_audit(
-                    server_id,
-                    user_id,
-                    AuditLogAction.MEMBER_ROLE_ADD,
-                    "member",
-                    user_id,
-                    {"role_id": role_id},
+                self.db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (143, int(server_id) & 0x3FFFFFFF),
                 )
-                assigned.append(role_id)
+            except Exception:
+                self.db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self.db.begin_transaction()
 
-        if assigned:
-            from src.core.database import invalidate_pattern
+            # One audit INSERT per assigned role used to cost one INSERT plus
+            # one autocommit each. Buffer them for the duration of the loop;
+            # the context manager flushes on exit (including on error), so
+            # every accepted audit row still reaches srv_audit_log.
+            with self.manager._buffered_audit():
+                for role_id in role_ids:
+                    if role_id not in allowed:
+                        continue
+                    row = self.db.fetch_one(
+                        "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
+                        (role_id,),
+                    )
+                    if not row or row["server_id"] != server_id:
+                        continue
+                    if row["is_default"]:
+                        continue
 
-            self.manager._cache_invalidate(self.manager._permission_cache_prefix)
-            invalidate_pattern(f"perms:{user_id}:{server_id}:*")
-            invalidate_pattern("has_perm:*")
-            invalidate_pattern(f"member_data:*{user_id}*")
-            get_channel_access_cache().bump(server_id, user_id)
-            self.manager._invalidate_roster_caches(server_id)
+                    permissions = row["permissions"]
+                    if isinstance(permissions, str):
+                        try:
+                            permissions = json.loads(permissions) if permissions else {}
+                        except (TypeError, ValueError):
+                            # A corrupt/legacy blob must never be treated as a
+                            # harmless empty grant on a self-service path.
+                            continue
+                    if not isinstance(permissions, dict):
+                        continue
+                    try:
+                        # Wildcards ("*", "namespace.*") expand to full grants
+                        # in has_permission(). They are forbidden in freshly
+                        # written roles, but a legacy/imported row could still
+                        # carry one; never hand such a role out self-service.
+                        validate_permission_dict(permissions)
+                    except ValueError:
+                        continue
+                    # Checking the literal ``administrator`` key alone missed a
+                    # role whose permissions contain a truthy ``*`` wildcard,
+                    # which grants every permission on lookup.
+                    if has_permission(permissions, "administrator"):
+                        continue
 
+                    existing = self.db.fetch_one(
+                        "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
+                        (member.id, role_id),
+                    )
+                    if existing:
+                        assigned.append(role_id)
+                        continue
+
+                    self.db.execute(
+                        """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            self.manager._generate_id(),
+                            member.id,
+                            role_id,
+                            now,
+                            user_id,
+                        ),
+                    )
+                    self.manager._log_audit(
+                        server_id,
+                        user_id,
+                        AuditLogAction.MEMBER_ROLE_ADD,
+                        "member",
+                        user_id,
+                        {"role_id": role_id},
+                    )
+                    assigned.append(role_id)
+
+            if assigned:
+                from src.core.database import invalidate_pattern
+
+                self.manager._cache_invalidate(self.manager._permission_cache_prefix)
+                invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+                invalidate_pattern("has_perm:*")
+                invalidate_pattern(f"member_data:*{user_id}*")
+                get_channel_access_cache().bump(server_id, user_id)
+                self.manager._invalidate_roster_caches(server_id)
+
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return assigned

@@ -1,17 +1,21 @@
-"""Advisory-lock namespace isolation across every quota guard.
+"""Advisory-lock namespace isolation across every guard.
 
 Quota guards that enforce per-resource caps under PostgreSQL READ COMMITTED
 take a transaction-scoped advisory lock (``pg_advisory_xact_lock``) keyed by the
-guarded resource. Every quota must own a namespace (or a small reserved band)
+guarded resource. Every quota owns a namespace (or a small reserved band)
 that no other quota touches. Two quotas sharing a namespace would serialise
 against each other even though they are unrelated -- safe for correctness
 (over-serialisation, never a quota bypass) but wasteful and a maintenance trap.
 
-Besides quota guards, permission-based check-then-write sites whose gate cannot
-be expressed in SQL (role JSON + owner shortcut + overrides) re-run
-``require_permission`` under a per-server advisory lock; those permission guards
-own their own namespaces too (142 for delete_event, 143 for update_server) and
-are registered here so they cannot collide with a quota namespace.
+Permission-based check-then-write sites whose gate cannot be expressed in SQL
+(role JSON + owner shortcut + overrides) re-run ``require_permission`` under a
+per-server advisory lock. Namespaces 142 (delete_event) and 143
+(update_server) are deliberately SHARED with every RBAC mutation that can
+invalidate those gates (update_role, delete_role, assign_role, remove_role,
+assign_roles_from_whitelist), so a re-check + write cannot race a role change.
+Over-serialisation is acceptable; an accidental collision between an
+exclusive quota band and a shared permission guard is not. Shared locks are
+always acquired in ascending order (142 before 143) to avoid deadlock.
 
 Commit 9313d994 introduced this guard ratchet but only covered the role and
 scheduled-event quotas. The invite, emoji, sticker, soundboard, webhook,
@@ -22,7 +26,10 @@ collision in any of them -- or a brand new advisory lock added anywhere in
 This module is a complete, non-vacuous inventory of all production advisory
 xact locks. It fails if:
   * a new advisory-lock call site appears that is not registered below,
-  * a registered quota's namespace changes or collides with another quota,
+  * a registered quota's exclusive namespace changes or collides with another
+    quota or with a shared permission-guard namespace,
+  * the exact path inventory of a shared permission namespace changes,
+  * a site taking both shared permission locks acquires them out of order,
   * a lock key degenerates to a bare constant (no resource derivation),
   * a single-key (64-bit) lock silently becomes a namespaced two-key lock.
 """
@@ -36,21 +43,18 @@ pytestmark = pytest.mark.unit
 
 _SRC_ROOT = Path(__file__).resolve().parents[2]
 
-# Definitive map of all production two-argument pg_advisory_xact_lock call
-# sites. Value: (path relative to src/, set of namespaces that quota owns).
+# Exclusive quota namespaces. Value: (path relative to src/, namespaces owned).
 # A quota may own a small band: invite uses 2 for server scope and 1 for
-# inviter scope; emoji uses 100/101 for the animated flag.
+# inviter scope; emoji uses 100/101 for the animated flag. Shared permission
+# namespaces are subtracted before comparison (see the shared registry below).
 _QUOTA_LOCKS = {
     "invite": ("core/servers/handlers/members/invites.py", {1, 2}),
     "emoji": ("core/reactions/manager/emojis.py", {100, 101}),
     "sticker": ("core/stickers/manager.py", {102}),
     "soundboard": ("core/soundboard/manager.py", {120}),
     "webhook": ("core/webhooks/manager/crud.py", {130}),
-    # 140 = create_event quota; 142 = delete_event permission re-check guard.
-    "scheduled-event": ("core/servers/manager/scheduled_event_ops.py", {140, 142}),
+    "scheduled-event": ("core/servers/manager/scheduled_event_ops.py", {140}),
     "role": ("core/servers/handlers/roles/crud.py", {141}),
-    # update_server re-checks ``server.manage`` under namespace 143.
-    "server-settings-permission": ("core/servers/manager/server_ops.py", {143}),
     "application": ("core/applications/manager/application_crud.py", {150}),
     "bookmark": ("core/messaging/services/bookmarks.py", {0x424F4B4D}),
 }
@@ -62,9 +66,31 @@ _SINGLE_ARG_LOCKS = {
     "storage": ("core/storage_quota/manager.py",),
 }
 
-_ALL_REGISTERED_PATHS = {path for path, _ in _QUOTA_LOCKS.values()} | {
-    path for (path,) in _SINGLE_ARG_LOCKS.values()
+# Namespaces intentionally shared between a gated writer and the RBAC mutations
+# that can invalidate its gate. Not "owned" by any single path.
+_SHARED_PERMISSION_NAMESPACES = {142, 143}
+
+# Exact path inventory for each shared namespace. Any new (or removed) lock
+# site using 142/143 must update this map; the test below compares it against
+# the discovered production call sites.
+_SHARED_LOCK_PATHS = {
+    142: {
+        "core/servers/manager/scheduled_event_ops.py",  # delete_event re-check
+        "core/servers/handlers/roles/crud.py",  # update_role / delete_role
+        "core/servers/handlers/roles/assignments.py",  # role grants / revokes
+    },
+    143: {
+        "core/servers/manager/server_ops.py",  # update_server re-check
+        "core/servers/handlers/roles/crud.py",  # update_role / delete_role
+        "core/servers/handlers/roles/assignments.py",  # role grants / revokes
+    },
 }
+
+_ALL_REGISTERED_PATHS = (
+    {path for path, _ in _QUOTA_LOCKS.values()}
+    | {path for (path,) in _SINGLE_ARG_LOCKS.values()}
+    | {path for paths in _SHARED_LOCK_PATHS.values() for path in paths}
+)
 
 
 def _parse(rel_path):
@@ -171,19 +197,23 @@ def test_every_advisory_lock_is_registered():
     unregistered = discovered - _ALL_REGISTERED_PATHS
     assert not unregistered, (
         f"unregistered pg_advisory_xact_lock call sites: {sorted(unregistered)}; "
-        "add each to _QUOTA_LOCKS/_SINGLE_ARG_LOCKS with its namespace"
+        "add each to _QUOTA_LOCKS/_SINGLE_ARG_LOCKS/_SHARED_LOCK_PATHS"
     )
     stale = _ALL_REGISTERED_PATHS - discovered
     assert not stale, (
         f"registry references files with no advisory lock: {sorted(stale)}"
     )
+    assert _SHARED_PERMISSION_NAMESPACES, "shared permission registry is empty"
+    for paths in _SHARED_LOCK_PATHS.values():
+        assert paths, "a shared permission namespace has an empty path inventory"
+        assert paths <= discovered
 
 
 def test_all_quota_namespaces_are_distinct_and_stable():
-    """Every quota owns a stable namespace band disjoint from all others."""
+    """Every quota owns a stable exclusive band disjoint from all others."""
     actual = {}
     for quota, (rel_path, expected) in _QUOTA_LOCKS.items():
-        namespaces = _namespaces_for(_parse(rel_path))
+        namespaces = _namespaces_for(_parse(rel_path)) - _SHARED_PERMISSION_NAMESPACES
         assert namespaces, f"{quota}: failed to extract a namespace from {rel_path}"
         assert namespaces == expected, (
             f"{quota}: namespace set changed: expected {sorted(expected)}, "
@@ -199,16 +229,64 @@ def test_all_quota_namespaces_are_distinct_and_stable():
                 f"quotas {left!r} and {right!r} share namespace(s) {sorted(overlap)}; "
                 "unrelated quotas must serialise on distinct namespaces"
             )
+    quota_union = set().union(*actual.values())
+    assert not (quota_union & _SHARED_PERMISSION_NAMESPACES), (
+        "an exclusive quota namespace collides with a shared permission guard"
+    )
 
 
 def test_role_and_scheduled_event_still_have_distinct_namespaces():
     """Original 9313d994 regression: role and scheduled-event must not collide."""
     role_ns = _namespaces_for(_parse(_QUOTA_LOCKS["role"][0]))
     event_ns = _namespaces_for(_parse(_QUOTA_LOCKS["scheduled-event"][0]))
-    assert role_ns and event_ns
-    assert not (role_ns & event_ns), (
+    role_exclusive = role_ns - _SHARED_PERMISSION_NAMESPACES
+    event_exclusive = event_ns - _SHARED_PERMISSION_NAMESPACES
+    assert role_exclusive and event_exclusive
+    assert not (role_exclusive & event_exclusive), (
         "role and scheduled-event quota locks share a namespace"
     )
+
+
+def test_shared_permission_namespaces_have_exact_path_inventory():
+    """Non-vacuous: shared guard namespaces have exactly the registered users."""
+    discovered = _prod_lock_paths()
+    for namespace in _SHARED_PERMISSION_NAMESPACES:
+        expected = _SHARED_LOCK_PATHS.get(namespace)
+        assert expected, f"shared permission namespace {namespace} is not registered"
+        actual = {
+            rel for rel in discovered if namespace in _namespaces_for(_parse(rel))
+        }
+        assert actual == expected, (
+            f"namespace {namespace}: registered {sorted(expected)}, "
+            f"actual {sorted(actual)}"
+        )
+
+
+def test_multi_namespace_sites_acquire_locks_in_fixed_order():
+    """Deadlock avoidance: a site taking both shared locks takes 142 first."""
+    checked = 0
+    for paths in _SHARED_LOCK_PATHS.values():
+        for rel in paths:
+            tree = _parse(rel)
+            for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+                pairs = []
+                for call, params in _advisory_lock_calls(fn):
+                    if _arg_count(call.args[0]) < 2:
+                        continue
+                    pairs.append((call.lineno, _namespace_from_tuple(tree, params)))
+                pairs.sort()
+                shared = [
+                    ns
+                    for _, ns_set in pairs
+                    for ns in sorted(ns_set & _SHARED_PERMISSION_NAMESPACES)
+                ]
+                if len(set(shared)) < 2:
+                    continue
+                checked += 1
+                assert shared.index(142) < shared.index(143), (
+                    f"{rel}:{fn.name} acquires shared locks out of order {shared}"
+                )
+    assert checked >= 3, "no site takes both shared locks - order guard vacuous"
 
 
 def test_single_arg_locks_have_no_namespace_to_collide():
@@ -222,21 +300,14 @@ def test_single_arg_locks_have_no_namespace_to_collide():
 
 
 def test_lock_keys_derive_from_resource():
-    """No quota lock key may be a bare integer constant."""
-    for quota, (rel_path, _expected) in _QUOTA_LOCKS.items():
+    """No advisory lock key may be a bare integer constant."""
+    for rel_path in sorted(_ALL_REGISTERED_PATHS):
         tree = _parse(rel_path)
         for call, params in _advisory_lock_calls(tree):
-            if _arg_count(call.args[0]) < 2:
-                continue
-            if isinstance(params, (ast.Tuple, ast.List)) and len(params.elts) > 1:
-                key = params.elts[1]
-                assert not (
-                    isinstance(key, ast.Constant) and isinstance(key.value, int)
-                ), f"{quota}: advisory-lock key must derive from a resource id"
-    for quota, (rel_path,) in _SINGLE_ARG_LOCKS.items():
-        for _call, params in _advisory_lock_calls(_parse(rel_path)):
+            two_key = _arg_count(call.args[0]) >= 2
             if isinstance(params, (ast.Tuple, ast.List)) and params.elts:
-                key = params.elts[0]
+                key = params.elts[-1]
                 assert not (
                     isinstance(key, ast.Constant) and isinstance(key.value, int)
-                ), f"{quota}: advisory-lock key must derive from a resource id"
+                ), f"{rel_path}: advisory-lock key must derive from a resource id"
+            assert two_key or _arg_count(call.args[0]) == 1
