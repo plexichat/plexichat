@@ -10,6 +10,7 @@ from src.core.database import cached, invalidate_pattern
 
 from ..models import AccessToken, AuditEventType
 from ..exceptions import UserNotFoundError
+from ..tokens import is_expired
 
 
 from .protocol import AuthManagerProtocol
@@ -646,8 +647,11 @@ class ApiTokenMixin(AuthManagerProtocol):
 
         # Revocation/binding are enforced by eager invalidation + the short TTL
         # (see the cache docstring); expiry is re-checked here even on a hit.
+        # Revalidate a persisted expiry: a corrupt falsy value (0/"") or an
+        # out-of-range forged future value must fail closed; only NULL means
+        # "never expires". is_expired() denies zero/malformed/out-of-range.
         expires_at = verdict.get("expires_at")
-        if expires_at and int(expires_at) <= now:
+        if expires_at is not None and is_expired(expires_at, now):
             self._record_api_access_token_event(
                 token_id=int(token_id),
                 ip_address=ip_address,
