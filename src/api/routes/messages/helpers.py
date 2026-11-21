@@ -452,9 +452,7 @@ def _message_to_response(
         content=content,
         created_at=created_at,
         edited_at=edited_at,
-        reply_to_id=SnowflakeID(get_attr(msg, "reply_to_id"))
-        if get_attr(msg, "reply_to_id")
-        else None,
+        reply_to_id=SnowflakeID(reply_to_id_value) if reply_to_id_value else None,
         attachments=attachments,
         embeds=embeds_out,
         pinned=get_attr(msg, "pinned", False),
