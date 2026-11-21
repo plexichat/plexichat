@@ -12,7 +12,7 @@ OAUTH_PROVIDERS = {
         "token_url": "https://github.com/login/oauth/access_token",
         "user_info_url": "https://api.github.com/user",
         "scopes": ["read:user", "user:email"],
-        "supports_pkce": False,
+        "supports_pkce": True,
         "supports_nonce": False,
     },
     "microsoft": {
