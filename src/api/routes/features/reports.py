@@ -667,6 +667,19 @@ async def update_report_status(
     if not _gate_flag(gate, "is_admin", 0):
         raise_forbidden("Admin access required")
 
+    # Membership in admin_users is not enough to mutate moderation state.
+    # Admin accounts are scoped by role: every sibling admin report action in
+    # moderation.py requires reports.action, and the read path in this same
+    # router already requires reports.read for admins. Without this check a
+    # tickets-only support admin (or any role without report scopes) could
+    # change a report's status, priority, assignment, resolution and internal
+    # notes simply by virtue of being in the admin table. Fail closed when the
+    # permission subsystem cannot resolve the caller's grants.
+    from src.core.admin.permissions import check_admin_permission
+
+    if not check_admin_permission(current_user.user_id, "reports.action", db):
+        raise_forbidden("Insufficient permissions")
+
     if body.status not in VALID_REPORT_STATUSES:
         raise_bad_request(
             f"Invalid status. Must be one of: {', '.join(sorted(VALID_REPORT_STATUSES))}"
