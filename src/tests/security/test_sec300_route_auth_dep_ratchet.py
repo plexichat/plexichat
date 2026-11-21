@@ -189,18 +189,37 @@ def _call_name(node):
     return ""
 
 
+def _own_body_guard_calls(fn: ast.AST):
+    """Guard-like evidence that actually executes on this handler's path.
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a nested callable that calls
+    a guard does not run it. Counting such a call as protection lets an
+    unauthenticated mutating route silence this invariant with dead evidence
+    (the same vacuity fixed in the sibling SEC100/SEC200 route guards).
+    """
+    hits = []
+    stack = [fn]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Call) and GUARD_RE.search(_call_name(child)):
+                hits.append(child)
+            if (
+                isinstance(child, ast.Attribute)
+                and isinstance(child.value, ast.Name)
+                and child.value.id == "request"
+                and GUARD_RE.search(child.attr)
+            ):
+                hits.append(child)
+            stack.append(child)
+    return hits
+
+
 def _has_in_handler_guard(fn) -> bool:
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Call) and GUARD_RE.search(_call_name(node)):
-            return True
-        if (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "request"
-            and GUARD_RE.search(node.attr)
-        ):
-            return True
-    return False
+    return bool(_own_body_guard_calls(fn))
 
 
 def _is_protected(fn) -> bool:
@@ -278,6 +297,45 @@ def by_decorator():
     assert routes[("sample.py", "patch", "/guard")] is True
     assert routes[("sample.py", "put", "/bare")] is False
     assert ("sample.py", "get", "/read") not in routes
+
+
+def test_dead_nested_guard_does_not_protect_route():
+    """A guard in a never-invoked nested callable must not gate the route.
+
+    Regression: the in-handler evidence scan used ``ast.walk(fn)``, which
+    descends into nested functions and lambdas. Merely *defining* a helper or
+    lambda that calls a guard did not execute it, so an unauthenticated
+    mutating route could silence this invariant with dead evidence. A live
+    in-handler guard must still count.
+    """
+    source = """
+@router.post("/dead-nested")
+async def dead_nested(request: Request):
+    def never_called():
+        require_admin_permission(request, "x")
+    return None
+
+@router.put("/dead-lambda")
+async def dead_lambda(request: Request):
+    _ = lambda: verify_token(request)
+    return None
+
+@router.delete("/live")
+async def live(request: Request):
+    require_admin_permission(request, "x")
+    return None
+"""
+    tree = ast.parse(source)
+    routes = {key: protected for key, protected in _routes_in_tree(tree, "sample.py")}
+    assert routes[("sample.py", "post", "/dead-nested")] is False, (
+        "dead guard in a nested function must not protect the route"
+    )
+    assert routes[("sample.py", "put", "/dead-lambda")] is False, (
+        "dead guard in a lambda must not protect the route"
+    )
+    assert routes[("sample.py", "delete", "/live")] is True, (
+        "a live in-handler guard must still protect the route"
+    )
 
 
 def test_route_scan_is_not_vacuous():
