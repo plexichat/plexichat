@@ -53,6 +53,7 @@ vacuously.
 from __future__ import annotations
 
 import ast
+import textwrap
 from pathlib import Path
 from typing import Dict, Set, Tuple
 
@@ -142,10 +143,28 @@ def _functions(source: str) -> Dict[str, ast.AST]:
     }
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes reachable through execution, not definition.
+
+    Descend through statement-level nesting (``if``/``for``/``with``/``try``)
+    but skip nested function, async function and lambda bodies: *defining* a
+    helper that copies a value does not copy it. Crediting a dead nested copy
+    call would let an accessor hand out the shared mutable object by reference.
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
 def _called_names(node: ast.AST) -> Set[str]:
-    """Names/callable attributes invoked anywhere in a function body."""
+    """Names/callable attributes invoked on a function's own execution path."""
     names: Set[str] = set()
-    for child in ast.walk(node):
+    for child in _own_body_nodes(node):
         if isinstance(child, ast.Call):
             func = child.func
             if isinstance(func, ast.Name):
@@ -250,3 +269,72 @@ def test_guard_flags_a_helper_that_stops_copying(spec: Spec):
 
     with pytest.raises(AssertionError, match="no longer copies"):
         _check(spec, sources)
+
+
+def test_guard_rejects_dead_nested_copy_evidence():
+    """A copy call buried in a never-called nested callable is not protection.
+
+    Regression: ``_called_names`` used ``ast.walk(node)``, which descends into
+    nested functions and lambdas. A helper that only *defined* a copier could
+    satisfy the guard while handing the shared mutable object out by reference.
+    """
+    relpath = "src/synthetic_cache.py"
+    spec: Spec = (
+        "synthetic",
+        relpath,
+        "_cache",
+        ("_copy_thing", ("deepcopy",)),
+        (("get_thing", ("_copy_thing",)),),
+    )
+    dead_nested = textwrap.dedent(
+        """
+        _cache = {}
+
+        def _copy_thing(value):
+            def _never_called():
+                return deepcopy(value)
+            return value
+
+        def get_thing():
+            return _copy_thing(_cache.get("k"))
+        """
+    )
+    dead_lambda = textwrap.dedent(
+        """
+        _cache = {}
+
+        def _copy_thing(value):
+            copier = lambda: deepcopy(value)
+            return value
+
+        def get_thing():
+            return _copy_thing(_cache.get("k"))
+        """
+    )
+    live_nested = textwrap.dedent(
+        """
+        _cache = {}
+
+        def _copy_thing(value):
+            if value:
+                return deepcopy(value)
+            return value
+
+        def get_thing():
+            return _copy_thing(_cache.get("k"))
+        """
+    )
+    for source in (dead_nested, dead_lambda):
+        fn = _functions(source)["_copy_thing"]
+        # Confirm the old broad traversal would have credited the dead call.
+        assert "deepcopy" in {
+            n.func.id
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert _called_names(fn) == set(), "dead nested copy must not count"
+        with pytest.raises(AssertionError, match="no longer copies"):
+            _check(spec, {relpath: source})
+
+    # Live evidence behind statement-level nesting still satisfies the guard.
+    _check(spec, {relpath: live_nested})

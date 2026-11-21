@@ -43,14 +43,34 @@ SITES = [
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield nodes on ``root``'s own execution path, skipping nested callables.
+
+    Descend through statement-level nesting (``if``/``for``/``with``/``try``)
+    but never into a nested function, async function or lambda. A loader call
+    in a helper that is merely defined does not perform a cache read, so it
+    must not establish (or distort the ordering of) the cached-loader evidence.
+    """
+    stack = [root]
+    while stack:
+        for child in ast.iter_child_nodes(stack.pop()):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            yield child
+            stack.append(child)
+
+
 def _call_lines(node, name):
     lines = []
-    for inner in ast.walk(node):
+    for inner in _own_body_nodes(node):
         if not isinstance(inner, ast.Call):
             continue
         func = inner.func
@@ -133,6 +153,70 @@ def test_detector_catches_gate_after_cache_and_nested_gate():
     assert ok is False and "unconditional" in reason
 
 
+def test_dead_nested_loader_call_is_not_cache_evidence():
+    """A loader call in a never-invoked nested callable is not a cache read.
+
+    Regression: ``_call_lines`` used ``ast.walk(node)``, which descends into
+    nested functions and lambdas. A dead early loader call could both invent a
+    cache read and mask a real gate-after-cache regression by skewing ``min``.
+    """
+    dead_nested = textwrap.dedent(
+        """
+        async def read():
+            gate()
+            def never_called():
+                return loader()
+            return True
+        """
+    )
+    dead_lambda = textwrap.dedent(
+        """
+        async def read():
+            gate()
+            _ = lambda: loader()
+            return True
+        """
+    )
+    live_nested = textwrap.dedent(
+        """
+        async def read():
+            gate()
+            if True:
+                return await loader()
+            return None
+        """
+    )
+    for source in (dead_nested, dead_lambda):
+        fn = _find_function(ast.parse(source), "read")
+        # Confirm the old broad traversal would have credited the dead call.
+        assert any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "loader"
+            for n in ast.walk(fn)
+        ), "old logic saw dead evidence"
+        assert _call_lines(fn, "loader") == []
+        ok, reason = _check_order(ast.parse(source), "read", "gate", "loader")
+        assert ok is False and "no cached loader call" in reason, reason
+
+    fn = _find_function(ast.parse(live_nested), "read")
+    assert _call_lines(fn, "loader"), "live in-body loader call must still count"
+    assert _check_order(ast.parse(live_nested), "read", "gate", "loader")[0] is True
+
+    masked = textwrap.dedent(
+        """
+        async def read():
+            def never_called():
+                return loader()
+            value = await loader()
+            gate()
+            return value
+        """
+    )
+    ok, reason = _check_order(ast.parse(masked), "read", "gate", "loader")
+    assert ok is False and "first gate" in reason, reason
+
+
 def test_scan_is_not_vacuous():
     assert len(SITES) == 2
     for rel, route_func, loader, gate in SITES:
@@ -142,26 +226,22 @@ def test_scan_is_not_vacuous():
         assert _call_lines(_find_function(tree, route_func), loader), f"{rel}:{loader}"
 
 
-@pytest.mark.parametrize(
-    "rel,route_func,loader,gate", SITES, ids=[s[1] for s in SITES]
-)
+@pytest.mark.parametrize("rel,route_func,loader,gate", SITES, ids=[s[1] for s in SITES])
 def test_gate_precedes_cache_read(rel, route_func, loader, gate):
     tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
     ok, reason = _check_order(tree, route_func, gate, loader)
     assert ok, f"{rel}:{route_func}: {reason}"
 
 
-@pytest.mark.parametrize(
-    "rel,route_func,loader,gate", SITES, ids=[s[1] for s in SITES]
-)
+@pytest.mark.parametrize("rel,route_func,loader,gate", SITES, ids=[s[1] for s in SITES])
 def test_membership_gate_fails_closed(rel, route_func, loader, gate):
     """The gate must deny on missing module, checker error and non-member."""
     tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
     helper = _find_function(tree, gate)
     assert helper is not None
-    source = ast.get_source_segment(
-        (ROOT / rel).read_text(encoding="utf-8"), helper
-    ) or ""
+    source = (
+        ast.get_source_segment((ROOT / rel).read_text(encoding="utf-8"), helper) or ""
+    )
     assert "get_servers" in source
     assert "get_member" in source
     # Three distinct fail-closed status codes: 503 (module missing),
