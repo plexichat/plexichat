@@ -9,7 +9,8 @@ from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 from urllib.request import Request
 
-from src.utils.outbound import urlopen
+from src.utils.outbound import pinned_urlopen as _pinned_urlopen
+from src.utils.security import URLValidator
 from urllib.error import URLError, HTTPError
 
 import utils.logger as logger
@@ -21,6 +22,38 @@ from ..exceptions import (
     AIBackendUnavailableError,
     AIBackendTimeoutError,
 )
+
+
+def urlopen(request: Request, timeout: float = 30):
+    """Fetch the configured moderation endpoint through the SSRF gate.
+
+    ``endpoint_url`` is operator/admin config (``automod.ai.custom``). The
+    shared ``urlopen`` transport only enforces the scheme allowlist and refuses
+    redirects -- it does *not* screen the destination IP, so a loopback,
+    link-local or private address (or a rebinding hostname) reached the socket
+    and received the configured API key. The admin config schema screens the IP
+    once when the value is written, but it does not pin the address and does not
+    cover config loaded straight from disk, so the check has to be repeated at
+    the fetch site.
+
+    Validate first (fail closed on a disallowed range or a failed resolution),
+    then hand the *approved* IP to ``pinned_urlopen``, which connects to that IP
+    while keeping the real hostname in ``Host`` / TLS SNI. Redirects are refused
+    by the shared transport, so there is no second, unvalidated hop.
+    """
+    url = request.full_url if isinstance(request, Request) else str(request)
+    try:
+        URLValidator().validate_url_for_request(url)
+    except ValueError as exc:
+        raise AIBackendError(
+            "custom endpoint URL refused by SSRF validation", backend="custom"
+        ) from exc
+    headers = dict(request.header_items()) if isinstance(request, Request) else {}
+    method = request.get_method() if isinstance(request, Request) else "GET"
+    data = request.data if isinstance(request, Request) else None
+    return _pinned_urlopen(
+        url, timeout=timeout, method=method, data=data, headers=headers
+    )
 
 
 class CustomAdapter(BaseAIAdapter):
