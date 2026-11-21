@@ -7,11 +7,17 @@ that no other quota touches. Two quotas sharing a namespace would serialise
 against each other even though they are unrelated -- safe for correctness
 (over-serialisation, never a quota bypass) but wasteful and a maintenance trap.
 
+Besides quota guards, permission-based check-then-write sites whose gate cannot
+be expressed in SQL (role JSON + owner shortcut + overrides) re-run
+``require_permission`` under a per-server advisory lock; those permission guards
+own their own namespaces too (142 for delete_event, 143 for update_server) and
+are registered here so they cannot collide with a quota namespace.
+
 Commit 9313d994 introduced this guard ratchet but only covered the role and
-scheduled-event quotas (2 of the 10 production advisory-lock call sites). The
-invite, emoji, sticker, soundboard, webhook, application, bookmark and storage
-locks were left unguarded, so a namespace collision in any of them -- or a brand
-new advisory lock added anywhere in ``src/`` -- would pass the guard silently.
+scheduled-event quotas. The invite, emoji, sticker, soundboard, webhook,
+application, bookmark and storage locks were left unguarded, so a namespace
+collision in any of them -- or a brand new advisory lock added anywhere in
+``src/`` -- would pass the guard silently.
 
 This module is a complete, non-vacuous inventory of all production advisory
 xact locks. It fails if:
@@ -40,8 +46,11 @@ _QUOTA_LOCKS = {
     "sticker": ("core/stickers/manager.py", {102}),
     "soundboard": ("core/soundboard/manager.py", {120}),
     "webhook": ("core/webhooks/manager/crud.py", {130}),
-    "scheduled-event": ("core/servers/manager/scheduled_event_ops.py", {140}),
+    # 140 = create_event quota; 142 = delete_event permission re-check guard.
+    "scheduled-event": ("core/servers/manager/scheduled_event_ops.py", {140, 142}),
     "role": ("core/servers/handlers/roles/crud.py", {141}),
+    # update_server re-checks ``server.manage`` under namespace 143.
+    "server-settings-permission": ("core/servers/manager/server_ops.py", {143}),
     "application": ("core/applications/manager/application_crud.py", {150}),
     "bookmark": ("core/messaging/services/bookmarks.py", {0x424F4B4D}),
 }

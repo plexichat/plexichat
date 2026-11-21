@@ -439,12 +439,60 @@ class ScheduledEventManager:
         if not event:
             raise ScheduledEventNotFoundError("Event not found")
 
+        # Original gate, kept intact: fail fast on every backend before doing
+        # any transaction work.
         self._server_manager.require_permission(
             user_id, event.server_id, "events.manage"
         )
 
-        self._db.execute("DELETE FROM srv_event_rsvps WHERE event_id = ?", (event_id,))
-        self._db.execute("DELETE FROM srv_scheduled_events WHERE id = ?", (event_id,))
+        # This gate resolves role JSON + the owner shortcut + channel overrides,
+        # so it cannot be re-asserted with a WHERE predicate on the DELETE the
+        # way the creator/owner guards are. Re-run it under a per-server advisory
+        # lock and hold that lock through both deletes, closing the window in
+        # which a concurrent role/permission change could land between the
+        # authoritative check and the write.
+        #
+        # SQLite serialises the write with its own write lock; PostgreSQL READ
+        # COMMITTED needs the advisory lock. Namespace 142 is reserved for the
+        # scheduled-event *permission* guard: it stays clear of the
+        # create_event quota namespace 140 and the role quota namespace 141.
+        # Masking to 30 bits keeps the second key in signed int4 range.
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (142, int(event.server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self._db.begin_transaction()
+
+            # Authoritative re-check under the lock.
+            self._server_manager.require_permission(
+                user_id, event.server_id, "events.manage"
+            )
+
+            self._db.execute(
+                "DELETE FROM srv_event_rsvps WHERE event_id = ?", (event_id,)
+            )
+            cursor = self._db.execute(
+                "DELETE FROM srv_scheduled_events WHERE id = ?", (event_id,)
+            )
+            # Fail closed if the event was removed concurrently: a lost race
+            # must not be reported as a successful delete.
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise ScheduledEventNotFoundError(
+                    "Event changed concurrently; refusing to delete"
+                )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         self._log_audit(
             event.server_id, user_id, AuditLogAction.EVENT_DELETE, "event", event_id

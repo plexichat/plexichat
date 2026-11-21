@@ -358,6 +358,11 @@ class ServerOpsMixin(ServerProtocol):
         if not server:
             raise ServerNotFoundError("Server not found")
 
+        # Original gate, kept intact: fail fast on every backend before doing
+        # any transaction work. It is re-run under a per-server advisory lock
+        # immediately before the write (see the ``if updates`` block below),
+        # because a role JSON / owner / override gate cannot be re-asserted with
+        # a WHERE predicate the way the creator/owner guards can.
         self.require_permission(user_id, server_id, "server.manage")
 
         updates = []
@@ -501,16 +506,52 @@ class ServerOpsMixin(ServerProtocol):
             set_params.append(now)
             set_clause = ", ".join(f"{col} = ?" for col in set_columns)
             query = "UPDATE srv_servers SET " + set_clause + " WHERE id = ?"
-            self._db.execute(query, (*set_params, server_id))
 
-            self._log_audit(
-                server_id,
-                user_id,
-                AuditLogAction.SERVER_UPDATE,
-                "server",
-                server_id,
-                changes,
-            )
+            # ``server.manage`` comes from role JSON + the owner shortcut +
+            # overrides, so it cannot be re-asserted by the UPDATE's WHERE
+            # clause. Hold a per-server advisory lock across the authoritative
+            # re-check and the write so a concurrent role/permission change
+            # cannot land in that gap. SQLite serialises the write itself;
+            # PostgreSQL READ COMMITTED needs the advisory lock.
+            # Namespace 143 is reserved for the server-settings *permission*
+            # guard, distinct from all quota namespaces (140/141/150/...).
+            # Masking to 30 bits keeps the second key in signed int4 range.
+            is_postgres = getattr(self._db, "type", "") == "postgres"
+            if is_postgres:
+                self._db.begin_transaction()
+                try:
+                    self._db.execute(
+                        "SELECT pg_advisory_xact_lock(?, ?)",
+                        (143, int(server_id) & 0x3FFFFFFF),
+                    )
+                except Exception:
+                    self._db.rollback()
+                    raise
+            try:
+                if not is_postgres:
+                    self._db.begin_transaction()
+
+                # Authoritative re-check under the lock.
+                self.require_permission(user_id, server_id, "server.manage")
+
+                cursor = self._db.execute(query, (*set_params, server_id))
+                if getattr(cursor, "rowcount", 0) == 0:
+                    raise ServerNotFoundError(
+                        "Server changed concurrently; refusing to update"
+                    )
+
+                self._log_audit(
+                    server_id,
+                    user_id,
+                    AuditLogAction.SERVER_UPDATE,
+                    "server",
+                    server_id,
+                    changes,
+                )
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
 
             if valkey_available():
                 cache_delete(f"server:{server_id}")
