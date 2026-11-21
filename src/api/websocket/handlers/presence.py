@@ -3,6 +3,9 @@ Presence handlers - Handle presence-related opcodes (presence_update, typing).
 """
 
 from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
+from collections import OrderedDict
+import threading
+import time
 
 import utils.logger as logger
 from starlette.concurrency import run_in_threadpool
@@ -44,6 +47,97 @@ def invalidate_typing_audience_cache(
     of entries removed.
     """
     return _typing_audience_cache.invalidate(server_id, channel_id)
+
+
+# TYPING_START is emitted on every keystroke pause. Building its payload needs
+# only the sender's ``username``, but the old path called ``auth.get_user`` for
+# every frame: a threadpool round-trip plus a full ``User`` rebuild (encrypted
+# field decryption + permission parsing) to read one string. The name is stable
+# for minutes, so memoize it per user for a short window. Like the audience
+# cache this is a bounded, epoch-expiring LRU: a flood of distinct senders
+# cannot grow it without limit, and a rename propagates within one TTL.
+_TYPING_USERNAME_TTL_S = 10.0
+_MAX_TYPING_USERNAMES = 4096
+_USERNAME_MISSING = object()
+
+
+class _TypingUsernameCache:
+    """Bounded, short-TTL LRU of ``user_id -> username`` for typing frames."""
+
+    __slots__ = (
+        "_max_entries",
+        "_ttl",
+        "_clock",
+        "_entries",
+        "_hits",
+        "_misses",
+        "_lock",
+    )
+
+    def __init__(
+        self,
+        max_entries: int = _MAX_TYPING_USERNAMES,
+        ttl_seconds: float = _TYPING_USERNAME_TTL_S,
+        clock=None,
+    ) -> None:
+        self._max_entries = max(1, int(max_entries))
+        self._ttl = float(ttl_seconds)
+        if self._ttl <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        self._clock = clock or time.monotonic
+        self._entries: "OrderedDict[tuple, str]" = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._lock = threading.Lock()
+
+    def _key(self, user_id: int) -> tuple:
+        return (int(self._clock() / self._ttl), int(user_id))
+
+    def get(self, user_id: int) -> Any:
+        """Return the cached username (or ``_USERNAME_MISSING`` on a miss)."""
+        key = self._key(user_id)
+        with self._lock:
+            value = self._entries.get(key, _USERNAME_MISSING)
+            if value is not _USERNAME_MISSING:
+                self._hits += 1
+                self._entries.move_to_end(key)
+            else:
+                self._misses += 1
+            return value
+
+    def put(self, user_id: int, username: str) -> None:
+        key = self._key(user_id)
+        with self._lock:
+            # Exact expiry: drop every entry from an earlier epoch on write.
+            for stale in [k for k in self._entries if k[0] != key[0]]:
+                self._entries.pop(stale, None)
+            self._entries[key] = username
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._hits = 0
+            self._misses = 0
+
+    def stats(self) -> Dict[str, int]:
+        with self._lock:
+            return {
+                "size": len(self._entries),
+                "max_entries": self._max_entries,
+                "hits": self._hits,
+                "misses": self._misses,
+            }
+
+
+_typing_username_cache = _TypingUsernameCache()
+
+
+def get_typing_username_cache_stats() -> Dict[str, int]:
+    """Expose username-memo hit/miss counters for observability and tests."""
+    return _typing_username_cache.stats()
 
 
 def _get_channel_recipients(
@@ -298,18 +392,25 @@ class PresenceHandler:
         if not recipients:
             return None, None, None
 
-        # Get username for the typing event
-        username = None
-        import src.api as api
+        # Resolve the sender's username for the typing event. A burst emits one
+        # frame per keystroke pause; resolving the name on every frame paid a
+        # threadpool hop plus a full ``User`` rebuild just to read one string.
+        # Memoize per user for a short bounded window (see
+        # ``_typing_username_cache``) so the burst resolves it once.
+        username = _typing_username_cache.get(connection.user_id)
+        if username is _USERNAME_MISSING:
+            username = None
+            import src.api as api
 
-        auth = api.get_auth()
-        if auth:
-            try:
-                user = await run_in_threadpool(auth.get_user, connection.user_id)
-                if user:
-                    username = user.username
-            except Exception as user_error:
-                logger.debug(f"typing user lookup failed: {user_error}")
+            auth = api.get_auth()
+            if auth:
+                try:
+                    user = await run_in_threadpool(auth.get_user, connection.user_id)
+                    if user and user.username:
+                        username = user.username
+                        _typing_username_cache.put(connection.user_id, username)
+                except Exception as user_error:
+                    logger.debug(f"typing user lookup failed: {user_error}")
 
         # Record typing in presence module
         if self._presence:
