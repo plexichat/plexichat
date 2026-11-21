@@ -65,10 +65,21 @@ class ModerationMixin(VoiceProtocol):
             if not server_row:
                 raise PermissionDeniedError("Server not found", permission)
             owner_id = server_row["owner_id"]
-            prime_server_owner(self._db, server_id, owner_id)
+            # SECURITY: prime only a genuine integer id. ``prime_server_owner``
+            # stores ``int(owner_id)``, so caching a malformed-but-coercible row
+            # value ("05"->5, 5.9->5, True->1) would launder it into a genuine
+            # int and re-open the owner grant on the next (cache-hit) call.
+            if type(owner_id) is int:
+                prime_server_owner(self._db, server_id, owner_id)
 
-        is_owner = int(owner_id) == int(moderator_id)
-        target_is_owner = int(owner_id) == int(target_user_id)
+        # SECURITY: a projected srv_servers.owner_id vouches for the
+        # moderator's/target's ownership only while it is a genuine integer
+        # id. Coercing a malformed-but-coercible value with int() ("05"->5,
+        # 5.9->5, True->1) would mark a non-owner as the server owner and let
+        # them moderate anyone (owner bypasses role hierarchy). Fail closed:
+        # type() also rejects bool.
+        is_owner = type(owner_id) is int and owner_id == int(moderator_id)
+        target_is_owner = type(owner_id) is int and owner_id == int(target_user_id)
         if target_is_owner:
             raise PermissionDeniedError("Cannot moderate the server owner", permission)
 
