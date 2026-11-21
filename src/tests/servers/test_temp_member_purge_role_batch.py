@@ -120,7 +120,9 @@ def test_earned_member_kept_and_unearned_revoked():
 
     # 1001 earned a role: flag cleared, not deleted, not reported revoked.
     assert db.updates == [(1001,)]
-    deleted_member_ids = [params[0] for _, params in db.deletes if len(params) == 1]
+    # Deletes are now bounded IN batches, so collect ids from every batch
+    # rather than assuming one id (one statement) per member.
+    deleted_member_ids = [mid for _, params in db.deletes for mid in params]
     assert 1001 not in deleted_member_ids
     # 1000 and 1002 had no non-default role: both rows deleted and reported.
     assert 1000 in deleted_member_ids

@@ -511,28 +511,66 @@ class MemberCrudMixin:
             for earned_row in earned_rows or []:
                 earned_member_ids.add(int(earned_row["member_id"]))
 
+        # Classify once, in row order: a role other than the server's default
+        # makes the membership permanent (the member contributed/participated).
+        # Keeping the original order means the returned server ids and the
+        # per-member cache/audit side effects stay byte-for-byte identical.
+        revoked_entries = []  # [(member_id, server_id), ...] in row order
+        earned_ids = []  # [member_id, ...] in row order
+        for row in rows or []:
+            member_id = row["member_id"]
+            if int(member_id) in earned_member_ids:
+                earned_ids.append(member_id)
+            else:
+                revoked_entries.append((member_id, row["server_id"]))
+
+        # Collapse the per-member writes into bounded set-based IN batches so
+        # the statement count (and autocommit round trips) is constant in the
+        # number of memberships instead of 2N. `_BATCH` already caps the read
+        # probe above, so every placeholder count stays under the same limit.
+        # Deletes are keyed on the authoritative member ids just read (no
+        # cache), so a just-assigned role is visible and an earned membership
+        # is never revoked.
+        revoked_ids = [member_id for member_id, _server_id in revoked_entries]
         # A disconnect can revoke many temporary memberships at once.  Buffer
-        # the per-revocation audit writes for the whole loop; the bounded
+        # the per-revocation audit writes for the whole operation; the bounded
         # buffer flushes on exit (also on error) so no audit row is lost.
         with self.manager._buffered_audit():
-            for row in rows or []:
-                member_id = row["member_id"]
-                server_id = row["server_id"]
-
-                # A role other than the server's default makes the membership
-                # permanent (the member contributed/participated).
-                if int(member_id) in earned_member_ids:
+            try:
+                for start in range(0, len(earned_ids), _BATCH):
+                    chunk = earned_ids[start : start + _BATCH]
+                    placeholders = ",".join("?" for _ in chunk)
                     self.db.execute(
-                        "UPDATE srv_members SET is_temporary = 0 WHERE id = ?",
-                        (member_id,),
+                        "UPDATE srv_members SET is_temporary = 0 "
+                        f"WHERE id IN ({placeholders})",
+                        tuple(chunk),
                     )
-                    continue
+                for start in range(0, len(revoked_ids), _BATCH):
+                    chunk = revoked_ids[start : start + _BATCH]
+                    placeholders = ",".join("?" for _ in chunk)
+                    # srv_member_roles must go before srv_members (FK). Both
+                    # statements are idempotent and scoped to this user's own
+                    # temporary memberships, so a second worker sweeping the
+                    # same rows simply affects zero rows -- multi-node safe.
+                    self.db.execute(
+                        "DELETE FROM srv_member_roles "
+                        f"WHERE member_id IN ({placeholders})",
+                        tuple(chunk),
+                    )
+                    self.db.execute(
+                        f"DELETE FROM srv_members WHERE id IN ({placeholders})",
+                        tuple(chunk),
+                    )
+            finally:
+                # Fail closed: retire every revoked member's cached channel
+                # verdicts even if a batched write failed part-way, so a role
+                # deleted in an earlier chunk can never keep granting access
+                # from cache. Cache invalidation is idempotent for the no-op
+                # case (rows untouched because the write never reached them).
+                for _member_id, server_id in revoked_entries:
+                    self.manager._invalidate_member_caches(server_id, user_id)
 
-                self.db.execute(
-                    "DELETE FROM srv_member_roles WHERE member_id = ?", (member_id,)
-                )
-                self.db.execute("DELETE FROM srv_members WHERE id = ?", (member_id,))
-                self.manager._invalidate_member_caches(server_id, user_id)
+            for _member_id, server_id in revoked_entries:
                 self.manager._log_audit(
                     server_id,
                     user_id,
