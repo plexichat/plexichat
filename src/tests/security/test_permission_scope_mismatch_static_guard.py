@@ -65,6 +65,27 @@ _CATALOG_KEY_RE = re.compile(r'^\s*"([A-Za-z0-9_.]+)"\s*:')
 _SERVER = "server"
 _CHANNEL = "channel"
 
+# The complete set of permissions the catalog legitimately scopes per channel
+# (the ``# Message permissions (per channel)`` family). Pinned here so catalog
+# drift -- a new permission family added under that comment, or a server-level
+# / destructive permission reordered into that section -- fails the build
+# instead of silently reclassifying a destructive check as channel-scoped.
+# ``messages.export_transcript`` is deliberately absent: it is server-scoped
+# ("Transcript export"), even though it shares the ``messages.`` prefix.
+EXPECTED_CHANNEL_SCOPED = frozenset(
+    {
+        "messages.send",
+        "messages.read",
+        "messages.manage",
+        "messages.embed_links",
+        "messages.attach_files",
+        "messages.mention_everyone",
+        "messages.add_reactions",
+        "messages.use_external_emojis",
+        "messages.bypass_slowmode",
+    }
+)
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -407,6 +428,21 @@ def test_catalog_derives_scope_from_its_definitions():
     assert len(scopes) >= 40
     assert all(s in (_SERVER, _CHANNEL) for s in scopes.values())
 
+    # Fail closed on catalog drift. ``channel`` is derived purely from the
+    # nearest preceding ``(per channel)`` section comment, so a permission
+    # family inserted under that comment -- or an existing server-level /
+    # destructive permission reordered into that section -- would otherwise be
+    # classified as channel-scoped. A channel-scoped check of such a permission
+    # would then produce NO finding and silently authorise the 72d3f648-style
+    # escalation. Pin the exact set so any drift fails the build and forces a
+    # reviewed decision.
+    assert channel == set(EXPECTED_CHANNEL_SCOPED), (
+        "catalog-derived channel scope set drifted -- a permission was added "
+        "under or moved into a '(per channel)' section, or removed from it\n"
+        f"  unexpected channel-scoped: {sorted(channel - set(EXPECTED_CHANNEL_SCOPED))}\n"
+        f"  missing:                   {sorted(set(EXPECTED_CHANNEL_SCOPED) - channel)}"
+    )
+
 
 def test_permission_scope_guard_has_no_unexpected_mismatch():
     findings, stats = _scan_tree()
@@ -560,3 +596,34 @@ def test_selftest_fixed_roles_manage_site_is_no_longer_allowlisted():
     assert findings[0].permission == "roles.manage"
     assert findings[0].scope == _CHANNEL and findings[0].intended == _SERVER
     assert not _is_documented(findings[0]), "fixed site must no longer be allowlisted"
+
+
+def test_selftest_mislabeled_destructive_permission_is_invisible_to_analyser():
+    """Prove the catalog pin is non-vacuous.
+
+    Scope is derived solely from the ``(per channel)`` catalog comment. If a
+    destructive server-level permission were misclassified as channel-scoped
+    (e.g. inserted under that comment), the analyser would consider a
+    channel-scoped check of it CORRECT and emit no finding at all -- the
+    72d3f648 escalation, invisible to the mismatch scan. The exact-set
+    assertion in ``test_catalog_derives_scope_from_its_definitions`` is what
+    fails the build in that case; this test demonstrates why it is required.
+    """
+    destructive = "server.wipe_members"
+    assert destructive not in EXPECTED_CHANNEL_SCOPED
+    assert destructive not in catalog_scopes()  # not currently in the catalog
+
+    # Simulate the misclassification the catalog pin guards against.
+    scopes = dict(catalog_scopes())
+    scopes[destructive] = _CHANNEL
+    source = '''
+    def wipe(servers, user, server_id, channel_id):
+        servers.require_permission(user, server_id, "server.wipe_members", channel_id)
+    '''
+    findings, _ = _analyze_source(source, _NOVEL_PATH, scopes=scopes)
+    assert findings == [], "a mislabeled destructive perm evades the mismatch scan"
+
+    # And the pinned-set check would reject that catalog state loudly.
+    channel = {p for p, s in scopes.items() if s == _CHANNEL}
+    assert channel != set(EXPECTED_CHANNEL_SCOPED)
+    assert destructive in channel - set(EXPECTED_CHANNEL_SCOPED)
