@@ -4,6 +4,7 @@ Session management - Manages gateway sessions and connections.
 
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Set, Any
+import math
 import time
 import secrets
 import threading
@@ -142,6 +143,20 @@ def _size_key(value: Any) -> Any:
 #: evict the least-recently-active session; denying an occasional RESUME is the
 #: safe direction versus unbounded memory growth.
 MAX_LOCAL_SESSIONS = 8192
+
+#: Absolute ceiling on a resumable gateway session's lifetime, measured from
+#: its persisted ``created_at_epoch``. The inactivity timeout
+#: (``session_timeout_ms``) and the Valkey TTL are both refreshed on every
+#: resume/dispatch, so on their own they let a session created under an older
+#: authorization state (before a demotion, ban or guild/artifact/SUM
+#: membership change) be revived indefinitely. This cap bounds that window:
+#: a session older than the ceiling is refused at RESUME and dropped from the
+#: shared store, so a stale authorization context cannot be replayed forever.
+MAX_SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000  # 7 days
+
+#: Small tolerance for wall-clock skew between workers: a persisted creation
+#: time slightly in the future is fine, a wildly future-dated one fails closed.
+MAX_SESSION_CREATION_SKEW_MS = 60 * 1000
 
 
 @dataclass
@@ -393,6 +408,7 @@ class SessionManager:
         session_timeout_ms: int = 60000,
         max_connections_per_user: int = 5,
         max_local_sessions: int = MAX_LOCAL_SESSIONS,
+        max_session_lifetime_ms: int = MAX_SESSION_LIFETIME_MS,
     ):
         """
         Initialize the session manager.
@@ -402,10 +418,20 @@ class SessionManager:
             session_timeout_ms: Session timeout for resume in milliseconds
             max_connections_per_user: Maximum concurrent connections per user
             max_local_sessions: Hard cap on locally retained resumable sessions
+            max_session_lifetime_ms: Absolute ceiling on a resumable session's
+                age, measured from its persisted ``created_at_epoch``
         """
         self._heartbeat_interval_ms = heartbeat_interval_ms
         self._session_timeout_ms = session_timeout_ms
         self._max_connections_per_user = max_connections_per_user
+        # An operator may shorten the lifetime but never disable or extend it
+        # past the hard ceiling. Corrupt config fails closed to the default.
+        try:
+            self._max_session_lifetime_ms = max(
+                1, min(int(max_session_lifetime_ms), MAX_SESSION_LIFETIME_MS)
+            )
+        except (TypeError, ValueError, OverflowError):
+            self._max_session_lifetime_ms = MAX_SESSION_LIFETIME_MS
         # Corrupted/negative config must not disable the cap.
         try:
             self._max_local_sessions = max(
@@ -519,6 +545,33 @@ class SessionManager:
                 f"{len(evicted)} stale/idle sessions"
             )
 
+    def _session_creation_valid(
+        self, created_at_epoch: object, *, now: Optional[float] = None
+    ) -> bool:
+        """Revalidate a persisted session creation time before allowing RESUME.
+
+        ``created_at_epoch`` is persisted verbatim and restored from Valkey, so
+        it is untrusted: it may be missing, corrupt, absurdly future-dated, or
+        simply older than the maximum session lifetime. The inactivity check
+        on ``last_activity_epoch`` cannot catch the last case because activity
+        is refreshed on every resume/dispatch. Fail closed on all of them so a
+        session minted under a stale authorization state cannot be revived.
+        """
+        if isinstance(created_at_epoch, bool) or not isinstance(
+            created_at_epoch, (int, float)
+        ):
+            return False
+        value = float(created_at_epoch)
+        if not math.isfinite(value):
+            return False
+        current = time.time() if now is None else now
+        age_ms = (current - value) * 1000.0
+        if age_ms > self._max_session_lifetime_ms:
+            return False
+        if age_ms < -MAX_SESSION_CREATION_SKEW_MS:
+            return False
+        return True
+
     def _load_shared_session(self, session_id: str) -> Optional[Session]:
         """Hydrate a session created by another worker, if it is still valid."""
         if not valkey_available():
@@ -542,6 +595,17 @@ class SessionManager:
             # the resumed connection (which would silently blackhole events).
             raw_intents = raw.get("intents", 0)
             intents = int(raw_intents) if validate_intents(raw_intents) else 0
+            # A persisted creation time is untrusted. Reject sessions with no
+            # valid creation timestamp or ones past the absolute lifetime,
+            # even when ``last_activity_epoch`` is still fresh (it is refreshed
+            # on every resume/dispatch and cannot bound a session's age).
+            created_epoch = raw.get("created_at_epoch", 0)
+            if not self._session_creation_valid(created_epoch):
+                logger.debug(
+                    f"Rejecting shared gateway session {session_id}: "
+                    f"invalid or expired creation time"
+                )
+                return None
             last_epoch = float(raw.get("last_activity_epoch", 0))
             if time.time() - last_epoch > self._session_timeout_ms / 1000:
                 return None
@@ -553,7 +617,7 @@ class SessionManager:
                 user_id=user_id,
                 sequence=int(raw.get("sequence", 0)),
                 intents=intents,
-                created_at_epoch=float(raw.get("created_at_epoch", last_epoch)),
+                created_at_epoch=float(created_epoch),
                 last_activity_epoch=last_epoch,
                 replay_events=raw.get("replay_events") or [],
             )
@@ -786,6 +850,14 @@ class SessionManager:
         if session.user_id != user_id:
             return False
 
+        # The inactivity timeout alone is insufficient: activity is refreshed
+        # on every resume/dispatch, so a session created long ago (possibly
+        # before a privilege/ban/membership change) would otherwise stay
+        # resumable forever. Revalidate the persisted creation time too.
+        if not self._session_creation_valid(session.created_at_epoch):
+            self.remove_session(session_id)
+            return False
+
         timeout_seconds = self._session_timeout_ms / 1000
         if time.time() - session.last_activity_epoch > timeout_seconds:
             self.remove_session(session_id)
@@ -812,6 +884,13 @@ class SessionManager:
         """
         session = self.get_session(session_id)
         if not session:
+            return None
+
+        # Defense in depth: direct callers may skip ``can_resume_session``.
+        # Never resume a session whose persisted creation time is past the
+        # absolute lifetime, even if its activity timestamp is still fresh.
+        if not self._session_creation_valid(session.created_at_epoch):
+            self.remove_session(session_id)
             return None
 
         # Enforce the same per-user connection cap IDENTIFY enforces. A resume
