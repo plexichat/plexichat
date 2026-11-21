@@ -30,6 +30,11 @@ from src.core.servers.exceptions import (
 
 
 from src.api.routes.messages.helpers import require_snowflake
+# Reuse the canonical live channel-view gate already enforced by the
+# get-message-by-id route. Without it, conversation participation (granted to
+# every server member) is incorrectly treated as permission to delete, so a
+# member denied view on a private channel could still delete messages there.
+from .retrieve import _require_channel_view
 from .base import MessagesCRUDBase
 from .broadcast import BroadcastMixin
 
@@ -82,6 +87,10 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
                     url_cid, current_user.user_id, api.get_servers()
                 ),
             )
+            # Participation only proves server membership, not the right to
+            # view this channel. Enforce the live per-channel view gate before
+            # any mutation, exactly as the GET-by-id route does.
+            _require_channel_view(url_cid, current_user.user_id, api.get_servers())
 
             cid = int(getattr(msg, "conversation_id"))
 
@@ -256,6 +265,11 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
                     status_code=400,
                     detail={"error": {"code": 400, "message": "Invalid channel ID"}},
                 )
+
+            # Bulk delete must not be a bypass of the single-delete view gate:
+            # being a participant in a server channel's conversation proves
+            # only server membership, not channels.view on a private channel.
+            _require_channel_view(cid, current_user.user_id, api.get_servers())
 
             raw_ids = list(body.message_ids or [])
             if len(raw_ids) > 100:
