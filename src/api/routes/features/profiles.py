@@ -328,17 +328,30 @@ def _profile_projection_for(current_user, owner_id: int):
     decision outside the cached loader means a denied/restricted view is never
     stored and a warm entry can't serve stale authorization.
     """
-    if owner_id == current_user.user_id:
+    # A bot token's ``user_id`` is its human owner (the bot id lives in
+    # ``account_id``). Treating that as the viewer here would let a leaked bot
+    # token exercise the owner's friendships / shared-server memberships to
+    # read another user's restricted profile -- the same bot-token-as-owner
+    # confusion rejected on the owner-scoped routes. Bot credentials are
+    # downgraded to an anonymous viewer: public profiles stay readable, but no
+    # relationship-gated (or self) projection is granted.
+    viewer_id = (
+        current_user.user_id
+        if getattr(current_user, "token_type", None) == "user"
+        else None
+    )
+    if viewer_id is not None and owner_id == viewer_id:
         return None  # self-reads are always complete
     visibility = _get_profile_visibility(owner_id)
     if visibility == "private":
         return _PRIVATE_PROFILE_FIELDS
     if visibility in ("friends", "shared-servers", _FAIL_CLOSED_VISIBILITY):
         allowed = False
-        if visibility == "friends":
-            allowed = _is_friend_of(current_user.user_id, owner_id)
-        elif visibility == "shared-servers":
-            allowed = _shares_server_with(current_user.user_id, owner_id)
+        if viewer_id is not None:
+            if visibility == "friends":
+                allowed = _is_friend_of(viewer_id, owner_id)
+            elif visibility == "shared-servers":
+                allowed = _shares_server_with(viewer_id, owner_id)
         if not allowed:
             return _LIMITED_PROFILE_FIELDS
     return None
