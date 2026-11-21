@@ -47,14 +47,24 @@ AUTH_TOKENS = (
     "identity",
 )
 
+# Matched against the WHOLE called name via ``fullmatch`` below. An unanchored
+# substring search let ``PasskeyAuthenticateOptionsResponse(...)`` (a response
+# model) count as auth -- keep the vocabulary anchored so the sweep cannot be
+# satisfied by an incidental "authenticate" substring in a symbol name.
 GUARD_CALL_RE = re.compile(
     r"(?:get_current_user|get_admin_user|get_admin_access|"
     r"require_admin_permission|require_admin|require_permission|require_auth|"
-    r"check_admin_permission|check_permission|has_permission|verify_token|"
-    r"authenticate|verify_signature|_require_\w+|"
+    r"check_admin_permission|check_permission|has_permission|"
+    r"verify_token|_?authenticate|verify_signature|"
+    r"_require_[a-z0-9_]+|"
     r"request\.state\.\w*(?:user|admin|auth|token|scope))",
     re.IGNORECASE,
 )
+
+
+def _is_guard_call_name(name: str) -> bool:
+    """Whether a called function name actually denotes an auth gate."""
+    return bool(name and GUARD_CALL_RE.fullmatch(name))
 
 # Mutating ``add_api_route`` registrations intentionally reachable without a
 # session token. (relative source file, HTTP method, raw path) -> justification.
@@ -109,7 +119,7 @@ def _is_protected(fn: ast.AST) -> bool:
                 if isinstance(func, ast.Attribute)
                 else ""
             )
-            if GUARD_CALL_RE.search(name):
+            if _is_guard_call_name(name):
                 return True
     return False
 
@@ -268,3 +278,30 @@ class SyntheticMixin:
     assert found[("src/api/routes/synthetic.py", "delete", "/good")] is True, (
         "detector failed to recognise Depends(get_current_user) on an endpoint"
     )
+
+
+def test_guard_name_matcher_rejects_response_model_lookalikes():
+    """Non-vacuity: an auth word inside a symbol name is not a guard call.
+
+    Mirrors the decorator-sweep vacuity: ``PasskeyAuthenticateOptionsResponse``
+    and ``authenticated_cache_key`` used to be accepted as authentication by an
+    unanchored substring search. They must not satisfy this invariant either.
+    """
+    for lookalike in (
+        "PasskeyAuthenticateOptionsResponse",
+        "authenticated_cache_key",
+        "is_authenticated_self_test",
+        "PasskeyRegistrationResponse",
+        "require_https_url",
+        "require_channel_snowflake",
+    ):
+        assert not _is_guard_call_name(lookalike), lookalike
+    for guard in (
+        "get_current_user",
+        "_authenticate",
+        "verify_token",
+        "require_admin_permission",
+        "_require_channel_access",
+        "check_permission",
+    ):
+        assert _is_guard_call_name(guard), guard
