@@ -9,13 +9,17 @@ hardened against (see ``test_sec400_route_id_parse_boundary_invariant.py``),
 but the PlexiSum route package was left using bare ``int()`` on every
 workbook/sheet/grant/feature id.
 
-This suite ratchets the PlexiSum adopters with an AST check (no app import,
-config or DB needed, so it cannot flake) and exercises two handlers directly
-to prove malformed ids are rejected *before* the manager is reached.
+This suite walks EVERY shipped PlexiSum route module (not a curated file list)
+with an AST check (no app import, config or DB needed, so it cannot flake), so a
+new module under any novel name that reintroduces a bare ``int()`` on an ID
+parameter fails the guard. The original adopters are kept only as a non-vacuity
+floor. It also exercises two handlers directly to prove malformed ids are
+rejected *before* the manager is reached.
 """
 
 import ast
 import asyncio
+import textwrap
 import types
 from pathlib import Path
 
@@ -26,20 +30,27 @@ pytestmark = [pytest.mark.security, pytest.mark.unit]
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# Every PlexiSum route module that converted a string ID with bare int().
-# ``operations.py`` is owned by a separate hardening effort and is excluded.
-HARDENED_SUM_MODULES = (
-    "src/api/routes/suite/sum/comments.py",
-    "src/api/routes/suite/sum/features.py",
-    "src/api/routes/suite/sum/files.py",
-    "src/api/routes/suite/sum/grants.py",
-    "src/api/routes/suite/sum/presence.py",
-    "src/api/routes/suite/sum/sheets.py",
-    "src/api/routes/suite/sum/snapshots.py",
-    "src/api/routes/suite/sum/validations.py",
-    "src/api/routes/suite/sum/workbooks.py",
-    "src/api/routes/suite/sum/xlsx.py",
+# Floor pins only: PlexiSum route modules that originally converted a string
+# ID with bare int(). They are a floor, NOT the bound of the sweep: the detector
+# below walks the whole ``routes/suite`` package, so a new module under a name
+# that appears in no list is still checked. ``operations.py`` was historically
+# excluded as a separate effort, but it uses parse_id and is now covered too.
+_KNOWN_SUM_MODULES = frozenset(
+    {
+        "src/api/routes/suite/sum/comments.py",
+        "src/api/routes/suite/sum/features.py",
+        "src/api/routes/suite/sum/files.py",
+        "src/api/routes/suite/sum/grants.py",
+        "src/api/routes/suite/sum/presence.py",
+        "src/api/routes/suite/sum/sheets.py",
+        "src/api/routes/suite/sum/snapshots.py",
+        "src/api/routes/suite/sum/validations.py",
+        "src/api/routes/suite/sum/workbooks.py",
+        "src/api/routes/suite/sum/xlsx.py",
+    }
 )
+
+_SUM_ROUTES_DIR = ROOT / "src/api/routes/suite"
 
 HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 
@@ -109,14 +120,45 @@ def _route_count(tree) -> int:
     )
 
 
-def _scan():
+def _iter_sum_modules(base: Path | None = None):
+    """Every shipped PlexiSum route module, discovered structurally.
+
+    The old ratchet iterated a hand-curated tuple of 10 sum paths. A new route
+    module -- under any name, including a new subpackage of ``routes/suite`` --
+    that converts a string ID with a bare ``int()`` was never examined and the
+    guard passed silently. Walking the whole package makes the sweep
+    name-agnostic: no enumeration of known filenames bounds what gets checked.
+    """
+    base = base if base is not None else _SUM_ROUTES_DIR
+    for path in sorted(base.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        yield path
+
+
+def _scan_paths(paths, root: Path | None = None):
+    """Scan the given route-module paths, labelling them relative to ``root``.
+
+    Shared by the real sweep and the novel-module self-test so the latter
+    exercises the exact same discovery + detector pipeline, not a mock.
+    """
+    root = root if root is not None else ROOT
     scanned = []
-    for rel in HARDENED_SUM_MODULES:
-        tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         scanned.append(
-            (rel, _bare_int_violations(tree), _parse_id_calls(tree), _route_count(tree))
+            (
+                path.relative_to(root).as_posix(),
+                _bare_int_violations(tree),
+                _parse_id_calls(tree),
+                _route_count(tree),
+            )
         )
     return scanned
+
+
+def _scan():
+    return _scan_paths(_iter_sum_modules())
 
 
 _SCAN = _scan()
@@ -140,7 +182,18 @@ def good(workbook_id: str):
 
 
 def test_scan_is_not_vacuous():
-    assert len(_SCAN) == len(HARDENED_SUM_MODULES)
+    scanned = {rel for rel, *_ in _SCAN}
+    assert all(rel.startswith("src/api/routes/suite/") for rel in scanned)
+    # The curated adopters are a floor, not the scan bound: the structural walk
+    # must reach every one of them and then some, so reverting to a fixed list
+    # fails non-vacuously.
+    assert _KNOWN_SUM_MODULES <= scanned, (
+        "PlexiSum sweep is missing known modules: "
+        f"{sorted(_KNOWN_SUM_MODULES - scanned)}"
+    )
+    assert scanned - _KNOWN_SUM_MODULES, (
+        "PlexiSum sweep regressed to the old hand-curated module list"
+    )
     assert sum(calls for _, _, calls, _ in _SCAN) >= 30
     assert sum(handlers for _, _, _, handlers in _SCAN) >= 40
 
@@ -155,6 +208,50 @@ def test_no_sum_route_converts_a_boundary_id_with_bare_int():
         "Bare int() on a PlexiSum string ID route parameter reintroduced:\n  "
         + "\n  ".join(sorted(offenders))
     )
+
+
+def test_novel_sum_module_with_bare_int_is_flagged(tmp_path):
+    """Non-vacuity: the structural sweep flags a brand-new, novel-named module.
+
+    The old detector iterated a fixed list of 10 sum paths, so a route module
+    under any other name (even in a new subpackage of ``routes/suite``) was
+    invisible to the guard. This writes a never-before-seen module and proves
+    the same discovery + scan pipeline the real guard uses reports its bare-int
+    ID conversion -- with no advance knowledge of the file or handler name.
+    """
+    routes = tmp_path / "src/api/routes/suite/brand_new_subpackage"
+    routes.mkdir(parents=True)
+    module = routes / "future_sheet_export.py"
+
+    def _scan_novel(source: str):
+        module.write_text(textwrap.dedent(source), encoding="utf-8")
+        return _scan_paths(
+            _iter_sum_modules(tmp_path / "src/api/routes/suite"), root=tmp_path
+        )
+
+    scanned = _scan_novel(
+        """\
+        @router.get("/future")
+        def future_sheet_export(workbook_id: str):
+            return int(workbook_id)
+        """
+    )
+    assert len(scanned) == 1
+    relative, violations, _, _ = scanned[0]
+    assert relative == (
+        "src/api/routes/suite/brand_new_subpackage/future_sheet_export.py"
+    )
+    assert violations, "novel PlexiSum module's bare int() was not detected"
+
+    # The same novel module using the shared gate is classified as clean.
+    scanned = _scan_novel(
+        """\
+        @router.get("/future")
+        def future_sheet_export(workbook_id: str):
+            return parse_id(workbook_id, "workbook_id")
+        """
+    )
+    assert scanned[0][1] == []
 
 
 @pytest.mark.parametrize(
