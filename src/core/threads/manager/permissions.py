@@ -83,10 +83,17 @@ class ThreadPermissionMixin(ThreadProtocol):
                 f"listing (user={user_id}): {e}"
             )
             return set()
+        # SECURITY: an ``srv_members.server_id`` is authoritative proof of a
+        # live membership only while it is a genuine integer id. Coercing a
+        # malformed value with ``int()`` (e.g. ``"05"``/``5.9``/``True``) would
+        # let a row that does not actually prove membership in ``wanted``'s
+        # server vouch for it, widening the private-thread audience beyond the
+        # per-row ``_is_server_member`` probe this batch replaced. Fail closed:
+        # only exact integer ids from live rows can enter the allow set.
         return {
-            int(row["server_id"])
-            for row in rows or []
-            if row.get("server_id") is not None
+            sid
+            for sid in (row.get("server_id") for row in rows or [])
+            if type(sid) is int
         } & wanted
 
     def _can_view_thread_row(self, user_id: int, thread) -> bool:
