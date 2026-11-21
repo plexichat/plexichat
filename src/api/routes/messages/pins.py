@@ -32,6 +32,62 @@ router = APIRouter(tags=["Messages"])
 _channel_guard = MessagesCRUDBase()
 
 
+def _channel_not_found() -> HTTPException:
+    """Same 404 as a missing message, so a restricted channel is not disclosed."""
+    return HTTPException(
+        status_code=404,
+        detail={"error": {"code": 404, "message": "Message not found"}},
+    )
+
+
+def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
+    """Fail closed when ``cid`` is a server channel the caller cannot view.
+
+    The message-bound check above plus ``get_message``/``pin_message`` only
+    verify conversation *participation*. For server channels participation is
+    granted to every server member (see ParticipantService.is_participant),
+    independent of ``channels.view``. Without this guard a member denied view
+    on a private channel could pin/unpin messages in it via the URL channel
+    id. The canonical ``get_channel`` accessor enforces membership and
+    ``channels.view``; a channel that exists but cannot be resolved is
+    indistinguishable from a missing message (no existence oracle).
+    """
+    if not servers_mod:
+        return  # No servers store => cid can only be a DM/group conversation.
+    get_channel = getattr(servers_mod, "get_channel", None)
+    channel_exists = getattr(servers_mod, "channel_exists", None)
+
+    def _is_server_channel() -> bool:
+        if callable(channel_exists):
+            try:
+                return bool(channel_exists(cid))
+            except Exception:
+                return True  # cannot prove it is NOT a server channel
+        # Fallback for stores without an existence probe: a linked
+        # conversation id is the only server-channel signal available.
+        getter = getattr(servers_mod, "get_channel_conversation_id", None)
+        if callable(getter):
+            try:
+                return getter(cid) is not None
+            except Exception:
+                return True
+        return False
+
+    if not callable(get_channel):
+        if _is_server_channel():
+            raise _channel_not_found()
+        return
+    try:
+        if get_channel(cid, user_id) is not None:
+            return
+    except Exception:
+        raise _channel_not_found()
+    # Resolved to None: either a DM/group id, or a server channel this user
+    # cannot view. Only the latter must be denied.
+    if _is_server_channel():
+        raise _channel_not_found()
+
+
 @router.put(
     "/channels/{channel_id}/pins/{message_id}",
     response_model=SuccessResponse,
@@ -88,6 +144,9 @@ async def pin_message(
                 cid, current_user.user_id, api.get_servers()
             )
             _channel_guard._ensure_message_in_channel(target, scope)
+            # Participation alone is not enough for server channels: the
+            # caller must also be able to VIEW the addressed channel.
+            _require_channel_view(cid, current_user.user_id, api.get_servers())
             real_cid = int(getattr(target, "conversation_id"))
 
             messaging.pin_message(current_user.user_id, mid)
@@ -241,6 +300,8 @@ async def unpin_message(
                 cid, current_user.user_id, api.get_servers()
             )
             _channel_guard._ensure_message_in_channel(target, scope)
+            # Mirror pin: deny unpin when the channel cannot be viewed.
+            _require_channel_view(cid, current_user.user_id, api.get_servers())
             real_cid = int(getattr(target, "conversation_id"))
 
             messaging.unpin_message(current_user.user_id, mid)
