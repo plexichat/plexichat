@@ -385,17 +385,18 @@ def _message_to_response(
         polls_module = api.get_polls()
         if polls_module:
             try:
-                poll_obj = polls_module.get_poll(int(poll_id), poll_viewer_user_id)
-                if poll_obj:
-                    poll_response = _poll_to_response(poll_obj)
-                    # Include current results and the poll viewer's voting status
-                    results = polls_module.get_results(
-                        int(poll_id), poll_viewer_user_id
-                    )
-                    if results:
-                        from src.api.routes.polls import _results_to_response
+                # get_results() already hydrates the complete poll (row +
+                # options + voter stats) through get_poll(). Derive the plain
+                # ``poll`` field from that same hydrated object instead of
+                # issuing a second get_poll() round trip: on a list/search page
+                # this used to double the poll-row/option/voter hydration and
+                # authz gates for every poll-bearing message (an N+1 hotspot).
+                results = polls_module.get_results(int(poll_id), poll_viewer_user_id)
+                if results:
+                    from src.api.routes.polls import _results_to_response
 
-                        poll_results = _results_to_response(results)
+                    poll_response = _poll_to_response(results.poll)
+                    poll_results = _results_to_response(results)
             except Exception as e:
                 logger.debug(f"Failed to fetch poll/results for message {msg_id}: {e}")
 
