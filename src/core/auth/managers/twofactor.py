@@ -33,7 +33,10 @@ from ..tokens import create_2fa_challenge_token, parse_token, verify_token_hash
 from .. import totp as totp_module
 from src.core.database import invalidate_pattern
 
-from ..gateway_revocation import close_user_gateway_connections
+from ..gateway_revocation import (
+    close_session_gateway_connections,
+    close_user_gateway_connections,
+)
 
 
 from .protocol import AuthManagerProtocol
@@ -671,17 +674,29 @@ class TwoFactorMixin(AuthManagerProtocol):
         # other sessions so that previously trusted sessions cannot bypass
         # the now-disabled second factor without re-authentication.
         self._log_audit(AuditEventType.TWO_FACTOR_DISABLED, user_id, True)
+        to_close: list = []
         try:
             # Policy: revoke all other sessions so previously trusted sessions
             # cannot bypass the now-disabled second factor. Preserve the
             # current session if the caller supplied it (route passes
             # current_user.session_id).
+            # Capture the sessions about to be revoked so their sockets can be
+            # closed individually. A blanket user-wide close would also kill
+            # the surviving current session's socket.
             if except_session_id is not None:
+                to_close = self._db.fetch_all(
+                    "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 0 AND id != ?",
+                    (user_id, except_session_id),
+                )
                 self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0 AND id != ?",
                     (user_id, except_session_id),
                 )
             else:
+                to_close = self._db.fetch_all(
+                    "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 0",
+                    (user_id,),
+                )
                 self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
                     (user_id,),
@@ -695,6 +710,13 @@ class TwoFactorMixin(AuthManagerProtocol):
             logger.warning(
                 f"Failed to revoke sessions on 2FA disable for user {user_id}: {e}",
                 exc_info=True,
+            )
+        # A SECURITY_ALERT is a client-side hint only. Close the sockets of the
+        # sessions we just revoked, by auth-session id, so the surviving
+        # current session (when except_session_id was supplied) stays usable.
+        for row in to_close:
+            close_session_gateway_connections(
+                user_id, int(row["id"]), "Session revoked"
             )
         try:
             from src.core.events.gateway_emit import emit_security_alert
