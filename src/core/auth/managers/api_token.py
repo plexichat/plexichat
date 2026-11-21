@@ -10,10 +10,20 @@ from src.core.database import cached, invalidate_pattern
 
 from ..models import AccessToken, AuditEventType
 from ..exceptions import UserNotFoundError
-from ..tokens import is_expired
+from ..tokens import is_expired, MAX_TOKEN_LENGTH
 
 
 from .protocol import AuthManagerProtocol
+
+
+# A caller-supplied API access token must carry at least the entropy of the
+# server-generated default (``secrets.token_urlsafe(24)`` -> 32 urlsafe chars).
+# Every other credential-setting path validates before persisting a credential;
+# without this floor an internal caller that forwards a value could install a
+# short, pre-known or brute-forceable permanent credential. The route layer's
+# "reject caller-supplied tokens" check is not a substitute: it only guards one
+# of the manager's callers and a second caller can (and does) omit it.
+_MIN_CUSTOM_ACCESS_TOKEN_LENGTH = 32
 
 
 # ---- Bounded, short-TTL API-token verification cache ------------------------
@@ -88,6 +98,16 @@ class ApiTokenMixin(AuthManagerProtocol):
         token = token_value.strip() if token_value else None
         if not token:
             token = secrets.token_urlsafe(24)
+        elif (
+            len(token) < _MIN_CUSTOM_ACCESS_TOKEN_LENGTH
+            or len(token) > MAX_TOKEN_LENGTH
+        ):
+            # Fail closed: never persist a credential weaker than the generated
+            # default or large enough to defeat the shared token bound.
+            raise ValueError(
+                "API access token value must be between "
+                f"{_MIN_CUSTOM_ACCESS_TOKEN_LENGTH} and {MAX_TOKEN_LENGTH} characters"
+            )
         token_index = self.crypto.fast_blind_index(token, "api_access_token")
         existing = self._db.fetch_one(
             "SELECT id FROM auth_api_access_tokens WHERE token_index = ?",
