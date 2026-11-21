@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -439,3 +440,124 @@ def test_real_repository_client_helpers_do_not_fail_open() -> None:
     if not client_root.is_dir():
         pytest.skip("plexichat-client checkout not present")
     assert [h for h in af.sweep_client(client_root) if h.kind == af.GRANT] == []
+
+
+# ---------------------------------------------------------------------------
+# Deterministic read/parse counts (no timing): the sweeps overlap heavily, and
+# a regression that reintroduces a whole-tree walk must fail these.
+# ---------------------------------------------------------------------------
+
+
+def _count_reads_and_parses(monkeypatch: pytest.MonkeyPatch):
+    """Patch ``Path.read_text``/``ast.parse`` to count actual calls.
+
+    Returns ``(read_counts, get_parse_count)``; all counts are call counts, so
+    the assertions below are deterministic and never depend on wall-clock time.
+    """
+    read_counts: Counter[str] = Counter()
+    parse_count = 0
+    real_read_text = Path.read_text
+    real_parse = ast.parse
+
+    def counting_read_text(self, *args, **kwargs):
+        read_counts[str(self)] += 1
+        return real_read_text(self, *args, **kwargs)
+
+    def counting_parse(*args, **kwargs):
+        nonlocal parse_count
+        parse_count += 1
+        return real_parse(*args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    monkeypatch.setattr(ast, "parse", counting_parse)
+
+    def get_parse_count() -> int:
+        return parse_count
+
+    return read_counts, get_parse_count
+
+
+def test_sweep_routes_reads_and_parses_each_route_module_once(
+    synthetic: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sweep D used to read and parse every route module twice in one call.
+
+    ``_build_handler_index`` walked and parsed the route tree, then the main
+    loop walked, read and parsed it all a second time. Sharing one cache makes
+    both passes use the same parsed tree.
+    """
+    read_counts, get_parses = _count_reads_and_parses(monkeypatch)
+
+    af.sweep_routes(synthetic)
+
+    route_reads = {
+        path: n for path, n in read_counts.items() if "/src/api/routes/" in path
+    }
+    assert route_reads, "expected a route module in the synthetic tree"
+    assert set(route_reads.values()) == {1}, (
+        f"each route module must be read once per sweep; got {route_reads}"
+    )
+    route_modules = list((synthetic / "src" / "api" / "routes").rglob("*.py"))
+    assert get_parses() == len(route_modules), (
+        f"each route module must be parsed once; got {get_parses()} "
+        f"for {len(route_modules)} modules"
+    )
+
+
+def test_report_reuses_one_read_and_parse_per_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full ``report()`` run reads/parses each module at most once.
+
+    Every sweep used to walk the tree and read the same files again: a route
+    module was read six times and a core module up to five. ``report`` now
+    threads a single cache through every sweep, so each file is read once and
+    parsed at most once regardless of how many sweeps inspect it.
+    """
+    root = tmp_path / "server"
+    client = tmp_path / "client"
+    _write(root, "src/core/sample/manager.py", "class M:\n    def f(self):\n        pass\n")
+    _write(
+        root,
+        "src/api/routes/sample.py",
+        "from fastapi import APIRouter\nrouter = APIRouter()\n",
+    )
+    _write(
+        root,
+        "src/api/websocket/handlers/voice.py",
+        "async def handle_voice_speaking(connection, data):\n    return None\n",
+    )
+    _write(
+        client,
+        "src/js/voice.js",
+        "function send() { this._sendVoiceMessage(this.OPCODES.VOICE_SPEAKING, "
+        "{ speaking: true }); }\n",
+    )
+
+    py_files = list((root / "src").rglob("*.py"))
+    js_files = list((client / "src").rglob("*.js"))
+    assert len(py_files) == 3 and len(js_files) == 1
+
+    read_counts, get_parses = _count_reads_and_parses(monkeypatch)
+
+    cache = af.SourceCache()
+    text, fail_open, missing = af.report(root, client, root / "findings.md", cache)
+
+    # The synthetic tree may legitimately have findings; this test is about
+    # I/O counts, not about the audited verdict.
+    assert isinstance(text, str)
+    assert isinstance(fail_open, int) and isinstance(missing, int)
+
+    # Ground truth: actual disk reads and parses match the cache's own counters.
+    assert sum(read_counts.values()) == cache.reads
+    assert get_parses() == cache.parses
+
+    # Each module is read exactly once and parsed at most once, no matter how
+    # many of the overlapping sweeps inspected it.
+    assert cache.reads == len(py_files) + len(js_files), read_counts
+    assert cache.parses <= len(py_files), get_parses()
+    assert set(read_counts.values()) == {1}, read_counts
+
+    # Each distinct glob pattern is performed once (the route/core/api walks
+    # used to be repeated by several sweeps).
+    assert cache.walks == 7, cache.walks

@@ -239,6 +239,72 @@ class Hit(NamedTuple):
     detail: str
 
 
+class SourceCache:
+    """Read, parse and walk each path at most once within one audit run.
+
+    Every sweep walks the source tree again, and several re-read and re-parse
+    the same modules -- in a ``report()`` run a route module is read six times
+    and parsed twice.  ``report`` builds one of these and shares it across all
+    sweeps so each file is read once, parsed once, and each glob performed once,
+    regardless of how many sweeps inspect it.  A sweep called on its own still
+    works: it makes a private cache when none is supplied.
+
+    The counters are call counts, not elapsed time, so a regression that
+    reintroduces a duplicate read/parse can be asserted deterministically.
+    """
+
+    def __init__(self) -> None:
+        self._text: dict[Path, str] = {}
+        self._lines: dict[Path, list[str]] = {}
+        self._tree: dict[Path, ast.AST | None] = {}
+        self._errors: dict[Path, SyntaxError | None] = {}
+        self._files: dict[tuple[Path, str, bool], list[Path]] = {}
+        self.reads = 0
+        self.parses = 0
+        self.walks = 0
+
+    def files(
+        self, directory: Path, pattern: str, *, recursive: bool = True
+    ) -> list[Path]:
+        """Sorted matches for ``pattern`` under ``directory`` (cached)."""
+        key = (directory, pattern, recursive)
+        if key not in self._files:
+            self.walks += 1
+            found = directory.rglob(pattern) if recursive else directory.glob(pattern)
+            self._files[key] = sorted(found)
+        return self._files[key]
+
+    def text(self, path: Path) -> str:
+        """File contents, read from disk at most once per path."""
+        if path not in self._text:
+            self._text[path] = path.read_text(encoding="utf-8", errors="replace")
+            self.reads += 1
+        return self._text[path]
+
+    def lines(self, path: Path) -> list[str]:
+        """``text()`` split into lines, cached separately."""
+        if path not in self._lines:
+            self._lines[path] = self.text(path).splitlines()
+        return self._lines[path]
+
+    def tree(self, path: Path) -> ast.AST | None:
+        """Parsed AST, cached; ``None`` when the module is unparsable."""
+        if path not in self._tree:
+            text = self.text(path)
+            self.parses += 1
+            try:
+                self._tree[path] = ast.parse(text)
+                self._errors[path] = None
+            except SyntaxError as exc:
+                self._tree[path] = None
+                self._errors[path] = exc
+        return self._tree[path]
+
+    def parse_error(self, path: Path) -> SyntaxError | None:
+        """The ``SyntaxError`` raised by ``tree()``, if parsing failed."""
+        return self._errors.get(path)
+
+
 def _block_after(lines: list[str], idx: int) -> list[str]:
     """Return the indented block following ``lines[idx]``."""
     head = lines[idx]
@@ -263,11 +329,12 @@ def _has_grant(block: Iterable[str]) -> bool:
     return any("return True" in line for line in block)
 
 
-def sweep_core(root: Path) -> list[Hit]:
+def sweep_core(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep A: manager guards in ``src/core`` that fail open."""
+    cache = cache or SourceCache()
     hits: list[Hit] = []
-    for path in sorted((root / "src" / "core").rglob("*.py")):
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for path in cache.files(root / "src" / "core", "*.py"):
+        lines = cache.lines(path)
         for idx, line in enumerate(lines):
             for pattern in (GUARD_INVERTED, GUARD_NONE):
                 match = pattern.match(line)
@@ -293,11 +360,12 @@ def sweep_core(root: Path) -> list[Hit]:
     return hits
 
 
-def sweep_api(root: Path) -> list[Hit]:
+def sweep_api(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep B: API-layer guards that skip an authorization helper."""
+    cache = cache or SourceCache()
     hits: list[Hit] = []
-    for path in sorted((root / "src" / "api").rglob("*.py")):
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for path in cache.files(root / "src" / "api", "*.py"):
+        lines = cache.lines(path)
         for idx, line in enumerate(lines):
             match = GUARD_POSITIVE.match(line)
             if not match:
@@ -520,7 +588,7 @@ def _call_passes_caller(call: ast.Call, callers: frozenset[str]) -> bool:
     return False
 
 
-def sweep_managers(root: Path) -> list[Hit]:
+def sweep_managers(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep E: mutating manager methods that ignore the caller identity.
 
     Sweeps A-C inspect the *guard* around an access check. This sweep covers
@@ -530,20 +598,20 @@ def sweep_managers(root: Path) -> list[Hit]:
     denial, and no call that forwards the caller id -- is a candidate missing
     check (the manager-layer mirror of sweep D's ``UNAUTHZ``).
     """
+    cache = cache or SourceCache()
     hits: list[Hit] = []
     core_dir = root / "src" / "core"
     if not core_dir.is_dir():
         return hits
-    for path in sorted(core_dir.rglob("*.py")):
+    for path in cache.files(core_dir, "*.py"):
         posix = path.as_posix()
         if any(skip in posix for skip in MANAGER_SKIP_DIRS):
             continue
         if path.name in MANAGER_SKIP_FILES:
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
+        text = cache.text(path)
+        tree = cache.tree(path)
+        if tree is None:
             continue
         rel = str(path.relative_to(root))
         stubs = _type_checking_ranges(tree)
@@ -632,7 +700,9 @@ FAIL_CLOSED = re.compile(r"if \(!\s*[\w.]*\w\s*\)\s*return false")
 INLINE_DELEGATE = re.compile(r"^\s*return\s+(ctx|window|this)\.\w+\(")
 
 
-def sweep_client(client_root: Path) -> list[Hit]:
+def sweep_client(
+    client_root: Path, cache: SourceCache | None = None
+) -> list[Hit]:
     """Sweep C: client access-decision helpers that fail open.
 
     Only bodies that actually decide access (they touch a permission, an
@@ -640,12 +710,13 @@ def sweep_client(client_root: Path) -> list[Hit]:
     generic UI helpers that happen to contain ``if (!x) return true`` (scroll
     heuristics, no-op checks) are not access decisions.
     """
+    cache = cache or SourceCache()
     hits: list[Hit] = []
     js_root = client_root / "src" / "js"
     if not js_root.is_dir():
         return hits
-    for path in sorted(js_root.rglob("*.js")):
-        text = path.read_text(encoding="utf-8", errors="replace")
+    for path in cache.files(js_root, "*.js"):
+        text = cache.text(path)
         rel = str(path.relative_to(client_root))
         for match in CLIENT_AUTH_FN.finditer(text):
             name = match.group(1)
@@ -813,19 +884,19 @@ def _probe_is_called(fn: ast.AST, probes: dict[str, tuple[str, int]]) -> bool:
     return False
 
 
-def sweep_facades(root: Path) -> list[Hit]:
+def sweep_facades(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep F: auth guards that skip when a private helper is unresolvable."""
+    cache = cache or SourceCache()
     hits: list[Hit] = []
-    for path in sorted((root / "src").rglob("*.py")):
-        source = path.read_text(encoding="utf-8", errors="replace")
+    for path in cache.files(root / "src", "*.py"):
+        source = cache.text(path)
         # Fast path: facade probes are always `getattr(obj, "_name", ...)`
         # calls, so a file without `getattr` cannot contain one. This
         # skips the parse plus several AST walks for ~85% of the tree.
         if "getattr" not in source:
             continue
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        tree = cache.tree(path)
+        if tree is None:
             continue
         rel = str(path.relative_to(root))
         skip_ranges = _type_checking_ranges(tree)
@@ -928,7 +999,9 @@ def _random_credential_call(node: ast.AST) -> str | None:
     return None
 
 
-def sweep_sdp_fabrication(root: Path) -> list[Hit]:
+def sweep_sdp_fabrication(
+    root: Path, cache: SourceCache | None = None
+) -> list[Hit]:
     """Sweep G: SDP answers that invent the ICE/DTLS credentials they need.
 
     Scoped tightly to functions that actually assemble an SDP answer (their
@@ -936,14 +1009,14 @@ def sweep_sdp_fabrication(root: Path) -> list[Hit]:
     generator. Randomness elsewhere -- session ids, tokens, nonces -- is not
     reported.
     """
+    cache = cache or SourceCache()
     hits: list[Hit] = []
-    for path in sorted((root / "src").rglob("*.py")):
-        source = path.read_text(encoding="utf-8", errors="replace")
+    for path in cache.files(root / "src", "*.py"):
+        source = cache.text(path)
         if not any(marker in source for marker in SDP_MARKERS):
             continue
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        tree = cache.tree(path)
+        if tree is None:
             continue
         rel = str(path.relative_to(root))
         for fn in ast.walk(tree):
@@ -1010,21 +1083,22 @@ _OBJECT_KEY_RE = re.compile(r"([A-Za-z_$][\w$]*)\s*:")
 
 
 def _client_voice_sends(
-    client_root: Path,
+    client_root: Path, cache: SourceCache | None = None
 ) -> tuple[list[tuple[str, str, str, int]], bool]:
     """``(opcode, field, client-relative path, line)`` for every send payload.
 
     Returns ``available=False`` when the client checkout cannot be found, so
     the caller reports a skip rather than an empty (and falsely clean) pass.
     """
+    cache = cache or SourceCache()
     js_root = client_root / "src"
     if not js_root.is_dir():
         return [], False
 
     found: list[tuple[str, str, str, int]] = []
-    for path in sorted(js_root.rglob("*.js")):
+    for path in cache.files(js_root, "*.js"):
         try:
-            source = path.read_text(encoding="utf-8", errors="replace")
+            source = cache.text(path)
         except OSError:
             continue
         if "_sendVoiceMessage" not in source:
@@ -1037,14 +1111,16 @@ def _client_voice_sends(
     return found, bool(found)
 
 
-def _handler_payload_reads(root: Path) -> dict[str, set[str]]:
+def _handler_payload_reads(
+    root: Path, cache: SourceCache | None = None
+) -> dict[str, set[str]]:
     """Map ``handle_voice_*`` function name -> payload keys it reads."""
+    cache = cache or SourceCache()
     path = root / "src" / "api" / "websocket" / "handlers" / "voice.py"
     if not path.is_file():
         return {}
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except SyntaxError:
+    tree = cache.tree(path)
+    if tree is None:
         return {}
 
     reads: dict[str, set[str]] = {}
@@ -1079,13 +1155,16 @@ def _handler_payload_reads(root: Path) -> dict[str, set[str]]:
     return reads
 
 
-def sweep_callback_delivery(root: Path, client_root: Path) -> tuple[list[Hit], bool]:
+def sweep_callback_delivery(
+    root: Path, client_root: Path, cache: SourceCache | None = None
+) -> tuple[list[Hit], bool]:
     """Sweep H: client-sent media fields no server handler consumes."""
-    sends, available = _client_voice_sends(client_root)
+    cache = cache or SourceCache()
+    sends, available = _client_voice_sends(client_root, cache)
     if not available:
         return [], False
 
-    reads = _handler_payload_reads(root)
+    reads = _handler_payload_reads(root, cache)
     if not reads:
         return [], False
 
@@ -1349,15 +1428,18 @@ def _router_decorator(dec: ast.AST) -> tuple[str, str] | None:
 
 
 def _build_handler_index(
-    routes_dir: Path, root: Path
+    routes_dir: Path, root: Path, cache: SourceCache | None = None
 ) -> dict[str, list[tuple[str, str]]]:
     """Map every route-module function name to its source segments."""
+    cache = cache or SourceCache()
     index: dict[str, list[tuple[str, str]]] = {}
-    for path in sorted(routes_dir.rglob("*.py")):
+    for path in cache.files(routes_dir, "*.py"):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(text)
-        except (OSError, SyntaxError):
+            text = cache.text(path)
+        except OSError:
+            continue
+        tree = cache.tree(path)
+        if tree is None:
             continue
         rel = str(path.relative_to(root))
         for node in ast.walk(tree):
@@ -1513,7 +1595,7 @@ def _iter_unresolved_dynamic_routes(
     return declared
 
 
-def sweep_routes(root: Path) -> list[Hit]:
+def sweep_routes(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep D: inventory every FastAPI route's authorization surface.
 
     Reports the two "missing check" shapes:
@@ -1523,17 +1605,18 @@ def sweep_routes(root: Path) -> list[Hit]:
       that identity (and makes no visible permission/membership/scope call),
       i.e. a candidate missing authorization check.
     """
+    cache = cache or SourceCache()
     hits: list[Hit] = []
     routes_dir = root / "src" / "api" / "routes"
     if not routes_dir.is_dir():
         return hits
-    handlers = _build_handler_index(routes_dir, root)
-    for path in sorted(routes_dir.rglob("*.py")):
-        text = path.read_text(encoding="utf-8", errors="replace")
+    handlers = _build_handler_index(routes_dir, root, cache)
+    for path in cache.files(routes_dir, "*.py"):
+        text = cache.text(path)
         rel = str(path.relative_to(root))
-        try:
-            tree = ast.parse(text)
-        except SyntaxError as exc:
+        tree = cache.tree(path)
+        if tree is None:
+            exc = cache.parse_error(path)
             hits.append(
                 Hit(
                     UNAUTHZ,
@@ -1624,18 +1707,18 @@ def sweep_routes(root: Path) -> list[Hit]:
     return hits
 
 
-def sweep_ws_handlers(root: Path) -> list[Hit]:
+def sweep_ws_handlers(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep D: websocket opcode handlers with no authorization surface."""
+    cache = cache or SourceCache()
     hits: list[Hit] = []
     handlers_dir = root / "src" / "api" / "websocket" / "handlers"
     if not handlers_dir.is_dir():
         return hits
-    for path in sorted(handlers_dir.glob("*.py")):
-        text = path.read_text(encoding="utf-8", errors="replace")
+    for path in cache.files(handlers_dir, "*.py", recursive=False):
+        text = cache.text(path)
         rel = str(path.relative_to(root))
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
+        tree = cache.tree(path)
+        if tree is None:
             continue
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1879,7 +1962,9 @@ def _collection_and_row_names(fn: ast.AST) -> tuple[set[str], set[str]]:
     return collections, rows
 
 
-def sweep_empty_decided(root: Path) -> list[Hit]:
+def sweep_empty_decided(
+    root: Path, cache: SourceCache | None = None
+) -> list[Hit]:
     """Sweep I: authorization decided from a listing the function fetched.
 
     The threads-listing shape fixed in ANNEX AB: the access call sat inside a
@@ -1899,17 +1984,16 @@ def sweep_empty_decided(root: Path) -> list[Hit]:
     call consumes a *row* of it -- so a resource lookup authorizing against
     the resource it fetched is not reported.
     """
+    cache = cache or SourceCache()
     hits: list[Hit] = []
     for scan_dir in (root / "src" / "core", root / "src" / "api"):
         if not scan_dir.is_dir():
             continue
-        for path in sorted(scan_dir.rglob("*.py")):
+        for path in cache.files(scan_dir, "*.py"):
             if "tests" in path.parts:
                 continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            try:
-                tree = ast.parse(text)
-            except SyntaxError:
+            tree = cache.tree(path)
+            if tree is None:
                 continue
             rel = str(path.relative_to(root))
             stubs = _type_checking_ranges(tree)
@@ -1951,11 +2035,14 @@ def sweep_empty_decided(root: Path) -> list[Hit]:
     return hits
 
 
-def findings_inventory(findings_path: Path) -> list[str]:
+def findings_inventory(
+    findings_path: Path, cache: SourceCache | None = None
+) -> list[str]:
     """Summarise the recorded findings inventory, if present."""
     if not findings_path.is_file():
         return ["findings file not found: " + str(findings_path)]
-    text = findings_path.read_text(encoding="utf-8", errors="replace")
+    cache = cache or SourceCache()
+    text = cache.text(findings_path)
     lines = text.splitlines()
     status = [ln for ln in lines if ">> STATUS:" in ln]
     fixed = sum(1 for ln in status if re.search(r"STATUS:[^\n]*\bFIXED\b", ln))
@@ -1974,28 +2061,38 @@ def findings_inventory(findings_path: Path) -> list[str]:
     ]
 
 
-def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int]:
-    hits = sweep_core(root) + sweep_api(root) + sweep_client(client_root)
+def report(
+    root: Path,
+    client_root: Path,
+    findings: Path,
+    cache: SourceCache | None = None,
+) -> tuple[str, int, int]:
+    # One cache for the whole run: every sweep reads, parses and walks the
+    # shared source tree through it, so a module is never fetched twice.
+    cache = cache or SourceCache()
+    hits = sweep_core(root, cache) + sweep_api(root, cache) + sweep_client(
+        client_root, cache
+    )
     grants = [h for h in hits if h.kind == GRANT]
     reviews = [h for h in hits if h.kind == REVIEW]
     non_auth = [h for h in hits if h.kind == NON_AUTH]
 
-    facade_hits = sweep_facades(root)
+    facade_hits = sweep_facades(root, cache)
     grants = grants + [h for h in facade_hits if h.kind == GRANT]
     reviews = reviews + [h for h in facade_hits if h.kind == REVIEW]
     non_auth = non_auth + [h for h in facade_hits if h.kind == NON_AUTH]
 
-    fabricated = sweep_sdp_fabrication(root)
+    fabricated = sweep_sdp_fabrication(root, cache)
 
-    undelivered, callbacks_scanned = sweep_callback_delivery(root, client_root)
+    undelivered, callbacks_scanned = sweep_callback_delivery(root, client_root, cache)
 
-    manager_hits = sweep_managers(root)
+    manager_hits = sweep_managers(root, cache)
     unchecked = [h for h in manager_hits if h.kind == UNCHECKED]
     non_auth = non_auth + [h for h in manager_hits if h.kind == NON_AUTH]
 
-    empty_decided = sweep_empty_decided(root)
+    empty_decided = sweep_empty_decided(root, cache)
 
-    route_hits = sweep_routes(root) + sweep_ws_handlers(root)
+    route_hits = sweep_routes(root, cache) + sweep_ws_handlers(root, cache)
     no_auth = [h for h in route_hits if h.kind == NO_AUTH]
     unauthorized = [h for h in route_hits if h.kind == UNAUTHZ]
     public = [h for h in route_hits if h.kind == PUBLIC]
@@ -2036,7 +2133,7 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
     )
     out.append(f"- PUBLIC (verified by design): {len(public)}")
     out.append("")
-    for line in findings_inventory(findings):
+    for line in findings_inventory(findings, cache):
         out.append(f"- {line}")
     out.append("")
 
