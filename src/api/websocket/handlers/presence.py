@@ -140,6 +140,34 @@ def get_typing_username_cache_stats() -> Dict[str, int]:
     return _typing_username_cache.stats()
 
 
+def _exclude_blocked_recipients(actor_id: int, recipients: List[int]) -> List[int]:
+    """Drop recipients who have a block relationship with ``actor_id``.
+
+    Typing frames are published with an *explicit* recipient list, so the
+    gateway router's DM block filter (which only applies to implicit routing)
+    never sees them. Server-channel viewers are resolved from ``channels.view``
+    permission alone, and a blocked pair can still share a server -- without
+    this gate a blocked user keeps receiving the other's typing frames.
+    ``get_all_blocked_ids`` is the authoritative two-way block set. A failed
+    lookup fails closed: withhold the whole audience. Applied per actor at read
+    time (like sender exclusion) so the shared per-channel cache stays
+    sender-agnostic.
+    """
+    if not recipients:
+        return recipients
+    import src.api as api
+
+    relationships = api.get_relationships()
+    if not relationships:
+        return recipients
+    try:
+        blocked_ids = {int(x) for x in relationships.get_all_blocked_ids(actor_id)}
+    except Exception as e:
+        logger.debug(f"typing audience block lookup failed: {e}")
+        return []
+    return [uid for uid in recipients if int(uid) not in blocked_ids]
+
+
 def _get_channel_recipients(
     user_id: int, channel_id: int
 ) -> Tuple[List[int], Optional[int]]:
@@ -175,10 +203,12 @@ def _get_channel_recipients(
                         # Warm hit: strip the current sender at read time. The
                         # cached set is shared across senders, so baking one
                         # sender's exclusion into it would leak their audience
-                        # into another user's typing event.
-                        return [
+                        # into another user's typing event. Apply the two-way
+                        # block filter here too, for the same reason.
+                        audience = [
                             uid for uid in viewers if int(uid) != int(user_id)
-                        ], server_id
+                        ]
+                        return _exclude_blocked_recipients(user_id, audience), server_id
 
                     # Cold path: resolve the FULL set of users who may view the
                     # channel. Deliberately do NOT exclude ``user_id`` here —
@@ -219,7 +249,7 @@ def _get_channel_recipients(
                     f"typing conversation participants failed: {participant_error}"
                 )
 
-    return user_ids, server_id
+    return _exclude_blocked_recipients(user_id, user_ids), server_id
 
 
 class PresenceHandler:
