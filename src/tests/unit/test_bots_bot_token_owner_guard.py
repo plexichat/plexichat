@@ -117,7 +117,11 @@ def _has_user_token_dependency(node: ast.FunctionDef | ast.AsyncFunctionDef) -> 
     here so this guard is actually enforced.
     """
     has_annotation = any(
-        isinstance(arg.annotation, ast.Name) and arg.annotation.id == "TokenInfo"
+        (isinstance(arg.annotation, ast.Name) and arg.annotation.id == "TokenInfo")
+        or (
+            isinstance(arg.annotation, ast.Subscript)
+            and getattr(arg.annotation.value, "id", None) == "TokenInfo"
+        )
         for arg in node.args.args
     )
     if not has_annotation:
@@ -135,12 +139,26 @@ def _has_user_token_dependency(node: ast.FunctionDef | ast.AsyncFunctionDef) -> 
 
 
 def _calls_require_user_token(node: ast.AST) -> bool:
-    return any(
-        isinstance(child, ast.Call)
-        and isinstance(child.func, ast.Name)
-        and child.func.id == "require_user_token"
-        for child in ast.walk(node)
-    )
+    """Guard calls on this handler's own execution path.
+
+    Descend through statement-level nesting (if/for/with/try) but skip nested
+    function and lambda bodies: a guard there is dead until that callable runs
+    and must not mark the route as protected.
+    """
+    stack = [node]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "require_user_token"
+            ):
+                return True
+            stack.append(child)
+    return False
 
 
 def test_every_owner_scoped_bot_handler_rejects_bot_tokens():
@@ -158,3 +176,44 @@ def test_every_owner_scoped_bot_handler_rejects_bot_tokens():
         "owner-scoped bot handlers without require_user_token:\n  "
         + "\n  ".join(omissions)
     )
+
+
+def test_selector_matches_real_route_signature():
+    """The completeness scan must actually select plain-``TokenInfo`` handlers."""
+    source = """
+async def handler(current_user: TokenInfo = Depends(get_current_user)):
+    require_user_token(current_user)
+    return current_user.user_id
+"""
+    node = next(
+        n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.AsyncFunctionDef)
+    )
+    assert _has_user_token_dependency(node)
+    assert _uses_caller_identity(node)
+
+
+def test_dead_nested_guard_does_not_protect_handler():
+    """A guard only inside a never-called nested callable is not a gate."""
+    source = """
+async def dead_nested(current_user: TokenInfo = Depends(get_current_user)):
+    def never_called():
+        require_user_token(current_user)
+    return current_user.user_id
+
+async def dead_lambda(current_user: TokenInfo = Depends(get_current_user)):
+    _ = lambda: require_user_token(current_user)
+    return current_user.user_id
+
+async def live(current_user: TokenInfo = Depends(get_current_user)):
+    if current_user:
+        require_user_token(current_user)
+    return current_user.user_id
+"""
+    fns = {
+        n.name: n
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.AsyncFunctionDef)
+    }
+    assert not _calls_require_user_token(fns["dead_nested"])
+    assert not _calls_require_user_token(fns["dead_lambda"])
+    assert _calls_require_user_token(fns["live"])

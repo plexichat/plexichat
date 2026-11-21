@@ -140,11 +140,25 @@ def _has_user_token_dependency(node: ast.FunctionDef | ast.AsyncFunctionDef) -> 
 
 
 def _calls_require_user_token(node: ast.AST) -> bool:
-    return any(
-        isinstance(child, ast.Call)
-        and getattr(child.func, "id", None) == "require_user_token"
-        for child in ast.walk(node)
-    )
+    """Guard calls on this handler's own execution path.
+
+    Descend through statement-level nesting (if/for/with/try) but skip nested
+    function and lambda bodies: a guard there is dead until that callable runs
+    and must not mark the route as protected.
+    """
+    stack = [node]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if (
+                isinstance(child, ast.Call)
+                and getattr(child.func, "id", None) == "require_user_token"
+            ):
+                return True
+            stack.append(child)
+    return False
 
 
 def test_every_owner_scoped_credential_handler_rejects_bot_tokens():
