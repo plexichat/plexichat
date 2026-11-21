@@ -418,8 +418,21 @@ class OAuthStateManager:
             (row["id"],),
         )
 
-        # Check if we actually updated (handles race condition)
-        if hasattr(result, "rowcount") and result.rowcount == 0:
+        # SECURITY: fail closed. The ``used`` read above is only a fast-fail —
+        # two concurrent callbacks can both read ``used = 0`` before either
+        # writes. The conditional UPDATE plus its rowcount is what makes state
+        # consumption single-use. If the driver does not report rowcount we
+        # cannot prove the guard fired, so verification MUST fail rather than
+        # risk replaying the state (login CSRF / code-interception). This
+        # mirrors the atomic-consume guards in the applications OAuth code
+        # exchange and refresh paths.
+        rowcount = getattr(result, "rowcount", None)
+        if rowcount is None:
+            logger.warning(
+                f"OAuth state could not be atomically consumed for state {row['id']}"
+            )
+            return False, None, "OAuth state could not be atomically consumed"
+        if rowcount == 0:
             logger.warning(f"OAuth state race condition for state {row['id']}")
             return False, None, "State token already used"
 
