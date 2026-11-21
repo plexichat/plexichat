@@ -27,6 +27,19 @@ from .exceptions import (
 )
 from src.core.security.hardening import bounded_int
 
+# This module logs through a plain ``logging.getLogger(__name__)`` logger, not
+# ``AppLogger``, so it never receives the on-disk ``SanitizingFilter``. Caller-
+# supplied fields such as ``filename`` (and a declared ``content_type``) are
+# untrusted: ``_sanitize_filename`` only drops C0/DEL, leaving U+0085 (NEL),
+# U+2028/U+2029 and the bidi controls intact. Those are line breaks / invisible
+# direction changes for log shippers, terminals and the admin log viewer, so a
+# single crafted upload could forge extra entries in the captured disk/SIEM log
+# (CWE-117). Install the same sink-level guard ``AppLogger`` uses so every log
+# line from this module -- including messages built from exception text -- is
+# neutralised. The guard escapes control characters visibly rather than
+# dropping them, so legitimate audit content stays readable.
+from src.utils.common_utils.utils.logger.core import SanitizingFilter
+
 from .security.validation import (
     ACTIVE_MARKUP_SCAN_LIMIT,
     BLOCKED_EXTENSIONS,
@@ -37,6 +50,7 @@ from .security.validation import (
 )
 
 logger = logging.getLogger(__name__)
+logger.addFilter(SanitizingFilter())
 
 
 def _has_blocked_extension(filename: str) -> bool:
