@@ -92,6 +92,43 @@ def _response_metadata(
     return result
 
 
+def _load_servable_metadata(db, filename: str):
+    """Return ``(row, scan_row)`` for the attachment-serving gates.
+
+    The stable metadata is memoised in ``_media_metadata_cache``, but the scan
+    state and the ``deleted`` flag must be read fresh on every request (the
+    metadata LRU is deliberately not invalidated by the delete/scan paths).
+    That used to cost TWO statements on a cold lookup: the filename query and
+    then a second by-id query for the scan state. ``scan_status`` is a stable
+    column of the same row, so select it in the first statement and reuse it
+    for this request. A cache hit still issues the fresh by-id read, so the
+    fail-closed scan/deleted gate is unchanged.
+
+    Returns ``(None, None)`` when the file does not exist or was soft-deleted.
+    """
+    row = _media_metadata_cache.get(filename)
+    if row is not None:
+        # Warm path: stable metadata came from the LRU, so the authoritative
+        # scan/deleted state still needs a fresh read.
+        return row, db.fetch_one(
+            "SELECT scan_status, deleted FROM media_files WHERE id = ?", (row["id"],)
+        )
+
+    row = db.fetch_one(
+        "SELECT id, storage_backend, storage_path, content_type, original_filename, "
+        "scan_status FROM media_files WHERE filename = ? AND deleted = 0",
+        (filename,),
+    )
+    if not row:
+        return None, None
+
+    _media_metadata_cache[filename] = row
+    # This row was read from the database in THIS request. The WHERE clause
+    # already proves ``deleted = 0`` and ``scan_status`` is in the row, so no
+    # second round trip is needed for the gates below.
+    return row, {"scan_status": row["scan_status"], "deleted": 0}
+
+
 def _signed_uid_from_query(query_string: str) -> Optional[str]:
     """Return the ``uid`` value that the URL signer actually validated.
 
@@ -393,23 +430,14 @@ def register_attachment_route(app: FastAPI) -> None:
                     },
                 )
 
-            # Find file in database (check cache first)
-            row = _media_metadata_cache.get(filename)
-            if not row:
-                logger.debug(f"Media cache miss for {filename}, querying database...")
-                row = db.fetch_one(
-                    "SELECT id, storage_backend, storage_path, content_type, original_filename FROM media_files WHERE filename = ? AND deleted = 0",
-                    (filename,),
-                )
-                if row:
-                    logger.debug(
-                        f"Found media file in DB: {filename} (ID: {row['id']})"
-                    )
-                    _media_metadata_cache[filename] = row
-                else:
-                    logger.warning(f"Media file NOT FOUND in DB: {filename}")
+            # Find file in database (stable metadata cached; scan/deleted state
+            # always fresh). A cold lookup reads both from one statement, a warm
+            # lookup still re-reads the scan state so the fail-closed gate below
+            # cannot be bypassed by a stale metadata entry.
+            row, scan_row = _load_servable_metadata(db, filename)
 
             if not row:
+                logger.warning(f"Media file NOT FOUND in DB: {filename}")
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "File not found"}},
@@ -419,10 +447,6 @@ def register_attachment_route(app: FastAPI) -> None:
             # The deleted flag is re-checked here on every request so a cached
             # metadata row can never keep serving a file after deletion (the
             # metadata LRU is not invalidated by the delete path).
-            scan_row = db.fetch_one(
-                "SELECT scan_status, deleted FROM media_files WHERE id = ?",
-                (row["id"],),
-            )
             if not scan_row or scan_row.get("deleted"):
                 _media_metadata_cache.pop(filename, None)
                 raise HTTPException(
