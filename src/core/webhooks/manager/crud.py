@@ -302,6 +302,16 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                 "Missing permission to manage webhooks", "webhooks.manage"
             )
 
+        # SECURITY: revoke queued outbound deliveries for this webhook. Retry
+        # rows carry the captured endpoint URL and signing headers and are
+        # drained by the background worker WITHOUT re-checking that the
+        # webhook still exists. Leaving them behind means a deleted (revoked)
+        # webhook keeps POSTing event payloads to its old endpoint. Delete
+        # every queued row so revocation also takes effect for in-flight work.
+        self._db.execute(
+            "DELETE FROM webhook_retry_queue WHERE webhook_id = ?", (webhook_id,)
+        )
+
         self._db.execute(
             "DELETE FROM webhook_messages WHERE webhook_id = ?", (webhook_id,)
         )
