@@ -15,6 +15,22 @@ from .protocol import AuthManagerProtocol
 
 
 class PasswordMixin(AuthManagerProtocol):
+    def _invalidate_trusted_devices(self, user_id: int) -> None:
+        """Forget every remembered device for this user.
+
+        A device marked trusted skips the 2FA challenge at login with only the
+        password, so it is a persistent second-factor bypass. A password
+        change/reset is a credential transition: any previously trusted device
+        is stale (it may be lost, stolen, or in an attacker's hands) and must
+        not keep bypassing 2FA after all sessions have been revoked. Ensure the
+        trust columns exist first so an old database fails closed here too.
+        """
+        self._ensure_trusted_device_columns()
+        self._db.execute(
+            "UPDATE auth_devices SET trusted = 0, trusted_at = NULL WHERE user_id = ?",
+            (user_id,),
+        )
+
     def verify_user_password(self, user_id: int, password: str) -> bool:
         """Verify a user's password without creating a session.
 
@@ -64,6 +80,11 @@ class PasswordMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
+        # Revoking sessions alone is not enough: a trusted device keeps
+        # skipping 2FA on the next login with the (new) password. Retire all
+        # remembered devices so the credential change actually re-secures the
+        # account.
+        self._invalidate_trusted_devices(user_id)
         # SECURITY: an intentional password change is a credential reset. Any
         # password-reset link still outstanding (e.g. one an attacker induced
         # the victim to request) must die with the old password, otherwise that
@@ -220,6 +241,10 @@ class PasswordMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (rec["user_id"],)
         )
+        # A password reset must also retire remembered devices: otherwise a
+        # stolen/lost device (or a leaked trusted fingerprint) still skips 2FA
+        # with the newly reset password, defeating the recovery entirely.
+        self._invalidate_trusted_devices(rec["user_id"])
         invalidate_pattern("token_verify:*")
         invalidate_pattern(f"user_data:{rec['user_id']}*")
         invalidate_pattern(f"user_api:{rec['user_id']}*")
