@@ -34,6 +34,12 @@ CREATE INDEX IF NOT EXISTS idx_webhook_server ON webhook_webhooks(server_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_creator ON webhook_webhooks(creator_id);
 -- Every inbound webhook execution resolves the calling webhook by token hash.
 CREATE INDEX IF NOT EXISTS idx_webhook_token ON webhook_webhooks(token_hash);
+-- The channel/server webhook listings filter on the owner and order by
+-- created_at. The single-column indexes above leave the planner with a
+-- temporary sort B-tree; these composite indexes serve both reads in one
+-- ordered scan. Mirrored by migration 014 for already-migrated databases.
+CREATE INDEX IF NOT EXISTS idx_webhook_channel_created ON webhook_webhooks(channel_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_server_created ON webhook_webhooks(server_id, created_at);
 
 -- Webhook messages table (for tracking webhook-sent messages)
 CREATE TABLE IF NOT EXISTS webhook_messages (
