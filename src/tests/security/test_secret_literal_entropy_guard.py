@@ -32,6 +32,7 @@ hash of the secret, never the secret text itself.
 from __future__ import annotations
 
 import ast
+import base64
 import fnmatch
 import hashlib
 import math
@@ -62,11 +63,14 @@ SECRET_NAME_RE = re.compile(
     r"signing[_-]?key|session[_-]?key|encryption[_-]?key"
 )
 VALUE_SHAPE_RE = re.compile(r"^[A-Za-z0-9_\-+/=]{16,}$")
-# A long all-hex literal is a credential by construction (128-bit+ keys, API
+# A hex literal meeting MIN_LEN is a credential by construction (keys, API
 # tokens and digests are routinely hex-encoded).  Shannon entropy over the hex
 # alphabet caps at 4.0 bits/char -- a random 32-char hex key averages ~3.6 --
 # so a flat Shannon floor of 4.0 silently misses this entire, common class.
-HEX_SECRET_RE = re.compile(r"^[0-9a-fA-F]{32,}$")
+# The floor is MIN_LEN (16 hex chars == 64 bits), not 32: a 31-char hex token is
+# still 124 bits and must not slip through just because it is one char short of
+# the canonical 128-bit encoding.
+HEX_SECRET_RE = re.compile(r"^[0-9a-fA-F]{16,}$")
 PLACEHOLDER_RE = re.compile(
     r"(?i)example|placeholder|sample|dummy|fake|your|changeme|xxx|todo|"
     r"redacted|insert|replace|deadbeef|\btest\b|[{}]"
@@ -75,8 +79,11 @@ MIN_LEN, MAX_LEN, MIN_ENTROPY = 16, 512, 4.0
 
 # Shapes that are credentials even at low entropy (e.g. ghp_AAAA...).  Kept as
 # a separate signal so an obvious provider prefix is never hidden by a low
-# Shannon score.  ``eyJ`` catches base64url-encoded JSON credentials such as
-# the example license string in a docstring.
+# Shannon score.  Cover the alternate AWS key-id prefixes (temporary creds,
+# roles, instance profiles, ...) and OpenAI's ``sk-``/``sk-proj-`` spellings as
+# well as the literal-prefix guard in check_dangerous_patterns.py does.
+# ``eyJ`` catches base64url-encoded JSON credentials such as the example
+# license string in a docstring.
 KNOWN_SHAPES = tuple(
     re.compile(p)
     for p in (
@@ -84,7 +91,8 @@ KNOWN_SHAPES = tuple(
         r"glpat-[A-Za-z0-9_-]{20,}",
         r"xox[baprs]-[A-Za-z0-9-]{10,}",
         r"(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}",
-        r"\bAKIA[A-Z0-9]{16}\b",
+        r"\b(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|AGPA)[A-Z0-9]{16}\b",
+        r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}",
         r"eyJ[A-Za-z0-9_-]{20,}",
     )
 )
@@ -192,15 +200,75 @@ def _wanted(rel: str) -> bool:
 
 
 def _const_str(node: ast.AST) -> str | None:
+    """Best-effort static string value of a literal-like expression.
+
+    Adjacent literals (``"a" "b"``) are already folded into one ``Constant`` by
+    the parser, but authors can split a committed token just as easily with
+    ``+`` or ``.join([...])``.  Only folds when *every* part is static, so a
+    runtime/computed value is never guessed at (and never produces a false
+    finding).  Non-static f-string interpolations are ignored, as before.
+    """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.JoinedStr):
-        parts = [
-            p.value
-            for p in node.values
-            if isinstance(p, ast.Constant) and isinstance(p.value, str)
-        ]
+        parts = []
+        for p in node.values:
+            if isinstance(p, ast.Constant) and isinstance(p.value, str):
+                parts.append(p.value)
+            elif isinstance(p, ast.FormattedValue):
+                inner = _const_str(p.value)
+                if inner is not None:
+                    parts.append(inner)
         return "".join(parts) if parts else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _const_str(node.left), _const_str(node.right)
+        return left + right if left is not None and right is not None else None
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and isinstance(node.func.value, ast.Constant)
+        and isinstance(node.func.value.value, str)
+        and node.args
+        and isinstance(node.args[0], (ast.List, ast.Tuple))
+    ):
+        parts = []
+        for elt in node.args[0].elts:
+            part = _const_str(elt)
+            if part is None:
+                return None
+            parts.append(part)
+        return node.func.value.value.join(parts)
+    # ``b64decode(...).decode()`` wraps the fold in a no-op str conversion.
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "decode"
+        and isinstance(node.func.value, ast.Call)
+    ):
+        return _const_str(node.func.value)
+    # A secret kept base64-encoded and decoded at the use site is still a
+    # committed credential.  Only fold a single literal argument; a computed
+    # input is never decoded or guessed at.
+    if isinstance(node, ast.Call) and node.args:
+        fn = node.func
+        fname = (
+            fn.id
+            if isinstance(fn, ast.Name)
+            else fn.attr
+            if isinstance(fn, ast.Attribute)
+            else None
+        )
+        arg = node.args[0]
+        if (
+            fname == "b64decode"
+            and isinstance(arg, ast.Constant)
+            and isinstance(arg.value, str)
+        ):
+            try:
+                return base64.b64decode(arg.value, validate=True).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                return None
     return None
 
 
@@ -476,3 +544,87 @@ def test_low_entropy_documentation_placeholder_is_still_ignored() -> None:
     """Templates remain exempt: tightening must not flag real doc examples."""
     assert _is_documentation_placeholder("your_api_key_here_000000000000")
     assert not _high_entropy_credential("your_api_key_here_000000000000")
+
+
+def test_hex_secret_just_below_canonical_32_char_length_is_flagged(
+    tmp_path: Path,
+) -> None:
+    """124 bits of hex is still a secret; the 32-char floor was an off-by-one."""
+    hex_secret = "a3f1c9e7b2d408f6a1e53c7d90b24f8"  # 31 chars, ~3.95 bits/char
+    assert len(hex_secret) == 31 and _shannon(hex_secret) < MIN_ENTROPY
+    assert HEX_SECRET_RE.fullmatch(hex_secret)  # premise: the lowered floor matches
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(f'api_key = "{hex_secret}"\n', encoding="utf-8")
+    findings = filter_findings(scan_files(tmp_path, ["app/config.py"]))
+    assert any(f.kind == "secret_literal" for f in findings), findings
+
+
+@pytest.mark.parametrize(
+    "token",
+    (
+        "ASIA" + "A" * 16,  # temporary AWS credentials
+        "AROA" + "B" * 16,  # AWS role session
+        "sk-proj-" + "c" * 40,  # OpenAI project key
+        "sk-" + "d" * 48,  # OpenAI legacy key
+    ),
+)
+def test_alternate_provider_token_prefixes_are_flagged(
+    tmp_path: Path, token: str
+) -> None:
+    """Shape signals are name-agnostic: a generic name must not hide these."""
+    path = tmp_path / "app" / "blob.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'value = "{token}"\n', encoding="utf-8")
+    findings = scan_files(tmp_path, ["app/blob.py"])
+    assert any(f.kind == "known_token_shape" for f in findings), findings
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        '"dBJf8sK2mQ9xL4pR7" + "vT1wY6zA3cN5hE"',
+        '"dBJf8sK2mQ9xL4pR7" + "vT1w" + "Y6zA3cN5hE"',
+        '"".join(["dBJf8sK2mQ9xL4pR7", "vT1wY6zA3cN5hE"])',
+        '"_".join(("dBJf8sK2mQ9xL4pR7", "vT1wY6zA3cN5hE"))',
+        "f\"{'dBJf8sK2mQ9xL4pR7'}vT1wY6zA3cN5hE\"",
+    ),
+)
+def test_secret_built_from_static_fragments_is_flagged(
+    tmp_path: Path, expression: str
+) -> None:
+    """Splitting a literal with +/join/f-string must not defeat the gate."""
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"API_KEY = {expression}\n", encoding="utf-8")
+    findings = filter_findings(scan_files(tmp_path, ["app/config.py"]))
+    assert any(f.kind == "secret_literal" for f in findings), findings
+
+
+def test_base64_wrapped_secret_is_flagged(tmp_path: Path) -> None:
+    """Decoding at the use site does not make a committed secret legitimate."""
+    secret = "dBJf8sK2mQ9xL4pR7vT1wY6zA3cN5hE"
+    encoded = base64.b64encode(secret.encode("utf-8")).decode("ascii")
+    assert encoded != secret  # premise
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f'import base64\nAPI_KEY = base64.b64decode("{encoded}").decode()\n',
+        encoding="utf-8",
+    )
+    findings = filter_findings(scan_files(tmp_path, ["app/config.py"]))
+    assert any(f.kind == "secret_literal" for f in findings), findings
+    assert secret not in repr([f.to_dict() for f in findings])
+
+
+def test_non_static_fragments_are_not_guessed(tmp_path: Path) -> None:
+    """The folding helper stays conservative: no finding for runtime values."""
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        'prefix = "dBJf8sK2mQ9xL4pR7"\n'
+        "API_KEY = prefix + get_suffix()\n"
+        'API_TOKEN = "".join(parts)\n',
+        encoding="utf-8",
+    )
+    assert scan_files(tmp_path, ["app/config.py"]) == []
