@@ -242,14 +242,23 @@ class ThreadListingMixin(ThreadProtocol):
         Membership alone is not proof of visibility: a user's channel or
         server access can be revoked after they joined a public thread.
         Private threads stay membership-gated by definition; public ones
-        must still pass ``can_view_thread`` (which fails closed without a
+        must still pass ``channels.view`` (which fails closed without a
         servers module).
+
+        The listing query already returned every field needed for that check.
+        Calling ``can_view_thread(user_id, thread.id)`` here used to re-read the
+        exact same ``thread_threads`` row via ``_get_thread_internal`` -- one
+        redundant point read per public thread (plus a wasted name decrypt).
+        Evaluate the identical ``_check_permission`` call from the row in hand
+        instead: same authorization decision, no per-row fetch.
         """
         visible: List[Thread] = []
         for row in rows:
             thread = _row_to_thread(row, self._encrypt_thread_names)
             if thread.thread_type == ThreadType.PRIVATE:
                 visible.append(thread)
-            elif self.can_view_thread(user_id, thread.id):
+            elif self._check_permission(
+                user_id, thread.server_id, "channels.view", thread.channel_id
+            ):
                 visible.append(thread)
         return visible
