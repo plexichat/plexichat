@@ -44,17 +44,6 @@ _FRIEND_CHECK_TTL_SECONDS = 30.0
 # instead of relying on each HTTP route to remember to bound its query param.
 MAX_RELATIONSHIP_LIST_LIMIT = 500
 
-MAX_RELATIONSHIP_LIST_LIMIT = 500
-
-# Hard ceiling for every relationship *list* read (friends / pending requests
-# / blocked users). The call sites used to do ``limit = max(0, limit)``: that
-# stops SQLite's ``LIMIT -1`` meaning "unlimited", but an arbitrarily large
-# positive value still dumped the caller's whole graph in one query -- including
-# the private 256-character friend-request messages. Internal callers and
-# plugins can pass a limit directly, so cap it at the shared choke point too
-# instead of relying on each HTTP route to remember to bound its query param.
-MAX_RELATIONSHIP_LIST_LIMIT = 500
-
 
 class RelationshipHelpersMixin(BaseManager):
     """Mixin providing shared helper methods for relationship operations."""
@@ -80,37 +69,6 @@ class RelationshipHelpersMixin(BaseManager):
         Non-numeric values fall back to the caller's documented default rather
         than raising, preserving the previous tolerant behaviour at the list
         boundary while keeping the read bounded.
-        """
-        try:
-            value = int(limit)
-        except (TypeError, ValueError, OverflowError):
-            value = default
-        return max(0, min(value, MAX_RELATIONSHIP_LIST_LIMIT))
-
-    @staticmethod
-    def _bounded_list_limit(limit, default: int = 100) -> int:
-        """Return a finite page size in ``[0, MAX_RELATIONSHIP_LIST_LIMIT]``.
-
-        ``max(0, limit)`` alone was not a bound: a huge positive integer (or a
-        non-integer that happens to compare) reached ``LIMIT ?`` unchanged.
-        Non-numeric values fall back to the caller's documented default rather
-        than raising, preserving the previous tolerant behaviour at the list
-        boundary while keeping the read bounded.
-        """
-        try:
-            value = int(limit)
-        except (TypeError, ValueError, OverflowError):
-            value = default
-        return max(0, min(value, MAX_RELATIONSHIP_LIST_LIMIT))
-
-    @staticmethod
-    def _bounded_list_limit(limit, default: int = 100) -> int:
-        """Return a finite page size in ``[0, MAX_RELATIONSHIP_LIST_LIMIT]``.
-
-        ``max(0, limit)`` alone was not a bound: a huge positive integer reached
-        ``LIMIT ?`` unchanged. Non-numeric values fall back to the caller's
-        documented default rather than raising, preserving the previous tolerant
-        behaviour at the boundary while keeping the read bounded.
         """
         try:
             value = int(limit)
