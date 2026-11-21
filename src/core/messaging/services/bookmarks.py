@@ -332,8 +332,17 @@ class BookmarkService:
             for row in rows
         ]
 
+        # The primary view gate lives in ``self._messaging``. When it is not
+        # available the listing must still never expose metadata for messages
+        # the caller cannot view, so run every row through the fail-closed
+        # probe (message row + participant table) instead of returning the raw
+        # bookmark rows unchecked.
         if not self._messaging:
-            return normalized
+            return [
+                data
+                for data in normalized
+                if self._is_viewable_by(user_id, data["message_id"])
+            ]
 
         # A real bulk resolver returns an id -> message mapping. Anything else
         # (a legacy/stub messaging object that only implements get_message)
@@ -371,9 +380,14 @@ class BookmarkService:
                 data["author_id"] = msg.author_id
                 data["message_created_at"] = msg.created_at
             except Exception as enrich_error:
-                # Transient enrichment failure: keep the row without a
-                # preview rather than hide a legitimate bookmark.
+                # The view gate could not be evaluated. Fail closed: a row
+                # whose visibility is unknown must never be returned, or a
+                # transient error becomes a metadata leak for messages the
+                # caller can no longer view (the invariant documented above).
+                # The direct probe is itself fail-closed on missing rows.
                 logger.debug(f"bookmark enrichment failed: {enrich_error}")
+                if not self._is_viewable_by(user_id, data["message_id"]):
+                    continue
             results.append(data)
         return results
 
