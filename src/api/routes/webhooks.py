@@ -8,6 +8,14 @@ from fastapi import APIRouter, HTTPException, Depends, status, Header
 import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+# A bot token's ``user_id`` is its human owner (the bot account is in
+# ``account_id``). Every management handler below authorizes against
+# ``current_user.user_id`` via the webhooks core, which checks the owner's
+# server roles. Without this gate a bot holding only its narrow global token
+# can create/regenerate/update/delete webhooks on any server its owner manages
+# -- owner authority wrongly inherited by the bot. These are human-account
+# routes; reject bot credentials up front.
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.api.schemas.webhooks import (
     WebhookCreateRequest,
@@ -106,6 +114,7 @@ async def regenerate_webhook_token(
 
     Invalidates the old token and returns the updated webhook with the new token.
     """
+    require_user_token(current_user)
     webhooks = api.get_webhooks()
     if not webhooks:
         logger.error("Webhooks module not available")
@@ -175,6 +184,7 @@ async def create_webhook(
 
     Creates a webhook for the specified channel. Returns the token only on creation.
     """
+    require_user_token(current_user)
     webhooks = api.get_webhooks()
     if not webhooks:
         logger.error("Webhooks module not available")
@@ -255,6 +265,7 @@ async def get_webhook(
 
     Returns webhook information without the token.
     """
+    require_user_token(current_user)
     webhooks = api.get_webhooks()
     if not webhooks:
         logger.error("Webhooks module not available")
@@ -335,6 +346,7 @@ async def update_webhook(
 
     Allows changing name, avatar, or channel.
     """
+    require_user_token(current_user)
     webhooks = api.get_webhooks()
     if not webhooks:
         logger.error("Webhooks module not available")
@@ -420,6 +432,7 @@ async def delete_webhook(
     """
     Delete a webhook.
     """
+    require_user_token(current_user)
     webhooks = api.get_webhooks()
     if not webhooks:
         logger.error("Webhooks module not available")

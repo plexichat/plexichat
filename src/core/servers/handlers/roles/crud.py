@@ -272,7 +272,9 @@ class RoleCrudMixin(RoleHandlerProtocol):
             # write time. Without this CAS predicate the read-then-write window
             # lets a concurrent promotion turn a previously-authorized edit of
             # a lower role into an edit of a role at/above the actor's rank.
-            query = "UPDATE srv_roles SET " + set_clause + " WHERE id = ? AND position = ?"
+            query = (
+                "UPDATE srv_roles SET " + set_clause + " WHERE id = ? AND position = ?"
+            )
             cursor = self.db.execute(query, (*set_params, role_id, role.position))
             rowcount = getattr(cursor, "rowcount", None)
             if isinstance(rowcount, int) and rowcount <= 0:
@@ -316,7 +318,19 @@ class RoleCrudMixin(RoleHandlerProtocol):
                 "Cannot delete a role at or above your highest role"
             )
 
-        self.db.execute("UPDATE srv_roles SET deleted = 1 WHERE id = ?", (role_id,))
+        # Re-assert the position the hierarchy decision was made against at
+        # write time, mirroring update_role. Without this CAS predicate a
+        # concurrent promotion between the check above and this write turns a
+        # previously-authorized deletion of a lower role into the deletion of a
+        # role now at/above the actor's rank.
+        cursor = self.db.execute(
+            "UPDATE srv_roles SET deleted = 1 WHERE id = ? AND position = ?",
+            (role_id, role.position),
+        )
+        rowcount = getattr(cursor, "rowcount", None)
+        if isinstance(rowcount, int) and rowcount <= 0:
+            raise RoleHierarchyError("Role changed concurrently, retry")
+
         self.db.execute("DELETE FROM srv_member_roles WHERE role_id = ?", (role_id,))
 
         # Members who held the deleted role lose its permissions immediately;
