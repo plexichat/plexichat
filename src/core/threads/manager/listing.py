@@ -50,7 +50,10 @@ class ThreadListingMixin(ThreadProtocol):
         if not thread:
             return None
 
-        if not self.can_view_thread(user_id, thread_id):
+        # Reuse the row just loaded: ``can_view_thread(user_id, thread_id)``
+        # would re-read this same ``thread_threads`` row via
+        # ``_get_thread_internal`` before making the identical decision.
+        if not self._can_view_thread_row(user_id, thread):
             return None
 
         now = self._get_timestamp()

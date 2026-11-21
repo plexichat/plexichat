@@ -59,22 +59,30 @@ class ThreadPermissionMixin(ThreadProtocol):
             return False
         return row is not None
 
+    def _can_view_thread_row(self, user_id: int, thread) -> bool:
+        """Visibility decision for a thread row the caller already holds.
+
+        ``get_thread`` and the listing filters fetch the ``thread_threads`` row
+        before deciding visibility. Re-deriving that decision through
+        ``can_view_thread`` used to re-read the *same* row via
+        ``_get_thread_internal`` -- one redundant point read (and name decrypt)
+        per thread. This mirrors ``can_view_thread`` exactly, minus the fetch:
+        private threads are membership + backing-server gated, public ones need
+        ``channels.view`` (which fails closed without the servers module).
+        """
+        if thread.thread_type == ThreadType.PRIVATE:
+            return self._is_member(user_id, thread.id) and self._is_server_member(
+                user_id, thread.server_id
+            )
+        return self._check_permission(
+            user_id, thread.server_id, "channels.view", thread.channel_id
+        )
+
     def can_view_thread(self, user_id: int, thread_id: int) -> bool:
         thread = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
         if not thread:
             return False
-
-        if thread.thread_type == ThreadType.PRIVATE:
-            # Thread membership alone is not enough: a user removed from the
-            # backing server keeps their thread_members row, so the server
-            # roster is re-checked here and a failed probe fails closed.
-            return self._is_member(user_id, thread_id) and self._is_server_member(
-                user_id, thread.server_id
-            )
-
-        return self._check_permission(
-            user_id, thread.server_id, "channels.view", thread.channel_id
-        )
+        return self._can_view_thread_row(user_id, thread)
 
     def can_send_in_thread(self, user_id: int, thread_id: int) -> bool:
         thread = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
