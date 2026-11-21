@@ -7,6 +7,7 @@ from typing import Optional
 from pathlib import Path
 import hashlib
 import html
+import os
 import re
 import time
 import utils.config as config
@@ -100,6 +101,51 @@ def is_authenticated_self_test(request: Request) -> bool:
     return bool(user and getattr(user, "user_id", None))
 
 
+# Config deep-merge re-adds default loopback hosts to an operator-narrowed
+# allowlist. Cache the raw-file value so an explicit allowlist stays authoritative.
+_explicit_hosts_cache: dict = {"key": None, "value": None}
+
+
+def _explicit_admin_allowed_hosts():
+    """Return the operator allowlist from the raw config file, or None.
+
+    ``config.get("admin_ui")`` is post-deep-merge and always contains the
+    default loopback entries. Reading the operator's own file lets an explicit
+    (possibly empty) allowlist take effect as written.
+    """
+    try:
+        instance = getattr(config, "_config_instance", None)
+        path = getattr(instance, "config_path", None)
+        if not path:
+            return None
+        stat = os.stat(path)
+        cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+        if _explicit_hosts_cache["key"] == cache_key:
+            return _explicit_hosts_cache["value"]
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        if str(path).lower().endswith(".json"):
+            import json
+
+            doc = json.loads(raw) if raw else {}
+        else:
+            import yaml
+
+            doc = yaml.safe_load(raw) if raw else {}
+        value = None
+        if isinstance(doc, dict):
+            ui = doc.get("admin_ui")
+            if isinstance(ui, dict):
+                hr = ui.get("host_restriction")
+                if isinstance(hr, dict) and isinstance(hr.get("allowed_hosts"), list):
+                    value = list(hr["allowed_hosts"])
+        _explicit_hosts_cache["key"] = cache_key
+        _explicit_hosts_cache["value"] = value
+        return value
+    except Exception:
+        return None
+
+
 def check_host_restriction(request: Request, require_admin_ui: bool = True) -> None:
     """Check if client IP is allowed to access admin surface.
 
@@ -173,6 +219,11 @@ def check_host_restriction(request: Request, require_admin_ui: bool = True) -> N
         allowed_hosts = host_restriction.get(
             "allowed_hosts", ["127.0.0.1", "localhost", "::1"]
         )
+        # The deep merge re-adds default loopback entries to a narrowed/empty
+        # list; honour the explicit operator value so the gate fails closed.
+        explicit_hosts = _explicit_admin_allowed_hosts()
+        if explicit_hosts is not None:
+            allowed_hosts = explicit_hosts
         from src.core import admin
 
         if not admin.check_host_restriction(client_ip, allowed_hosts):
