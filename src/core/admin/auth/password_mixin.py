@@ -347,7 +347,7 @@ def force_password_change_target(
     # never leaves the DB in a mutated-but-un-audited state.
     if not rollback_supported:
         try:
-            log_admin_action(
+            audit_ok = log_admin_action(
                 db,
                 acting_admin_id,
                 "force_password_change",
@@ -366,6 +366,18 @@ def force_password_change_target(
                 audit_exc,
             )
             return False, f"Audit log failed: {audit_exc}"
+        # log_admin_action swallows its own write errors and reports them via
+        # its return value, not by raising. A falsy result therefore means no
+        # audit row exists - the privileged UPDATE must not proceed.
+        if not audit_ok:
+            logger.critical(
+                "AUDIT-MISMATCH: force_password_change audit write reported "
+                "failure for admin %s -> %s (no transaction support; "
+                "UPDATE refused)",
+                acting_admin_id,
+                target_id,
+            )
+            return False, "Audit log failed"
 
     db.execute(
         "UPDATE admin_users SET force_password_change = 1 WHERE id = ?",
@@ -376,8 +388,9 @@ def force_password_change_target(
     # and rollback on any failure so the UPDATE and the audit row
     # stay synchronised.
     if rollback_supported:
+        audit_failed = False
         try:
-            log_admin_action(
+            audit_ok = log_admin_action(
                 db,
                 acting_admin_id,
                 "force_password_change",
@@ -386,13 +399,19 @@ def force_password_change_target(
                 {"message": f"Forced password change for admin {target_id}"},
                 client_ip or "unknown",
             )
+            # log_admin_action swallows its own write errors and reports them
+            # via its return value. Treat a falsy result exactly like a raised
+            # error so a mutated-but-un-audited row cannot be committed.
+            audit_failed = not audit_ok
         except Exception as audit_exc:
+            audit_failed = audit_exc
+        if audit_failed:
             logger.critical(
                 "AUDIT-MISMATCH: force_password_change audit log write "
                 "failed for admin %s -> %s; rolling back: %s",
                 acting_admin_id,
                 target_id,
-                audit_exc,
+                audit_failed,
             )
             try:
                 db.rollback()
@@ -403,7 +422,7 @@ def force_password_change_target(
                     target_id,
                     rb_exc,
                 )
-            return False, f"Audit log failed: {audit_exc}"
+            return False, f"Audit log failed: {audit_failed}"
         try:
             db.commit()
         except Exception as commit_exc:  # pragma: no cover
