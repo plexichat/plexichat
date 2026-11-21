@@ -404,10 +404,25 @@ class TemplateManager:
                 "Only the creator can delete this template", "templates.manage"
             )
 
+        # Creator can be reassigned between the check above and these writes;
+        # bind both deletes to the authoritative creator predicate so a former
+        # creator cannot delete a template that now belongs to someone else.
+        # Guard the child delete too so a lost race leaves the snapshot intact.
         self._db.execute(
-            "DELETE FROM srv_template_data WHERE template_id = ?", (template.id,)
+            "DELETE FROM srv_template_data WHERE template_id = ? "
+            "AND EXISTS (SELECT 1 FROM srv_templates "
+            "WHERE id = ? AND creator_id = ?)",
+            (template.id, template.id, int(user_id)),
         )
-        self._db.execute("DELETE FROM srv_templates WHERE id = ?", (template.id,))
+        cursor = self._db.execute(
+            "DELETE FROM srv_templates WHERE id = ? AND creator_id = ?",
+            (template.id, int(user_id)),
+        )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise PermissionDeniedError(
+                "Template creator changed concurrently; refusing to delete",
+                "templates.manage",
+            )
 
         if template.source_server_id:
             self._log_audit(
@@ -486,8 +501,20 @@ class TemplateManager:
             set_columns.append("updated_at")
             set_params.append(now)
             set_clause = ", ".join(f"{col} = ?" for col in set_columns)
-            query = "UPDATE srv_templates SET " + set_clause + " WHERE id = ?"
-            self._db.execute(query, (*set_params, template.id))
+            # Re-check the authoritative creator predicate in the write so a
+            # concurrent reassignment cannot let the former creator edit the
+            # template; fail closed when the guarded update matches no row.
+            query = (
+                "UPDATE srv_templates SET " + set_clause + " WHERE id = ? AND creator_id = ?"
+            )
+            cursor = self._db.execute(
+                query, (*set_params, template.id, int(user_id))
+            )
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise PermissionDeniedError(
+                    "Template creator changed concurrently; refusing to update",
+                    "templates.manage",
+                )
 
         result = self.get_template(code, user_id)
         assert result is not None  # Should exist since we just updated it
