@@ -150,7 +150,13 @@ class ItemMutationMixin(StashManagerProtocol):
         # Restore is a lifecycle-management action, not a delegated item
         # permission. A personal item can only be restored by its owner; a
         # server item can also be restored by an explicit server manager.
-        owner = int(row["owner_id"]) == int(user_id)
+        # SECURITY: only a genuine integer id from the authoritative item row
+        # may attest ownership. int() laundering of a malformed value
+        # ("05"->5, 5.9->5, True->1) would let a non-owner restore another
+        # user's item -- the restore UPDATE has no SQL owner backstop. type()
+        # also rejects bool.
+        row_owner_id = row["owner_id"]
+        owner = type(row_owner_id) is int and row_owner_id == int(user_id)
         server_id = row.get("server_id")
         server_manager = (
             server_id is not None

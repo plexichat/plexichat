@@ -525,7 +525,13 @@ class BotManagementMixin(ApplicationManagerProtocol):
             )
             if owner is None or viewer_id is None:
                 return None
-            if int(owner["owner_id"]) != int(viewer_id):
+            # SECURITY: only a genuine integer id from the authoritative
+            # app_applications.owner_id row may attest to ownership. int()
+            # laundering of a malformed value ("05"->5, 5.9->5, True->1) would
+            # disclose a private bot profile to a non-owner viewer. type()
+            # also rejects bool.
+            app_owner_id = owner["owner_id"]
+            if type(app_owner_id) is not int or app_owner_id != int(viewer_id):
                 return None
 
         return row_to_bot_profile(row)

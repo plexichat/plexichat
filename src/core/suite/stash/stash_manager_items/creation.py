@@ -105,7 +105,12 @@ class ItemCreationMixin(StashManagerProtocol):
         )
         # Only the owner (or a server administrator/moderator) may see who an
         # item is shared with, so grants are never leaked to ordinary grantees.
-        is_owner = int(row["owner_id"]) == int(user_id)
+        # SECURITY: only a genuine integer id from the authoritative item row
+        # may attest ownership. int() laundering of a malformed value
+        # ("05"->5, 5.9->5, True->1) would disclose the owner-only grant list.
+        # type() also rejects bool.
+        row_owner_id = row["owner_id"]
+        is_owner = type(row_owner_id) is int and row_owner_id == int(user_id)
         server_id = row.get("server_id")
         can_see_grants = is_owner or (
             server_id is not None
@@ -132,7 +137,8 @@ class ItemCreationMixin(StashManagerProtocol):
         item = self._row_to_item(
             row, include_storage=self._can_expose_storage(row, user_id)
         )
-        is_owner = int(row["owner_id"]) == int(user_id)
+        row_owner_id = row["owner_id"]
+        is_owner = type(row_owner_id) is int and row_owner_id == int(user_id)
         server_id = row.get("server_id")
         if is_owner or (
             server_id is not None

@@ -45,7 +45,13 @@ class StashManagerCollections(StashManagerProtocol):
             # same scope: a personal folder cannot nest under a server folder
             # (or vice versa), which would let a server member inherit access
             # to a personal owner's content through a scope-confused parent.
-            if int(parent["owner_id"]) != int(user_id):
+            # SECURITY: only a genuine integer id from the authoritative
+            # parent row may attest to ownership. int() laundering of a
+            # malformed value ("05"->5, 5.9->5, True->1) would let a non-owner
+            # nest a collection under someone else's parent. type() also
+            # rejects bool.
+            parent_owner_id = parent["owner_id"]
+            if type(parent_owner_id) is not int or parent_owner_id != int(user_id):
                 raise StashPermissionError(
                     "Parent collection is not owned by this user"
                 )
@@ -129,7 +135,12 @@ class StashManagerCollections(StashManagerProtocol):
         return row
 
     def _can_grant_collection(self, collection: Dict[str, Any], user_id: int) -> None:
-        if int(collection["owner_id"]) == int(user_id):
+        # SECURITY: only a genuine integer id from the authoritative collection
+        # row may attest to ownership. int() laundering of a malformed value
+        # ("05"->5, 5.9->5, True->1) would let a non-owner grant collection
+        # access to arbitrary subjects. type() also rejects bool.
+        collection_owner_id = collection["owner_id"]
+        if type(collection_owner_id) is int and collection_owner_id == int(user_id):
             return
         server_id = collection.get("server_id")
         if server_id is not None and self._can_administer_server(
