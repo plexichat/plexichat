@@ -740,7 +740,12 @@ class _FilesMixin:
         if uploader_id == int(user_id):
             return True
 
-        # 2. Message attachment in a conversation the user participates in
+        # 2. Message attachment in a conversation the user participates in.
+        # SECURITY: every link field (checksum, filename, url, file_id in
+        # metadata) is client-supplied. Require that the referencing
+        # message was authored by the file's uploader -- the only party
+        # with inherent authority to share it. Forged references fail
+        # closed while legitimate upload-then-attach flows still work.
         checksum = meta.checksum
         file_id_token = str(meta.id)
 
@@ -758,7 +763,7 @@ class _FilesMixin:
                        OR a.metadata LIKE '%' || ? || '%'
                        OR a.metadata LIKE '%' || ? || '%'
                        OR a.metadata LIKE '%' || ? || '%'
-                   ) AND a.deleted = 0""",
+                   ) AND a.deleted = 0 AND m.author_id = ?""",
                 (
                     checksum,
                     f'"media_file_id": {file_id_token}',
@@ -767,6 +772,7 @@ class _FilesMixin:
                     f'"file_id": {file_id_token}',
                     f'"file_id": "{file_id_token}"',
                     f'"file_id":"{file_id_token}"',
+                    uploader_id,
                 ),
             )
 
@@ -784,7 +790,7 @@ class _FilesMixin:
                        OR a.metadata LIKE '%' || ? || '%'
                        OR a.metadata LIKE '%' || ? || '%'
                        OR a.metadata LIKE '%' || ? || '%'
-                   ) AND a.deleted = 0""",
+                   ) AND a.deleted = 0 AND m.author_id = ?""",
                 (
                     search_filename,
                     search_filename,
@@ -794,6 +800,7 @@ class _FilesMixin:
                     f'"file_id": {file_id_token}',
                     f'"file_id": "{file_id_token}"',
                     f'"file_id":"{file_id_token}"',
+                    uploader_id,
                 ),
             )
 
