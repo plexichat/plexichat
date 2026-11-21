@@ -39,7 +39,17 @@ class ParticipantRepository(BaseRepository[Participant]):
         participants: List[Dict[str, Any]],
         auto_commit: bool = True,
     ) -> None:
-        """Create multiple participants in batch."""
+        """Create multiple participants in batch.
+
+        Peers used to issue one ``INSERT OR IGNORE`` (and one statement
+        round-trip) per participant, so adding a user to many conversations at
+        once grew linearly in the number of rows. Fold the rows into bounded
+        ``executemany`` chunks instead, collapsing N statements into
+        ``ceil(N / _MAX_BULK_CHUNK)`` calls. The SQL text, column order,
+        ``INSERT OR IGNORE`` conflict handling and the explicit transaction
+        boundary are unchanged: duplicate ``(conversation_id, user_id)`` rows
+        still dedupe and any failure still rolls the whole batch back.
+        """
         if not participants:
             return
 
@@ -47,21 +57,23 @@ class ParticipantRepository(BaseRepository[Participant]):
         if not in_trans:
             self.begin_transaction()
 
+        query = """INSERT OR IGNORE INTO msg_participants 
+                   (id, conversation_id, user_id, role, joined_at)
+                   VALUES (?, ?, ?, ?, ?)"""
         try:
-            for p in participants:
-                self._execute(
-                    """INSERT OR IGNORE INTO msg_participants 
-                       (id, conversation_id, user_id, role, joined_at)
-                       VALUES (?, ?, ?, ?, ?)""",
+            for start in range(0, len(participants), _MAX_BULK_CHUNK):
+                chunk = participants[start : start + _MAX_BULK_CHUNK]
+                data = [
                     (
                         p["id"],
                         p["conversation_id"],
                         p["user_id"],
                         p["role"].value,
                         p["joined_at"],
-                    ),
-                    auto_commit=False,
-                )
+                    )
+                    for p in chunk
+                ]
+                self._db.execute_many(query, data, auto_commit=False)
             if auto_commit and not in_trans:
                 self.commit()
         except Exception:
