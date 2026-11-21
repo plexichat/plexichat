@@ -2,6 +2,7 @@
 Connection handlers - Handle connection-related opcodes (heartbeat, identify, resume).
 """
 
+from collections import OrderedDict
 from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
 
 import utils.logger as logger
@@ -23,6 +24,40 @@ if TYPE_CHECKING:
     from src.core.auth.manager import AuthManager
     from src.core.presence.manager import PresenceManager
     from src.core.servers.manager import ServerManager
+
+
+_MISSING = object()
+
+
+class _StatusMemo:
+    """Bounded, per-IDENTIFY memo of ``presence.get_status(user_id)`` reads.
+
+    A single IDENTIFY resolves status twice: once for the READY payload's
+    ``user.presence.status`` and once to decide the online-transition dispatch.
+    ``get_status`` is an uncached raw SQL read, so a reconnect burst issues the
+    identical query twice per connection.
+
+    The memo is instantiated per IDENTIFY and never stored on the handler or
+    module: one user's status can never be observed by a different connection,
+    user or worker (no cross-user leak, multi-node safe). It is keyed by user
+    id, fixed-size with LRU eviction, and only memoises a presence *read* --
+    never a token, permission or intent decision -- so authz is unchanged.
+    """
+
+    __slots__ = ("_max_entries", "_entries")
+
+    def __init__(self, max_entries: int = 8) -> None:
+        self._max_entries = max(1, int(max_entries))
+        self._entries: "OrderedDict[int, Any]" = OrderedDict()
+
+    def get(self, user_id: int) -> Any:
+        return self._entries.get(user_id, _MISSING)
+
+    def put(self, user_id: int, status: Any) -> None:
+        self._entries[user_id] = status
+        self._entries.move_to_end(user_id)
+        while len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
 
 
 class ConnectionHandler:
@@ -139,12 +174,18 @@ class ConnectionHandler:
 
         session = self._session_manager.create_session(connection, user_id, intents)
 
-        ready_data = await self._build_ready_payload(user_id, session.session_id)
+        # One bounded, per-IDENTIFY status memo shared by READY enrichment and
+        # the online-transition dispatch. Fresh per call: no cross-user/worker
+        # sharing, so a status read cannot leak between connections.
+        status_memo = _StatusMemo()
+        ready_data = await self._build_ready_payload(
+            user_id, session.session_id, status_memo=status_memo
+        )
 
         logger.info(f"User {user_id} identified with session {session.session_id}")
 
         # Dispatch online presence to friends
-        await self._dispatch_online_presence(user_id)
+        await self._dispatch_online_presence(user_id, status_memo=status_memo)
 
         ready_payload = {
             "op": int(GatewayOpcode.DISPATCH),
@@ -233,6 +274,22 @@ class ConnectionHandler:
 
         return validate_intents(intents)
 
+    async def _read_presence_status(self, memo: _StatusMemo, user_id: int) -> Any:
+        """Read status, hitting the DB at most once per IDENTIFY.
+
+        Exceptions propagate to each caller's existing ``try`` block so
+        the documented per-path fallbacks remain unchanged.
+        """
+        cached = memo.get(user_id)
+        if cached is not _MISSING:
+            return cached
+        presence = self._presence
+        if presence is None:
+            raise RuntimeError("presence module unavailable")
+        status = await run_in_threadpool(presence.get_status, user_id)
+        memo.put(user_id, status)
+        return status
+
     async def _verify_token(
         self,
         token: str,
@@ -260,6 +317,8 @@ class ConnectionHandler:
         self,
         user_id: int,
         session_id: str,
+        *,
+        status_memo: Optional[_StatusMemo] = None,
     ) -> Dict[str, Any]:
         """Build the READY event payload."""
         user_data: Dict[str, Any] = {"id": str(user_id)}
@@ -285,8 +344,9 @@ class ConnectionHandler:
         presence_status = "online"
         if self._presence:
             try:
-                status_enum = await run_in_threadpool(
-                    self._presence.get_status, user_id
+                status_enum = await self._read_presence_status(
+                    status_memo if status_memo is not None else _StatusMemo(),
+                    user_id,
                 )
                 presence_status = (
                     status_enum.value
@@ -330,7 +390,9 @@ class ConnectionHandler:
             "application": {"id": str(user_id), "flags": 0},
         }
 
-    async def _dispatch_online_presence(self, user_id: int) -> None:
+    async def _dispatch_online_presence(
+        self, user_id: int, *, status_memo: Optional[_StatusMemo] = None
+    ) -> None:
         """Dispatch online presence to friends when user connects.
 
         CORRECTNESS FIX: a persisted idle/dnd status chosen by the user via
@@ -343,8 +405,9 @@ class ConnectionHandler:
             from src.core.presence.models import UserStatus
 
             try:
-                current_status = await run_in_threadpool(
-                    self._presence.get_status, user_id
+                current_status = await self._read_presence_status(
+                    status_memo if status_memo is not None else _StatusMemo(),
+                    user_id,
                 )
             except Exception:
                 current_status = UserStatus.ONLINE
