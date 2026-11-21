@@ -141,7 +141,53 @@ class ApiTokenMixin(AuthManagerProtocol):
                    ORDER BY created_at DESC LIMIT ? OFFSET ?""",
                 (now, limit, offset),
             )
-        return [self._row_to_access_token(row) for row in rows]
+        # An empty page needs no aggregates (and keeps the final DB call on
+        # this path the bounded token SELECT itself).
+        if not rows:
+            return []
+        # Each row needs two usage aggregates over auth_api_access_token_events.
+        # Resolving them per row (inside _row_to_access_token) made a page of N
+        # tokens cost N extra COUNT round trips. The page is already bounded
+        # (limit <= 500) and authorized; resolve every token's aggregates in one
+        # GROUP BY query over exactly those token ids so no other token's events
+        # can be pulled in.
+        token_ids = [row["id"] for row in rows]
+        placeholders = ", ".join("?" for _ in token_ids)
+        summaries: Dict[int, Dict[str, Any]] = {}
+        try:
+            agg_rows = self._db.fetch_all(
+                f"""SELECT token_id,
+                           COUNT(DISTINCT ip_index) AS distinct_ip_count,
+                           SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
+                    FROM auth_api_access_token_events
+                    WHERE token_id IN ({placeholders})
+                    GROUP BY token_id""",
+                tuple(token_ids),
+            )
+        except Exception:  # pragma: no cover - enrichment is best effort
+            agg_rows = []
+        for row in agg_rows or []:
+            if isinstance(row, dict):
+                tid, distinct, denied = (
+                    row.get("token_id"),
+                    row.get("distinct_ip_count"),
+                    row.get("denied_count_total"),
+                )
+            else:
+                tid = row[0] if len(row) > 0 else None
+                distinct = row[1] if len(row) > 1 else None
+                denied = row[2] if len(row) > 2 else None
+            if tid is not None:
+                summaries[int(tid)] = {
+                    "distinct_ip_count": distinct,
+                    "denied_count_total": denied,
+                }
+        return [
+            self._row_to_access_token(
+                row, distinct_summary=summaries.get(int(row["id"]), {})
+            )
+            for row in rows
+        ]
 
     def get_api_access_token(self, token_id: int) -> Optional[AccessToken]:
         row = self._db.fetch_one(
@@ -840,22 +886,31 @@ class ApiTokenMixin(AuthManagerProtocol):
             "reject_reason": row.get("reject_reason"),
         }
 
-    def _row_to_access_token(self, row: Dict[str, Any]) -> AccessToken:
+    def _row_to_access_token(
+        self,
+        row: Dict[str, Any],
+        distinct_summary: Optional[Dict[str, Any]] = None,
+    ) -> AccessToken:
         row = dict(row)
         use_count = int(row.get("use_count_total") or 0)
-        if use_count > 0:
-            distinct_summary = (
-                self._db.fetch_one(
-                    """SELECT COUNT(DISTINCT ip_index) AS distinct_ip_count,
-                          SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
-                   FROM auth_api_access_token_events
-                   WHERE token_id = ?""",
-                    (row["id"],),
+        if distinct_summary is None:
+            # Single-token callers (create/get/update/rotate) still resolve the
+            # aggregates on demand; only the listing batches them up front.
+            if use_count > 0:
+                distinct_summary = (
+                    self._db.fetch_one(
+                        """SELECT COUNT(DISTINCT ip_index) AS distinct_ip_count,
+                              SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
+                        FROM auth_api_access_token_events
+                        WHERE token_id = ?""",
+                        (row["id"],),
+                    )
+                    or {}
                 )
-                or {}
-            )
-        else:
-            distinct_summary = {}
+            else:
+                distinct_summary = {}
+        # Narrow Optional[Dict] -> Dict for callers that supplied summaries.
+        distinct_summary = distinct_summary or {}
         last_ip = None
         if row.get("last_used_ip_encrypted"):
             try:
