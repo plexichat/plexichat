@@ -721,6 +721,28 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
         """
         self._sound_use_cache.invalidate_where(lambda key: key[1] == sound_id)
 
+    @staticmethod
+    def _sound_use_version(user_id: int, server_id: int):
+        """Current RBAC epoch snapshot for a ``(user, server)`` scope.
+
+        The decision in :meth:`_can_use_sound` depends on the caller's role
+        set, which the servers module changes through role assignment/removal,
+        role deletion, kick/ban and ownership transfers. Every one of those
+        writes bumps the channel-access cache's ``(server_epoch, user_epoch)``
+        — the same version the member-role-rows cache keys on. Folding it into
+        the memoized verdict makes a revoked role retire the old ALLOW *now*
+        instead of leaving a window where the stale verdict is replayed.
+
+        Any lookup failure returns ``None`` so the caller skips the memo and
+        recomputes from the authoritative database (fail closed).
+        """
+        try:
+            from src.core.servers.channel_access_cache import get_channel_access_cache
+
+            return get_channel_access_cache().version(int(server_id), int(user_id))
+        except Exception:
+            return None
+
     def _can_use_sound(self, user_id: int, sound_id: int, server_id: int) -> bool:
         """Check if user can use a sound based on role permissions.
 
@@ -733,16 +755,31 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
         The decision is memoized for a short window (see the module constants).
         The key includes ``user_id`` so one caller's verdict can never be
         reused for another, and a sentinel distinguishes a cached ``False``
-        from a miss. Local permission mutations clear the store eagerly; the
-        short TTL bounds staleness from changes on other workers.
+        from a miss. Each entry is tagged with the RBAC epoch it was computed
+        under: a role/membership mutation bumps that epoch, so a verdict
+        computed with a now-revoked role is rejected on the next read rather
+        than surviving the TTL. Local permission-row mutations clear the
+        store eagerly; the epoch bounds staleness from any other change.
         """
         cache = self._sound_use_cache
         key = (user_id, sound_id, server_id)
-        cached = cache.get(key, _CACHE_MISS)
-        if cached is not _CACHE_MISS:
-            return cached
+        version = self._sound_use_version(user_id, server_id)
+        if version is not None:
+            cached = cache.get(key, _CACHE_MISS)
+            if (
+                cached is not _CACHE_MISS
+                and isinstance(cached, tuple)
+                and len(cached) == 2
+                and cached[0] == version
+            ):
+                return cached[1]
         allowed = self._compute_can_use_sound(user_id, sound_id, server_id)
-        cache.set(key, allowed)
+        if version is not None:
+            # Store the version captured *before* the authoritative read. If a
+            # mutation landed mid-computation the entry carries the old epoch
+            # and is rejected on the next read, so a stale grant is never
+            # replayed under a fresh version.
+            cache.set(key, (version, allowed))
         return allowed
 
     def _compute_can_use_sound(
