@@ -251,6 +251,78 @@ class LastChatService:
 
         return result
 
+    def _conversation_read_allowed(self, user_id: int, conversation_id: int) -> bool:
+        """Whether messages in the server channel behind ``conversation_id`` may be read.
+
+        ``is_participant`` grants every member of a server participation in all
+        of its channel conversations, so it is NOT a read boundary. The normal
+        channel message listing path additionally requires the per-channel
+        ``messages.read`` grant. A recent-chat row carries unread state and the
+        last-message id/at for that conversation, so returning it for a private
+        channel a member cannot read leaks activity in that channel. Resolve the
+        backing channel membership-agnostically (both the channel-id and
+        conversation-id forms are accepted on this API) and require a live read
+        grant. A genuine DM/group has no backing channel and needs no extra
+        gate. Fails closed whenever the channel or its permission cannot be
+        resolved.
+        """
+        try:
+            import src.api as api
+
+            servers = api.get_servers()
+        except Exception:
+            return False
+        if servers is None or getattr(servers, "_setup_complete", True) is False:
+            return True  # no server store: only DM/group conversations exist
+
+        channel_id = None
+        server_id = None
+        channel_exists = getattr(servers, "channel_exists", None)
+        if callable(channel_exists):
+            try:
+                if channel_exists(conversation_id):
+                    channel_id = conversation_id
+            except Exception:
+                return False
+        if channel_id is None:
+            reverse = getattr(servers, "get_channel_by_conversation", None)
+            if callable(reverse):
+                try:
+                    info = reverse(conversation_id)
+                except Exception:
+                    return False
+                if isinstance(info, dict):
+                    channel_id = info.get("id")
+                    server_id = info.get("server_id")
+        if channel_id is None:
+            return True  # genuine DM/group conversation
+
+        if server_id is None:
+            get_channel = getattr(servers, "get_channel", None)
+            if not callable(get_channel):
+                return False
+            try:
+                channel = get_channel(channel_id, user_id)
+            except Exception:
+                return False
+            if channel is None:
+                return False
+            server_id = (
+                channel.get("server_id")
+                if isinstance(channel, dict)
+                else getattr(channel, "server_id", None)
+            )
+        if not server_id:
+            return False
+
+        has_permission = getattr(servers, "has_permission", None)
+        if not callable(has_permission):
+            return False
+        try:
+            return bool(has_permission(user_id, server_id, "messages.read", channel_id))
+        except Exception:
+            return False
+
     def get_recent_chats(self, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
         """
         Get the user's recent chat history.
@@ -315,6 +387,12 @@ class LastChatService:
             else:
                 permitted = checker.is_participant(conv_id, user_id)
             if not permitted:
+                continue
+            # Participation alone does not authorize a server-channel read (see
+            # _conversation_read_allowed). A recent-chat row exposes unread state
+            # and last-message metadata, so drop conversations the caller cannot
+            # read. Fails closed; the existing participation gate is unchanged.
+            if not self._conversation_read_allowed(user_id, int(conv_id)):
                 continue
             results.append(data)
 
