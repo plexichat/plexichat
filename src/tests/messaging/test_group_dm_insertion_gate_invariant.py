@@ -111,8 +111,17 @@ GATES = {
 }
 
 
-def _parse(rel_path):
-    return ast.parse((ROOT / rel_path).read_text(encoding="utf-8"))
+def _load_site(rel_path, fn_name):
+    """Read and parse a site's source exactly once; return ``(source, node)``.
+
+    The raw ``source`` and the parsed tree must come from the *same* read:
+    ``ast.get_source_segment`` indexes into the source using the tree's
+    line/column offsets, so re-reading the file a second time is both wasteful
+    and needlessly fragile. Every caller below reuses this one parsed tree.
+    """
+    source = (ROOT / rel_path).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    return source, _find_function(tree, fn_name)
 
 
 def _find_function(tree, name):
@@ -219,7 +228,7 @@ def test_registry_is_definitive():
 @pytest.mark.parametrize("rel,fn,gates,markers,why", SITES)
 def test_insertion_site_is_gated(rel, fn, gates, markers, why):
     """Each site either calls its gate or keeps its documented inline gate."""
-    node = _find_function(_parse(rel), fn)
+    source, node = _load_site(rel, fn)
     assert node is not None, f"insertion site {rel}:{fn} disappeared"
     bare, attrs = _called_names(node)
     called = bare | attrs
@@ -228,9 +237,9 @@ def test_insertion_site_is_gated(rel, fn, gates, markers, why):
             f"{rel}:{fn} no longer calls any of {sorted(gates)} ({why})"
         )
     else:
-        source = ast.get_source_segment((ROOT / rel).read_text(encoding="utf-8"), node)
-        assert source is not None, f"cannot read source of {rel}:{fn}"
-        missing = [m for m in markers if m not in source]
+        segment = ast.get_source_segment(source, node)
+        assert segment is not None, f"cannot read source of {rel}:{fn}"
+        missing = [m for m in markers if m not in segment]
         assert not missing, (
             f"{rel}:{fn} documented exception lost inline marker(s) {missing} ({why})"
         )
@@ -242,9 +251,47 @@ def test_insertion_site_is_gated(rel, fn, gates, markers, why):
 )
 def test_privacy_gates_stay_fail_closed(rel, fn, expected_markers):
     """A gate simplified past its fail-closed markers is a regression."""
-    node = _find_function(_parse(rel), fn)
+    source, node = _load_site(rel, fn)
     assert node is not None, f"privacy gate {rel}:{fn} disappeared"
-    source = ast.get_source_segment((ROOT / rel).read_text(encoding="utf-8"), node)
-    assert source is not None
-    missing = [m for m in expected_markers if m not in source]
+    segment = ast.get_source_segment(source, node)
+    assert segment is not None
+    missing = [m for m in expected_markers if m not in segment]
     assert not missing, f"{rel}:{fn} lost fail-closed marker(s): {missing}"
+
+
+def test_site_helpers_read_and_parse_each_source_once(monkeypatch):
+    """Perf regression: a site source is read and parsed exactly once.
+
+    Previously both site tests parsed via ``_parse(rel)`` and then re-read the
+    same file via ``(ROOT / rel).read_text()`` to feed ``get_source_segment``.
+    Counting the read/parse calls pins the fix deterministically -- no wall-clock
+    timing and no flaky threshold. Both the gated and documented-exception
+    shapes funnel through the same ``_load_site`` helper, so one representative
+    site exercises the single-read/single-parse path.
+    """
+    rel, fn = SITES[0][0], SITES[0][1]
+    assert (rel, fn) in {(r, f) for r, f, *_ in SITES}
+
+    read_calls = []
+    real_read_text = Path.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        read_calls.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    parse_calls = []
+    real_parse = ast.parse
+
+    def counting_parse(source, *args, **kwargs):
+        parse_calls.append(source)
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    monkeypatch.setattr(ast, "parse", counting_parse)
+
+    source, node = _load_site(rel, fn)
+
+    assert node is not None
+    assert ast.get_source_segment(source, node) is not None
+    assert len(read_calls) == 1, f"expected 1 read, got {len(read_calls)}"
+    assert len(parse_calls) == 1, f"expected 1 parse, got {len(parse_calls)}"
