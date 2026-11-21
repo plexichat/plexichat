@@ -6,16 +6,57 @@ when its config or token-table query fails), so a wrapper that degrades to
 ``False`` on the same error would advertise a weaker posture than the server
 actually enforces. The degraded answer must also not be memoized, otherwise
 clients stay on the wrong contract for the whole snapshot TTL.
+
+The route module is loaded directly so the test does not depend on the rest of
+the API router graph being importable at collection time.
 """
 
-import importlib
+import importlib.util
+import sys
+import types
+from pathlib import Path
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
-# ``src.api.routes`` shadows its ``config`` submodule attribute with
-# ``utils.config`` at package init, so resolve the module by full name.
-route_config = importlib.import_module("src.api.routes.config")
 import src.core.auth as auth_module
+
+
+class _Response(BaseModel):
+    """Minimal stand-in for the two response models the route constructs."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+def _load_route_module():
+    module_name = "_capabilities_config_route_under_test"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+
+    for name, attrs in {
+        "src.api.schemas.config": {
+            "ServerCapabilitiesResponse": _Response,
+            "AvatarConfigResponse": _Response,
+        },
+        "src.api.schemas.common": {"ErrorResponse": object},
+        "src.api.routes.auth.oauth_config": {
+            "OAUTH_PROVIDERS": ("google", "github", "microsoft", "gitlab")
+        },
+    }.items():
+        stub = types.ModuleType(name)
+        for key, value in attrs.items():
+            setattr(stub, key, value)
+        sys.modules[name] = stub
+
+    path = Path(__file__).parents[2] / "api" / "routes" / "config.py"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+route_config = _load_route_module()
 
 
 @pytest.fixture(autouse=True)
