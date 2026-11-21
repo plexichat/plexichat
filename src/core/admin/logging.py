@@ -11,8 +11,39 @@ import json
 from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
+# Log/audit text is untrusted free-form input. ``AdminLogEntry.details`` (and
+# the other fields below) can be attacker-controlled -- a ban reason, an
+# approval note, a forwarded-for IP, a federation peer id. This module writes
+# through the ``admin`` logger, which is a *separate* logger from ``AppLogger``
+# and therefore does not get the on-disk ``SanitizingFilter`` (nor the log
+# viewer's presentation guard). An embedded CR/LF -- or a Unicode LINE/
+# PARAGRAPH SEPARATOR, NEL, bidi override, ANSI escape, tab, ... -- would let
+# one entry forge additional lines in the file that is shipped to the SIEM
+# (CWE-117). Reuse the shared hardened control-character set so every consumer
+# stays on the same side of that parser differential; keep the legacy
+# ``src.core.security.hardening.text`` import path local (it has no dependency
+# on the application package).
+from src.core.security.hardening.text import CONTROL_CHARACTERS
+
 if TYPE_CHECKING:
     pass
+
+
+def _escape_log_control_characters(value: Any) -> str:
+    """Render control characters visibly so one audit entry stays one line.
+
+    C0/C1/DEL render as ``\\xNN``; the wider Unicode separators and bidi
+    controls render as ``\\uNNNN`` so a shipper that normalises U+2028/U+2029
+    to a newline cannot forge an extra entry out of a single field. Everything
+    else (including ordinary text, emails and details) is left verbatim.
+    """
+    text = "" if value is None else str(value)
+
+    def _escape(match):
+        codepoint = ord(match.group())
+        return f"\\x{codepoint:02x}" if codepoint <= 0xFF else f"\\u{codepoint:04x}"
+
+    return CONTROL_CHARACTERS.sub(_escape, text)
 
 
 # Every admin audit write used to ask the database twice whether
@@ -166,7 +197,12 @@ class AdminLogger:
         if entry.metadata:
             parts.append(f"Metadata={json.dumps(entry.metadata)}")
 
-        return " ".join(parts)
+        # Fail closed at the sink: every dynamic field above is untrusted, and
+        # this line goes to the ``admin`` file logger which has no sanitizing
+        # filter. Neutralise CR/LF and all other control characters before the
+        # logger renders the record so a crafted value cannot forge a new line
+        # or repaint the log viewer. Legitimate text passes through unchanged.
+        return _escape_log_control_characters(" ".join(parts))
 
     def _log_to_database(self, db: Any, entry: AdminLogEntry):
         """Write admin log entry to database."""
