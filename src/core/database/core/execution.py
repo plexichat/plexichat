@@ -46,10 +46,29 @@ _SQL_LITERAL_SPLIT_RE = re.compile(r"('(?:[^']|'')*')")
 # ``_has_multiple_statements``, leaving the query cache uncleared after a write.
 # SQLite's ``#`` tails are stripped by ``_sanitize_sqlite_query`` before
 # execution, so classifying them as writes here can only over-invalidate.
+#
+# NOTE: PostgreSQL ``E'...'`` escape strings MUST be matched by a backslash-
+# aware alternative BEFORE the plain single-quote pattern. In an E-string a
+# backslash escapes the following character (``E'\''`` is one string holding a
+# single quote), but the plain pattern ``'(?:[^']|'')*'`` reads that ``\'`` as a
+# doubled quote and keeps scanning past the real end of the literal. Given
+# ``SELECT E'\''; UPDATE authz_roles SET role='user'`` PG executes a stacked
+# write after the ``;``, yet the plain pattern swallows that ``;`` (it pairs the
+# literal's closing quote with the ``'`` before ``user``), so a real write was
+# classified as a read and the cache kept serving a stale authz verdict. The
+# ``[Ee]`` prefix is word-bounded so an identifier tail cannot be mistaken for
+# an E-string; the ``\\.`` branch consumes backslash escapes and ``''`` still
+# covers doubled quotes inside E-strings.
 _SQL_NON_CODE_RE = re.compile(
-    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\""
+    r"\b[Ee]'(?:[^'\\]|\\.|'')*'|\"(?:[^\"]|\"\")*\""
+    r"|'(?:[^']|'')*'"
     r"|\$\$.*?\$\$|\$(?P<dollar_tag>[A-Za-z_][A-Za-z_0-9]*)\$.*?\$(?P=dollar_tag)\$"
-    r"|--[^\n]*|/\*.*?\*/",
+    # PostgreSQL's scanner treats BOTH \n and \r as a line terminator for
+    # ``--`` comments (scan.l: `newline [\n\r]`, `comment "--"{non_newline}*`).
+    # Stopping at \n only lets ``SELECT 1 -- c\r; UPDATE ...`` hide its stacked
+    # separator inside the "comment" -- PG ends the comment at \r and executes
+    # the UPDATE, so the ``;`` must stay visible to the separator count.
+    r"|--[^\n\r]*|/\*.*?\*/",
     re.DOTALL,
 )
 
@@ -82,14 +101,22 @@ def _strip_leading_sql_comments(sql: str) -> str:
     any of them still executes, so the invalidation check must see past them.
     Only the leading run is stripped; comments inside the statement are left
     exactly as they were.
+
+    PostgreSQL ends a ``--`` comment at either ``\\n`` or ``\\r`` (scan.l's
+    ``newline [\\n\\r]``). Only looking for ``\\n`` let ``-- c\\rUPDATE ...``
+    pass as a read even though PG executed the UPDATE, so both terminators
+    end the comment here.
     """
     rest = sql.lstrip()
     while True:
         if rest.startswith("--") or rest.startswith("#"):
-            newline = rest.find("\n")
-            if newline < 0:
+            lf = rest.find("\n")
+            cr = rest.find("\r")
+            candidates = [pos for pos in (lf, cr) if pos >= 0]
+            if not candidates:
                 return ""
-            rest = rest[newline + 1 :].lstrip()
+            end = min(candidates)
+            rest = rest[end + 1 :].lstrip()
         elif rest.startswith("/*"):
             end = rest.find("*/", 2)
             if end < 0:
