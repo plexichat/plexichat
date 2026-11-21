@@ -452,16 +452,21 @@ class StaticClientMiddleware:
         ext = Path(path).suffix.lower()
         if ext in _HTML_EXT:
             return True
-        if ext in _HASHED_EXTS:
-            return False
         name = Path(path).name
         if name == "config.js" or name == "robots.txt" or name == "favicon.svg":
             return False
         if path.startswith(("/assets/", "/js/", "/css/")):
             return False
+        # SPA fallback takes precedence over the extension heuristic in
+        # ``_resolve``: ``/app/x.js`` is served the mapped ``app.html`` even
+        # though its suffix looks like a hashed asset. Classify by what is
+        # actually served, not by the URL suffix, or a full HTML document
+        # lands in the fail-open assets rate-limit tier.
         for matcher, _ in self._spa_matchers:
             if matcher.match(path):
                 return True
+        if ext in _HASHED_EXTS:
+            return False
         if path == "/" or path == "/index.html":
             return True
         return False
