@@ -371,8 +371,17 @@ class TestAlertModeratorNotifications:
         def get_notification_settings(self, user_id, server_id=None):
             return SimpleNamespace(user_id=user_id, server_id=server_id)
 
+        def get_notification_settings_bulk(self, user_ids, server_id=None):
+            return {
+                uid: SimpleNamespace(user_id=uid, server_id=server_id)
+                for uid in user_ids
+            }
+
         def get_channel_override(self, user_id, channel_id):
             return None
+
+        def get_channel_overrides_bulk(self, user_ids, channel_id):
+            return {}
 
         def _should_notify_user_optimized(
             self,

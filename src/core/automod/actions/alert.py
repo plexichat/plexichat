@@ -178,22 +178,33 @@ class AlertModeratorsAction(BaseAction):
 
         content_preview = self._format_alert_message(violation)
 
-        for moderator_id in moderator_ids:
-            # Resolve this moderator's settings and channel override so the
-            # shared eligibility gate can be applied. This previously called a
-            # ``_should_notify_user`` method that does not exist anywhere in
-            # the codebase (the real one is ``_should_notify_user_optimized``),
-            # so every ALERT_MODERATORS action raised AttributeError: no
-            # moderator was ever notified and execute()'s broad handler
-            # skipped ``_log_alert`` as well.
-            settings = manager.get_notification_settings(
-                moderator_id, violation.server_id
-            )
-            override = (
-                manager.get_channel_override(moderator_id, channel_id)
-                if channel_id
-                else None
-            )
+        # Resolve notification preferences for the whole moderator audience in
+        # two bounded reads instead of two lookups per moderator. The old loop
+        # called ``get_notification_settings`` and ``get_channel_override`` once
+        # per recipient, so an alert in a server with hundreds of moderators
+        # issued 2N config queries (each settings read is a cache get + a
+        # ``SELECT``). Both helpers below chunk their ``IN (...)`` binds, so the
+        # fan-out stays within SQLite/Postgres variable limits; results are
+        # keyed by user id and lookups below stay scoped to that one moderator.
+        # Missing rows fall back to the same defaults the per-user helpers
+        # returned, so eligibility (and fail-closed behaviour) is unchanged.
+        audience = list(dict.fromkeys(int(mid) for mid in moderator_ids))
+        all_settings = manager.get_notification_settings_bulk(
+            audience, violation.server_id
+        )
+        all_overrides = (
+            manager.get_channel_overrides_bulk(audience, channel_id)
+            if channel_id
+            else {}
+        )
+
+        for moderator_id in audience:
+            settings = all_settings.get(moderator_id)
+            override = all_overrides.get(moderator_id)
+            # The shared eligibility gate is ``_should_notify_user_optimized``
+            # (there is no ``_should_notify_user``); filtering per moderator
+            # here keeps each recipient's own preferences authoritative and
+            # never mixes one moderator's settings into another's decision.
             if not manager._should_notify_user_optimized(
                 moderator_id,
                 violation.user_id,
