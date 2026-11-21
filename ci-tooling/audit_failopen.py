@@ -1433,6 +1433,86 @@ def _iter_route_sources(
     return declared
 
 
+# Sentinel method for an ``add_api_route`` whose ``methods`` cannot be resolved
+# from source (a list/loop variable, a star-unpack, a call or a ``**kwargs``
+# bag). Such a registration may be mutating, so it is checked with the
+# mutating-route rules instead of being silently dropped as "no methods".
+UNRESOLVED_METHOD = "<unresolved>"
+
+
+def _iter_unresolved_dynamic_routes(
+    tree: ast.AST,
+    text: str,
+    decl_rel: str,
+    handlers: dict[str, list[tuple[str, str]]],
+) -> list[tuple[str, str, str, int, bool]]:
+    """Yield ``add_api_route`` registrations whose verbs cannot be resolved.
+
+    ``_iter_route_sources`` sees decorator registrations and the
+    ``router.<verb>(...)(handler)`` direct-registration form, but an endpoint
+    bound with ``router.add_api_route(..., methods=<expr>)`` is invisible to it.
+    A literal ``methods=["POST"]`` is covered by the dedicated dynamic sweep;
+    the gap is a non-literal expression -- a module-level list, a loop variable
+    (``methods=[verb]``), a star-unpack or a ``**kwargs`` bag. Resolving those
+    away to "no methods" silently dropped the route from this sweep, letting an
+    unauthenticated mutation pass every guard. Instead we fail closed: an
+    unresolvable ``methods`` is treated as a potentially mutating registration
+    and handed to the same auth checks as a decorator route, reusing the
+    handler resolution of ``_iter_route_sources``.
+    """
+    declared: list[tuple[str, str, str, int, bool]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "add_api_route":
+            continue
+
+        methods_kw = next((kw for kw in node.keywords if kw.arg == "methods"), None)
+        if methods_kw is None:
+            # No ``methods`` and no ``**kwargs`` means Starlette's GET default
+            # (read-only). A ``**kwargs`` bag could hide a mutating verb, so it
+            # fails closed.
+            unresolved = any(kw.arg is None for kw in node.keywords)
+        else:
+            value = methods_kw.value
+            if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+                unresolved = any(
+                    isinstance(elt, ast.Starred)
+                    or not (
+                        isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                    )
+                    for elt in value.elts
+                )
+            elif isinstance(value, ast.Constant) and isinstance(value.value, str):
+                unresolved = False
+            else:
+                # A bare name, attribute or call -- e.g. ``methods=METHODS``.
+                unresolved = True
+        if not unresolved:
+            continue
+
+        raw_path = ""
+        if node.args and isinstance(node.args[0], ast.Constant):
+            raw_path = node.args[0].value
+        endpoint = node.args[1] if len(node.args) > 1 else None
+        if endpoint is None:
+            for kw in node.keywords:
+                if kw.arg == "endpoint":
+                    endpoint = kw.value
+                    break
+        target = ""
+        if isinstance(endpoint, ast.Name):
+            target = endpoint.id
+        elif isinstance(endpoint, ast.Attribute):
+            target = endpoint.attr
+        source = _resolve_handler(target, decl_rel, handlers)
+        declared.append(
+            (UNRESOLVED_METHOD, raw_path, source, node.lineno, bool(source))
+        )
+    return declared
+
+
 def sweep_routes(root: Path) -> list[Hit]:
     """Sweep D: inventory every FastAPI route's authorization surface.
 
@@ -1464,9 +1544,10 @@ def sweep_routes(root: Path) -> list[Hit]:
                 )
             )
             continue
-        for method, route_path, source, line_no, resolved in _iter_route_sources(
-            tree, text, rel, handlers
-        ):
+        route_sources = list(_iter_route_sources(tree, text, rel, handlers)) + list(
+            _iter_unresolved_dynamic_routes(tree, text, rel, handlers)
+        )
+        for method, route_path, source, line_no, resolved in route_sources:
             key = (rel, method, route_path)
             reason = PUBLIC_BY_DESIGN.get(key)
             if reason is None and rel in PUBLIC_FILES:
@@ -1527,7 +1608,9 @@ def sweep_routes(root: Path) -> list[Hit]:
                     )
                 )
                 continue
-            if method in MUTATING and not authorized and not self_scoped:
+            if (
+                method in MUTATING or method == UNRESOLVED_METHOD
+            ) and not authorized and not self_scoped:
                 hits.append(
                     Hit(
                         UNAUTHZ,

@@ -16,6 +16,7 @@ Two properties are covered:
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -128,6 +129,31 @@ async def delete_me(current_user=Depends(get_current_user)) -> dict:
 @router.post("/verify")
 async def verify_credential(body: dict) -> dict:
     return {"ok": auth.verify_email(body["token"])}
+
+
+# ``add_api_route`` with a non-literal ``methods`` expression. The decorator
+# sweeps cannot see these, and resolving a variable/loop verb to "no methods"
+# used to drop them from this sweep too, so an unauthenticated mutation passed
+# every guard. The guarded sibling and the literal read-only registration are
+# controls: neither may be reported.
+MUTATING_METHODS = ["POST", "DELETE"]
+
+
+async def dynamic_nuke(request: Request, body: dict = None) -> dict:
+    return do_the_thing(body)
+
+
+async def dynamic_ok(
+    request: Request, current_user=Depends(get_current_user), body: dict = None
+) -> dict:
+    return do_the_thing(body)
+
+
+router.add_api_route("/dynamic-nuke", dynamic_nuke, methods=MUTATING_METHODS)
+router.add_api_route("/dynamic-ok", dynamic_ok, methods=MUTATING_METHODS)
+router.add_api_route("/dynamic-readonly", dynamic_nuke, methods=["GET"])
+for _verb in ("POST",):
+    router.add_api_route("/dynamic-loop", dynamic_nuke, methods=[_verb])
 """,
     )
     _write(
@@ -252,6 +278,59 @@ def test_flags_mutating_route_that_ignores_caller(synthetic: Path) -> None:
     hits = af.sweep_routes(synthetic)
     unauthorized = {h.symbol for h in hits if h.kind == af.UNAUTHZ}
     assert "POST /ignores-caller" in unauthorized
+
+
+def test_flags_dynamic_route_with_unresolvable_methods(synthetic: Path) -> None:
+    """Non-vacuity: a non-literal ``methods`` expression fails closed.
+
+    A module-level list, a loop variable, a star-unpack or a ``**kwargs`` bag
+    can hide a mutating verb. Such a registration must be checked, not dropped
+    as "no methods"; an unauthenticated one is a NO_AUTH hit. The guarded
+    sibling and the literal read-only registration are controls.
+    """
+    hits = af.sweep_routes(synthetic)
+    flagged = {h.symbol for h in hits if h.kind in (af.NO_AUTH, af.UNAUTHZ)}
+    assert any("/dynamic-nuke" in s for s in flagged), (
+        "an add_api_route with methods=<variable> was silently skipped"
+    )
+    assert any("/dynamic-loop" in s for s in flagged), (
+        "an add_api_route with methods=[loop_var] was silently skipped"
+    )
+    assert not any("/dynamic-ok" in s for s in flagged), (
+        "Depends(get_current_user) must still protect an unresolvable-method route"
+    )
+    assert not any("/dynamic-readonly" in s for s in flagged), (
+        "a literal methods=['GET'] registration must not be treated as unresolved"
+    )
+
+
+def test_dynamic_methods_helper_flags_only_unresolvable_verbs() -> None:
+    """Focused detector test: literal verbs resolve, dynamic ones fail closed."""
+    source = """
+async def handler(request):
+    return None
+
+router.add_api_route("/literal", handler, methods=["POST"])
+router.add_api_route("/variable", handler, methods=METHODS)
+router.add_api_route("/loop-var", handler, methods=[verb])
+router.add_api_route("/starred", handler, methods=[*METHODS])
+router.add_api_route("/kwargs", handler, **opts)
+router.add_api_route("/single", handler, methods="POST")
+router.add_api_route("/get", handler, methods=["GET"])
+"""
+    tree = ast.parse(source)
+    handlers = {"handler": [("src/api/routes/example.py", "body")]}
+    found = {
+        (method, path)
+        for method, path, _, _, _ in af._iter_unresolved_dynamic_routes(
+            tree, source, "src/api/routes/example.py", handlers
+        )
+    }
+    assert ("<unresolved>", "/variable") in found
+    assert ("<unresolved>", "/loop-var") in found
+    assert ("<unresolved>", "/starred") in found
+    assert ("<unresolved>", "/kwargs") in found
+    assert not any(path in {"/literal", "/single", "/get"} for _, path in found)
 
 
 def test_does_not_flag_authorized_or_self_scoped_routes(synthetic: Path) -> None:
