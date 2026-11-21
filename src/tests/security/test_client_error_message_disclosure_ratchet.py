@@ -169,13 +169,19 @@ def _dynamic_exception_message(expr: ast.AST, names: set[str]) -> bool:
     return False
 
 
-def _sensitive_names(
-    tree: ast.AST, parents: dict[ast.AST, ast.AST], src_names: set[str]
-) -> set[str]:
-    """Fixpoint of exception names plus locals assigned from them in excepts.
+def _sensitive_names(tree: ast.AST, src_names: set[str]) -> set[str]:
+    """Fixpoint of exception names plus locals assigned from them.
 
     Covers the ``error_message = str(e)`` then ``detail={...: error_message}``
     shape (and ``+=`` rewrites), which a direct-expression scan would miss.
+
+    Taint is intentionally *not* restricted to assignments lexically inside an
+    ``except`` block. A shared mapper receives the exception as a typed/conventional
+    parameter (``_handle_value_error(exc: ValueError)``), and a refactor can move
+    ``reason = str(exc)`` outside the handler; gating taint on ``_inside_except``
+    let such a "static-looking" name carry exception text into an f-string body
+    and slip past the guard. Propagate from any assignment whose RHS references
+    an already-sensitive name, fail closed.
     """
     names = set(src_names)
     while True:
@@ -183,10 +189,10 @@ def _sensitive_names(
         for node in ast.walk(tree):
             value = None
             targets: list[ast.AST] = []
-            if isinstance(node, ast.Assign) and _inside_except(node, parents):
+            if isinstance(node, ast.Assign):
                 value = node.value
                 targets = node.targets
-            elif isinstance(node, ast.AugAssign) and _inside_except(node, parents):
+            elif isinstance(node, ast.AugAssign):
                 value = node.value
                 targets = [node.target]
             if value is None:
@@ -273,11 +279,16 @@ def _scan_source(src: str, relpath: str) -> list[Finding]:
     tree = ast.parse(src)
     parents = _parent_map(tree)
     param_names = _exception_names(tree)
-    exc_names = _sensitive_names(tree, parents, param_names)
-    # In scope when the body sits in an except block, or when it is built by a
-    # shared exception-formatting helper that takes the exception as a param.
+    exc_names = _sensitive_names(tree, param_names)
+    # In scope when the body sits in an except block, is built by a shared
+    # exception-formatting helper that takes the exception as a param, or uses a
+    # name tainted by an exception (which may be assigned/used outside an except).
     def in_scope(node: ast.AST, value: ast.AST) -> bool:
-        return _inside_except(node, parents) or _references_exception(value, param_names)
+        return (
+            _inside_except(node, parents)
+            or _references_exception(value, param_names)
+            or _references_exception(value, exc_names)
+        )
 
     findings: list[Finding] = []
 
@@ -675,3 +686,54 @@ def _format_error(exc: ValueError) -> HTTPException:
     helper = _scan_source(helper_src, "synthetic.py")
     assert len(helper) == 1 and helper[0].function == "_format_error"
     assert _undocumented(helper)
+
+
+def test_fstring_static_param_exclusion_does_not_hide_exception_taint():
+    """f-strings of *truly* static params stay out of scope; tainted ones do not.
+
+    The f-string branch treats a bare-name interpolation as static unless that
+    name is known to carry exception text. A "static-looking" name that is
+    actually assigned from ``str(e)``/``str(exc)`` must not slip past the guard
+    just because the taint assignment or the raise sits outside an ``except``
+    block (a shared mapper or a refactor produces exactly that shape).
+    """
+    # Taint assigned inside the except, but the client body raised outside it.
+    outside_raise = '''
+def handler():
+    try:
+        do_work()
+    except OSError as e:
+        msg = str(e)
+    raise HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": f"Failed: {msg}"}},
+    )
+'''
+    flagged = _scan_source(outside_raise, "synthetic.py")
+    assert len(flagged) == 1 and flagged[0].expression == 'f"Failed: {msg}"'
+    assert _undocumented(flagged), "a tainted f-string param must fail closed"
+
+    # Shared mapper: exception-typed param -> local assigned outside any except.
+    helper_local = '''
+def _format_error(exc: ValueError):
+    reason = str(exc)
+    raise HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": f"Failed: {reason}"}},
+    )
+'''
+    flagged2 = _scan_source(helper_local, "synthetic.py")
+    assert len(flagged2) == 1 and flagged2[0].expression == 'f"Failed: {reason}"'
+    assert _undocumented(flagged2), "a tainted helper f-string param must fail closed"
+
+    # Non-vacuity of the exclusion itself: a genuinely static param (a caller
+    # status/field, not exception-derived) is still correctly ignored.
+    static = '''
+def handler(status):
+    if bad(status):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Approval is {status}"}},
+        )
+'''
+    assert _scan_source(static, "synthetic.py") == []
