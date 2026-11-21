@@ -97,25 +97,53 @@ _ROUTES_FILE = (
 
 
 def _uses_caller_identity(node: ast.AST) -> bool:
+    """Match ``<name>.user_id`` on any local, not just ``current_user``.
+
+    A future handler may rename the dependency parameter (``user``) or bind a
+    local alias (``caller = current_user``). Keying the completeness scan on the
+    literal name ``current_user`` would let such a handler key its notification
+    read/write on the caller id without a guard and slip past detection. This
+    deliberately errs toward false positives, which only demand a gate and
+    never hide a missing one.
+    """
     return any(
         isinstance(child, ast.Attribute)
-        and isinstance(child.value, ast.Name)
-        and child.value.id == "current_user"
         and child.attr == "user_id"
+        and isinstance(child.value, ast.Name)
         for child in ast.walk(node)
     )
 
 
-def _has_current_user_dependency(node) -> bool:
+def _is_get_current_user_dep(call):
+    return (
+        isinstance(call, ast.Call)
+        and getattr(call.func, "id", None) in ("Depends", "Security")
+        and any(
+            isinstance(a, ast.Name) and a.id == "get_current_user" for a in call.args
+        )
+    )
+
+
+def _has_user_token_dependency(node) -> bool:
+    """Match a ``TokenInfo`` dependency on ``get_current_user``.
+
+    The annotation may be plain ``TokenInfo``, a subscript (``TokenInfo[str]``)
+    or ``Annotated[TokenInfo, Depends(get_current_user)]``; the ``Depends`` may
+    live in the defaults or inside the annotation. All are accepted so a future
+    handler cannot dodge the scan by changing its declaration style.
+    """
     for arg in node.args.args:
-        if arg.arg != "current_user":
+        if arg.annotation is None:
             continue
-        for default in node.args.defaults:
-            if (
-                isinstance(default, ast.Call)
-                and getattr(default.func, "id", None) == "Depends"
-            ):
-                return True
+        if not any(
+            isinstance(c, ast.Name) and c.id == "TokenInfo"
+            for c in ast.walk(arg.annotation)
+        ):
+            continue
+        if any(_is_get_current_user_dep(c) for c in ast.walk(arg.annotation)):
+            return True
+        if any(_is_get_current_user_dep(d) for d in node.args.defaults):
+            return True
     return False
 
 
@@ -141,16 +169,21 @@ def _calls_require_user_token(node: ast.AST) -> bool:
     return False
 
 
-def test_every_account_bound_notification_handler_rejects_bot_tokens():
-    tree = ast.parse(_ROUTES_FILE.read_text(encoding="utf-8"))
+def _scan_account_bound(tree):
+    """Return names of account-bound handlers missing ``require_user_token``."""
     omissions = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        if not _uses_caller_identity(node) or not _has_current_user_dependency(node):
+        if not _uses_caller_identity(node) or not _has_user_token_dependency(node):
             continue
         if not _calls_require_user_token(node):
             omissions.append(node.name)
+    return omissions
+
+
+def test_every_account_bound_notification_handler_rejects_bot_tokens():
+    omissions = _scan_account_bound(ast.parse(_ROUTES_FILE.read_text(encoding="utf-8")))
 
     assert not omissions, (
         "account-bound notification handlers without require_user_token:\n  "
@@ -168,8 +201,92 @@ async def handler(current_user: TokenInfo = Depends(get_current_user)):
     node = next(
         n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.AsyncFunctionDef)
     )
-    assert _has_current_user_dependency(node)
+    assert _has_user_token_dependency(node)
     assert _uses_caller_identity(node)
+
+
+def test_ast_completeness_detector_is_non_vacuous():
+    """The scan flags a real-shaped unguarded handler in every declaration style.
+
+    This exercises the exact helpers the registry scan uses, so widening the
+    matchers cannot silently turn the completeness test into a no-op.
+    """
+
+    def omissions(source):
+        return _scan_account_bound(ast.parse(source))
+
+    # Baseline: a new handler keying a notification read on the caller id,
+    # with no credential gate.
+    assert omissions(
+        """
+async def future_handler(current_user: TokenInfo = Depends(get_current_user)):
+    return get_notifications(user_id=current_user.user_id)
+"""
+    ) == ["future_handler"]
+
+    # The same handler with a real gate is accepted.
+    assert (
+        omissions(
+            """
+async def future_handler(current_user: TokenInfo = Depends(get_current_user)):
+    require_user_token(current_user)
+    return get_notifications(user_id=current_user.user_id)
+"""
+        )
+        == []
+    )
+
+    # Renamed parameter and local alias must still be detected.
+    assert omissions(
+        """
+async def alias_handler(current_user: TokenInfo = Depends(get_current_user)):
+    caller = current_user
+    return get_notifications(user_id=caller.user_id)
+"""
+    ) == ["alias_handler"]
+    assert omissions(
+        """
+async def renamed_handler(user: TokenInfo = Depends(get_current_user)):
+    return get_notifications(user_id=user.user_id)
+"""
+    ) == ["renamed_handler"]
+
+    # Plain, subscript and Annotated TokenInfo declarations are all recognised.
+    assert omissions(
+        """
+async def subscript_handler(current_user: TokenInfo[str] = Depends(get_current_user)):
+    return get_notifications(user_id=current_user.user_id)
+"""
+    ) == ["subscript_handler"]
+    assert omissions(
+        """
+async def annotated_handler(
+    current_user: Annotated[TokenInfo, Depends(get_current_user)],
+):
+    return get_notifications(user_id=current_user.user_id)
+"""
+    ) == ["annotated_handler"]
+
+    # A gate only inside a never-called nested callable is not protection.
+    assert omissions(
+        """
+async def dead_guard_handler(current_user: TokenInfo = Depends(get_current_user)):
+    def never_called():
+        require_user_token(current_user)
+    return get_notifications(user_id=current_user.user_id)
+"""
+    ) == ["dead_guard_handler"]
+    assert (
+        omissions(
+            """
+async def live_guard_handler(current_user: TokenInfo = Depends(get_current_user)):
+    if current_user:
+        require_user_token(current_user)
+    return get_notifications(user_id=current_user.user_id)
+"""
+        )
+        == []
+    )
 
 
 def test_dead_nested_guard_does_not_protect_handler():
