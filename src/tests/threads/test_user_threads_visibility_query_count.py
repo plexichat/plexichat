@@ -64,6 +64,10 @@ class _CountingDB:
                 if row["id"] == params[0]:
                     return row
             return None
+        if "srv_members" in sql:
+            # Viewer is still a live member of the backing server (the
+            # fail-closed roster probe added to private-thread listings).
+            return {"1": 1}
         return None
 
     def fetch_all(self, sql, params=()):

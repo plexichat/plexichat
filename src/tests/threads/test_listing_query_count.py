@@ -59,6 +59,10 @@ class _FakeDB:
     def fetch_one(self, sql, params=()):
         if "srv_channels" in sql:
             return {"id": 1, "server_id": 5, "deleted": 0}
+        if "srv_members" in sql:
+            # Viewer is a live member of the backing server; private threads
+            # now require this roster row in addition to thread membership.
+            return {"1": 1}
         return None
 
     def fetch_all(self, sql, params=()):

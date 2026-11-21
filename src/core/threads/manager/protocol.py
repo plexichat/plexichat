@@ -15,6 +15,7 @@ class ThreadProtocol:
     _require_permission: Any = None
 
     _is_member: Any = None
+    _is_server_member: Any = None
     _can_view_thread_row: Any = None
 
     def _get_timestamp(self) -> int:
