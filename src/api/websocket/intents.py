@@ -110,16 +110,21 @@ def _compute_filter_decision(event: Event, intents: int) -> bool:
         if required is not None and not (intents & required):
             return False
 
-    # MESSAGE_ACK is the only message-family event that is absent from BOTH
-    # router intent maps and from ``GUILD_MESSAGE_EVENTS``, so the router's
-    # default-allow delivers it to every connection. A read receipt discloses
-    # another user's activity in a conversation (who read up to which message),
-    # so it must obey the same message intent as the conversation it belongs to.
-    # Current emitters build the Event without an explicit scope, which the
-    # router classifies as guild (the same conservative default applied to
-    # other scope-less message events); a correctly DM-scoped ACK instead
-    # requires DIRECT_MESSAGES. Fail closed when neither is declared.
-    if event.event_type is EventType.MESSAGE_ACK:
+    # These message-family events are absent from BOTH router intent maps and
+    # from ``GUILD_MESSAGE_EVENTS``, so the router's default-allow delivers
+    # them to every connection. A read receipt discloses another user's
+    # activity in a conversation (who read up to which message); a bookmark
+    # event carries the bookmarked message's id and content. Each must obey
+    # the same message intent as the conversation it belongs to. Current
+    # emitters build the Event without an explicit scope, which the router
+    # classifies as guild (the same conservative default applied to other
+    # scope-less message events); a correctly DM-scoped event instead requires
+    # DIRECT_MESSAGES. Fail closed when neither is declared.
+    if event.event_type in (
+        EventType.MESSAGE_ACK,
+        EventType.MESSAGE_BOOKMARK_ADD,
+        EventType.MESSAGE_BOOKMARK_REMOVE,
+    ):
         is_dm = event.server_id is None and event.channel_id is not None
         required = (
             GatewayIntent.DIRECT_MESSAGES if is_dm else GatewayIntent.GUILD_MESSAGES
