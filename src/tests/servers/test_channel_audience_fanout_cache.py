@@ -93,6 +93,7 @@ def _freeze_roster_clock(monkeypatch):
 def test_burst_reuses_member_list(monkeypatch):
     _freeze_roster_clock(monkeypatch)
     servers = _Servers([1, 2, 3], viewers={2, 3})
+    before = channel_audience_cache_stats()
 
     for _ in range(50):
         ids, sid = _resolve_recipients(servers, None, CHANNEL, CHANNEL, ACTOR)
@@ -104,9 +105,11 @@ def test_burst_reuses_member_list(monkeypatch):
     assert servers.member_calls == 1
     assert servers.channel_calls == 50
     assert servers.perm_calls == 50 * 3
-    stats = channel_audience_cache_stats()
-    assert stats["hits"] == 49
-    assert stats["misses"] == 1
+    # The counters are process-lifetime totals: other tests in the same shard
+    # may already have read this cache, so measure this burst's delta.
+    after = channel_audience_cache_stats()
+    assert after["hits"] - before["hits"] == 49
+    assert after["misses"] - before["misses"] == 1
 
 
 def test_perf_before_and_after_call_counts(monkeypatch):
