@@ -88,8 +88,15 @@ class MentionValidationMixin(NotificationProtocol):
                         m.valid = False
                         m.error = "Role not in this server"
                     elif not bool(role["mentionable"]):
+                        # roles.manage is a SERVER-scoped permission. Resolving
+                        # it with a channel_id applies per-channel overrides,
+                        # which would let a member granted roles.manage in ONE
+                        # channel bypass a role's server-wide non-mentionable
+                        # setting and mass-ping that role. Check it at server
+                        # scope so only a genuine server-wide grant (or
+                        # owner/administrator) authorizes the bypass.
                         if not self._servers or not self._servers.has_permission(
-                            user_id, server_id, "roles.manage", channel_id
+                            user_id, server_id, "roles.manage"
                         ):
                             m.valid = False
                             m.error = "Role is not mentionable"

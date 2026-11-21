@@ -199,18 +199,6 @@ DOCUMENTED_MISMATCHES = {
         "exists to pass. Correct as written."
     ),
     (
-        "core/notifications/manager/mention_validator.py",
-        "validate_mentions",
-        "has_permission",
-        "roles.manage",
-        _CHANNEL,
-    ): (
-        "Pre-existing per-channel mention-moderation check: a roles.manage "
-        "holder in this channel may mention an otherwise unmentionable role. "
-        "Non-destructive check, documented here rather than changed; server-scope "
-        "tightening is deferred to the roles follow-up."
-    ),
-    (
         "core/servers/handlers/members/invites.py",
         "create_invite",
         "require_permission",
@@ -540,12 +528,10 @@ def test_selftest_channel_keyword_argument_is_detected():
 def test_selftest_same_finding_is_accepted_only_when_documented():
     """The allowlist is keyed by path/function: move the same bug and it fails."""
     source = '''
-    def validate_mentions(servers, user, server_id, channel_id):
-        return servers.has_permission(user, server_id, "roles.manage", channel_id)
+    def create_invite(servers, user, server_id, channel_id):
+        return servers.require_permission(user, server_id, "invites.create", channel_id)
     '''
-    documented_path = (
-        "core/notifications/manager/mention_validator.py"
-    )
+    documented_path = "core/servers/handlers/members/invites.py"
     findings, _ = _analyze_source(source, documented_path)
     assert len(findings) == 1
     assert _is_documented(findings[0]), "documented case must be accepted"
@@ -553,3 +539,24 @@ def test_selftest_same_finding_is_accepted_only_when_documented():
     moved, _ = _analyze_source(source, _NOVEL_PATH)
     assert len(moved) == 1
     assert not _is_documented(moved[0]), "same bug at a novel site must fail closed"
+
+
+def test_selftest_fixed_roles_manage_site_is_no_longer_allowlisted():
+    """A reintroduced channel-scoped roles.manage check must fail closed.
+
+    The mention-validation site now resolves ``roles.manage`` at server scope.
+    The old channel-scope form used to be documented as a deferred follow-up;
+    that entry was removed with the fix, so reintroducing the bug at the same
+    path must now be flagged rather than silently allowed.
+    """
+    source = '''
+    def validate_mentions(servers, user, server_id, channel_id):
+        return servers.has_permission(user, server_id, "roles.manage", channel_id)
+    '''
+    findings, _ = _analyze_source(
+        source, "core/notifications/manager/mention_validator.py"
+    )
+    assert len(findings) == 1
+    assert findings[0].permission == "roles.manage"
+    assert findings[0].scope == _CHANNEL and findings[0].intended == _SERVER
+    assert not _is_documented(findings[0]), "fixed site must no longer be allowlisted"
