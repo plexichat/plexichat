@@ -17,7 +17,7 @@ from .boundaries import (
     bounded_batch,
     payload_size,
 )
-from .intents import PRIVILEGED_INTENTS, validate_intents
+from .intents import PRIVILEGED_INTENTS, filter_event_by_intents, validate_intents
 
 
 def _safe_resume_intents(raw: Any) -> int:
@@ -39,6 +39,55 @@ def _safe_resume_intents(raw: Any) -> int:
     if not isinstance(raw, int) or isinstance(raw, bool) or not validate_intents(raw):
         return 0
     return raw & ~PRIVILEGED_INTENTS
+
+
+def _replay_event_allowed(payload: Any, intents: int) -> bool:
+    """Re-apply the intent gate to a frame restored from a replay buffer.
+
+    A gateway session outlives its socket and may be hydrated from a persisted
+    payload recorded under a wider (privileged) intent mask. RESUME strips
+    privileged bits before handing the mask to the new connection, but the
+    replay buffer is restored verbatim: without a second gate here replay
+    re-escalates event visibility that IDENTIFY/RESUME deliberately deny.
+    Known event types are re-checked against the *current* mask and fail
+    closed; unrecognised ``t`` values carry no intent requirement at dispatch
+    time either, so they keep the existing behaviour.
+    """
+    from src.core.events.models import Event
+    from src.core.events.types import EventType
+
+    if not isinstance(payload, dict):
+        return False
+    name = payload.get("t")
+    if not isinstance(name, str):
+        return True
+    try:
+        event_type = EventType(name)
+    except ValueError:
+        return True
+    data = payload.get("d")
+    if not isinstance(data, dict):
+        data = {}
+
+    def _as_id(value: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    server_id = _as_id(data.get("server_id"))
+    if server_id is None:
+        server_id = _as_id(data.get("guild_id"))
+    channel_id = _as_id(data.get("channel_id"))
+    event = Event(
+        event_type=event_type,
+        data=data,
+        server_id=server_id,
+        channel_id=channel_id,
+    )
+    return filter_event_by_intents(event, intents)
 
 
 # Sentinel for a value whose serialized size cannot be proven from a cheap
@@ -305,6 +354,29 @@ class Session:
             if size <= MAX_REPLAY_EVENT_BYTES:
                 result.append(event)
         return result
+
+    def prune_replay_events_for_intents(self, intents: int) -> None:
+        """Drop buffered frames the resumed connection's mask no longer allows.
+
+        A stale/corrupt persisted session may carry frames recorded under
+        privileged intents. Once those intents are stripped at RESUME the
+        frames must not be replayed, so heal the cached buffer here (the same
+        way ``session.intents`` is healed) and keep the size cache and byte
+        total aligned with the pruned list.
+        """
+        cache = self._replay_size_cache
+        if len(cache) != len(self.replay_events):
+            self._rebuild_replay_size_cache()
+            cache = self._replay_size_cache
+        kept_events = []
+        kept_cache = []
+        for event, entry in zip(self.replay_events, cache):
+            if _replay_event_allowed(event, intents):
+                kept_events.append(event)
+                kept_cache.append(entry)
+        self.replay_events = kept_events
+        self._replay_size_cache = kept_cache
+        self.replay_bytes = sum(size for _sig, size in kept_cache)
 
     def update_activity(self) -> None:
         """Update local and cross-worker activity timestamps."""
@@ -785,6 +857,9 @@ class SessionManager:
         # the sanitized mask is what gets persisted for sibling workers.
         resume_intents = _safe_resume_intents(session.intents)
         session.intents = resume_intents
+        # Heal the replay buffer too: a stale session can hold frames recorded
+        # under privileged intents that the resumed connection no longer has.
+        session.prune_replay_events_for_intents(resume_intents)
         connection.set_identified(session.user_id, session_id, resume_intents)
         connection.sequence = session.sequence
 
