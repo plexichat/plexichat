@@ -426,7 +426,8 @@ class ChunkedUploadManager:
         """
         for _ in range(max_retries):
             current = self._db.fetch_one(
-                """SELECT uploaded_chunks, uploaded_bytes, received_chunks, updated_at
+                """SELECT uploaded_chunks, uploaded_bytes, received_chunks, updated_at,
+                          total_chunks
                    FROM media_upload_sessions WHERE id = ?""",
                 (session_id,),
             )
@@ -435,15 +436,19 @@ class ChunkedUploadManager:
 
             # ``fetch_one`` may return either a mapping (sqlite dict cursor /
             # valkey) or a bare tuple (raw adapter), so read the columns by
-            # position when we do not get a mapping.
+            # position when we do not get a mapping. ``total_chunks`` is
+            # immutable for the session's lifetime, so reading it in this same
+            # SELECT removes a second per-chunk round-trip (see below).
             if isinstance(current, dict):
                 _received_chunks = current["received_chunks"]
                 _uploaded_bytes = current["uploaded_bytes"]
                 _updated_at = current["updated_at"]
+                total_chunks = current.get("total_chunks")
             else:
                 _received_chunks = current[2]
                 _uploaded_bytes = current[1]
                 _updated_at = current[3]
+                total_chunks = current[4] if len(current) > 4 else None
 
             try:
                 received: Set[int] = set(
@@ -461,16 +466,12 @@ class ChunkedUploadManager:
             else:
                 uploaded_bytes = _uploaded_bytes
 
-            total_chunks_row = self._db.fetch_one(
-                "SELECT total_chunks FROM media_upload_sessions WHERE id = ?",
-                (session_id,),
-            )
-            if total_chunks_row:
-                if isinstance(total_chunks_row, dict):
-                    total_chunks = total_chunks_row["total_chunks"]
-                else:
-                    total_chunks = total_chunks_row[0]
-            else:
+            # ``total_chunks`` came from the progress SELECT above. It used to
+            # be fetched with a second SELECT on every chunk (and again on every
+            # optimistic-concurrency retry), doubling the DB work on the upload
+            # hot path for a value that never changes. Fall back to the count we
+            # just computed only for legacy adapters that omit the column.
+            if total_chunks is None:
                 total_chunks = uploaded_chunks
             is_complete = uploaded_chunks >= total_chunks
             status = "completed" if is_complete else "in_progress"
