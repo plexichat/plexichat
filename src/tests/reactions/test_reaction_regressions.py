@@ -79,6 +79,7 @@ class TestRemoveReactionInvalidEmoji:
         current_user = SimpleNamespace(user_id=1)
         with (
             patch("src.api.get_reactions", return_value=fake),
+            patch("src.api.get_servers", return_value=None),
             patch(
                 "src.api.routes.reactions.ratelimit.acheck_rate_limit",
                 new=AsyncMock(return_value=SimpleNamespace(allowed=True)),
@@ -103,6 +104,7 @@ class TestRemoveReactionInvalidEmoji:
         current_user = SimpleNamespace(user_id=1)
         with (
             patch("src.api.get_reactions", return_value=fake),
+            patch("src.api.get_servers", return_value=None),
             patch(
                 "src.api.routes.reactions.ratelimit.acheck_rate_limit",
                 new=AsyncMock(return_value=SimpleNamespace(allowed=True)),

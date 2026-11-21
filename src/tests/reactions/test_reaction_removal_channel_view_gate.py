@@ -98,6 +98,47 @@ async def test_removal_denied_without_channel_view(endpoint):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", _ENDPOINTS)
+async def test_removal_denied_when_wired_channel_lookup_raises(endpoint):
+    """A wired servers module whose reverse lookup fails must FAIL CLOSED."""
+    from src.api.routes import reactions as routes
+
+    reactions, servers = _stubs(can_view=True)
+    # The module is wired and exposes the reverse-lookup API, but the lookup
+    # itself blows up. The old `except: srv_channel = None` skipped the
+    # messages.read check and allowed the mutation -- that is the fail-open.
+    servers.get_channel_by_conversation.side_effect = RuntimeError("db exploded")
+    request, current_user = _ctx()
+    with ExitStack() as stack:
+        for patcher in _patches(reactions, servers):
+            stack.enter_context(patcher)
+        with pytest.raises(HTTPException) as exc:
+            await _call(routes, endpoint, request, current_user)
+
+    assert exc.value.status_code == 403
+    getattr(reactions, _MANAGER_METHOD[endpoint]).assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", _ENDPOINTS)
+async def test_removal_defers_when_servers_module_unwired(endpoint):
+    """With no reverse-lookup API available, defer to the manager's gate."""
+    from src.api.routes import reactions as routes
+
+    reactions, _unused = _stubs(can_view=False)
+    request, current_user = _ctx()
+    with ExitStack() as stack:
+        # `None` means there is genuinely no servers module / no channel to
+        # check; the gate must not block and the manager still decides.
+        for patcher in _patches(reactions, None):
+            stack.enter_context(patcher)
+        response = await _call(routes, endpoint, request, current_user)
+
+    assert response.success is True
+    getattr(reactions, _MANAGER_METHOD[endpoint]).assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", _ENDPOINTS)
 async def test_removal_allowed_with_channel_view(endpoint):
     from src.api.routes import reactions as routes
 

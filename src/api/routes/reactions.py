@@ -136,35 +136,46 @@ def _require_channel_view(reactions, user_id: int, mid: int, action: str) -> Non
     manager's own participant gate.
     """
     servers_mod = api.get_servers()
-    if servers_mod and hasattr(servers_mod, "get_channel_by_conversation"):
-        conv_id = reactions.get_conversation_id_from_message(mid)
-        try:
-            srv_channel = (
-                servers_mod.get_channel_by_conversation(conv_id) if conv_id else None
-            )
-        except Exception:
-            # The servers module cannot resolve this conversation's channel
-            # (e.g. it is not set up in this process). With no channel row we
-            # cannot check a channel-level view bit, so defer to the manager's
-            # own fail-closed checks -- exactly as for DMs, which have no
-            # channel row either. This is an infrastructure condition, not an
-            # attacker-controlled value: conv_id comes from the message row.
-            srv_channel = None
-        if srv_channel and not servers_mod.has_permission(
-            user_id,
-            srv_channel["server_id"],
-            "messages.read",
-            srv_channel["id"],
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "error": {
-                        "code": 403,
-                        "message": f"Cannot {action} this message",
-                    }
-                },
-            )
+    if not servers_mod or not hasattr(servers_mod, "get_channel_by_conversation"):
+        # No reverse-lookup API is available (unwired module, or a manager
+        # stub without that API): there is no channel view bit to check, so
+        # defer to the manager's own fail-closed checks -- as for DMs.
+        return
+
+    conv_id = reactions.get_conversation_id_from_message(mid)
+    try:
+        srv_channel = (
+            servers_mod.get_channel_by_conversation(conv_id) if conv_id else None
+        )
+    except Exception as exc:
+        # The servers module IS wired but the reverse lookup raised. We cannot
+        # verify ``messages.read``, so fail closed instead of allowing the
+        # write. Only a genuinely absent API above defers to the manager.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": f"Cannot {action} this message",
+                }
+            },
+        ) from exc
+
+    if srv_channel and not servers_mod.has_permission(
+        user_id,
+        srv_channel["server_id"],
+        "messages.read",
+        srv_channel["id"],
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": f"Cannot {action} this message",
+                }
+            },
+        )
 
 
 async def _dispatch_reaction_event(
@@ -532,9 +543,7 @@ async def clear_reactions_for_emoji(
     real_cid = _validate_message_in_channel(reactions, mid, cid)
 
     # Fail closed: clearing reactions requires view access to the channel.
-    _require_channel_view(
-        reactions, current_user.user_id, mid, "remove reactions from"
-    )
+    _require_channel_view(reactions, current_user.user_id, mid, "remove reactions from")
 
     try:
         decoded_emoji = _validated_emoji(emoji)
