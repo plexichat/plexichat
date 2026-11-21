@@ -24,6 +24,11 @@ from src.api.websocket.opcodes import (
     coerce_opcode,
 )
 from src.api.websocket.boundaries import requires_authentication
+from src.api.websocket.intents import (
+    DEFAULT_INTENTS,
+    has_privileged_intents,
+    validate_intents,
+)
 from src.api.websocket.connection import Connection
 from src.api.websocket.session import SessionManager
 
@@ -360,6 +365,24 @@ class OpcodeHandler:
                 f"mutating opcode {op} rejected"
             )
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        # Privileged intents (GUILD_MEMBERS / GUILD_PRESENCES / MESSAGE_CONTENT)
+        # require out-of-band approval this gateway has not granted to the
+        # connecting client. Accepting them would let any identified socket
+        # widen its own event delivery to privileged member/presence events
+        # simply by setting those bits. Fail closed with the documented
+        # DISALLOWED_INTENTS code before a session is created that a later
+        # RESUME could use to regain the mask. Invalid masks are left to
+        # handle_identify so they keep their INVALID_INTENTS contract.
+        if op == GatewayOpcode.IDENTIFY and isinstance(data, dict):
+            requested_intents = data.get("intents", DEFAULT_INTENTS)
+            if validate_intents(requested_intents) and has_privileged_intents(
+                requested_intents
+            ):
+                logger.warning(
+                    "Rejecting IDENTIFY with unapproved privileged intents"
+                )
+                return None, None, int(GatewayCloseCode.DISALLOWED_INTENTS)
 
         if op == GatewayOpcode.HEARTBEAT:
             return await self._connection_handler.handle_heartbeat(connection, data)
