@@ -123,7 +123,7 @@ def test_admin_capabilities_evaluated_only_once_per_ttl(monkeypatch):
 
     monkeypatch.setattr(admin_caps, "get_artifact_capabilities", counting)
     monkeypatch.setattr(admin_caps, "check_host_restriction", lambda r: None)
-    monkeypatch.setattr(admin_caps, "get_admin_from_token", lambda r: 1)
+    monkeypatch.setattr(admin_caps, "require_admin_permission", lambda r, p: 1)
 
     scope = {"type": "http", "headers": [], "client": ("127.0.0.1", 0)}
     request = Request(scope)
@@ -173,7 +173,7 @@ def test_admin_capabilities_are_bounded(monkeypatch):
         )
     monkeypatch.setattr(admin_caps, "get_artifact_capabilities", lambda: oversized)
     monkeypatch.setattr(admin_caps, "check_host_restriction", lambda r: None)
-    monkeypatch.setattr(admin_caps, "get_admin_from_token", lambda r: 1)
+    monkeypatch.setattr(admin_caps, "require_admin_permission", lambda r, p: 1)
 
     result = asyncio.run(
         admin_caps.get_admin_capabilities(
@@ -192,24 +192,24 @@ def test_admin_capabilities_are_bounded(monkeypatch):
 
 
 def test_admin_capabilities_enforces_auth_gates(monkeypatch):
-    seen = {"host": 0, "token": 0}
+    seen = {"host": 0, "scope": 0}
 
     def host(_r):
         seen["host"] += 1
         raise HTTPException(status_code=403, detail="denied")
 
-    def token(_r):
-        seen["token"] += 1
+    def scope(_r, _p):
+        seen["scope"] += 1
 
     monkeypatch.setattr(admin_caps, "check_host_restriction", host)
-    monkeypatch.setattr(admin_caps, "get_admin_from_token", token)
+    monkeypatch.setattr(admin_caps, "require_admin_permission", scope)
     with pytest.raises(HTTPException):
         asyncio.run(
             admin_caps.get_admin_capabilities(
                 Request({"type": "http", "headers": [], "client": ("127.0.0.1", 0)})
             )
         )
-    assert seen == {"host": 1, "token": 0}
+    assert seen == {"host": 1, "scope": 0}
 
 
 def test_admin_capabilities_error_is_generic(monkeypatch):
@@ -220,7 +220,7 @@ def test_admin_capabilities_error_is_generic(monkeypatch):
 
     monkeypatch.setattr(admin_caps, "_get_payload", boom)
     monkeypatch.setattr(admin_caps, "check_host_restriction", lambda r: None)
-    monkeypatch.setattr(admin_caps, "get_admin_from_token", lambda r: 1)
+    monkeypatch.setattr(admin_caps, "require_admin_permission", lambda r, p: 1)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             admin_caps.get_admin_capabilities(

@@ -302,7 +302,9 @@ def test_admin_capabilities_route_stays_raw_for_diagnostics(monkeypatch):
     monkeypatch.setattr(
         admin_caps_routes, "check_host_restriction", lambda request: None
     )
-    monkeypatch.setattr(admin_caps_routes, "get_admin_from_token", lambda request: 1)
+    monkeypatch.setattr(
+        admin_caps_routes, "require_admin_permission", lambda request, perm: 1
+    )
     try:
         client_result = asyncio.run(
             caps_routes.get_capabilities(current_user=types.SimpleNamespace(user_id=42))

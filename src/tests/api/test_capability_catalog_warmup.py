@@ -186,8 +186,8 @@ def test_admin_gates_still_run_on_a_warm_payload(monkeypatch):
     )
     monkeypatch.setattr(
         admin_caps,
-        "get_admin_from_token",
-        lambda request: gate_calls.append("admin"),
+        "require_admin_permission",
+        lambda request, perm: gate_calls.append(f"scope:{perm}"),
     )
 
     app = FastAPI()
@@ -197,4 +197,4 @@ def test_admin_gates_still_run_on_a_warm_payload(monkeypatch):
         response = client.get("/capabilities")
 
     assert response.status_code == 200
-    assert gate_calls == ["host", "admin"]
+    assert gate_calls == ["host", "scope:config.read"]

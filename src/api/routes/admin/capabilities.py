@@ -7,7 +7,11 @@ of the per-feature capability breakdown used by the client endpoints.
 Unlike the public ``GET /capabilities/artifacts`` route (which scrubs
 ``details`` to launcher-safe scalars), this admin route intentionally returns
 raw evaluator details such as the transcription ``provider``: it is
-host-restricted + admin-authenticated and admins need full diagnostics.
+host-restricted and gated on the documented ``config.read`` scope, because the
+payload is derived from system configuration and the license document. A valid
+admin session alone must not be enough to read this cached snapshot -- the
+``summary`` counts and per-feature config details are configuration data that
+other reads gate behind ``config.read``.
 
 The catalog is memoised for a short TTL: evaluating every capability re-runs
 the voice-transcription provider probe, which is identical for every caller.
@@ -26,7 +30,12 @@ from src.core.artifacts.capabilities import (
     get_artifact_capabilities,
     capability_to_dict,
 )
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    # Kept for existing test doubles that patch this module attribute.
+    get_admin_from_token,  # noqa: F401
+    require_admin_permission,
+)
 from src.api.schemas.common import ErrorResponse
 
 router = APIRouter(prefix="/capabilities", tags=["Admin", "Capabilities"])
@@ -55,9 +64,10 @@ def warm_admin_capabilities_payload_cache() -> None:
     """Prime the admin catalog off the request path (best-effort, never fatal).
 
     Shares the cold voice-transcription provider probe with the launcher
-    catalog. The host-restriction and admin-token gates in ``get_admin_capabilities``
-    still run on every request; only the shared, admin-independent payload is
-    primed here. Failures are swallowed so boot can never depend on them.
+    catalog. The host-restriction and ``config.read`` scope gates in
+    ``get_admin_capabilities`` still run on every request; only the shared,
+    admin-independent payload is primed here. Failures are swallowed so boot can
+    never depend on them.
     """
     try:
         _get_payload()
@@ -158,9 +168,12 @@ async def get_admin_capabilities(request: Request) -> Dict[str, Any]:
     including a top-level summary of how many features are available versus
     unavailable and why.
     """
-    # Security gates stay first and unchanged: host restriction + admin token.
+    # Security gates stay first: host restriction + the documented config-read
+    # scope. Session validation alone let any admin (including a tickets-only
+    # support role) read this cached config/license snapshot. Both gates run on
+    # every request, before the short-TTL payload cache is consulted.
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "config.read")
 
     try:
         return _get_payload()
