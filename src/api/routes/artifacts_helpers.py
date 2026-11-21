@@ -646,7 +646,16 @@ def _can_emit_artifact_message(conversation_id, author_id) -> bool:
         return True  # no conversation to post into (event-only emission)
     servers = api.get_servers()
     if servers is None:
-        return True  # no servers store => conversation can only be a DM/group
+        # The backing-channel lookup cannot be evaluated without the servers
+        # module. That is exactly the state in which the reverse lookup cannot
+        # prove the absence of a private-channel alias, so skipping the gate
+        # here would let any participant emit a message into a channel whose
+        # messages.send / timeout / view grants were never checked. Deny
+        # instead (the unwired-dependency invariant in
+        # src/tests/api/test_unwired_dependency_fails_closed.py). A wired store
+        # whose reverse lookup returns no channel still allows genuine DMs
+        # below, so fail-closed is not a blanket denial.
+        return False
     lookup = getattr(servers, "get_channel_by_conversation", None)
     if not callable(lookup):
         return False
