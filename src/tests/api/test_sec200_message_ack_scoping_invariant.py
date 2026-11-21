@@ -63,11 +63,39 @@ def _calls(node):
     return [child for child in ast.walk(node) if isinstance(child, ast.Call)]
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes on its execution path, skipping nested defs.
+
+    Descend through statement-level nesting (``if``/``for``/``with``/``try``/...)
+    but do not descend into a nested function or lambda: *defining* a helper
+    that builds a ``MESSAGE_ACK`` or resolves its recipients does not run it.
+    Crediting dead code as in-handler evidence lets an unscoped dispatcher
+    silence this invariant, so the positive-evidence scans use this walker.
+    Violation scans (raw member lookups) stay on the broad traversal below.
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
+def _own_body_calls(node):
+    return [child for child in _own_body_nodes(node) if isinstance(child, ast.Call)]
+
+
 def _is_ack_dispatch(fn):
-    """Whether ``fn`` builds a ``MESSAGE_ACK`` event (e.g. EventType.MESSAGE_ACK)."""
+    """Whether ``fn`` itself builds a ``MESSAGE_ACK`` event.
+
+    The event must be built on the function's own execution path: a nested def
+    or lambda that mentions ``MESSAGE_ACK`` never dispatches anything.
+    """
     return any(
         isinstance(node, ast.Attribute) and node.attr == "MESSAGE_ACK"
-        for node in ast.walk(fn)
+        for node in _own_body_nodes(fn)
     )
 
 
@@ -79,6 +107,24 @@ def _member_lookup_functions():
     ]
 
 
+def _scoping_offenses(path_name, fn):
+    """Offense strings for one ACK dispatcher's recipient scoping.
+
+    The forbidden raw lookup stays on the broad traversal (a violation detector
+    must stay conservative). The scoped resolver is positive evidence, so it is
+    required on the function's own execution path -- a resolver call inside a
+    never-invoked nested callable does not scope any recipients.
+    """
+    names = {_call_name(c) for c in _calls(fn)}
+    own_names = {_call_name(c) for c in _own_body_calls(fn)}
+    offenses = []
+    if RAW_MEMBER_LOOKUP in names:
+        offenses.append(f"{path_name}:{fn.name} uses {RAW_MEMBER_LOOKUP}")
+    if SCOPED_RESOLVER not in own_names:
+        offenses.append(f"{path_name}:{fn.name} never calls {SCOPED_RESOLVER}")
+    return offenses
+
+
 # --- the scan itself must be real -------------------------------------------
 
 
@@ -88,6 +134,57 @@ def test_ack_dispatch_scan_is_not_vacuous():
         "expected at least the single-channel and bulk ACK dispatch helpers, "
         f"found {acks}"
     )
+
+
+def test_dead_nested_ack_dispatch_evidence_does_not_satisfy_guard():
+    """A ``MESSAGE_ACK`` or resolver call inside a dead callable is not evidence.
+
+    Regression: ``_is_ack_dispatch`` used ``ast.walk(fn)`` and the resolver check
+    used ``_calls(fn)`` (also broad), so a function whose only ``MESSAGE_ACK``
+    or ``resolve_channel_event_recipients`` call lived in an uninvoked nested
+    def/lambda satisfied both the dispatch scan and the scoping guard. A live
+    event behind statement-level nesting must still count.
+    """
+    source = """
+def dead_nested():
+    def never_called():
+        event_type = EventType.MESSAGE_ACK
+        return resolve_channel_event_recipients(ids)
+    return None
+
+def dead_lambda():
+    _ = lambda: (EventType.MESSAGE_ACK, resolve_channel_event_recipients(ids))
+    return None
+
+def live():
+    if True:
+        event_type = EventType.MESSAGE_ACK
+        return resolve_channel_event_recipients(ids)
+    return None
+"""
+    fns = {
+        node.name: node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef)
+    }
+    for name in ("dead_nested", "dead_lambda"):
+        assert not _is_ack_dispatch(fns[name]), f"{name} dispatch evidence is dead"
+        assert _scoping_offenses("synthetic.py", fns[name]) == [
+            f"synthetic.py:{name} never calls {SCOPED_RESOLVER}"
+        ]
+    assert _is_ack_dispatch(fns["live"]), "live in-body dispatch must still count"
+    assert _scoping_offenses("synthetic.py", fns["live"]) == []
+
+    # The old broad logic really was fooled, so this self-test is non-vacuous.
+    for name in ("dead_nested", "dead_lambda"):
+        fn = fns[name]
+        assert any(
+            isinstance(node, ast.Attribute) and node.attr == "MESSAGE_ACK"
+            for node in ast.walk(fn)
+        ), "old _is_ack_dispatch accepted dead nested evidence"
+        assert SCOPED_RESOLVER in {_call_name(c) for c in _calls(fn)}, (
+            "old resolver check accepted dead nested evidence"
+        )
 
 
 def test_raw_member_lookup_scan_is_not_vacuous():
@@ -107,11 +204,7 @@ def test_ack_dispatch_uses_scoped_resolver_not_raw_member_ids():
     for path, fn in _functions():
         if not _is_ack_dispatch(fn):
             continue
-        names = {_call_name(c) for c in _calls(fn)}
-        if RAW_MEMBER_LOOKUP in names:
-            offenders.append(f"{path.name}:{fn.name} uses {RAW_MEMBER_LOOKUP}")
-        if SCOPED_RESOLVER not in names:
-            offenders.append(f"{path.name}:{fn.name} never calls {SCOPED_RESOLVER}")
+        offenders.extend(_scoping_offenses(path.name, fn))
     assert not offenders, (
         "MESSAGE_ACK dispatch must scope server-channel recipients through "
         f"{SCOPED_RESOLVER}, never a raw member list:\n  " + "\n  ".join(offenders)
