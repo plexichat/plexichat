@@ -541,10 +541,17 @@ class ArtifactManager(BaseManager):
         media_module = self._get_media_module()
         if media_module is None or not hasattr(media_module, "delete_file"):
             return
-        author_id = int(artifact.author_id or 0)
+        # The payload's file ids are attacker-controllable. Enforce the media
+        # owner check against the actual deleter, never the artifact author: a
+        # non-author with edit/delete rights can inject a victim's file id.
+        owner_id = (
+            int(purging_user_id)
+            if purging_user_id is not None
+            else int(artifact.author_id or 0)
+        )
         for fid in file_ids:
             try:
-                media_module.delete_file(author_id, int(fid))
+                media_module.delete_file(owner_id, int(fid))
             except Exception as e:  # pragma: no cover - media is best-effort
                 logger.debug(f"Media purge skipped for artifact {artifact.id}: {e}")
 
