@@ -35,8 +35,83 @@ _ADMIN_DIR = _REPO_ROOT / "src" / "api" / "routes" / "admin"
 _UTILS = _ADMIN_DIR / "utils.py"
 
 _ROUTE_DECORATORS = {"get", "post", "put", "patch", "delete"}
+# Route factories are ordinary bound methods, so a destructive handler can be
+# registered through a local alias (``post = router.post`` / ``@post(...)``).
+ROUTE_FACTORIES = frozenset(_ROUTE_DECORATORS)
 _APPROVAL_GATES = {"require_approved_request", "require_destructive_confirmation"}
 _READ_ONLY_SCOPES = {"admin.read"}
+
+
+def _canonical_names(tree):
+    """Resolve local aliases of route factories to their canonical method name.
+
+    ``post = router.post`` followed by ``@post("/nuke")`` produces a bare
+    ``ast.Name`` decorator, not the ``ast.Attribute`` the handler inventory keys
+    on. Without resolution such a destructive admin handler is never added to
+    ``_DESTRUCTIVE``, so *every* invariant below passes vacuously for it even if
+    it carries no elevated permission gate.
+
+    Resolution runs to a fixpoint so chained aliases (``p = post; @p(...)``)
+    collapse to the canonical factory too. Over-resolution is safe here: it can
+    only add handlers to the inventory, never remove one, so the guard fails
+    closed.
+    """
+    aliases: dict[str, str] = {}
+    nodes = list(ast.walk(tree))
+
+    def resolve(name):
+        seen: set[str] = set()
+        while name in aliases and name not in seen:
+            seen.add(name)
+            name = aliases[name]
+        return name
+
+    for _ in range(len(nodes) + 1):
+        changed = False
+        for node in nodes:
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, value = [node.target], node.value
+            elif isinstance(node, ast.NamedExpr):
+                targets, value = [node.target], node.value
+            else:
+                continue
+            canonical = None
+            if isinstance(value, ast.Attribute) and value.attr in ROUTE_FACTORIES:
+                canonical = value.attr
+            elif isinstance(value, ast.Name):
+                canonical = resolve(value.id)
+            if canonical not in ROUTE_FACTORIES:
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name) and aliases.get(target.id) != canonical:
+                    aliases[target.id] = canonical
+                    changed = True
+        if not changed:
+            break
+    return aliases
+
+
+def _is_route_handler(node, aliases=None):
+    """True when ``node`` is registered by a (possibly aliased) route factory.
+
+    Attribute-shaped decorators keep their existing behaviour; bare factory
+    names are also treated as route registrations (fail closed), whether or not
+    an alias binding was found.
+    """
+    if aliases is None:
+        aliases = {}
+    for dec in node.decorator_list:
+        if not isinstance(dec, ast.Call):
+            continue
+        func = dec.func
+        if isinstance(func, ast.Attribute) and func.attr in ROUTE_FACTORIES:
+            return True
+        if isinstance(func, ast.Name):
+            if aliases.get(func.id, func.id) in ROUTE_FACTORIES:
+                return True
+    return False
 
 
 def _own_body_calls(node: ast.AST) -> list[ast.Call]:
@@ -75,21 +150,23 @@ def _permission_scopes(node: ast.AST) -> list[str]:
     return scopes
 
 
+def _handlers_in_tree(src_name: str, tree: ast.AST) -> list[tuple[str, ast.AST]]:
+    """Inventory route handlers in one tree using alias-aware detection."""
+    aliases = _canonical_names(tree)
+    handlers: list[tuple[str, ast.AST]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_route_handler(
+            node, aliases
+        ):
+            handlers.append((f"{src_name}::{node.name}", node))
+    return handlers
+
+
 def _handlers() -> list[tuple[str, ast.AST]]:
     handlers: list[tuple[str, ast.AST]] = []
     for src in sorted(_ADMIN_DIR.rglob("*.py")):
         tree = ast.parse(src.read_text(encoding="utf-8"), filename=str(src))
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            is_route = any(
-                isinstance(dec, ast.Call)
-                and isinstance(dec.func, ast.Attribute)
-                and dec.func.attr in _ROUTE_DECORATORS
-                for dec in node.decorator_list
-            )
-            if is_route:
-                handlers.append((f"{src.name}::{node.name}", node))
+        handlers.extend(_handlers_in_tree(src.name, tree))
     return handlers
 
 
@@ -151,6 +228,61 @@ async def live(request: Request):
     assert "maintenance" not in _permission_scopes(dead)
     assert "require_admin_permission" in _call_names(live)
     assert "maintenance" in _permission_scopes(live)
+
+
+@pytest.mark.security
+@pytest.mark.unit
+def test_aliased_route_factory_handler_is_inventoried():
+    """A destructive handler behind an aliased factory must not escape.
+
+    ``post = router.post`` then ``@post("/nuke")`` decorates with a bare
+    ``ast.Name``. The old inventory keyed only on ``ast.Attribute`` decorators,
+    so such a handler was dropped from ``_DESTRUCTIVE`` and every
+    destructive-permission invariant passed without ever seeing it -- the same
+    name-resolution fail-open fixed for the fan-out and cached-route guards.
+    """
+    source = """
+post = router.post
+wire = post
+get = router.get
+
+@post("/direct")
+async def direct(request: Request):
+    require_approved_request(request, "ticket")
+
+@wire("/chained")
+async def chained(request: Request):
+    require_approved_request(request, "ticket")
+
+@get("/read")
+async def read_only(request: Request):
+    return list_things()
+
+@not_a_route
+async def plain(request: Request):
+    return None
+"""
+    tree = ast.parse(source)
+    aliases = _canonical_names(tree)
+    assert aliases["post"] == "post"
+    assert aliases["wire"] == "post"  # chained alias collapses to canonical
+    assert aliases["get"] == "get"
+
+    # Non-vacuity at the integration boundary: the exact helper used by
+    # _handlers() must inventory the aliased handlers and skip the plain one.
+    inventoried = {name.rsplit("::", 1)[-1] for name, _ in _handlers_in_tree("synthetic.py", tree)}
+    assert {"direct", "chained", "read_only"} <= inventoried
+    assert "plain" not in inventoried
+
+    # And the aliased destructive handler must actually trip the invariant it
+    # used to slip past: it carries an approval gate but no permission gate.
+    destructive = [
+        node
+        for name, node in _handlers_in_tree("synthetic.py", tree)
+        if _APPROVAL_GATES & _call_names(node)
+    ]
+    flagged = [n.name for n in destructive if "require_admin_permission" not in _call_names(n)]
+    assert "direct" in flagged and "chained" in flagged
 
 
 @pytest.mark.security
