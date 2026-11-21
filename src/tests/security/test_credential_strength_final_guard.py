@@ -42,8 +42,11 @@ cannot be "fixed" by deleting the operation.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import json
+import time
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -220,3 +223,192 @@ async def test_admin_federation_create_accepts_strong_shared_key(monkeypatch):
     assert result["connection_id"] == 4242
     assert len(manager.calls) == 1
     assert manager.calls[0]["shared_key"] == strong
+
+
+# --- structural sweep: a NOVEL weak-key route must not silently escape -------
+#
+# The static ratchet above is a fixed tuple of *function objects*
+# (``_SETTING_PATHS``).  It proves the seven known sites keep their floors, but
+# it cannot see a route that does not exist yet: a developer who adds
+# ``POST /plexijoin/connections/import`` (or any differently named handler) that
+# forwards a caller-supplied ``shared_key`` straight to
+# ``PlexiJoinManager.create_connection`` is invisible to that ratchet.  The
+# manager intentionally shape-checks imported/legacy keys with the weak default
+# (``validate_shared_key(shared_key)``), so such a route would persist a
+# one-character HMAC key with NO strength floor, and the old guard would stay
+# green.  This section closes that gap by enumerating the sites *structurally*
+# (over the AST of every production module) and failing on any unclassified
+# site.
+
+_SRC_ROOT = Path(__file__).resolve().parents[2]  # .../src
+_REPO_ROOT = _SRC_ROOT.parent
+_SCAN_EXCLUDED_DIRS = {"tests", "selftest"}
+_VALIDATION_MODULE = "src/core/plexijoin/validation.py"
+
+# The ONLY production sites allowed to use the weak ``validate_shared_key``
+# default.  These are the manager's legacy/import shape-check path; a
+# caller-facing setter is never allowed in this allowlist.
+_LEGACY_WEAK_SHARED_KEY_SITES = {
+    ("src/core/plexijoin/manager.py", "create_connection"),
+}
+
+
+def _findings():
+    return {
+        "floored_validate": [],
+        "legacy_validate": [],
+        "unclassified_validate": [],
+        "floored_create": [],
+        "generated_create": [],
+        "unclassified_create": [],
+    }
+
+
+def _call_name(node: ast.Call):
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _has_strong_floor(call: ast.Call) -> bool:
+    return any(
+        kw.arg == "require_strong"
+        and isinstance(kw.value, ast.Constant)
+        and kw.value.value is True
+        for kw in call.keywords
+    )
+
+
+def _is_generated_key(expr: ast.AST) -> bool:
+    return isinstance(expr, ast.Call) and _call_name(expr) == "generate_shared_key"
+
+
+def _classify_module(tree: ast.AST, path: str, findings: dict) -> None:
+    """Classify every shared-key site in one parsed module into ``findings``."""
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def enclosing_func(node):
+        cur = parents.get(node)
+        while cur is not None:
+            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return cur.name
+            cur = parents.get(cur)
+        return "<module>"
+
+    # Functions that floor a key via validate_shared_key(..., require_strong=True).
+    floored_funcs = {
+        enclosing_func(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and _call_name(node) == "validate_shared_key"
+        and _has_strong_floor(node)
+    }
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name, func = _call_name(node), enclosing_func(node)
+        if name == "validate_shared_key":
+            if _has_strong_floor(node):
+                findings["floored_validate"].append((path, func))
+            elif (path, func) in _LEGACY_WEAK_SHARED_KEY_SITES:
+                findings["legacy_validate"].append((path, func))
+            else:
+                findings["unclassified_validate"].append((path, func))
+        elif name == "create_connection":
+            shared_kw = next(
+                (kw.value for kw in node.keywords if kw.arg == "shared_key"), None
+            )
+            if shared_kw is None:
+                continue  # unrelated create_connection (DB/websocket sockets)
+            if _is_generated_key(shared_kw):
+                findings["generated_create"].append((path, func))
+            elif func in floored_funcs:
+                findings["floored_create"].append((path, func))
+            else:
+                findings["unclassified_create"].append((path, func))
+
+
+def _read_source(py: Path) -> str:
+    """Read a module, tolerating transient rewrite races in a shared worktree."""
+    last: OSError | None = None
+    for _ in range(6):
+        try:
+            return py.read_text(encoding="utf-8")
+        except OSError as exc:  # another agent mid atomic-rewrite
+            last = exc
+            time.sleep(0.05)
+    raise last
+
+
+def _production_findings() -> dict:
+    findings = _findings()
+    for py in sorted(_SRC_ROOT.rglob("*.py")):
+        rel = py.relative_to(_SRC_ROOT)
+        if any(part in _SCAN_EXCLUDED_DIRS for part in rel.parts):
+            continue
+        if py.name.startswith("test_"):
+            continue
+        path = str(py.relative_to(_REPO_ROOT))
+        if path == _VALIDATION_MODULE:
+            continue
+        _classify_module(
+            ast.parse(_read_source(py), filename=path), path, findings
+        )
+    return findings
+
+
+def test_all_shared_key_setting_sites_are_classified():
+    """Every production shared-key site is floored, generated, or allowlisted."""
+    f = _production_findings()
+    # Non-vacuity: the scanner must discover real sites in each expected class.
+    # A scanner that matched nothing would trivially pass the emptiness checks.
+    assert f["floored_validate"], "scanner found no floored validate_shared_key sites"
+    assert f["floored_create"], "scanner found no floored create_connection sites"
+    assert f["generated_create"], "scanner found no generated-key create_connection sites"
+    assert f["legacy_validate"], "scanner found no legacy weak-default site"
+
+    # Fail on unclassified sites. A brand-new route under a novel name that
+    # forwards a caller-supplied shared_key without a floor lands here.
+    assert not f["unclassified_validate"], (
+        "weak validate_shared_key site with no floor and no legacy allowlist: "
+        + repr(f["unclassified_validate"])
+    )
+    assert not f["unclassified_create"], (
+        "caller-supplied create_connection(shared_key=) with no strength floor "
+        "in its enclosing function: " + repr(f["unclassified_create"])
+    )
+
+
+def test_structural_detector_flags_novel_weak_key_route():
+    """Proof the detector catches the novel route the old ratchet missed."""
+    novel = '''
+async def import_connection(request):
+    body = await request.json()
+    return manager.create_connection(shared_key=body["shared_key"])
+'''
+    f = _findings()
+    _classify_module(ast.parse(novel), "<synthetic>", f)
+    assert ("<synthetic>", "import_connection") in f["unclassified_create"], (
+        "a novel route forwarding a caller-supplied shared_key with no floor "
+        "must be flagged as unclassified"
+    )
+
+
+def test_structural_detector_accepts_floored_route():
+    """The detector is not vacuously rejecting every novel setter."""
+    novel = '''
+async def import_connection(request):
+    body = await request.json()
+    key = validate_shared_key(body["shared_key"], require_strong=True)
+    return manager.create_connection(shared_key=key)
+'''
+    f = _findings()
+    _classify_module(ast.parse(novel), "<synthetic>", f)
+    assert ("<synthetic>", "import_connection") in f["floored_create"]
+    assert not f["unclassified_create"]
