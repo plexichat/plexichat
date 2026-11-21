@@ -27,7 +27,8 @@ import json
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Dict, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import utils.logger as logger
 from src.core.webhooks.url_safety import (
@@ -65,6 +66,14 @@ MAX_HEADER_NAME_LENGTH = 128
 MAX_HEADER_VALUE_LENGTH = 4096
 MAX_BATCH_LIMIT = 1000
 MAX_INTERVAL_SECONDS = 86400
+
+# Bounded fan-out delivery. A batch of due rows is POSTed concurrently but
+# never by more than this many workers, so one slow endpoint cannot stall
+# the whole cycle or open an unbounded number of sockets. Every worker still
+# runs the full SSRF/signing gate; only the sequential wall-clock wait and
+# the head-of-line blocking are removed.
+MAX_DELIVERY_CONCURRENCY = 16
+DEFAULT_DELIVERY_CONCURRENCY = 8
 
 # When one event fans out to N webhook endpoints, all N retry rows carry the
 # same canonical payload JSON string. Delivery used to re-derive the byte size
@@ -306,6 +315,7 @@ class WebhookDeliverer:
         follow_redirects: bool = True,
     ):
         self._client = client
+        self._session_lock = threading.Lock()
         self._timeout = timeout
         self._signer = signer
         self._allow_private_network = allow_private_network
@@ -334,8 +344,13 @@ class WebhookDeliverer:
             return self._client
         if httpx is None:  # pragma: no cover
             raise WebhookDeliveryError("httpx is not installed")
-        # Explicit rather than implicit: redirect handling is ours alone.
-        return httpx.Client(timeout=self._timeout, follow_redirects=False)
+        with self._session_lock:
+            if self._client is None:
+                # Explicit rather than implicit: redirects are ours alone.
+                self._client = httpx.Client(
+                    timeout=self._timeout, follow_redirects=False
+                )
+            return self._client
 
     def _effective_signing_headers(
         self, webhook_id: Any, payload: Dict[str, Any], stored: Dict[str, str]
@@ -554,10 +569,49 @@ class WebhookDeliverer:
         return status
 
 
+def _deliver_one(deliverer: Any, record: Dict[str, Any]) -> Tuple[str, Any]:
+    """Normalize one delivery into ``(kind, value)`` without raising."""
+    try:
+        return ("status", deliverer.deliver(record))
+    except WebhookDeliveryError as exc:
+        return ("transport", str(exc))
+    except Exception as exc:  # defensive: a deliverer bug must not break the loop
+        logger.error(f"Unexpected webhook delivery error: {exc}")
+        return ("error", str(exc))
+
+
+def _apply_outcome(
+    retry_queue: Any,
+    stats: Dict[str, int],
+    record: Dict[str, Any],
+    outcome: Tuple[str, Any],
+) -> None:
+    """Resolve one (already delivered) record in the queue, single-threaded."""
+    stats["processed"] += 1
+    kind, value = outcome
+    if kind == "status":
+        if 200 <= value < 300:
+            retry_queue.mark_success(record["id"], value)
+            stats["delivered"] += 1
+        else:
+            retry_queue.mark_failure(record["id"], value, f"HTTP {value}")
+            stats["failed"] += 1
+    elif kind == "transport":
+        stats["transport_errors"] += 1
+        stats["failed"] += 1
+        retry_queue.mark_failure(record["id"], None, value)
+    else:
+        stats["transport_errors"] += 1
+        stats["failed"] += 1
+        retry_queue.mark_failure(record["id"], None, "delivery error")
+
+
 def process_due_retries(
     retry_queue: Any,
     deliverer: Optional[WebhookDeliverer] = None,
     limit: int = 100,
+    *,
+    max_concurrency: int = 1,
 ) -> Dict[str, int]:
     """Deliver all due retry records and update the queue.
 
@@ -567,6 +621,12 @@ def process_due_retries(
             method returning the HTTP status). Defaults to a real
             httpx-based deliverer.
         limit: Maximum number of due records to process in this pass.
+        max_concurrency: Upper bound on simultaneous HTTP deliveries. The
+            default of 1 keeps the original strictly sequential behaviour;
+            the scheduled worker opts in to a bounded pool. Queue updates
+            always run on the calling thread in ``due`` order, so DB writes
+            keep their original order and no queue state is shared. Every
+            delivery still executes the full SSRF and signing gates.
 
     Returns:
         Summary dict with ``processed``, ``delivered``, ``failed`` and
@@ -580,32 +640,39 @@ def process_due_retries(
     except (TypeError, ValueError):
         limit = 100
     limit = max(1, min(limit, MAX_BATCH_LIMIT))
+    try:
+        max_concurrency = int(max_concurrency)
+    except (TypeError, ValueError):
+        max_concurrency = 1
+    max_concurrency = max(1, min(max_concurrency, MAX_DELIVERY_CONCURRENCY))
+
     due = retry_queue.get_pending_retries(limit=limit)
     stats = {"processed": 0, "delivered": 0, "failed": 0, "transport_errors": 0}
+    if not due:
+        return stats
 
-    for record in due:
-        stats["processed"] += 1
-        try:
-            status = deliverer.deliver(record)
-        except WebhookDeliveryError as exc:
-            stats["transport_errors"] += 1
-            stats["failed"] += 1
-            retry_queue.mark_failure(record["id"], None, str(exc))
-            continue
-        except Exception as exc:  # defensive: a deliverer bug must not break the loop
-            logger.error(f"Unexpected webhook delivery error: {exc}")
-            stats["transport_errors"] += 1
-            stats["failed"] += 1
-            retry_queue.mark_failure(record["id"], None, "delivery error")
-            continue
+    if max_concurrency == 1 or len(due) == 1:
+        for record in due:
+            _apply_outcome(retry_queue, stats, record, _deliver_one(deliverer, record))
+        return stats
 
-        if 200 <= status < 300:
-            retry_queue.mark_success(record["id"], status)
-            stats["delivered"] += 1
-        else:
-            retry_queue.mark_failure(record["id"], status, f"HTTP {status}")
-            stats["failed"] += 1
+    # Bounded parallel POSTs: claims were already made atomically by
+    # get_pending_retries, so no two workers can deliver the same row. Results
+    # are indexed by position and applied in order on this thread only.
+    outcomes: List[Any] = [None] * len(due)
+    with ThreadPoolExecutor(
+        max_workers=min(max_concurrency, len(due)),
+        thread_name_prefix="webhook-delivery",
+    ) as pool:
+        futures = {
+            pool.submit(_deliver_one, deliverer, record): i
+            for i, record in enumerate(due)
+        }
+        for future in as_completed(futures):
+            outcomes[futures[future]] = future.result()
 
+    for record, outcome in zip(due, outcomes):
+        _apply_outcome(retry_queue, stats, record, outcome)
     return stats
 
 
@@ -639,6 +706,15 @@ class WebhookDeliveryJob:
         # Cap an operator-supplied interval so a typo cannot stall the
         # delivery worker (and its retry backlog) for effectively forever.
         return min(interval, MAX_INTERVAL_SECONDS)
+
+    def _concurrency(self) -> int:
+        webhook_cfg = self._config or {}
+        raw = webhook_cfg.get("delivery_concurrency", DEFAULT_DELIVERY_CONCURRENCY)
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            n = DEFAULT_DELIVERY_CONCURRENCY
+        return max(1, min(n, MAX_DELIVERY_CONCURRENCY))
 
     def start(self) -> None:
         """Start the background delivery loop."""
@@ -692,7 +768,11 @@ class WebhookDeliveryJob:
             signer = _get_manager().sign_payload
         except Exception:
             signer = None
-        stats = process_due_retries(retry_queue, WebhookDeliverer(signer=signer))
+        stats = process_due_retries(
+            retry_queue,
+            WebhookDeliverer(signer=signer),
+            max_concurrency=self._concurrency(),
+        )
         # Expired-record cleanup piggybacks on the delivery cycle (the
         # queue self-throttles via CLEANUP_INTERVAL_MS) so delivered/
         # dead-letter rows and stale 'delivering' claims are reaped
