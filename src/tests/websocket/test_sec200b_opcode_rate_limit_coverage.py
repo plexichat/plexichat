@@ -74,9 +74,8 @@ def _assignment_value(tree, name):
     raise AssertionError(f"no assignment to {name} found in source")
 
 
-def _enum_members(source):
-    """Return ``{GatewayOpcode member name: int value}`` from opcodes.py."""
-    tree = ast.parse(source)
+def _enum_members(tree):
+    """Return ``{GatewayOpcode member name: int value}`` from an opcodes tree."""
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "GatewayOpcode":
             members = {}
@@ -94,9 +93,9 @@ def _enum_members(source):
     raise AssertionError("GatewayOpcode enum not found in opcodes.py")
 
 
-def _declared_set(source, name):
+def _declared_set(tree, name):
     """Return member names referenced in a ``frozenset({GatewayOpcode.X,...})``."""
-    value = _assignment_value(ast.parse(source), name)
+    value = _assignment_value(tree, name)
     return {
         node.attr
         for node in ast.walk(value)
@@ -124,9 +123,9 @@ def _key_name(key):
     return None
 
 
-def _rate_limits(source):
-    """Return ``{opcode name: (max_events, window)}`` from a handlers source."""
-    value = _assignment_value(ast.parse(source), "INBOUND_RATE_LIMITS")
+def _rate_limits(tree):
+    """Return ``{opcode name: (max_events, window)}`` from a handlers tree."""
+    value = _assignment_value(tree, "INBOUND_RATE_LIMITS")
     assert isinstance(value, ast.Dict), "INBOUND_RATE_LIMITS must be a dict literal"
     limits = {}
     for key, val in zip(value.keys, value.values):
@@ -136,11 +135,29 @@ def _rate_limits(source):
     return limits
 
 
+def _load_sources():
+    """Read and parse each gateway source exactly once.
+
+    Returns ``((opcodes, handlers) texts, (opcodes, handlers) trees)``. Every
+    detector works on the shared trees, so the many real-tree assertions --
+    including the per-opcode parametrization -- add no reads or parses of their
+    own. Self-tests that feed a synthetic table parse their snippet once and
+    pass that tree explicitly.
+    """
+    texts = tuple(
+        src.read_text(encoding="utf-8") for src in (OPCODES_SRC, HANDLERS_SRC)
+    )
+    trees = tuple(ast.parse(text) for text in texts)
+    return texts, trees
+
+
+(OPCODES_TEXT, HANDLERS_TEXT), (OPCODES_TREE, HANDLERS_TREE) = _load_sources()
+
+
 def test_manifest_is_real_and_client_sendable():
     """Every declared expensive opcode exists in the enum and is client-sendable."""
-    opcodes_src = OPCODES_SRC.read_text(encoding="utf-8")
-    members = _enum_members(opcodes_src)
-    client = _declared_set(opcodes_src, "CLIENT_OPCODES")
+    members = _enum_members(OPCODES_TREE)
+    client = _declared_set(OPCODES_TREE, "CLIENT_OPCODES")
     assert EXPENSIVE_OPCODES <= members.keys(), (
         f"manifest names missing from GatewayOpcode: {EXPENSIVE_OPCODES - members.keys()}"
     )
@@ -151,7 +168,7 @@ def test_manifest_is_real_and_client_sendable():
 
 def test_every_expensive_opcode_is_rate_limited():
     """The core invariant: the shipped throttle table covers the whole manifest."""
-    limits = _rate_limits(HANDLERS_SRC.read_text(encoding="utf-8"))
+    limits = _rate_limits(HANDLERS_TREE)
     missing = EXPENSIVE_OPCODES - limits.keys()
     assert not missing, (
         f"expensive opcodes missing from INBOUND_RATE_LIMITS: {sorted(missing)}"
@@ -159,8 +176,8 @@ def test_every_expensive_opcode_is_rate_limited():
 
 
 def test_rate_limit_table_has_no_stale_opcodes_and_sane_budgets():
-    limits = _rate_limits(HANDLERS_SRC.read_text(encoding="utf-8"))
-    members = _enum_members(OPCODES_SRC.read_text(encoding="utf-8"))
+    limits = _rate_limits(HANDLERS_TREE)
+    members = _enum_members(OPCODES_TREE)
     assert limits.keys() <= members.keys(), (
         f"stale opcode keys in INBOUND_RATE_LIMITS: {sorted(limits.keys() - members.keys())}"
     )
@@ -180,8 +197,7 @@ def test_rate_limit_table_has_no_stale_opcodes_and_sane_budgets():
 
 def test_detector_flags_a_missing_expensive_opcode():
     """Self-test: dropping one expensive opcode from the table must be detected."""
-    full = HANDLERS_SRC.read_text(encoding="utf-8")
-    full_limits = _rate_limits(full)
+    full_limits = _rate_limits(HANDLERS_TREE)
     assert EXPENSIVE_OPCODES <= full_limits.keys()  # sanity of the fixture
 
     # Rebuild a synthetic module source whose rate-limit table omits one
@@ -193,7 +209,8 @@ def test_detector_flags_a_missing_expensive_opcode():
     for name, (max_events, window) in pruned.items():
         lines.append(f"    int(GatewayOpcode.{name}): ({max_events}, {window!r}),")
     lines.append("}")
-    synthetic_limits = _rate_limits("\n".join(lines))
+    synthetic_tree = ast.parse("\n".join(lines))  # still valid source
+    synthetic_limits = _rate_limits(synthetic_tree)
     missing = EXPENSIVE_OPCODES - synthetic_limits.keys()
     assert victim in missing, "detector failed to notice the removed opcode"
 
@@ -201,5 +218,49 @@ def test_detector_flags_a_missing_expensive_opcode():
 @pytest.mark.parametrize("name", sorted(EXPENSIVE_OPCODES))
 def test_each_expensive_opcode_individually_covered(name):
     """Per-opcode reporting makes a regression pinpoint the exact opcode."""
-    limits = _rate_limits(HANDLERS_SRC.read_text(encoding="utf-8"))
+    limits = _rate_limits(HANDLERS_TREE)
     assert name in limits, f"{name} is not throttled"
+
+
+def test_sources_are_read_and_parsed_once(monkeypatch):
+    """Perf regression: each gateway source is read and AST-parsed once.
+
+    Previously every detector re-parsed its source text on each call and the
+    per-opcode parametrized test re-read + re-parsed the whole handlers source
+    once per expensive opcode (12x). Now ``_load_sources`` reads + parses each
+    file exactly once and every detector reuses those trees. Counting the
+    reads/parses pins this deterministically -- no wall-clock timing and no
+    flaky threshold.
+    """
+    reads = []
+    parses = []
+    real_read_text = Path.read_text
+    real_parse = ast.parse
+
+    def counting_read_text(self, *args, **kwargs):
+        reads.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    def counting_parse(*args, **kwargs):
+        parses.append(args[0] if args else None)
+        return real_parse(*args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    monkeypatch.setattr(ast, "parse", counting_parse)
+
+    (opcodes_text, handlers_text), (opcodes_tree, handlers_tree) = _load_sources()
+
+    assert reads == [OPCODES_SRC, HANDLERS_SRC]
+    assert len(parses) == 2
+    assert parses == [opcodes_text, handlers_text]
+
+    # Every real-tree detector must reuse the pre-built trees: no extra reads
+    # or parses, however many assertions/parameters call them.
+    _enum_members(opcodes_tree)
+    _declared_set(opcodes_tree, "CLIENT_OPCODES")
+    _rate_limits(handlers_tree)
+    _rate_limits(handlers_tree)
+    _enum_members(opcodes_tree)
+
+    assert reads == [OPCODES_SRC, HANDLERS_SRC]
+    assert len(parses) == 2, "a detector re-parsed an already-parsed source"
