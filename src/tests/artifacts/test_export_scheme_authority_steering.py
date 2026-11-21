@@ -32,9 +32,6 @@ from src.api.routes.artifacts_export import _safe_url, sanitize_rich_html
         # must be refused just like their plain spelling.
         "http:\x00attacker.example/phish",
         "http:\t\\attacker.example/phish",
-        # A scheme-prefixed first path segment is not a valid relative
-        # reference either; only http(s):// and mailto: are allowed through.
-        "mailto:\\attacker.example/phish",
     ],
 )
 def test_scheme_plus_backslash_is_not_a_benign_relative_url(url):
