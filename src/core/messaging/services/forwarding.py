@@ -72,10 +72,54 @@ class ForwardingService:
     MAX_FORWARDS_PER_USER_PER_HOUR = 50
     MAX_HISTORY = 50
 
-    def __init__(self, db, messaging_module=None, participant_svc=None):
+    def __init__(self, db, messaging_module=None, participant_svc=None, servers_mod=None):
         self._db = db
         self._messaging = messaging_module
         self._participant_svc = participant_svc
+        self._servers = servers_mod
+
+    def _require_channel_view(self, conversation_id, user_id) -> None:
+        """Deny when ``conversation_id`` is backed by a server channel the caller cannot view.
+
+        ``is_participant`` grants every member of a server participation in its
+        channel conversations, independent of the per-channel ``channels.view``
+        permission. Forwarding *reads and decrypts* the source message content
+        and re-sends it into the target conversation, so a member denied view
+        on a private channel could otherwise exfiltrate its messages by
+        forwarding them into a channel/DM they control (and plant content in a
+        channel they cannot view via the target side). Resolve the backing
+        server channel membership-agnostically and require a live view grant
+        on it, exactly like the message get/pin routes. A conversation with no
+        backing channel is a genuine DM/group and needs no further gate.
+
+        Fails closed: if the reverse lookup or the view decision cannot be
+        established, the forward is denied rather than silently allowed.
+        """
+        servers = self._servers
+        if not servers:
+            return  # no servers store => conversation can only be a DM/group
+        lookup = getattr(servers, "get_channel_by_conversation", None)
+        if not callable(lookup):
+            raise PermissionError("Cannot verify channel view access")
+        try:
+            info = lookup(conversation_id)
+        except Exception:
+            raise PermissionError("Cannot verify channel view access")
+        if info is None:
+            return  # DM/group conversation: participation already gated it
+        channel_id = info.get("id") if isinstance(info, dict) else None
+        if channel_id is None:
+            raise PermissionError("Cannot verify channel view access")
+        get_channel = getattr(servers, "get_channel", None)
+        if not callable(get_channel):
+            raise PermissionError("Cannot verify channel view access")
+        try:
+            if get_channel(int(channel_id), user_id) is None:
+                raise PermissionError("Cannot view channel for this conversation")
+        except PermissionError:
+            raise
+        except Exception:
+            raise PermissionError("Cannot verify channel view access")
 
     def _get_timestamp(self) -> int:
         return int(time.time() * 1000)
@@ -174,6 +218,14 @@ class ForwardingService:
         # Check user can write to target conversation
         if not self._participant_svc.is_participant(target_conversation_id, user_id):
             raise PermissionError("Cannot send to the target conversation")
+
+        # Participation alone is not enough for server channels: every member
+        # of a server is a participant in its channel conversations even when
+        # they lack channels.view. Enforce a live view grant on the channel
+        # backing BOTH the source (content is read/decrypted from here) and the
+        # target (content is written here) before any forward is recorded.
+        self._require_channel_view(original["conversation_id"], user_id)
+        self._require_channel_view(target_conversation_id, user_id)
 
         # Rate limit check
         hour_ago = self._get_timestamp() - (3600 * 1000)
@@ -344,4 +396,3 @@ class ForwardingService:
         )
         return [_forwarded_row_to_dict(row) for row in rows]
 
-# CATCH_PROBE
