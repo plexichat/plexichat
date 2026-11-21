@@ -11,7 +11,7 @@ import pyotp
 
 from .dataclasses import AdminLoginResult
 from .helpers import _create_otp_challenge, _verify_admin_password
-from .otp_mixin import _check_admin_otp_budget
+from .otp_mixin import _check_admin_otp_budget, _is_canonical_totp_code
 from src.core.security.secrets import constant_time_compare
 
 
@@ -119,7 +119,14 @@ class OTPSetupMixin:
         verified_backup_index = None
 
         # TOTP disable must honor the same single-use replay rule as login.
-        if secret and pyotp.TOTP(secret).verify(code, valid_window=1):
+        # pyotp NFKC-normalises its input, so a fullwidth homoglyph of a code
+        # already consumed via login/setup verifies here while the raw-code
+        # single-use CAS below no longer matches it. Pin TOTP codes to the
+        # canonical ASCII grammar (same gate as verify_otp/verify_otp_setup);
+        # backup codes keep their separate XXXX-XXXX hex branch below.
+        if _is_canonical_totp_code(code) and pyotp.TOTP(secret).verify(
+            code, valid_window=1
+        ):
             now_ms = int(time.time() * 1000)
             cursor = self._db.execute(
                 "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ? "
