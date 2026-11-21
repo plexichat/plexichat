@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 import utils.logger as logger
 from starlette.concurrency import run_in_threadpool
 
+from src.api.websocket.boundaries import parse_snowflake
 from src.api.websocket.connection import Connection
 from src.api.websocket.opcodes import GatewayCloseCode, GatewayOpcode
 
@@ -19,6 +20,25 @@ if TYPE_CHECKING:
 # must NOT trigger a redundant re-resolution, so "not supplied" needs its own
 # marker. See ``handle_voice_speaking``.
 _UNRESOLVED = object()
+
+
+def _parse_channel_id(value: object) -> Optional[int]:
+    """Parse a gateway ``channel_id`` through the canonical snowflake gate.
+
+    These handlers used bare ``int()`` on the wire value. That grammar accepts
+    Unicode decimal homoglyphs (``"٤٢"``), PEP 515 separators (``"1_0"``) and
+    explicit signs, so a token a client or next hop reads as one id can be
+    silently reinterpreted as a different one; the CONNECT and STATE_UPDATE
+    paths did not even reject non-positive or oversized values, which then
+    flowed into repository lookups and cache keys. Every other gateway handler
+    routes ids through ``parse_snowflake`` already. Do the same here so an id
+    the wire cannot express canonically is refused as a malformed frame before
+    any downstream lookup, and the exact 64-bit value is preserved.
+    """
+    try:
+        return parse_snowflake(value, "channel_id")
+    except (TypeError, ValueError):
+        return None
 
 
 def _present_bool(payload: Dict[str, Any], key: str) -> Optional[bool]:
@@ -101,16 +121,11 @@ class VoiceHandler:
         else:
             consented = None
 
-        if channel_id is None:
+        parsed_channel_id = _parse_channel_id(channel_id)
+        if parsed_channel_id is None:
+            logger.warning(f"Invalid channel_id in voice state update: {channel_id!r}")
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
-
-        try:
-            channel_id = int(channel_id)
-        except (ValueError, TypeError):
-            logger.warning(
-                f"Invalid channel_id type in voice state update: {type(channel_id)}"
-            )
-            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+        channel_id = parsed_channel_id
 
         if not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
@@ -178,15 +193,11 @@ class VoiceHandler:
         if not data:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-        channel_id = data.get("channel_id")
-        if not channel_id:
+        parsed_channel_id = _parse_channel_id(data.get("channel_id"))
+        if parsed_channel_id is None:
+            logger.warning(f"Invalid channel_id in voice connect: {data.get('channel_id')!r}")
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
-
-        try:
-            channel_id = int(channel_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid channel_id type: {type(channel_id)}")
-            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+        channel_id = parsed_channel_id
 
         try:
             if not connection.user_id:
@@ -282,15 +293,13 @@ class VoiceHandler:
             if raw_channel_id is None or raw_channel_id == "":
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-            # The channel id must be a positive integer; a malformed value
-            # must be rejected here rather than surfacing as an opaque
-            # signaling failure.
-            try:
-                channel_id = int(raw_channel_id)
-            except (TypeError, ValueError):
+            # The channel id must be a canonical positive snowflake; a
+            # malformed value is rejected here rather than surfacing as an
+            # opaque signaling failure or being reinterpreted by int().
+            parsed_channel_id = _parse_channel_id(raw_channel_id)
+            if parsed_channel_id is None:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
-            if channel_id <= 0:
-                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            channel_id = parsed_channel_id
 
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
@@ -351,14 +360,10 @@ class VoiceHandler:
             # validate it, then require it to match the channel the caller's
             # signaling connection is bound to (the same binding the ICE and
             # quality paths enforce).
-            if channel_id is None or channel_id == "":
+            parsed_channel_id = _parse_channel_id(channel_id)
+            if parsed_channel_id is None:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
-            try:
-                channel_id = int(channel_id)
-            except (TypeError, ValueError):
-                return None, None, int(GatewayCloseCode.DECODE_ERROR)
-            if channel_id <= 0:
-                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            channel_id = parsed_channel_id
 
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
@@ -431,12 +436,10 @@ class VoiceHandler:
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-            try:
-                channel_id = int(channel_id)
-            except (TypeError, ValueError):
+            parsed_channel_id = _parse_channel_id(channel_id)
+            if parsed_channel_id is None:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
-            if channel_id <= 0:
-                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            channel_id = parsed_channel_id
 
             # SECURITY-correctness (audit: trickle ICE never reached the media
             # plane): the async variant both records the candidate AND hands
@@ -473,14 +476,12 @@ class VoiceHandler:
 
             # D8: the authoritative voice_state.channel_id is an int while the
             # client-supplied value arrives as a string; a raw comparison
-            # always fails and speaking updates would never dispatch. Coerce
-            # before comparing.
-            try:
-                channel_id = int(channel_id)
-            except (TypeError, ValueError):
+            # always fails and speaking updates would never dispatch. Parse it
+            # through the canonical gate before comparing.
+            parsed_channel_id = _parse_channel_id(channel_id)
+            if parsed_channel_id is None:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
-            if channel_id <= 0:
-                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            channel_id = parsed_channel_id
 
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
