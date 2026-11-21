@@ -598,6 +598,15 @@ def _create_approval_request(
         raise
 
 
+class _PositionLookupFailed(int):
+    """A 0-valued position meaning "lookup failed", not "no roles".
+
+    Keeping it an ``int`` preserves the public ``get_admin_max_position``
+    contract (0 on error) for best-effort callers, while hierarchy gates can
+    distinguish an unreadable position from a genuinely role-less admin.
+    """
+
+
 def _load_admin_max_position(db, admin_id: int) -> int:
     """Single uncached role-position read; propagates DB errors to the caller."""
     row = db.fetch_one(
@@ -614,7 +623,7 @@ def _load_admin_max_position(db, admin_id: int) -> int:
     return 0
 
 
-def get_admin_max_position(db, admin_id: int, *, strict: bool = False) -> int:
+def get_admin_max_position(db, admin_id: int) -> int:
     """
     Get the highest position of all roles assigned to an admin.
 
@@ -623,13 +632,12 @@ def get_admin_max_position(db, admin_id: int, *, strict: bool = False) -> int:
     repeatedly within a request. Every privilege mutation clears the cache via
     :func:`invalidate_admin_permission_caches`, so a revoked/demoted role is
     reflected on the very next check. A failed lookup is not cached and yields
-    ``0`` for best-effort callers; hierarchy gates pass ``strict=True`` so a
-    DB error is distinguishable from "no roles" and can be denied.
+    a 0-valued :class:`_PositionLookupFailed` sentinel so hierarchy gates can
+    deny instead of reading it as "no roles".
 
     Args:
         db: Database instance
         admin_id: The admin user ID
-        strict: Re-raise lookup errors instead of returning 0
 
     Returns:
         The maximum position value across all assigned roles (0 if no roles)
@@ -640,9 +648,7 @@ def get_admin_max_position(db, admin_id: int, *, strict: bool = False) -> int:
         )
     except Exception as e:
         logger.error(f"Error getting admin max position: {e}")
-        if strict:
-            raise
-        return 0
+        return _PositionLookupFailed(0)
 
 
 def can_manage_admin(db, current_admin_id: int, target_admin_id: int) -> bool:
@@ -668,15 +674,16 @@ def can_manage_admin(db, current_admin_id: int, target_admin_id: int) -> bool:
     # Get both admins' max positions. A failed lookup must never be read as
     # "no roles" (0): the target's real position may be higher than the
     # actor's, so treating an error as 0 would grant authority over an admin
-    # the actor cannot legitimately manage. Resolve both strictly and deny on
-    # any lookup error; the strict comparison itself is unchanged.
-    try:
-        current_pos = get_admin_max_position(db, current_admin_id, strict=True)
-        target_pos = get_admin_max_position(db, target_admin_id, strict=True)
-    except Exception as e:
+    # the actor cannot legitimately manage. The strict comparison itself is
+    # unchanged; only an unreadable position forces a deny.
+    current_pos = get_admin_max_position(db, current_admin_id)
+    target_pos = get_admin_max_position(db, target_admin_id)
+    if isinstance(current_pos, _PositionLookupFailed) or isinstance(
+        target_pos, _PositionLookupFailed
+    ):
         logger.error(
             f"Error checking admin hierarchy for {current_admin_id} -> "
-            f"{target_admin_id}: {e}"
+            f"{target_admin_id}: position lookup failed"
         )
         return False
 
