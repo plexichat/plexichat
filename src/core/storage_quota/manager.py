@@ -165,6 +165,24 @@ def _row_value(row: Any, key: str, index: int = 0) -> Any:
         return None
 
 
+def _public_override(override: Any) -> Optional[Dict[str, Any]]:
+    """Render an override row (tuple or dict) as the API-facing dict.
+
+    Both :meth:`StorageQuotaManager.get_override` and the folded status snapshot
+    use this so the admin endpoint gets byte-for-byte identical output whether
+    the row came from a dedicated read or from the wider status query.
+    """
+    if override is None:
+        return None
+    return {
+        "limit_bytes": _row_value(override, "limit_bytes", 1),
+        "unlimited": bool(_as_int(_row_value(override, "unlimited", 2), 0)),
+        "note": _row_value(override, "note", 3),
+        "updated_by": _row_value(override, "updated_by", 4),
+        "updated_at": _row_value(override, "updated_at", 5),
+    }
+
+
 class StorageQuotaManager:
     """Resolve, report, and enforce per-user storage limits."""
 
@@ -379,7 +397,9 @@ class StorageQuotaManager:
             " WHERE uploaded_by = ? AND deleted = 0) AS files, "
             "(SELECT COALESCE(SUM(bytes), 0) FROM storage_quota_reservations "
             " WHERE user_id = ? AND expires_at > ?) AS pending, "
-            "q.limit_bytes AS q_limit, q.unlimited AS q_unlimited "
+            "q.limit_bytes AS q_limit, q.unlimited AS q_unlimited, "
+            "q.note AS q_note, q.updated_by AS q_updated_by, "
+            "q.updated_at AS q_updated_at "
             "FROM (SELECT 1) AS one "
             "LEFT JOIN user_storage_quotas q ON q.user_id = ?",
             (uid, uid, uid, now, uid),
@@ -392,13 +412,31 @@ class StorageQuotaManager:
         # A LEFT JOIN with no matching row yields NULL for both columns; that
         # is the "no override" case. A real override with limit_bytes NULL and
         # unlimited 0 still has a non-NULL unlimited column, so it is kept.
+        # Carry the full override row here so callers that also need the audit
+        # fields (note/updated_by/updated_at) do not re-read the same row; the
+        # admin storage endpoints used to issue a second dedicated SELECT.
         override = None
         if q_limit is not None or q_unlimited is not None:
-            override = {"limit_bytes": q_limit, "unlimited": q_unlimited}
+            override = {
+                "limit_bytes": q_limit,
+                "unlimited": q_unlimited,
+                "note": _row_value(row, "q_note", 5),
+                "updated_by": _row_value(row, "q_updated_by", 6),
+                "updated_at": _row_value(row, "q_updated_at", 7),
+            }
         return used, files, pending, override
 
-    def get_status(self, user_id: int) -> Dict[str, Any]:
-        """Return usage, limit, and remaining bytes for a user."""
+    def get_status(
+        self, user_id: int, *, include_override: bool = False
+    ) -> Dict[str, Any]:
+        """Return usage, limit, and remaining bytes for a user.
+
+        ``include_override=True`` also returns the full override row under the
+        ``override`` key. The audit fields are already present in the single
+        :meth:`_status_snapshot` query, so this avoids the extra ``get_override``
+        SELECT that the admin storage endpoints previously issued for every
+        view/update of a user's quota.
+        """
         used, file_count, pending, override = self._status_snapshot(user_id)
         resolved = self.resolve_limit(user_id, override=override)
         limit = resolved["limit_bytes"]
@@ -411,7 +449,7 @@ class StorageQuotaManager:
             remaining = max(0, int(limit) - consumed)
             percent = round((consumed * 100.0 / limit), 2) if limit > 0 else 100.0
             percent = min(100.0, max(0.0, percent))
-        return {
+        result: Dict[str, Any] = {
             "used_bytes": used,
             "pending_bytes": pending,
             "limit_bytes": limit,
@@ -424,6 +462,9 @@ class StorageQuotaManager:
             "tier_limit_bytes": resolved["tier_limit_bytes"],
             "default_limit_bytes": resolved["default_limit_bytes"],
         }
+        if include_override:
+            result["override"] = _public_override(override)
+        return result
 
     def _invalidate_quota_cache(self) -> None:
         """Drop this worker's cached SQL reads before/after a quota mutation.
@@ -599,6 +640,7 @@ class StorageQuotaManager:
         unlimited: bool = False,
         note: Optional[str] = None,
         updated_by: Optional[int] = None,
+        include_override: bool = False,
     ) -> Dict[str, Any]:
         if unlimited:
             normalized_limit = None
@@ -641,28 +683,21 @@ class StorageQuotaManager:
             ),
         )
         self._invalidate_quota_cache()
-        return self.get_status(user_id)
+        return self.get_status(user_id, include_override=include_override)
 
-    def clear_override(self, user_id: int) -> Dict[str, Any]:
+    def clear_override(
+        self, user_id: int, *, include_override: bool = False
+    ) -> Dict[str, Any]:
         self._ensure_schema()
         self._invalidate_quota_cache()
         self._db.execute(
             "DELETE FROM user_storage_quotas WHERE user_id = ?", (int(user_id),)
         )
         self._invalidate_quota_cache()
-        return self.get_status(user_id)
+        return self.get_status(user_id, include_override=include_override)
 
     def get_override(self, user_id: int) -> Optional[Dict[str, Any]]:
-        row = self._override_row(user_id)
-        if row is None:
-            return None
-        return {
-            "limit_bytes": _row_value(row, "limit_bytes", 1),
-            "unlimited": bool(_as_int(_row_value(row, "unlimited", 2), 0)),
-            "note": _row_value(row, "note", 3),
-            "updated_by": _row_value(row, "updated_by", 4),
-            "updated_at": _row_value(row, "updated_at", 5),
-        }
+        return _public_override(self._override_row(user_id))
 
     def list_user_files(
         self,

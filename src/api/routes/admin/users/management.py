@@ -64,11 +64,12 @@ class ManagementMixin(AdminUsersRouterProtocol):
         try:
             uid = self._parse_user_id(user_id)
             manager = get_manager(self._get_db())
-            status = manager.get_status(uid)
+            # The status snapshot already reads the override row; asking it to
+            # include the audit fields avoids a second identical SELECT.
+            status = manager.get_status(uid, include_override=True)
             return {
                 "user_id": str(uid),
                 **status,
-                "override": manager.get_override(uid),
             }
         except ValueError:
             raise HTTPException(
@@ -87,7 +88,7 @@ class ManagementMixin(AdminUsersRouterProtocol):
             uid = self._parse_user_id(user_id)
             manager = get_manager(self._get_db())
             if update.get("clear"):
-                status = manager.clear_override(uid)
+                status = manager.clear_override(uid, include_override=True)
             else:
                 unlimited = bool(update.get("unlimited"))
                 limit_bytes = update.get("limit_bytes")
@@ -151,12 +152,12 @@ class ManagementMixin(AdminUsersRouterProtocol):
                     unlimited=unlimited,
                     note=note,
                     updated_by=admin_id,
+                    include_override=True,
                 )
             return {
                 "success": True,
                 "user_id": str(uid),
                 **status,
-                "override": manager.get_override(uid),
             }
         except ValueError:
             raise HTTPException(
