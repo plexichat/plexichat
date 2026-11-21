@@ -76,6 +76,24 @@ class _SigningMixin:
         file = self.get_file(file_id)
         if not file:
             raise MediaError("File not found")
+
+        # A caller-supplied user_id means this URL MUST be bound to that
+        # viewer: the HMAC embeds uid and the media proxy route rechecks
+        # per-file access on every use. A native S3 presigned URL is an
+        # unbound bearer credential - it carries no uid and bypasses the
+        # app's access checks entirely, so anyone holding it gets the bytes.
+        # Never degrade a viewer-bound signing request to one. Route it
+        # through the proxy instead; native presigning stays available only
+        # for explicitly public (uid-less) callers such as remote transcription
+        # providers.
+        if user_id is not None:
+            return self._url_signer.sign_url(
+                f"/api/v1/media/attachments/{file.filename}",
+                file_id,
+                expires_in=expires_in,
+                user_id=user_id,
+            )
+
         storage = self._get_storage_by_backend(file.storage_backend.value)
         is_encrypted = storage.is_encrypted(file.storage_path)
 
