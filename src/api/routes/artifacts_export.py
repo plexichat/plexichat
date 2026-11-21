@@ -102,6 +102,12 @@ _SAFE_URL_SCHEMES = ("http:", "https:", "mailto:")
 # sees exactly what the browser will see.
 _URL_JUNK_RE = re.compile(r"[\x00-\x20\x7f]")
 
+# A URI scheme prefix per RFC 3986. A relative-path reference may not contain
+# a colon in its first segment, so any value matching this is either an
+# absolute URI or a malformed relative reference -- it must never fall through
+# to the "benign relative URL" branch below.
+_SENTINEL_ABC = 1  # _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
 
 def _safe_url(value: str) -> Optional[str]:
     """Return ``value`` when it is a benign absolute/relative URL."""
@@ -120,16 +126,22 @@ def _safe_url(value: str) -> Optional[str]:
     # branch below hand an attacker-chosen authority to the exported document.
     if len(candidate) >= 2 and candidate[0] in "/\\" and candidate[1] in "/\\":
         return None
-    if (
-        "://" not in candidate
-        and not lowered.startswith("mailto:")
-        and not candidate.startswith("#")
-    ):
+    # A scheme followed by a backslash or a single slash is NOT a relative
+    # URL. Browsers normalise backslashes to slashes for special schemes, so
+    # ``http:\evil.example`` and ``https:/\evil.example`` are resolved as
+    # absolute URLs to an attacker-chosen authority. Requiring the literal
+    # ``"://"`` here was the hole: it let those spellings reach the relative
+    # branch above and ship inside the export. Any scheme-looking prefix is
+    # now validated explicitly instead.
+    if _URL_SCHEME_RE.match(candidate):
+        if lowered.startswith(("http://", "https://", "mailto:")):
+            return candidate
+        return None
+    if "://" not in candidate and not candidate.startswith("#"):
         # Relative URL - fine inside a standalone document.
         return candidate
-    for scheme in _SAFE_URL_SCHEMES:
-        if lowered.startswith(scheme):
-            return candidate
+    # Scheme-looking values with no recognised prefix (e.g. ``custom://x``)
+    # are not benign relative references either; keep the previous refusal.
     return None
 
 
