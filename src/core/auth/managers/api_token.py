@@ -190,13 +190,26 @@ class ApiTokenMixin(AuthManagerProtocol):
             for row in rows
         ]
 
-    def get_api_access_token(self, token_id: int) -> Optional[AccessToken]:
+    def get_api_access_token(
+        self,
+        token_id: int,
+        *,
+        usage_summary: Optional[Dict[str, Any]] = None,
+    ) -> Optional[AccessToken]:
+        """Read a token row and render it, reusing ``usage_summary`` if given.
+
+        The usage summary (``COUNT(DISTINCT ip_index)`` / denied count over the
+        token's events) is part of every rendered :class:`AccessToken`. A caller
+        that already fetched that single summary row -- e.g. the admin detail
+        endpoint, which also emits the top-level counters -- can pass it here
+        so the row converter does not issue an identical second SELECT.
+        """
         row = self._db.fetch_one(
             "SELECT * FROM auth_api_access_tokens WHERE id = ?", (token_id,)
         )
         if not row:
             return None
-        return self._row_to_access_token(row)
+        return self._row_to_access_token(row, distinct_summary=usage_summary)
 
     def update_api_access_token(
         self,
@@ -455,7 +468,23 @@ class ApiTokenMixin(AuthManagerProtocol):
         token_id: int,
         recent_limit: int = 100,
     ) -> Dict[str, Any]:
-        token = self.get_api_access_token(token_id)
+        # One summary read feeds both the nested token's usage counters and the
+        # top-level counters below. The row converter used to re-issue the same
+        # COUNT(DISTINCT ip_index)/SUM(denied) SELECT for the same token; the
+        # extra ``COUNT(*)`` here makes this the wider of the two queries, so
+        # thread it through instead of paying for both.
+        summary = (
+            self._db.fetch_one(
+                """SELECT COUNT(*) AS total_events,
+                          COUNT(DISTINCT ip_index) AS distinct_ip_count,
+                          SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
+                   FROM auth_api_access_token_events
+                   WHERE token_id = ?""",
+                (token_id,),
+            )
+            or {}
+        )
+        token = self.get_api_access_token(token_id, usage_summary=summary)
         if not token:
             raise UserNotFoundError("Access token not found")
 
@@ -524,18 +553,6 @@ class ApiTokenMixin(AuthManagerProtocol):
             }
             for row in path_rows
         ]
-
-        summary = (
-            self._db.fetch_one(
-                """SELECT COUNT(*) AS total_events,
-                      COUNT(DISTINCT ip_index) AS distinct_ip_count,
-                      SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count_total
-               FROM auth_api_access_token_events
-               WHERE token_id = ?""",
-                (token_id,),
-            )
-            or {}
-        )
 
         return {
             "token": token,
