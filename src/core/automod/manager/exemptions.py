@@ -40,8 +40,17 @@ class ExemptionMixin(AutoModProtocol):
             "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
             (server_id,),
         )
-        if server_row and int(server_row["owner_id"]) == int(user_id):
-            return True
+        # SECURITY: a projected srv_servers.owner_id vouches for the caller's
+        # ownership (and therefore an exemption from every automod rule) only
+        # while it is a genuine integer id. Coercing a malformed-but-coercible
+        # value with int() ("05"->5, 5.9->5, True->1) would mark a non-owner as
+        # the server owner and silently exempt them from automod. Fail closed:
+        # only an exact integer id from the authoritative owner row may satisfy
+        # the check (type() also rejects bool).
+        if server_row:
+            owner_id = server_row["owner_id"]
+            if type(owner_id) is int and owner_id == int(user_id):
+                return True
 
         channel_exempt = self._db.fetch_one(
             """SELECT id FROM automod_exemptions 
