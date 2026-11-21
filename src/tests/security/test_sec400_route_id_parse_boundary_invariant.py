@@ -3,19 +3,21 @@
 A bare ``int(request.query_params["channel_id"])`` accepts signs, underscores,
 Unicode digits, whitespace and values past the 64-bit snowflake ceiling. The
 hardening fix replaced that with the shared, ASCII-only and range-bounded
-``src.core.security.hardening.parse_id`` helper at the route boundary. Several
-subsystems adopted that fix (messaging, channel attachments, polls); this suite
-ratchets those adopters so a future refactor cannot silently reintroduce a bare
-``int()`` on an incoming ID/cursor parameter.
+``src.core.security.hardening.parse_id`` helper at the route boundary. The
+sweep walks EVERY shipped route module (not a curated adopter list), so a new
+route under any name that reintroduces a bare ``int()`` on an incoming
+ID/cursor parameter fails the guard; the original adopters are kept only as a
+non-vacuity floor.
 
 The check is purely AST-based over source files -- no app import, config or DB
 is needed, so it cannot flake. The detector is first exercised against
 synthetic good/bad handlers (self-test), then against the real tree, and a
 non-vacuity test proves the scan really sees both the helper calls and the
-route handlers it is meant to guard.
+route handlers it is meant to guard, including a novel-named module.
 """
 
 import ast
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -24,25 +26,31 @@ pytestmark = [pytest.mark.security, pytest.mark.unit]
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# Route modules that adopted the shared parse_id boundary helper as part of the
-# prior fix. Every one must still reference parse_id and must never convert one
-# of its own string-typed route ID/cursor parameters with a bare int().
-HARDENED_ID_MODULES = (
-    "src/api/routes/messages/helpers.py",
-    "src/api/routes/messages/messages_list.py",
-    "src/api/routes/messages/read_receipts.py",
-    "src/api/routes/messages/typing.py",
-    "src/api/routes/messages/search.py",
-    "src/api/routes/messages/export.py",
-    "src/api/routes/messages/pins.py",
-    "src/api/routes/messages/messages_crud/send.py",
-    "src/api/routes/messages/messages_crud/delete.py",
-    "src/api/routes/messages/messages_crud/retrieve.py",
-    "src/api/routes/messages/messages_crud/edit.py",
-    "src/api/routes/channels/helpers.py",
-    "src/api/routes/channels/attachments.py",
-    "src/api/routes/polls.py",
+# Floor pins only: modules that adopted the shared parse_id boundary helper as
+# part of the original fix. Every one must still call parse_id and stay free of
+# bare int() on its string ID/cursor params. They are a floor, NOT the bound of
+# the sweep: the detector below walks the whole routes package so a brand-new
+# module under a name that appears in no list is still checked.
+_KNOWN_PARSE_ID_ADOPTERS = frozenset(
+    {
+        "src/api/routes/messages/helpers.py",
+        "src/api/routes/messages/messages_list.py",
+        "src/api/routes/messages/read_receipts.py",
+        "src/api/routes/messages/typing.py",
+        "src/api/routes/messages/search.py",
+        "src/api/routes/messages/export.py",
+        "src/api/routes/messages/pins.py",
+        "src/api/routes/messages/messages_crud/send.py",
+        "src/api/routes/messages/messages_crud/delete.py",
+        "src/api/routes/messages/messages_crud/retrieve.py",
+        "src/api/routes/messages/messages_crud/edit.py",
+        "src/api/routes/channels/helpers.py",
+        "src/api/routes/channels/attachments.py",
+        "src/api/routes/polls.py",
+    }
 )
+
+_ROUTES_DIR = ROOT / "src/api/routes"
 
 HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 
@@ -138,20 +146,45 @@ def _route_handler_count(tree) -> int:
     )
 
 
-def _scan_tree():
+def _iter_route_modules(base: Path | None = None):
+    """Every shipped API route module, discovered structurally.
+
+    The old ratchet iterated a hand-curated tuple of 14 adopter paths. A new
+    route module -- under any name -- that converts a string ID/cursor parameter
+    with a bare ``int()`` was never examined and the guard passed silently.
+    Walking the whole ``routes`` package makes the sweep name-agnostic: no
+    enumeration of known filenames bounds what gets checked.
+    """
+    base = base if base is not None else _ROUTES_DIR
+    for path in sorted(base.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        yield path
+
+
+def _scan_paths(paths, root: Path | None = None):
+    """Scan route-module paths, labelling them relative to ``root``.
+
+    Shared by the real tree walk and the novel-module self-test so the latter
+    exercises the exact same discovery + detector pipeline, not a mock.
+    """
+    root = root if root is not None else ROOT
     scanned = []
-    for relative in HARDENED_ID_MODULES:
-        path = ROOT / relative
+    for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         scanned.append(
             (
-                relative,
+                path.relative_to(root).as_posix(),
                 _bare_int_on_param_violations(tree),
                 _parse_id_calls(tree),
                 _route_handler_count(tree),
             )
         )
     return scanned
+
+
+def _scan_tree():
+    return _scan_paths(_iter_route_modules())
 
 
 _SCAN = _scan_tree()
@@ -188,11 +221,25 @@ def other(count: int, label: str):
 
 
 def test_hardened_modules_still_use_parse_id_and_scan_is_not_vacuous():
-    assert len(_SCAN) == len(HARDENED_ID_MODULES)
-    assert all(rel.startswith("src/api/routes/") for rel, *_ in _SCAN)
-    # Every adopter still calls the helper, and the scan really covers route
-    # handlers -- otherwise the "no bare int()" assertion below is vacuous.
-    missing_helper = [rel for rel, _, calls, _ in _SCAN if calls == 0]
+    scanned = {rel for rel, *_ in _SCAN}
+    assert all(rel.startswith("src/api/routes/") for rel in scanned)
+    # The curated adopters are a floor, not the scan bound: the structural walk
+    # must reach every one of them and then some, so reverting to a fixed list
+    # fails non-vacuously.
+    assert _KNOWN_PARSE_ID_ADOPTERS <= scanned, (
+        "route sweep is missing known parse_id adopters: "
+        f"{sorted(_KNOWN_PARSE_ID_ADOPTERS - scanned)}"
+    )
+    assert scanned - _KNOWN_PARSE_ID_ADOPTERS, (
+        "route sweep regressed to the old hand-curated adopter list"
+    )
+    # Every known adopter still calls the helper, and the scan really covers
+    # route handlers -- otherwise the "no bare int()" assertion is vacuous.
+    missing_helper = [
+        rel
+        for rel, _, calls, _ in _SCAN
+        if rel in _KNOWN_PARSE_ID_ADOPTERS and calls == 0
+    ]
     assert not missing_helper, f"parse_id dropped from: {missing_helper}"
     total_calls = sum(calls for _, _, calls, _ in _SCAN)
     total_handlers = sum(handlers for _, _, _, handlers in _SCAN)
@@ -210,3 +257,45 @@ def test_no_hardened_route_converts_a_boundary_id_with_bare_int():
         "Bare int() on a string ID/cursor route parameter reintroduced:\n  "
         + "\n  ".join(sorted(offenders))
     )
+
+
+def test_novel_route_module_with_bare_int_is_flagged(tmp_path):
+    """Non-vacuity: the structural sweep flags a brand-new, novel-named module.
+
+    The old detector iterated a fixed list of 14 adopter paths, so a route
+    module under any other name was invisible to the guard. This writes a
+    never-before-seen module under a novel package name and proves the same
+    discovery + scan pipeline the real guard uses reports its bare-int boundary
+    conversion -- with no advance knowledge of the file or handler name.
+    """
+    routes = tmp_path / "src/api/routes/brand_new_subsystem"
+    routes.mkdir(parents=True)
+    module = routes / "future_widget_export.py"
+
+    def _scan_novel(source: str):
+        module.write_text(textwrap.dedent(source), encoding="utf-8")
+        return _scan_paths(
+            _iter_route_modules(tmp_path / "src/api/routes"), root=tmp_path
+        )
+
+    scanned = _scan_novel(
+        """\
+        @router.get("/future")
+        def future_widget_export(channel_id: str):
+            return int(channel_id)
+        """
+    )
+    assert len(scanned) == 1
+    relative, violations, _, _ = scanned[0]
+    assert relative == "src/api/routes/brand_new_subsystem/future_widget_export.py"
+    assert violations, "novel route module's bare int() was not detected"
+
+    # The same novel module using the shared gate is classified as clean.
+    scanned = _scan_novel(
+        """\
+        @router.get("/future")
+        def future_widget_export(channel_id: str):
+            return parse_id(channel_id, "channel_id")
+        """
+    )
+    assert scanned[0][1] == []
