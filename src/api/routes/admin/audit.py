@@ -425,11 +425,35 @@ async def get_audit_logs(
 
         query += " ORDER BY created_at DESC"
 
-        # Build a separate count query with the same WHERE conditions
-        count_query = "SELECT COUNT(*) as total FROM admin_audit_log"
-        if conditions:
-            count_query += " WHERE " + " AND ".join(conditions)
-        total = db.fetch_one(count_query, params)["total"]
+        # The ``COUNT(*)`` is a covering-index scan of every matching row in
+        # the retention window -- the dominant cost of every list poll. It is
+        # a request-invariant, per-filter summary with no per-admin data (the
+        # host/permission gates ran above), so collapse rapid, identical polls
+        # into one computation using the same short-TTL, DB-scoped summary cache
+        # the stats endpoint uses. Reusing its TTL keeps identical semantics.
+        # The key carries every caller-supplied filter so two different queries
+        # never share a count; the cache itself scopes it to the backing DB.
+        count_key = (
+            action_family,
+            status,
+            admin_id,
+            target_type,
+            date_from,
+            date_to,
+        )
+
+        def _load_count() -> int:
+            count_query = "SELECT COUNT(*) as total FROM admin_audit_log"
+            if conditions:
+                count_query += " WHERE " + " AND ".join(conditions)
+            return int(db.fetch_one(count_query, tuple(params))["total"])
+
+        total = get_or_compute(
+            "audit_list_count",
+            count_key,
+            _load_count,
+            _AUDIT_STATS_TTL_SECONDS,
+        )
 
         query += " LIMIT ? OFFSET ?"
         params.extend([per_page, (page - 1) * per_page])
