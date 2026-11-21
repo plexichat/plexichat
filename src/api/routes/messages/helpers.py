@@ -396,7 +396,20 @@ def _message_to_response(
                     from src.api.routes.polls import _results_to_response
 
                     poll_response = _poll_to_response(results.poll)
-                    poll_results = _results_to_response(results)
+                    if viewer_user_id is None:
+                        # Fan-out broadcast (message delete / AutoMod tombstone):
+                        # this single body reaches EVERY channel recipient, so it
+                        # must not carry results resolved through one viewer's
+                        # visibility window. ``poll_viewer_user_id`` is the
+                        # message author there; for AFTER_VOTE / AFTER_END polls
+                        # the author may be entitled to per-option counts, the
+                        # voter headcount and their own individual votes -- none
+                        # of which other recipients may see. Keep only the
+                        # non-sensitive poll skeleton for UI continuity and fail
+                        # closed on the viewer-specific pieces.
+                        poll_response.total_votes = None
+                    else:
+                        poll_results = _results_to_response(results)
             except Exception as e:
                 logger.debug(f"Failed to fetch poll/results for message {msg_id}: {e}")
 
