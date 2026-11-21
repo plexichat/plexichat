@@ -79,6 +79,30 @@ class PasswordMixin:
 
     def _validate_password_policy(self, new_password: str) -> Tuple[bool, str]:
         """Validate new password against configured policy. Returns (valid, message)."""
+        # Admin-set and admin-rotated passwords are written into auth_users and
+        # authenticate through the same credential store as user passwords.
+        # The local policy below is an *extra* layer, not a replacement for the
+        # shared policy that registration, self-service change and token reset
+        # enforce. Without this, a privileged write could install a credential
+        # over the shared length ceiling or on the bundled breached-password
+        # list that every other path rejects.
+        try:
+            from src.core.auth.passwords import validate_password as validate_shared
+
+            shared = validate_shared(new_password)
+        except Exception as exc:
+            # Fail closed: an unusable shared policy must never be treated as
+            # "no objections" for a privileged credential mutation.
+            logger.debug(f"shared password policy unavailable: {exc}")
+            return False, "Password strength policy is temporarily unavailable"
+        if not shared.valid:
+            return (
+                False,
+                shared.issues[0]
+                if shared.issues
+                else "Password does not meet the password policy",
+            )
+
         admin_config = config.get("admin_ui", {})
         password_policy = admin_config.get("security", {}).get("password_policy", {})
 
