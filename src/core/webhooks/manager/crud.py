@@ -20,6 +20,28 @@ from src.utils.encryption import encrypt_data, generate_key_pair
 from .base import WebhookManagerTrait
 
 
+# One statement re-checks both webhook quotas at the instant of the insert. The
+# old flow ran a ``SELECT COUNT(*)`` for the per-channel and per-server caps and
+# only then issued a separate bare ``INSERT``; two concurrent creators could both
+# read a below-cap count and both insert, pushing a channel or server past its
+# webhook quota (a TOCTOU bypass). The guard subqueries see the table state
+# *before* the new row exists, so exactly the callers that still fit under both
+# caps get a row, and ``rowcount == 0`` is an authoritative "limit reached"
+# signal. SQLite serialises this single statement with its write lock;
+# PostgreSQL needs the advisory xact lock in ``create_webhook`` because READ
+# COMMITTED would let two statements both see a stale count.
+_ATOMIC_WEBHOOK_INSERT_SQL = """
+INSERT INTO webhook_webhooks
+    (id, channel_id, server_id, creator_id, name, webhook_type,
+     avatar_url, token_hash, signing_key_public,
+     signing_key_private_encrypted, require_signed_deliveries,
+     created_at, updated_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE (SELECT COUNT(*) FROM webhook_webhooks WHERE channel_id = ?) < ?
+  AND (SELECT COUNT(*) FROM webhook_webhooks WHERE server_id = ?) < ?
+"""
+
+
 class WebhookCRUDMixin(WebhookManagerTrait):
     """Full webhook CRUD operations."""
 
@@ -76,29 +98,78 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             context=f"webhook:{webhook_id}",
         )
 
-        self._db.execute(
-            """INSERT INTO webhook_webhooks
-               (id, channel_id, server_id, creator_id, name, webhook_type,
-                avatar_url, token_hash, signing_key_public,
-                signing_key_private_encrypted, require_signed_deliveries,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                webhook_id,
-                channel_id,
-                server_id,
-                user_id,
-                name,
-                WebhookType.INCOMING.value,
-                avatar_url,
-                token_hash,
-                public_key,
-                private_key_encrypted,
-                1 if require_signed_deliveries else 0,
-                now,
-                now,
-            ),
-        )
+        # PostgreSQL READ COMMITTED would let two concurrent guarded INSERTs
+        # both see a stale count. Serialise per server with an advisory xact
+        # lock. Namespace 130 stays clear of the invite (1/2), emoji (100/101),
+        # sticker (102) and soundboard (120) quota locks; masking to 30 bits
+        # keeps the second key in signed int4 range.
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (130, int(server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self._db.begin_transaction()
+
+            cursor = self._db.execute(
+                _ATOMIC_WEBHOOK_INSERT_SQL,
+                (
+                    webhook_id,
+                    channel_id,
+                    server_id,
+                    user_id,
+                    name,
+                    WebhookType.INCOMING.value,
+                    avatar_url,
+                    token_hash,
+                    public_key,
+                    private_key_encrypted,
+                    1 if require_signed_deliveries else 0,
+                    now,
+                    now,
+                    channel_id,
+                    max_per_channel,
+                    server_id,
+                    max_per_server,
+                ),
+            )
+            # rowcount 0 means a guard subquery found a quota already full at
+            # insert time — a concurrent creator won the race. Roll back and
+            # surface the same quota error the advisory check would have raised,
+            # re-reading the real counts so the message names the full scope.
+            if getattr(cursor, "rowcount", 0) == 0:
+                ch_row = self._db.fetch_one(
+                    "SELECT COUNT(*) as count FROM webhook_webhooks WHERE channel_id = ?",
+                    (channel_id,),
+                )
+                ch_count = ch_row["count"] if ch_row else 0
+                if ch_count >= max_per_channel:
+                    raise WebhookLimitError(
+                        f"Channel has reached maximum of {max_per_channel} webhooks",
+                        max_per_channel,
+                        ch_count,
+                    )
+                sv_row = self._db.fetch_one(
+                    "SELECT COUNT(*) as count FROM webhook_webhooks WHERE server_id = ?",
+                    (server_id,),
+                )
+                sv_count = sv_row["count"] if sv_row else 0
+                raise WebhookLimitError(
+                    f"Server has reached maximum of {max_per_server} webhooks",
+                    max_per_server,
+                    sv_count,
+                )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         return Webhook(
             id=webhook_id,
