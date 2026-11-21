@@ -264,6 +264,11 @@ class _CountingInviteServers:
         self.get_server_calls += 1
         return SimpleNamespace(name="cached server")
 
+    def get_member(self, server_id, user_id):
+        # Mirror the production facade: a warm invite-name hit is re-gated on
+        # a cheap, live membership probe.
+        return SimpleNamespace(id=user_id)
+
 
 @pytest.mark.asyncio
 async def test_invite_info_caches_server_name_but_not_live_invite_fields():
