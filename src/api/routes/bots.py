@@ -15,6 +15,7 @@ import src.api as api
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 
 from src.api.schemas.policy_types import UIText
+from src.api.schemas.url_types import validate_http_url
 
 from src.api.middleware.authentication import (
     get_current_user,
@@ -210,16 +211,23 @@ class UpdateBotProfileRequest(BaseModel):
     )
     @classmethod
     def _http_url(cls, value: Optional[str]) -> Optional[str]:
-        # These links are rendered in the public bot directory. A javascript:
-        # or data: URL would execute for anyone who clicks the profile.
+        """Apply the canonical HTTP-URL policy to every profile link.
+
+        These values are rendered in the public bot directory/profile. A
+        scheme-only ``urlparse`` check let credential-bearing URLs, literal
+        backslashes in the authority (a WHATWG parser differential: the link
+        validates as one host and navigates visitors to another) and
+        control/bidi characters reach that output. The core revalidates only
+        the three informational links, so ``avatar_url``/``banner_url`` rely on
+        this schema as their only gate. Delegate all five to the shared rule
+        used by the rest of the API: absolute http(s), no credentials, no
+        backslash authority, no control characters, bounded length.
+        """
         if value is None:
             return value
-        from urllib.parse import urlparse
-
-        parsed = urlparse(value)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        if not value.strip():
             raise ValueError("must be an absolute http(s) URL")
-        return value
+        return validate_http_url(value, "bot profile URL")
 
 
 class BotDirectoryResponse(BaseModel):
