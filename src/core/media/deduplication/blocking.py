@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import utils.logger as logger
 
+from .paging import clamp_page_limit
+
 
 class BlockingMixin:
     """Provides blocking operations for hashes and users."""
@@ -181,8 +183,9 @@ class BlockingMixin:
         self, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
         """Get list of blocked users."""
-        # Clamp from below: SQLite reads LIMIT -1 as *unlimited*.
-        limit = max(0, limit)
+        # Clamp both ends: LIMIT -1 is *unlimited* and a huge positive limit
+        # still materialized the whole table. Invalid input fails closed.
+        limit = clamp_page_limit(limit)
         offset = max(0, offset)
         rows = self._db.fetch_all(
             """SELECT user_id, reason, blocked_at, blocked_by, expires_at
@@ -221,8 +224,9 @@ class BlockingMixin:
         self, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
         """Get list of blocked hashes."""
-        # Clamp from below: SQLite reads LIMIT -1 as *unlimited*.
-        limit = max(0, limit)
+        # Clamp both ends: LIMIT -1 is *unlimited* and a huge positive limit
+        # still materialized the whole table. Invalid input fails closed.
+        limit = clamp_page_limit(limit)
         offset = max(0, offset)
         rows = self._db.fetch_all(
             """SELECT hash_value, reason, blocked_at, blocked_by, auto_blocked

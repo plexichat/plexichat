@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import utils.logger as logger
 
 from .constants import HashReport, ReportStatus
+from .paging import clamp_page_limit
 
 
 class ReportingMixin:
@@ -102,9 +103,9 @@ class ReportingMixin:
         self, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
     ) -> List[HashReport]:
         """Get hash reports for admin review."""
-        # Clamp from below: SQLite reads LIMIT -1 as *unlimited*, so a
-        # negative limit would dump every report instead of an empty page.
-        limit = max(0, limit)
+        # Clamp both ends: LIMIT -1 is *unlimited* and a huge positive limit
+        # dumped every report. Invalid input fails closed to an empty page.
+        limit = clamp_page_limit(limit)
         offset = max(0, offset)
 
         if status_filter:
