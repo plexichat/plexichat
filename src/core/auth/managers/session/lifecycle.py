@@ -593,7 +593,13 @@ class LifecycleMixin(AuthManagerProtocol):
         return False
 
     def logout_all(self, user_id: int, except_token: Optional[str] = None) -> int:
-        invalidate_pattern("token_verify:*")
+        # NOTE: do NOT invalidate ``token_verify:*`` here. Every sibling
+        # revocation path (``logout``, ``revoke_session``,
+        # ``revoke_sessions_bulk``, ``revoke_device``) drops the verdict cache
+        # AFTER its write, because a verification landing between an early
+        # invalidation and the revocation re-caches the still-live TokenInfo and
+        # keeps it authenticating for the rest of the verify TTL. The
+        # invalidation is performed immediately after each UPDATE below.
 
         # ``except_token`` decides which live session SURVIVES a mass
         # revocation, so it is a credential and must be treated as one. Every
@@ -634,6 +640,9 @@ class LifecycleMixin(AuthManagerProtocol):
                 "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND id != ?",
                 (user_id, except_session_id),
             )
+            # Invalidate after the write so a concurrent verify_token cannot
+            # re-cache the still-valid row in between (see the note above).
+            invalidate_pattern("token_verify:*")
             try:
                 from src.core.events.gateway_emit import emit_security_alert
 
@@ -649,6 +658,9 @@ class LifecycleMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
+        # Invalidate after the write so a concurrent verify_token cannot
+        # re-cache the still-valid row in between (see the note above).
+        invalidate_pattern("token_verify:*")
         try:
             from src.core.events.gateway_emit import emit_security_alert
 
@@ -658,8 +670,10 @@ class LifecycleMixin(AuthManagerProtocol):
         return count_row["cnt"] if count_row else 0
 
     def logout_all_users(self) -> int:
-        invalidate_pattern("token_verify:*")
         self._db.execute("UPDATE auth_sessions SET revoked = 1 WHERE revoked = 0")
+        # Invalidate after the write so a concurrent verify_token cannot
+        # re-cache a still-valid row in between (as in logout_all above).
+        invalidate_pattern("token_verify:*")
         logger.info("Site-wide session purge: all users logged out")
         return 1
 
