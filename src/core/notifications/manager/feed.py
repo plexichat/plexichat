@@ -192,19 +192,18 @@ class FeedMixin(NotificationProtocol):
         return count
 
     def mark_channel_read(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> int:
-        count_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND channel_id = ? AND read = 0",
-            (user_id, channel_id),
-        )
-        count = count_row["count"] if count_row else 0
-
-        # Capture per-conversation counts before marking as read
+        # Capture per-conversation counts before marking as read. This grouped
+        # read is the single source of truth: the returned count is the sum of
+        # its per-conversation totals, so a separate COUNT(*) scan over the very
+        # same filtered rows is redundant. One snapshot also keeps the count and
+        # the counter decrements consistent.
         conv_rows = self._db.fetch_all(
             """SELECT conversation_id, COUNT(*) as total
                FROM notif_notifications WHERE user_id = ? AND channel_id = ? AND read = 0
                GROUP BY conversation_id""",
             (user_id, channel_id),
         )
+        count = sum(row["total"] for row in conv_rows)
 
         self._db.execute(
             "UPDATE notif_notifications SET read = 1 WHERE user_id = ? AND channel_id = ? AND read = 0",
@@ -229,19 +228,15 @@ class FeedMixin(NotificationProtocol):
         return count
 
     def mark_server_read(self, user_id: SnowflakeID, server_id: SnowflakeID) -> int:
-        count_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND server_id = ? AND read = 0",
-            (user_id, server_id),
-        )
-        count = count_row["count"] if count_row else 0
-
-        # Capture per-conversation counts before marking as read
+        # One grouped read feeds both the return value and the decrements (see
+        # mark_channel_read); a standalone COUNT(*) over the same rows is gone.
         conv_rows = self._db.fetch_all(
             """SELECT conversation_id, COUNT(*) as total
                FROM notif_notifications WHERE user_id = ? AND server_id = ? AND read = 0
                GROUP BY conversation_id""",
             (user_id, server_id),
         )
+        count = sum(row["total"] for row in conv_rows)
 
         self._db.execute(
             "UPDATE notif_notifications SET read = 1 WHERE user_id = ? AND server_id = ? AND read = 0",
@@ -264,19 +259,15 @@ class FeedMixin(NotificationProtocol):
         return count
 
     def mark_thread_read(self, user_id: SnowflakeID, thread_id: SnowflakeID) -> int:
-        count_row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM notif_notifications WHERE user_id = ? AND thread_id = ? AND read = 0",
-            (user_id, thread_id),
-        )
-        count = count_row["count"] if count_row else 0
-
-        # Capture per-conversation counts before marking as read
+        # One grouped read feeds both the return value and the decrements (see
+        # mark_channel_read); a standalone COUNT(*) over the same rows is gone.
         conv_rows = self._db.fetch_all(
             """SELECT conversation_id, COUNT(*) as total
                FROM notif_notifications WHERE user_id = ? AND thread_id = ? AND read = 0
                GROUP BY conversation_id""",
             (user_id, thread_id),
         )
+        count = sum(row["total"] for row in conv_rows)
 
         self._db.execute(
             "UPDATE notif_notifications SET read = 1 WHERE user_id = ? AND thread_id = ? AND read = 0",
