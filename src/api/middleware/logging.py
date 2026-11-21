@@ -73,12 +73,13 @@ def _log_info(msg: str):
     if logger:
         try:
             logger.info(msg)
-        except RuntimeError as e:
-            print(f"[LOGGING MIDDLEWARE] RuntimeError: {e}")
-        except Exception as e:
-            print(f"[LOGGING MIDDLEWARE] Exception: {e}")
-    else:
-        print(f"[LOGGING MIDDLEWARE] Logger not available: {msg}")
+        except Exception:
+            # Access logging is best-effort: a logger failure must never fall
+            # back to stdout. stdout is captured by gunicorn/uvicorn and shipped
+            # to log collectors, and ``msg`` carries request data (method,
+            # path and client IP). Fail closed instead of leaking it, matching
+            # the other _log_* helpers.
+            pass
 
 
 def _log_warning(msg: str):
