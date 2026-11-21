@@ -8,11 +8,31 @@ file logs and the admin_audit_log database table for comprehensive audit trails.
 import logging
 import time
 import json
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
     pass
+
+
+# Every admin audit write used to ask the database twice whether
+# ``admin_audit_log.target_user_id`` exists (``column_exists`` performs a
+# ``sqlite_master`` lookup plus ``PRAGMA table_info``, or an
+# ``information_schema`` query on PostgreSQL) just to pick between two INSERT
+# shapes. That schema fact is static for the life of a process, so cache the
+# verdict on the (singleton) logger.
+#
+# Safety properties:
+# * bounded: a hard cap on cached verdicts, keyed only by static
+#   ``(table, column)`` literals -- no request or user data ever enters a key;
+# * fail-closed: an introspection error is never cached and still takes the
+#   historical "extended schema" branch, so the INSERT surfaces the real error
+#   instead of silently writing a truncated row;
+# * multi-node safe: a short TTL bounds staleness so a migration that adds the
+#   column on any node is picked up without a process restart, and an explicit
+#   invalidation hook allows an immediate refresh.
+_SCHEMA_VERDICT_TTL_SECONDS = 30.0
+_SCHEMA_VERDICT_MAX_ENTRIES = 16
 
 
 @dataclass
@@ -47,10 +67,37 @@ class AdminLogger:
         """
         self.file_logger = file_logger or logging.getLogger("admin")
         self._db_logging_enabled = True
+        # {(table, column): (expires_at_monotonic, verdict)}
+        self._schema_verdicts: Dict[Tuple[str, str], Tuple[float, bool]] = {}
 
     def set_db_logging(self, enabled: bool):
         """Enable or disable database logging."""
         self._db_logging_enabled = enabled
+
+    def clear_schema_cache(self) -> None:
+        """Drop cached schema verdicts (e.g. after a migration adds a column)."""
+        self._schema_verdicts.clear()
+
+    def _column_exists_cached(self, db: Any, table: str, column: str) -> bool:
+        """Return ``db.column_exists(...)`` with a bounded, short-TTL memo.
+
+        A failed introspection is deliberately not cached (fail-closed): the
+        caller keeps the historical "assume extended schema" behaviour and the
+        next write retries the check instead of pinning a bad verdict.
+        """
+        key = (table, column)
+        now = time.monotonic()
+        cached = self._schema_verdicts.get(key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        try:
+            verdict = bool(db.column_exists(table, column))
+        except Exception:
+            return True
+        if len(self._schema_verdicts) >= _SCHEMA_VERDICT_MAX_ENTRIES:
+            self._schema_verdicts.clear()
+        self._schema_verdicts[key] = (now + _SCHEMA_VERDICT_TTL_SECONDS, verdict)
+        return verdict
 
     def log_action(
         self,
@@ -144,13 +191,9 @@ class AdminLogger:
         if not target_user_id and entry.target_type == "user":
             target_user_id = entry.target_id
 
-        has_target_user_id = False
-        try:
-            has_target_user_id = bool(
-                db.column_exists("admin_audit_log", "target_user_id")
-            )
-        except Exception:
-            has_target_user_id = True
+        has_target_user_id = self._column_exists_cached(
+            db, "admin_audit_log", "target_user_id"
+        )
 
         if has_target_user_id:
             db.execute(
@@ -367,3 +410,13 @@ def init_admin_logger(file_logger: Optional[logging.Logger] = None) -> AdminLogg
     global _admin_logger
     _admin_logger = AdminLogger(file_logger)
     return _admin_logger
+
+
+def clear_admin_schema_cache() -> None:
+    """Invalidate the singleton logger's cached schema verdicts.
+
+    Call this after a migration changes ``admin_audit_log`` so the next write
+    re-introspects the schema immediately instead of waiting for the TTL.
+    """
+    if _admin_logger is not None:
+        _admin_logger.clear_schema_cache()
