@@ -60,6 +60,68 @@ class ScheduledMessageService:
     def _generate_id(self) -> int:
         return generate_snowflake_id()
 
+    def _assert_channel_post_access(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Apply the live send path's channel gate before storing content.
+
+        ``is_participant`` proves DM participation or membership in the
+        conversation's server, but not that the caller may view or post in the
+        specific channel backing this conversation. The normal send route
+        resolves the channel with ``get_channel`` (membership + channels.view),
+        rejects timed-out members, and checks the server permission set. A
+        scheduled message is dispatched later through the messaging layer,
+        whose only gate is that same membership-only check, so without this
+        guard a member could queue content into a channel they cannot post to.
+        Deny whenever the channel/permission data cannot be resolved rather
+        than treating an unavailable checker as permission.
+        """
+        try:
+            channel_row = self._db.fetch_one(
+                "SELECT id, server_id FROM srv_channels "
+                "WHERE conversation_id = ? AND deleted = 0 LIMIT 1",
+                (conversation_id,),
+            )
+        except Exception:
+            raise PermissionError("Cannot verify channel access")
+        if not channel_row:
+            # DM / group conversation: no separate channel grant applies and
+            # participation has already been verified by the caller.
+            return
+        channel_id = (
+            channel_row["id"] if isinstance(channel_row, dict) else channel_row[0]
+        )
+        server_id = (
+            channel_row["server_id"]
+            if isinstance(channel_row, dict)
+            else channel_row[1]
+        )
+        if not channel_id or not server_id:
+            raise PermissionError("Cannot verify channel access")
+
+        try:
+            import src.api as api
+
+            servers = api.get_servers()
+        except Exception:
+            raise PermissionError("Cannot verify channel access")
+        if servers is None:
+            raise PermissionError("Cannot verify channel access")
+        try:
+            # get_channel enforces membership and channels.view for this
+            # exact caller; a restricted channel resolves to None.
+            if servers.get_channel(channel_id, user_id) is None:
+                raise PermissionError("Cannot post to this channel")
+            if servers.is_timed_out(user_id, server_id):
+                raise PermissionError("Timed out in this server")
+            permissions = servers.get_permissions(user_id, server_id, channel_id)
+            if not permissions or not permissions.get("messages.send", False):
+                raise PermissionError("Missing messages.send permission")
+        except PermissionError:
+            raise
+        except Exception:
+            raise PermissionError("Cannot verify channel access")
+
     def create_scheduled_message(
         self,
         user_id: SnowflakeID,
@@ -118,6 +180,12 @@ class ScheduledMessageService:
             raise PermissionError("Cannot verify conversation participation")
         if not self._participant_svc.is_participant(conversation_id, user_id):
             raise PermissionError("Not a participant in this conversation")
+
+        # Membership alone is not posting permission: a server member may not
+        # be allowed to view/post in this particular channel. Enforce the same
+        # channel gate the live send path uses before persisting content that
+        # dispatch will deliver through a membership-only send path.
+        self._assert_channel_post_access(conversation_id, user_id)
 
         msg_id = self._generate_id()
         self._db.execute(
