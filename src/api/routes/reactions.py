@@ -123,6 +123,41 @@ def _validate_message_in_channel(reactions, mid: int, cid: int) -> int:
     return int(real_channel_id)
 
 
+def _require_channel_view(reactions, user_id: int, mid: int, action: str) -> None:
+    """Fail closed when the actor cannot VIEW the message's channel.
+
+    The core manager gates reaction writes on participation (server membership)
+    plus ``messages.add_reactions`` / ``messages.manage``, but treats view
+    access (``messages.read``) as a separate bit. Without this gate a member
+    denied view by a channel override -- or a moderator who cannot see the
+    channel -- can still write reactions there. Resolve the channel
+    membership-agnostically so a revoked viewer is denied even though they
+    remain a server member. DMs have no server channel row and are left to the
+    manager's own participant gate.
+    """
+    servers_mod = api.get_servers()
+    if servers_mod and hasattr(servers_mod, "get_channel_by_conversation"):
+        conv_id = reactions.get_conversation_id_from_message(mid)
+        srv_channel = (
+            servers_mod.get_channel_by_conversation(conv_id) if conv_id else None
+        )
+        if srv_channel and not servers_mod.has_permission(
+            user_id,
+            srv_channel["server_id"],
+            "messages.read",
+            srv_channel["id"],
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": f"Cannot {action} this message",
+                    }
+                },
+            )
+
+
 async def _dispatch_reaction_event(
     event_type: str,
     user_id: int,
@@ -487,6 +522,11 @@ async def clear_reactions_for_emoji(
     # or event emission.
     real_cid = _validate_message_in_channel(reactions, mid, cid)
 
+    # Fail closed: clearing reactions requires view access to the channel.
+    _require_channel_view(
+        reactions, current_user.user_id, mid, "remove reactions from"
+    )
+
     try:
         decoded_emoji = _validated_emoji(emoji)
 
@@ -614,6 +654,12 @@ async def remove_reaction(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
+
+        # Fail closed: removing a reaction requires view access to the channel.
+        # Kept outside the inner try so its 403 is not rewritten to a 500.
+        _require_channel_view(
+            reactions, current_user.user_id, mid, "remove reactions from"
+        )
 
         try:
             # Validate the message actually belongs to this channel BEFORE any
@@ -764,6 +810,9 @@ async def clear_reactions(
     # Validate the message actually belongs to this channel BEFORE any write
     # or event emission.
     real_cid = _validate_message_in_channel(reactions, mid, cid)
+
+    # Fail closed: clearing all reactions requires view access to the channel.
+    _require_channel_view(reactions, current_user.user_id, mid, "clear reactions on")
 
     try:
         reactions.remove_all_reactions(current_user.user_id, mid)
