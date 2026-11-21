@@ -253,7 +253,14 @@ def _get_profile_visibility(owner_id: int) -> str:
     A missing value falls back to the documented default (public); an
     UNRECOGNIZED stored value fails closed to the limited projection.
     """
-    raw = _read_profile_visibility_raw(owner_id)
+    # ``@cached`` derives its key from the runtime type name of the argument.
+    # The HTTP route passes ``owner_id`` as a ``SnowflakeIDParam`` (an ``int``
+    # subclass), which would produce ``profile_visibility:SnowflakeIDParam:<id>``
+    # while the settings write path invalidates ``profile_visibility:int:<id>``.
+    # Normalize to a plain ``int`` here so the read and invalidation keys agree:
+    # otherwise a tightened visibility (public -> private/friends/servers) stays
+    # warm for the full TTL and keeps exposing private fields to viewers.
+    raw = _read_profile_visibility_raw(int(owner_id))
     if not raw:
         return _DEFAULT_VISIBILITY
     value = str(raw).strip().lower().strip('"')
