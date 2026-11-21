@@ -2,7 +2,7 @@
 Gateway intents - Intent validation and filtering.
 """
 
-from src.core.events.types import GatewayIntent
+from src.core.events.types import EventType, GatewayIntent
 from src.core.events.models import Event
 from src.core.events.router import (
     filter_by_intents as _filter_by_intents,
@@ -108,6 +108,23 @@ def _compute_filter_decision(event: Event, intents: int) -> bool:
     if _get_dm_intent(event.event_type) is None:
         required = _get_required_intent(event.event_type)
         if required is not None and not (intents & required):
+            return False
+
+    # MESSAGE_ACK is the only message-family event that is absent from BOTH
+    # router intent maps and from ``GUILD_MESSAGE_EVENTS``, so the router's
+    # default-allow delivers it to every connection. A read receipt discloses
+    # another user's activity in a conversation (who read up to which message),
+    # so it must obey the same message intent as the conversation it belongs to.
+    # Current emitters build the Event without an explicit scope, which the
+    # router classifies as guild (the same conservative default applied to
+    # other scope-less message events); a correctly DM-scoped ACK instead
+    # requires DIRECT_MESSAGES. Fail closed when neither is declared.
+    if event.event_type is EventType.MESSAGE_ACK:
+        is_dm = event.server_id is None and event.channel_id is not None
+        required = (
+            GatewayIntent.DIRECT_MESSAGES if is_dm else GatewayIntent.GUILD_MESSAGES
+        )
+        if not (intents & required):
             return False
 
     return bool(_filter_by_intents(event, intents))
