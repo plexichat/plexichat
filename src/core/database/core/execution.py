@@ -26,6 +26,17 @@ _DDL_STATEMENT_PREFIXES = ("CREATE", "ALTER")
 # the code segments so string-literal data is never rewritten.
 _SQL_LITERAL_SPLIT_RE = re.compile(r"('(?:[^']|'')*')")
 
+# Quoted literals, quoted identifiers and comments cannot carry a real
+# statement separator. Blank them before counting ``;`` so a semicolon inside
+# e.g. ``'a; b'`` does not look like a second statement. Anything this pattern
+# fails to neutralise (dollar quotes, nested block comments, ...) can only add a
+# spurious separator -- i.e. over-invalidate the short-lived cache -- which is
+# safe. Missing a real separator is not: see ``_has_multiple_statements``.
+_SQL_NON_CODE_RE = re.compile(
+    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|#[^\n]*|/\*.*?\*/",
+    re.DOTALL,
+)
+
 # Statement types that are guaranteed not to mutate table data. Everything
 # else is treated as a write by the query-result-cache invalidation check:
 # fail closed. In particular ``WITH`` is deliberately absent -- a leading CTE
@@ -70,17 +81,35 @@ def _strip_leading_sql_comments(sql: str) -> str:
             return rest
 
 
+def _has_multiple_statements(query: str) -> bool:
+    """True when ``query`` carries more than one SQL statement.
+
+    pg8000 sends parameterless statements through PostgreSQL's simple-query
+    protocol, which executes every ``;``-separated statement in the string. A
+    prefix-only read/write check sees just the first statement, so a write
+    stacked behind a harmless-looking ``SELECT ...;`` would mutate the table
+    without clearing the cache -- leaving a cached authorization verdict
+    serving the pre-write role. Fail closed: any top-level separator makes the
+    whole string a write (over-invalidating a multi-SELECT batch is harmless).
+    """
+    neutralized = _SQL_NON_CODE_RE.sub(" ", query)
+    return sum(1 for part in neutralized.split(";") if part.strip()) > 1
+
+
 def _query_mutates_data(query: str) -> bool:
     """True when ``query`` may mutate table data and must clear the query cache.
 
-    Fails closed: only known read-only statement prefixes are exempt. This
+    Fails closed: only a single, known read-only statement is exempt. This
     catches writes the old ``startswith(("INSERT", "UPDATE", ...))`` check
-    missed -- CTE writes, ``MERGE``, ``TRUNCATE``, and DML preceded by comments
-    that the driver strips before execution but the prefix check could not.
+    missed -- CTE writes, ``MERGE``, ``TRUNCATE``, DML preceded by comments that
+    the driver strips before execution, and writes stacked behind a read in one
+    string (``SELECT 1; UPDATE ...``) that the simple-query protocol runs.
     """
     effective = _strip_leading_sql_comments(query)
     if not effective:
         return False
+    if _has_multiple_statements(effective):
+        return True
     return not effective.upper().startswith(_QUERY_CACHE_READ_PREFIXES)
 
 
