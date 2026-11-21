@@ -89,7 +89,18 @@ class AccessControlMixin(SearchManagerBase):
                 f"WHERE user_id = ? AND conversation_id IN ({placeholders})",
                 (user_id, *chunk),
             )
-            allowed = {int(row["conversation_id"]) for row in rows}
+            # SECURITY: a live msg_participants.conversation_id vouches for the
+            # searcher's visibility only while it is a genuine integer id.
+            # Coercing a malformed-but-coercible value with int() ("05"->5,
+            # 5.9->5, True->1) would admit a conversation the row does not
+            # prove the user participates in, leaking its messages in search.
+            # Fail closed: only exact integer ids from the authoritative
+            # projection may enter the allow set.
+            allowed = {
+                row["conversation_id"]
+                for row in rows
+                if type(row["conversation_id"]) is int
+            }
             for cid in chunk:
                 result[cid] = cid in allowed
         return result
