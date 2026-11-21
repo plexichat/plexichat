@@ -488,6 +488,29 @@ class MemberCrudMixin:
             (user_id,),
         )
         revoked: List[SnowflakeID] = []
+
+        # The "did this member earn a non-default role?" probe used to run one
+        # srv_member_roles/srv_roles join per temporary membership (N+1). A
+        # disconnect can revoke many at once, so resolve every candidate with
+        # bounded set-based IN batches: the query count is now constant in the
+        # number of memberships. This is a fresh read of the authoritative
+        # tables on every purge (no cache), so a just-assigned role is visible
+        # immediately and a purge can never keep a stale "earned" decision.
+        member_ids = [row["member_id"] for row in rows or []]
+        earned_member_ids: set = set()
+        _BATCH = 500  # stay below SQLite/PostgreSQL bound-parameter limits
+        for start in range(0, len(member_ids), _BATCH):
+            chunk = member_ids[start : start + _BATCH]
+            placeholders = ",".join("?" for _ in chunk)
+            earned_rows = self.db.fetch_all(
+                "SELECT DISTINCT mr.member_id FROM srv_member_roles mr "
+                "JOIN srv_roles r ON r.id = mr.role_id "
+                f"WHERE mr.member_id IN ({placeholders}) AND r.is_default = 0",
+                tuple(chunk),
+            )
+            for earned_row in earned_rows or []:
+                earned_member_ids.add(int(earned_row["member_id"]))
+
         # A disconnect can revoke many temporary memberships at once.  Buffer
         # the per-revocation audit writes for the whole loop; the bounded
         # buffer flushes on exit (also on error) so no audit row is lost.
@@ -498,13 +521,7 @@ class MemberCrudMixin:
 
                 # A role other than the server's default makes the membership
                 # permanent (the member contributed/participated).
-                earned = self.db.fetch_one(
-                    "SELECT 1 FROM srv_member_roles mr "
-                    "JOIN srv_roles r ON r.id = mr.role_id "
-                    "WHERE mr.member_id = ? AND r.is_default = 0",
-                    (member_id,),
-                )
-                if earned:
+                if int(member_id) in earned_member_ids:
                     self.db.execute(
                         "UPDATE srv_members SET is_temporary = 0 WHERE id = ?",
                         (member_id,),
