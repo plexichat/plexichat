@@ -35,6 +35,17 @@ A documented ``moved_to`` successor path is tolerated so a benign file rename
 does not produce a false positive.  Non-vacuous self-tests prove that a
 synthetic removal of a marker (and a missing file) are actually flagged, and
 that the documented rename tolerance works.
+
+``absent`` markers and negative assertions
+------------------------------------------
+Some sub-fixes are defined by the *absence* of a vulnerable pattern (e.g. the
+query-cache classifier must NOT treat ``#`` as a comment, and must NOT list
+``EXPLAIN`` as a read-only prefix).  Those entries set ``absent=True``; the
+evaluator inverts the check and fails when the pattern is *found*.  An optional
+``scope=(start_anchor, end_anchor)`` restricts the search to one lexical block,
+so a pattern that is legitimately discussed in an adjacent explanatory comment
+does not create a false positive.  Non-vacuity is proven from the other side:
+a synthetic blob that REINTRODUCES the pattern must be flagged.
 """
 
 from __future__ import annotations
@@ -54,6 +65,11 @@ class FixMarker:
     ``path`` is repo-relative.  ``moved_to`` lists documented successor paths
     tolerated when the original file is renamed/relocated.  ``why`` records the
     security purpose so a future maintainer knows what they are protecting.
+
+    ``absent=True`` inverts the check: the entry passes while ``marker`` is
+    absent and FAILS if the vulnerable pattern reappears.  ``scope`` optionally
+    bounds the search to the text between two literal anchors (used when the
+    pattern is also named in an explanatory comment on the same file).
     """
 
     key: str
@@ -61,6 +77,8 @@ class FixMarker:
     marker: str
     why: str
     moved_to: tuple[str, ...] = field(default_factory=tuple)
+    absent: bool = False
+    scope: tuple[str, str] | None = None
 
     @property
     def candidates(self) -> tuple[str, ...]:
@@ -145,6 +163,75 @@ FIX_MARKERS: tuple[FixMarker, ...] = (
             "a stale authorization verdict after a write"
         ),
     ),
+    # --- Query-cache classifier sub-fixes (seven distinct fixes) ---
+    # The coarse ``query-cache-write-classification`` entry above pins only the
+    # enclosing function.  These entries pin the individual hardening steps so
+    # a refactor that silently drops one of them is caught by name.
+    FixMarker(
+        key="query-cache-escape-string-pattern",
+        path="src/core/database/core/execution.py",
+        marker=r"\b[Ee]'(?:[^'\\]|\\.|'')*'",
+        why=(
+            "backslash-aware [Ee] escape-string alternative in _SQL_NON_CODE_RE; "
+            "without it an escape-quoted quote pairs with a later quote and a "
+            "stacked write separator is swallowed, so a write stays a 'read' "
+            "and stale authz verdicts keep being served"
+        ),
+    ),
+    FixMarker(
+        key="query-cache-line-comment-cr-aware",
+        path="src/core/database/core/execution.py",
+        marker=r"--[^\n\r]*",
+        why=(
+            "the SQL line-comment alternative stops at both newline characters; "
+            "a \\n-only variant lets a CR terminate the PostgreSQL comment early "
+            "and exposes a stacked write separator the cache must see"
+        ),
+    ),
+    FixMarker(
+        key="query-cache-hash-not-comment",
+        path="src/core/database/core/execution.py",
+        marker=r"#[^\n]*",
+        why=(
+            "'#' must NOT be neutralised as a comment: on PostgreSQL it is the "
+            "integer-XOR operator, so stripping a '#' tail would hide a stacked "
+            "'; UPDATE ...' from the separator count. Scoped to the regex block "
+            "because the same text appears in the adjacent rationale comment."
+        ),
+        absent=True,
+        scope=("_SQL_NON_CODE_RE = re.compile(", "re.DOTALL,"),
+    ),
+    FixMarker(
+        key="query-cache-explain-not-read-prefix",
+        path="src/core/database/core/execution.py",
+        marker='"EXPLAIN",',
+        why=(
+            "EXPLAIN must stay out of _QUERY_CACHE_READ_PREFIXES: PostgreSQL "
+            "EXPLAIN ANALYZE executes its target, so a leading EXPLAIN would let "
+            "a committed write keep the query cache serving a stale verdict"
+        ),
+        absent=True,
+    ),
+    FixMarker(
+        key="query-cache-multiple-statement-check",
+        path="src/core/database/core/execution.py",
+        marker="def _has_multiple_statements(",
+        why=(
+            "counts top-level separators after neutralising literals, quoted "
+            "bodies and comments, so a write stacked behind a read is treated "
+            "as a write and the cache is invalidated"
+        ),
+    ),
+    FixMarker(
+        key="query-cache-dollar-quote-neutralization",
+        path="src/core/database/core/execution.py",
+        marker=r"\$\$.*?\$\$|\$(?P<dollar_tag>",
+        why=(
+            "dollar-quoted bodies ($$...$$ and $tag$...$tag$) are blanked as a "
+            "unit so a lone quote inside one cannot pair with an outside quote "
+            "and swallow a genuine stacked-write separator"
+        ),
+    ),
     FixMarker(
         key="dedup-listing-limit-clamp",
         path="src/core/media/deduplication/paging.py",
@@ -187,10 +274,41 @@ ADDED_MARKER_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# The fine-grained query-cache classifier sub-fixes.  Kept explicit so every
+# one of them gets a dedicated non-vacuity self-test below.
+QUERY_CACHE_MARKER_KEYS: frozenset[str] = frozenset(
+    {
+        "query-cache-escape-string-pattern",
+        "query-cache-line-comment-cr-aware",
+        "query-cache-hash-not-comment",
+        "query-cache-explain-not-read-prefix",
+        "query-cache-multiple-statement-check",
+        "query-cache-dollar-quote-neutralization",
+    }
+)
+
 
 def _read_text(repo_relative: str) -> str:
     """Read a registry-relative file from the current tree."""
     return (_REPO_ROOT / repo_relative).read_text(encoding="utf-8")
+
+
+def _scoped_text(text: str, record: FixMarker) -> str | None:
+    """Return only the region between ``record.scope`` anchors, or ``None``.
+
+    ``None`` is treated as a failure by the evaluator so a missing scope can
+    never make a negative assertion pass vacuously.
+    """
+    if record.scope is None:
+        return text
+    start_anchor, end_anchor = record.scope
+    start = text.find(start_anchor)
+    if start < 0:
+        return None
+    end = text.find(end_anchor, start + len(start_anchor))
+    if end < 0:
+        return None
+    return text[start:end]
 
 
 def _evaluate(
@@ -199,7 +317,9 @@ def _evaluate(
     """Return ``(present, detail)`` for one fix marker.
 
     ``reader`` is injectable so the self-tests can simulate a marker being
-    removed or a file being moved without touching the real tree.
+    removed/reintroduced or a file being moved without touching the real tree.
+    For ``absent`` records the polarity is inverted: the entry passes only
+    while the vulnerable pattern is NOT found in the (optional) scope.
     """
     checked: list[str] = []
     for rel in record.candidates:
@@ -208,19 +328,43 @@ def _evaluate(
         except (OSError, UnicodeDecodeError) as exc:
             checked.append(f"{rel} (unreadable: {exc.__class__.__name__})")
             continue
-        if record.marker in text:
-            return True, f"marker {record.marker!r} for {record.key!r} present in {rel}"
-        checked.append(rel)
+        searched = _scoped_text(text, record)
+        if searched is None:
+            checked.append(f"{rel} (scope {record.scope!r} not found)")
+            continue
+        found = record.marker in searched
+        if record.absent:
+            if not found:
+                return True, (
+                    f"absent marker {record.marker} for {record.key!r} "
+                    f"confirmed absent in {rel}"
+                )
+            checked.append(f"{rel} (VULNERABLE pattern {record.marker} present)")
+        else:
+            if found:
+                return True, f"marker {record.marker} for {record.key!r} present in {rel}"
+            checked.append(rel)
 
-    location = f"expected at {record.path!r}"
+    if record.absent:
+        location = f"must be absent at {record.path!r}"
+    else:
+        location = f"expected at {record.path!r}"
     if record.moved_to:
         location += f" or documented successor(s) {record.moved_to!r}"
-    detail = (
-        f"SECURITY FIX MARKER MISSING: {record.key!r} -- "
-        f"{record.marker!r} not found ({location}); checked: "
-        + ", ".join(checked)
-        + f". Purpose: {record.why}"
-    )
+    if record.absent:
+        detail = (
+            f"SECURITY FIX MARKER VIOLATED: {record.key!r} -- vulnerable pattern "
+            f"{record.marker} was REINTRODUCED ({location}); checked: "
+            + ", ".join(checked)
+            + f". Purpose: {record.why}"
+        )
+    else:
+        detail = (
+            f"SECURITY FIX MARKER MISSING: {record.key!r} -- "
+            f"{record.marker} not found ({location}); checked: "
+            + ", ".join(checked)
+            + f". Purpose: {record.why}"
+        )
     return False, detail
 
 
@@ -270,6 +414,71 @@ def test_added_marker_synthetic_removal_is_flagged(key: str) -> None:
     present, detail = _evaluate(record, reader_without_marker)
     assert not present, f"synthetic removal of {key!r} was not detected"
     assert record.key in detail and record.marker in detail
+
+
+def test_query_cache_keys_are_registered() -> None:
+    """The fine-grained classifier keys name real, unique registry entries."""
+    keys = [r.key for r in FIX_MARKERS]
+    assert QUERY_CACHE_MARKER_KEYS <= set(keys), (
+        "query-cache key set references keys missing from FIX_MARKERS: "
+        f"{sorted(QUERY_CACHE_MARKER_KEYS - set(keys))}"
+    )
+    for key in QUERY_CACHE_MARKER_KEYS:
+        record = next(r for r in FIX_MARKERS if r.key == key)
+        assert record.path == "src/core/database/core/execution.py"
+
+
+def test_absent_marker_scopes_resolve() -> None:
+    """Every scoped negative assertion resolves to a real, non-empty region."""
+    for record in FIX_MARKERS:
+        if not (record.absent and record.scope):
+            continue
+        region = _scoped_text(_read_text(record.path), record)
+        assert region, f"scope {record.scope!r} did not resolve for {record.key!r}"
+        assert record.marker not in region, (
+            f"vulnerable pattern is already present in the current scope "
+            f"of {record.key!r}"
+        )
+
+
+@pytest.mark.parametrize("key", sorted(QUERY_CACHE_MARKER_KEYS))
+def test_query_cache_marker_non_vacuity(key: str) -> None:
+    """Each sub-fix is live in the tree AND the guard reacts when it is undone.
+
+    Positive markers are tested by synthetic removal (the fix disappears).
+    ``absent`` markers are tested from the other side: a synthetic blob that
+    REINTRODUCES the vulnerable pattern must be flagged, otherwise the negative
+    assertion would be vacuous.
+    """
+    record = next(r for r in FIX_MARKERS if r.key == key)
+    present_in_tree, _ = _evaluate(record)
+    assert present_in_tree, f"query-cache marker {key!r} is not present in the tree"
+
+    if record.absent:
+
+        def reader_reintroduces(rel: str) -> str:
+            text = _read_text(rel)
+            if record.scope is None:
+                return text + f"\n{record.marker}\n"
+            start_anchor, _end_anchor = record.scope
+            return text.replace(
+                start_anchor, f"{start_anchor}\n{record.marker}\n", 1
+            )
+
+        present, detail = _evaluate(record, reader_reintroduces)
+        assert not present, (
+            f"reintroduction of vulnerable pattern for {key!r} was not detected"
+        )
+        assert record.key in detail and record.marker in detail
+        assert "REINTRODUCED" in detail
+    else:
+
+        def reader_without_marker(rel: str) -> str:
+            return _read_text(rel).replace(record.marker, "")
+
+        present, detail = _evaluate(record, reader_without_marker)
+        assert not present, f"synthetic removal of {key!r} was not detected"
+        assert record.key in detail and record.marker in detail
 
 
 def test_selftest_synthetic_removal_is_flagged() -> None:

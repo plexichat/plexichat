@@ -34,6 +34,16 @@ silent pass.  Removal is tolerated only for an explicitly documented successor
 Non-vacuity is proven twice: (1) a fake blob with the marker stripped out is
 flagged for every registry entry, and (2) a throwaway git repo whose working
 tree diverges from HEAD shows the reader really returns the committed blob.
+
+Negative (``absent``) markers
+-----------------------------
+Some fixes are the *absence* of a vulnerable pattern (the query-cache
+classifier must not treat ``#`` as a comment, and must not list ``EXPLAIN`` as
+a read prefix).  Such entries set ``absent=True`` and pass only while the
+pattern is missing from the committed blob; an optional ``scope`` limits the
+search to one lexical block so a pattern named in an adjacent rationale
+comment is not a false positive.  Non-vacuity is proven from the inverted side:
+a synthetic committed blob that REINTRODUCES the pattern must be flagged.
 """
 
 from __future__ import annotations
@@ -64,6 +74,10 @@ class CommittedFixMarker:
     targets: a primary-path removal is tolerated only when a successor blob
     carries the marker.  ``why`` records the security purpose and the stale-file
     revert that this entry is meant to catch.
+
+    ``absent=True`` inverts the check: the entry passes while ``marker`` is
+    absent and FAILS if the vulnerable pattern is committed.  ``scope`` optionally
+    bounds the search to the text between two literal anchors.
     """
 
     key: str
@@ -71,6 +85,8 @@ class CommittedFixMarker:
     marker: str
     why: str
     successors: tuple[str, ...] = field(default_factory=tuple)
+    absent: bool = False
+    scope: tuple[str, str] | None = None
 
     @property
     def candidates(self) -> tuple[str, ...]:
@@ -164,6 +180,75 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "conversation-id alias"
         ),
     ),
+    # --- Query-cache classifier sub-fixes (seven distinct fixes) ---
+    # The committed counterparts of the working-tree meta-guard entries: these
+    # pin the individual hardening steps inside _query_mutates_data so a peer
+    # committing a stale/gutted execution.py is caught by name.
+    CommittedFixMarker(
+        key="query-cache-escape-string-pattern",
+        path="src/core/database/core/execution.py",
+        marker=r"\b[Ee]'(?:[^'\\]|\\.|'')*'",
+        why=(
+            "backslash-aware [Ee] escape-string alternative in _SQL_NON_CODE_RE; "
+            "without it an escape-quoted quote pairs with a later quote and a "
+            "stacked write separator is swallowed, so a write stays a 'read' "
+            "and stale authz verdicts keep being served"
+        ),
+    ),
+    CommittedFixMarker(
+        key="query-cache-line-comment-cr-aware",
+        path="src/core/database/core/execution.py",
+        marker=r"--[^\n\r]*",
+        why=(
+            "the SQL line-comment alternative stops at both newline characters; "
+            "a \\n-only variant lets a CR terminate the PostgreSQL comment early "
+            "and exposes a stacked write separator the cache must see"
+        ),
+    ),
+    CommittedFixMarker(
+        key="query-cache-hash-not-comment",
+        path="src/core/database/core/execution.py",
+        marker=r"#[^\n]*",
+        why=(
+            "'#' must NOT be neutralised as a comment: on PostgreSQL it is the "
+            "integer-XOR operator, so stripping a '#' tail would hide a stacked "
+            "'; UPDATE ...' from the separator count. Scoped to the regex block "
+            "because the same text appears in the adjacent rationale comment."
+        ),
+        absent=True,
+        scope=("_SQL_NON_CODE_RE = re.compile(", "re.DOTALL,"),
+    ),
+    CommittedFixMarker(
+        key="query-cache-explain-not-read-prefix",
+        path="src/core/database/core/execution.py",
+        marker='"EXPLAIN",',
+        why=(
+            "EXPLAIN must stay out of _QUERY_CACHE_READ_PREFIXES: PostgreSQL "
+            "EXPLAIN ANALYZE executes its target, so a leading EXPLAIN would let "
+            "a committed write keep the query cache serving a stale verdict"
+        ),
+        absent=True,
+    ),
+    CommittedFixMarker(
+        key="query-cache-multiple-statement-check",
+        path="src/core/database/core/execution.py",
+        marker="def _has_multiple_statements(",
+        why=(
+            "counts top-level separators after neutralising literals, quoted "
+            "bodies and comments, so a write stacked behind a read is treated "
+            "as a write and the cache is invalidated"
+        ),
+    ),
+    CommittedFixMarker(
+        key="query-cache-dollar-quote-neutralization",
+        path="src/core/database/core/execution.py",
+        marker=r"\$\$.*?\$\$|\$(?P<dollar_tag>",
+        why=(
+            "dollar-quoted bodies ($$...$$ and $tag$...$tag$) are blanked as a "
+            "unit so a lone quote inside one cannot pair with an outside quote "
+            "and swallow a genuine stacked-write separator"
+        ),
+    ),
 )
 
 
@@ -187,6 +272,19 @@ def commit_sha() -> str:
     return sha
 
 
+# Fine-grained query-cache classifier sub-fixes pinned in the committed blob.
+QUERY_CACHE_COMMITTED_KEYS: frozenset[str] = frozenset(
+    {
+        "query-cache-escape-string-pattern",
+        "query-cache-line-comment-cr-aware",
+        "query-cache-hash-not-comment",
+        "query-cache-explain-not-read-prefix",
+        "query-cache-multiple-statement-check",
+        "query-cache-dollar-quote-neutralization",
+    }
+)
+
+
 def _make_blob_reader(commit: str, repo_root: Path = _REPO_ROOT):
     """Return a reader that fetches ``<commit>:<path>`` with ``git show``."""
 
@@ -199,12 +297,31 @@ def _make_blob_reader(commit: str, repo_root: Path = _REPO_ROOT):
     return read
 
 
+def _scoped_text(text: str, record: CommittedFixMarker) -> str | None:
+    """Return only the region between ``record.scope`` anchors, or ``None``.
+
+    ``None`` is treated as a failure so a missing scope can never make a
+    negative assertion pass vacuously.
+    """
+    if record.scope is None:
+        return text
+    start_anchor, end_anchor = record.scope
+    start = text.find(start_anchor)
+    if start < 0:
+        return None
+    end = text.find(end_anchor, start + len(start_anchor))
+    if end < 0:
+        return None
+    return text[start:end]
+
+
 def _evaluate(record: CommittedFixMarker, reader) -> tuple[bool, str]:
     """Return ``(present, detail)`` using the injectable ``reader``.
 
     The reader is injectable so the self-tests can serve synthetic committed
-    blobs (marker removed, file deleted, file relocated) without touching the
-    real repository.
+    blobs (marker removed/reintroduced, file deleted, file relocated) without
+    touching the real repository.  For ``absent`` records the polarity is
+    inverted: the entry passes only while the vulnerable pattern is NOT found.
     """
     checked: list[str] = []
     for rel in record.candidates:
@@ -216,22 +333,45 @@ def _evaluate(record: CommittedFixMarker, reader) -> tuple[bool, str]:
         except (OSError, UnicodeDecodeError) as exc:
             checked.append(f"{rel} (unreadable: {exc.__class__.__name__})")
             continue
-        if record.marker in text:
-            return True, (
-                f"marker {record.marker!r} for {record.key!r} present in "
-                f"committed blob {rel!r}"
-            )
-        checked.append(rel)
+        searched = _scoped_text(text, record)
+        if searched is None:
+            checked.append(f"{rel} (scope {record.scope!r} not found)")
+            continue
+        found = record.marker in searched
+        if record.absent:
+            if not found:
+                return True, (
+                    f"absent marker {record.marker} for {record.key!r} confirmed "
+                    f"absent in committed blob {rel!r}"
+                )
+            checked.append(f"{rel} (VULNERABLE pattern {record.marker} present)")
+        else:
+            if found:
+                return True, (
+                    f"marker {record.marker} for {record.key!r} present in "
+                    f"committed blob {rel!r}"
+                )
+            checked.append(rel)
 
-    location = f"expected in committed blob {record.path!r}"
+    if record.absent:
+        location = f"must be absent in committed blob {record.path!r}"
+    else:
+        location = f"expected in committed blob {record.path!r}"
     if record.successors:
         location += f" or documented successor(s) {record.successors!r}"
-    detail = (
-        f"COMMITTED SECURITY FIX MARKER MISSING: {record.key!r} -- "
-        f"{record.marker!r} not found ({location}); checked: "
-        + ", ".join(checked)
-        + f". Purpose: {record.why}"
-    )
+    if record.absent:
+        detail = (
+            f"COMMITTED SECURITY FIX MARKER VIOLATED: {record.key!r} -- "
+            f"vulnerable pattern {record.marker} was REINTRODUCED ({location}); "
+            "checked: " + ", ".join(checked) + f". Purpose: {record.why}"
+        )
+    else:
+        detail = (
+            f"COMMITTED SECURITY FIX MARKER MISSING: {record.key!r} -- "
+            f"{record.marker} not found ({location}); checked: "
+            + ", ".join(checked)
+            + f". Purpose: {record.why}"
+        )
     return False, detail
 
 
@@ -264,12 +404,31 @@ def test_registry_is_documentable_and_unique() -> None:
     "record", COMMITTED_FIX_MARKERS, ids=[r.key for r in COMMITTED_FIX_MARKERS]
 )
 def test_synthetic_reverted_blob_is_flagged(record: CommittedFixMarker) -> None:
-    """Non-vacuity: a fake blob lacking the marker must fail the guard.
+    """Non-vacuity for every registry entry, in its own polarity.
 
-    This simulates a peer committing a stale staged file that reverts the fix:
-    the evaluator has to notice it for *every* registry entry, not just pass
-    vacuously on an unchecked path.
+    Positive markers: a fake blob lacking the marker must fail the guard (a
+    peer committing a stale staged file reverted the fix).  ``absent`` markers:
+    a fake blob that REINTRODUCES the vulnerable pattern must fail instead.
+    Neither type may pass vacuously on an unchecked path.
     """
+    if record.absent:
+        if record.scope is None:
+            synthetic = f"# reintroduced vulnerable pattern\n{record.marker}\n"
+        else:
+            start_anchor, end_anchor = record.scope
+            synthetic = f"{start_anchor}\n{record.marker}\n{end_anchor}\n"
+
+        def attacker_blob(path: str) -> str:
+            return synthetic
+
+        present, detail = _evaluate(record, attacker_blob)
+        assert not present, (
+            f"synthetic reintroduction of vulnerable pattern for {record.key!r} "
+            "was not caught"
+        )
+        assert record.key in detail and record.marker in detail
+        assert "REINTRODUCED" in detail
+        return
 
     def reverted_blob(path: str) -> str:
         return f"# synthetic reverted blob for {path}\n# mark erased\n"
@@ -278,6 +437,72 @@ def test_synthetic_reverted_blob_is_flagged(record: CommittedFixMarker) -> None:
     assert not present, f"synthetic committed revert of {record.key!r} was not caught"
     assert record.key in detail and record.marker in detail
     assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+def test_query_cache_committed_keys_are_registered() -> None:
+    """The fine-grained classifier keys name real, unique committed entries."""
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert QUERY_CACHE_COMMITTED_KEYS <= set(keys), (
+        "query-cache key set references keys missing from COMMITTED_FIX_MARKERS: "
+        f"{sorted(QUERY_CACHE_COMMITTED_KEYS - set(keys))}"
+    )
+    for key in QUERY_CACHE_COMMITTED_KEYS:
+        record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
+        assert record.path == "src/core/database/core/execution.py"
+
+
+def test_committed_absent_marker_scopes_resolve(commit_sha: str) -> None:
+    """Negative-assertion scopes resolve in the real HEAD blob, non-vacuously."""
+    reader = _make_blob_reader(commit_sha)
+    for record in COMMITTED_FIX_MARKERS:
+        if not (record.absent and record.scope):
+            continue
+        region = _scoped_text(reader(record.path), record)
+        assert region, f"scope {record.scope!r} did not resolve for {record.key!r}"
+        assert record.marker not in region, (
+            f"vulnerable pattern already committed in the scope of {record.key!r}"
+        )
+
+
+@pytest.mark.parametrize("key", sorted(QUERY_CACHE_COMMITTED_KEYS))
+def test_query_cache_committed_marker_non_vacuity(
+    key: str, commit_sha: str
+) -> None:
+    """Each committed sub-fix is live at HEAD and the guard reacts if undone.
+
+    Positive markers are proven by a synthetic reverted blob.  ``absent``
+    markers are proven from the other side: a synthetic committed blob that
+    REINTRODUCES the vulnerable pattern must be flagged.
+    """
+    record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
+    reader = _make_blob_reader(commit_sha)
+    present, detail = _evaluate(record, reader)
+    assert present, detail
+
+    if record.absent:
+
+        def blob_reintroduces(path: str) -> str:
+            if record.scope is None:
+                return f"# reintroduced\n{record.marker}\n"
+            start_anchor, end_anchor = record.scope
+            return f"{start_anchor}\n{record.marker}\n{end_anchor}\n"
+
+        present, detail = _evaluate(record, blob_reintroduces)
+        assert not present, (
+            f"committed reintroduction of vulnerable pattern for {key!r} "
+            "was not detected"
+        )
+        assert record.key in detail and record.marker in detail
+        assert "REINTRODUCED" in detail
+    else:
+
+        def reverted_blob(path: str) -> str:
+            return f"# synthetic reverted blob for {path}\n# mark erased\n"
+
+        present, detail = _evaluate(record, reverted_blob)
+        assert not present, f"synthetic committed revert of {key!r} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
 
 def test_undocumented_blob_removal_is_flagged() -> None:
