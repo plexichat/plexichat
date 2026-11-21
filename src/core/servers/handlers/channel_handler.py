@@ -332,9 +332,13 @@ class ChannelHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
-        self.manager.require_permission(
-            user_id, channel.server_id, "channels.manage", channel_id
-        )
+        # channels.manage is a SERVER-scoped permission. Resolving it with a
+        # channel_id applies per-channel overrides, which would let a member
+        # granted channels.manage in a single channel delete/move/edit that
+        # channel or rewrite its overrides. Check it at server scope so only a
+        # genuine server-wide grant (or owner/administrator) authorizes these
+        # channel-management writes.
+        self.manager.require_permission(user_id, channel.server_id, "channels.manage")
 
         updates = []
         params = []
@@ -455,9 +459,13 @@ class ChannelHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
-        self.manager.require_permission(
-            user_id, channel.server_id, "channels.manage", channel_id
-        )
+        # channels.manage is a SERVER-scoped permission. Resolving it with a
+        # channel_id applies per-channel overrides, which would let a member
+        # granted channels.manage in a single channel delete/move/edit that
+        # channel or rewrite its overrides. Check it at server scope so only a
+        # genuine server-wide grant (or owner/administrator) authorizes these
+        # channel-management writes.
+        self.manager.require_permission(user_id, channel.server_id, "channels.manage")
 
         now = self.manager._get_timestamp()
         self.db.execute(
@@ -527,9 +535,13 @@ class ChannelHandler:
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
-        self.manager.require_permission(
-            user_id, channel.server_id, "channels.manage", channel_id
-        )
+        # channels.manage is a SERVER-scoped permission. Resolving it with a
+        # channel_id applies per-channel overrides, which would let a member
+        # granted channels.manage in a single channel delete/move/edit that
+        # channel or rewrite its overrides. Check it at server scope so only a
+        # genuine server-wide grant (or owner/administrator) authorizes these
+        # channel-management writes.
+        self.manager.require_permission(user_id, channel.server_id, "channels.manage")
 
         self.db.execute(
             "UPDATE srv_channels SET position = ?, updated_at = ? WHERE id = ?",

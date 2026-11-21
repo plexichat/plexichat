@@ -71,11 +71,11 @@ async def set_channel_slowmode(
         raise_internal("Servers module not available")
 
     can_manage = False
+    # channels.manage/administrator are server-scoped; do not pass ``cid`` here
+    # or a per-channel override could authorize this channel-management write.
     for permission in ("channels.manage", "administrator"):
         try:
-            if servers_mod.has_permission(
-                current_user.user_id, server_id, permission, cid
-            ):
+            if servers_mod.has_permission(current_user.user_id, server_id, permission):
                 can_manage = True
                 break
         except Exception as perm_error:
