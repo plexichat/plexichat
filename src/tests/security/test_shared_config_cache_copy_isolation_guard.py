@@ -13,6 +13,8 @@ capability verdicts       _capability_cache (artifacts)                       _c
 admin host allowlist      _explicit_hosts_cache["value"]                      _copy_explicit_hosts on every read
 profile bulk              mem_cache_get("user_profile:*")                     _profile_snapshot on store and read
 emoji catalog             ReactionManager._emoji_catalog_cache_instance       replace()/dict() on every cached read
+tier-limit verdicts       _tier_limits_snapshot / _tier_configuration_snap    _copy_tier_limits on store and read
+API config                _api_config_snapshot                                deepcopy on store and every read
 ========================  ================================================  ================================================
 
 Why each value is in scope (the poisoning impact the copy breaks):
@@ -27,15 +29,19 @@ Why each value is in scope (the poisoning impact the copy breaks):
   returned profile would poison every later listing that resolves that id.
 * emoji ``CustomEmoji`` rows / count dicts are cached server shared metadata;
   a caller renaming a returned element would rewrite the cached catalog.
+* ``TierLimits`` (mutable dataclass) and ``TierConfiguration`` (mutable list +
+  dict) are cached process-wide by config version and gate rate limits, upload
+  sizes and emoji slots; mutating either poisons every later quota decision.
+* ``APIConfig`` (mutable dataclass with CORS lists and ``access_token_required``)
+  is cached process-wide and gates CORS and access-token auth on every request;
+  mutating it widens those gates for every later caller.
 
 Values that are deliberately NOT part of this family (so the enumeration is
 complete): caches whose value is immutable (``StaticPolicy`` frozen dataclass
 with a frozenset, ``URLResolutionCache`` tuple resolutions, CATEGORY_SCOPE,
 ``permission_grant_cache`` frozensets, ``read_cache`` bytes), and reaction L0
 query-result caches whose rows are display data with the live authorization
-gate applied *before* the cache (see ``ReactionReadCache`` docstring).  Two
-config snapshots (tier limits, API config) are owned by other agents in this
-sweep and have their own surface; they are intentionally not guarded here.
+gate applied *before* the cache (see ``ReactionReadCache`` docstring).
 
 The guard parses each module with ``ast`` and requires the accessor to actually
 call its copy helper on the cached value -- not merely that a copy helper is
@@ -103,6 +109,23 @@ COPY_GUARDS: Tuple[Spec, ...] = (
             ("get_emoji_counts", ("dict",)),
         ),
     ),
+    (
+        "tier-limit verdicts",
+        "src/core/features/__init__.py",
+        "_tier_limits_snapshot",
+        ("_copy_tier_limits", ("deepcopy",)),
+        (
+            ("get_tier_limits", ("_copy_tier_limits",)),
+            ("get_tier_configuration", ("_copy_tier_limits",)),
+        ),
+    ),
+    (
+        "API config",
+        "src/api/config.py",
+        "_api_config_snapshot",
+        None,
+        (("get_api_config", ("deepcopy",)),),
+    ),
 )
 
 
@@ -169,14 +192,16 @@ def _all_sources() -> Dict[str, str]:
 def test_enumeration_is_complete_and_nonempty():
     """Deleting a family from the guard is itself a failure."""
     labels = [spec[0] for spec in COPY_GUARDS]
-    assert len(labels) == len(set(labels)) == 4, (
-        f"expected the four shared config/metadata cache families, got {labels}"
+    assert len(labels) == len(set(labels)) == 6, (
+        f"expected the six shared config/metadata cache families, got {labels}"
     )
     assert set(labels) == {
         "capability verdicts",
         "admin host allowlist",
         "profile bulk",
         "emoji catalog",
+        "tier-limit verdicts",
+        "API config",
     }
 
 

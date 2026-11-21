@@ -106,7 +106,12 @@ def test_api_config_wiring_reuses_snapshot_value(monkeypatch):
 
     results = [api_config.get_api_config() for _ in range(200)]
 
-    assert all(result is sentinel for result in results)
+    # The snapshot value is materialised once; callers receive detached copies
+    # (APIConfig is mutable config gating CORS/auth), so results are equal but
+    # never the shared object itself.
+    assert all(result == sentinel for result in results)
+    assert all(result is not sentinel for result in results)
+    assert len({id(result) for result in results}) == len(results)
     assert len(loads) == 1, "API config must be materialised once per version"
     # The short staleness ceiling throttles the (stat-backed) version check on
     # this per-request path; repeated reads inside the window hit memory only.

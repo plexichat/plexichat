@@ -4,6 +4,7 @@ API configuration - Settings for the REST API.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, cast
 import os
@@ -212,7 +213,10 @@ def _build_api_config() -> APIConfig:
         max_request_body_size=api_conf.get("max_request_body_size", 10 * 1024 * 1024),
         max_worker_threads=api_conf.get("max_worker_threads", 16),
     )
-    return result
+    # The CORS method/header/expose lists above come straight from the config
+    # dict. Detach them so the cached snapshot owns its values and an in-place
+    # edit of the source config cannot silently rewrite a memoized verdict.
+    return deepcopy(result)
 
 
 # A single versioned snapshot replaces the old five-minute TTL cache.  The
@@ -237,8 +241,15 @@ _api_config_snapshot = VersionedConfigSnapshot(
 
 
 def get_api_config() -> APIConfig:
-    """Return the current API config from the versioned snapshot."""
-    return cast(APIConfig, _api_config_snapshot.snapshot())
+    """Return the current API config from the versioned snapshot.
+
+    ``APIConfig`` is a mutable dataclass with mutable list fields (CORS
+    origins/methods/headers and ``access_token_required``) that drive the
+    CORS and access-token gates on every request. The snapshot is process-wide
+    and keyed only by config version, so hand out a detached copy: a caller
+    editing its copy must never widen the gate for every later request.
+    """
+    return deepcopy(cast(APIConfig, _api_config_snapshot.snapshot()))
 
 
 def clear_api_config_cache() -> None:

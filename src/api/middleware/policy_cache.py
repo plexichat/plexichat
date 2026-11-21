@@ -63,8 +63,11 @@ def _config_version():
     return (
         id(loader),
         file_version(path),
-        id(api_cfg),
-        getattr(api_cfg, "api_prefix", None),
+        # Value-based, not identity-based: get_api_config() hands out a
+        # detached copy on every read, so id(api_cfg) would differ on each
+        # version check and force a needless rebuild even with no config
+        # change. repr() is stable for equal APIConfig values.
+        repr(api_cfg),
     )
 
 

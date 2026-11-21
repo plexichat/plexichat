@@ -84,9 +84,13 @@ class TestApiConfigStatThrottle:
 
     def test_throttled_output_matches_a_forced_rebuild(self, api_snapshot):
         settings = api_config.get_api_config()
-        # Several throttled reads must all return the identical object.
+        # Several throttled reads must all resolve the same memoized value.
+        # They are equal but deliberately NOT the same object: APIConfig is
+        # mutable config fed to the CORS/auth gates, so each caller gets a
+        # detached copy that cannot poison the shared snapshot.
         for _ in range(50):
-            assert api_config.get_api_config() is settings
+            assert api_config.get_api_config() == settings
+            assert api_config.get_api_config() is not settings
 
         # Force an unconditional rebuild and confirm the *values* are identical.
         api_snapshot.invalidate()

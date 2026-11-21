@@ -48,7 +48,12 @@ def test_repeated_resolution_identical_and_single_compute(monkeypatch):
     expected = features._compute_tier_limits("standard")
     results = [features.get_tier_limits("standard") for _ in range(200)]
 
-    assert all(r == expected and r is results[0] for r in results)
+    # One table build serves every hot-path lookup. The verdicts are equal in
+    # value, but each caller gets its own detached instance: a caller mutating
+    # its TierLimits must not poison the memoized verdict used by the others.
+    assert all(r == expected for r in results)
+    assert all(r is not results[0] for r in results[1:])
+    assert len({id(r) for r in results}) == len(results)
     assert len(builds) == 1
     assert snapshot.stats()["rebuilds"] == 1
     assert 0 < features._TIER_LIMITS_CACHE_TTL_SECONDS <= 10
@@ -185,3 +190,42 @@ def test_expired_grant_never_served_from_cache(db, test_user):
     assert features.get_user_features(test_user.id) is not None
     assert features.get_user_tier(test_user.id) == features.get_default_tier()
     assert features.has_feature(test_user.id, "can_voice") is False
+
+
+def test_mutated_tier_verdict_cannot_poison_later_decisions(monkeypatch):
+    """An in-place edit of a returned verdict must not widen any later gate."""
+    first = features.get_tier_limits("standard")
+    baseline = first.to_dict()
+
+    # A caller (or a bug holding onto the returned object) tries to widen the
+    # upload/rate-limit/emoji-slot gates through the object it was handed.
+    first.multiplier = 1000.0
+    first.max_file_size_mb = -1
+    first.custom_emoji_slots = -1
+
+    # The warm read is detached from the memo and pristine.
+    second = features.get_tier_limits("standard")
+    assert second is not first
+    assert second.to_dict() == baseline
+    assert features._tier_limits_snapshot.snapshot()["standard"].to_dict() == baseline
+
+    # The decision that consumes the verdict is unaffected.
+    monkeypatch.setattr(features, "get_user_tier", lambda _uid: "standard")
+    assert features.get_rate_limit_multiplier(1) == baseline["multiplier"]
+
+
+def test_mutated_tier_configuration_cannot_poison_cached_table():
+    """The admin tier table copy must not expose the cached mutable objects."""
+    first = features.get_tier_configuration()
+    baseline = {tier: limits.to_dict() for tier, limits in first.limits.items()}
+
+    first.limits["standard"].multiplier = 999.0
+    first.tiers.append("rogue")
+    first.default = "rogue"
+
+    second = features.get_tier_configuration()
+    assert second is not first
+    assert second.tiers == features._tier_configuration_snapshot.snapshot().tiers
+    assert "rogue" not in second.tiers
+    assert second.default == features._tier_configuration_snapshot.snapshot().default
+    assert {tier: limits.to_dict() for tier, limits in second.limits.items()} == baseline

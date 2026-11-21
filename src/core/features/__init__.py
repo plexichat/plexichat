@@ -70,6 +70,7 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
+from copy import deepcopy
 from typing import Optional, List, Any
 
 import utils.logger as logger
@@ -218,6 +219,20 @@ def get_available_tiers() -> List[str]:
     )
 
 
+def _copy_tier_limits(limits: TierLimits) -> TierLimits:
+    """Return an independent copy of a memoized tier-limit verdict.
+
+    ``TierLimits`` is a mutable dataclass and the resolved table is cached
+    process-wide in ``_tier_limits_snapshot`` (keyed only by config version).
+    Handing the cached instance to a caller would let one in-place edit (e.g.
+    ``limits.max_file_size_mb = -1`` or ``limits.multiplier = 100``) silently
+    widen the upload/rate-limit/emoji-slot gates every later request sees for
+    the whole config version. Copy on both the store and read paths so the
+    memoized object is never reachable by a caller.
+    """
+    return deepcopy(limits)
+
+
 def _compute_tier_limits(tier: str) -> TierLimits:
     """Resolve one tier's limits from config (uncached, authoritative).
 
@@ -229,9 +244,11 @@ def _compute_tier_limits(tier: str) -> TierLimits:
 
     if tier not in tiers_config:
         # Fail closed: an unknown tier is rejected, a known one falls back to
-        # its built-in limits. No cached verdict can bypass this branch.
+        # its built-in limits. No cached verdict can bypass this branch. The
+        # default is copied so the cached table never aliases the module-level
+        # DEFAULT_TIER_LIMITS singleton that other callers can reach.
         if tier in DEFAULT_TIER_LIMITS:
-            return DEFAULT_TIER_LIMITS[tier]
+            return _copy_tier_limits(DEFAULT_TIER_LIMITS[tier])
         raise InvalidTierError(f"Unknown tier: {tier}")
 
     # Tier limits come from trusted operator YAML; -1 is the documented
@@ -270,15 +287,19 @@ def get_tier_limits(tier: str) -> TierLimits:
         reconstruction happens once per config version instead of once per
         request. Unknown tiers and invalid config still raise and are never
         cached, so the gate remains fail-closed.
+
+        A detached copy is returned on every read: ``TierLimits`` is mutable
+        and feeds upload-size/rate-limit/emoji-slot decisions, so callers must
+        never be able to mutate the shared memoized verdict.
     """
     table = _tier_limits_snapshot.snapshot()
     limits = table.get(tier)
     if limits is not None:
-        return limits
+        return _copy_tier_limits(limits)
     # A tier absent from the configured table is either a known built-in
     # (default limits) or unknown (rejected). Both must be resolved by the
     # authoritative helper, never inferred from the cache.
-    return _compute_tier_limits(tier)
+    return _copy_tier_limits(_compute_tier_limits(tier))
 
 
 def get_default_tier() -> str:
@@ -360,8 +381,21 @@ _tier_configuration_snapshot = VersionedConfigSnapshot(
 
 
 def get_tier_configuration() -> TierConfiguration:
-    """Return the current tier table, rebuilding only when config changes."""
-    return _tier_configuration_snapshot.snapshot()
+    """Return the current tier table, rebuilding only when config changes.
+
+    ``TierConfiguration`` exposes a mutable tier list and a dict of mutable
+    ``TierLimits``; both are detached here so a caller editing the returned
+    table cannot poison the cached snapshot used by the admin tier listing
+    (and, through the shared limit objects, downstream quota decisions).
+    """
+    cached = _tier_configuration_snapshot.snapshot()
+    return TierConfiguration(
+        tiers=list(cached.tiers),
+        limits={
+            tier: _copy_tier_limits(limits) for tier, limits in cached.limits.items()
+        },
+        default=cached.default,
+    )
 
 
 # === Per-request tier-limits resolution cache ===
