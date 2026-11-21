@@ -6,6 +6,9 @@ methods are mixed into :class:`~src.core.stickers.manager.StickerManager`.
 
 import json
 import re
+import threading
+import time
+from collections import OrderedDict
 from typing import Any, Optional, List
 
 import utils.logger as logger
@@ -36,6 +39,74 @@ from .exceptions import (
 # result set to be materialised. Both directions are bounded here so the
 # invariant holds regardless of which caller reaches the manager.
 MAX_DISCOVERY_LIMIT = 200
+
+
+# A sticker's pack id is immutable for the lifetime of the row, so it is safe
+# to memoize the lightweight existence/pack lookup on the send hot path. The
+# tier stays small and short-lived: a cross-worker deletion can only leave a
+# stale entry for at most this TTL, and local sticker/pack deletions evict
+# eagerly (see StickerManager.delete_sticker / delete_pack).
+_STICKER_PACK_ID_TTL = 5.0
+_STICKER_PACK_ID_MAX_ENTRIES = 512
+_PACK_ID_MISS = object()
+
+
+class _StickerPackIdCache:
+    """Bounded LRU with a monotonic TTL for ``sticker_id -> pack_id``."""
+
+    def __init__(self, clock=time.monotonic) -> None:
+        self._data: "OrderedDict[int, tuple[float, int]]" = OrderedDict()
+        self._lock = threading.RLock()
+        self._clock = clock
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, sticker_id: int):
+        now = self._clock()
+        with self._lock:
+            item = self._data.get(sticker_id)
+            if item is None:
+                self._misses += 1
+                return _PACK_ID_MISS
+            expires_at, pack_id = item
+            if expires_at <= now:
+                del self._data[sticker_id]
+                self._misses += 1
+                return _PACK_ID_MISS
+            self._data.move_to_end(sticker_id)
+            self._hits += 1
+            return pack_id
+
+    def set(self, sticker_id: int, pack_id: int) -> None:
+        with self._lock:
+            self._data.pop(sticker_id, None)
+            self._data[sticker_id] = (self._clock() + _STICKER_PACK_ID_TTL, pack_id)
+            while len(self._data) > _STICKER_PACK_ID_MAX_ENTRIES:
+                self._data.popitem(last=False)
+
+    def invalidate_sticker(self, sticker_id: int) -> None:
+        with self._lock:
+            self._data.pop(sticker_id, None)
+
+    def invalidate_pack(self, pack_id: int) -> None:
+        """Drop every sticker whose resolved pack is ``pack_id``."""
+        with self._lock:
+            for key in [k for k, (_exp, p) in self._data.items() if p == pack_id]:
+                del self._data[key]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "hits": self._hits,
+                "misses": self._misses,
+                "size": len(self._data),
+                "max_entries": _STICKER_PACK_ID_MAX_ENTRIES,
+                "ttl_seconds": _STICKER_PACK_ID_TTL,
+            }
 
 
 def _bounded_listing_limit(value: Any, default: int = 10) -> int:
@@ -193,6 +264,15 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
         """Public-facing variant of :meth:`get_popular_stickers`."""
         return self.get_popular_stickers(limit=max(1, limit))
 
+    _PACK_ID_CACHE_ATTR = "_sticker_pack_id_cache_instance"
+
+    def _sticker_pack_id_cache(self) -> _StickerPackIdCache:
+        cache = getattr(self, self._PACK_ID_CACHE_ATTR, None)
+        if cache is None:
+            cache = _StickerPackIdCache()
+            setattr(self, self._PACK_ID_CACHE_ATTR, cache)
+        return cache
+
     def _sticker_pack_id(self, sticker_id: int) -> Optional[int]:
         """Look up only a sticker's pack id, skipping the usage-count JOIN.
 
@@ -200,11 +280,24 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
         build ``Sticker.usage_count``. Permission checks and the send/existence
         gate need only the sticker's identity/pack, so paying for that
         aggregation on every send is wasted work on the usage hot path.
+
+        The pack id is memoized in a bounded, short-TTL tier because the send
+        route calls this twice for one sticker (once from ``can_use_sticker``,
+        once from ``send_sticker``). Deletions evict eagerly so a removed
+        sticker cannot keep resolving through a warm entry.
         """
+        cache = self._sticker_pack_id_cache()
+        cached = cache.get(sticker_id)
+        if cached is not _PACK_ID_MISS:
+            return cached
         row = self._db.fetch_one(
             "SELECT pack_id FROM sticker_stickers WHERE id = ?", (sticker_id,)
         )
-        return int(row["pack_id"]) if row else None
+        if not row:
+            return None
+        pack_id = int(row["pack_id"])
+        cache.set(sticker_id, pack_id)
+        return pack_id
 
     def _pack_authz(self, pack_id: int):
         """Return ``(pack_type, server_id, created_by)`` without the count JOIN.
