@@ -132,6 +132,47 @@ def _unique_member_user_ids(members) -> list:
     return user_ids
 
 
+def _public_identity_map(auth, user_ids) -> dict:
+    """Resolve the public identity fields a roster row actually renders.
+
+    A member response only shows ``username``, ``avatar_url`` and ``badges``.
+    ``auth.get_users_bulk`` used to fetch those through a wide
+    ``SELECT u.* LEFT JOIN user_features`` and, on every cold roster read,
+    decrypt each user's email (and date of birth) even though neither field is
+    ever serialized. That is a per-member PII-decryption cost on the list hot
+    path. ``get_user_profiles_bulk`` resolves the exact same public fields from
+    the bounded profile cache (L1 + shared) with a narrow SELECT and no PII
+    decryption; it is the same primitive the relationship and message listings
+    already use. Fall back to the legacy bulk lookup for auth objects that do
+    not expose the narrow API so fakes/older callers keep working.
+    """
+    if not auth or not user_ids:
+        return {}
+    getter = getattr(auth, "get_user_profiles_bulk", None)
+    raw = getter(user_ids) if getter is not None else auth.get_users_bulk(user_ids)
+    result = {}
+    for uid, profile in (raw or {}).items():
+        try:
+            uid_int = int(uid)
+        except (TypeError, ValueError):
+            continue
+        if profile is None:
+            continue
+        if isinstance(profile, dict):
+            result[uid_int] = {
+                "username": profile.get("username"),
+                "avatar_url": profile.get("avatar_url"),
+                "badges": profile.get("badges") or [],
+            }
+        else:
+            result[uid_int] = {
+                "username": getattr(profile, "username", None),
+                "avatar_url": getattr(profile, "avatar_url", None),
+                "badges": getattr(profile, "badges", None) or [],
+            }
+    return result
+
+
 @router.get(
     "/{server_id}/members",
     response_model=MemberListResponse,
@@ -205,9 +246,7 @@ def get_server_members(
 
         user_ids = _unique_member_user_ids(members)
 
-        users_map = {}
-        if auth and user_ids:
-            users_map = auth.get_users_bulk(user_ids)
+        users_map = _public_identity_map(auth, user_ids)
 
         presence_map = {}
         if presence and user_ids:
@@ -239,6 +278,9 @@ def get_server_members(
 
             user_id = int(raw_user_id)
             user = users_map.get(user_id) or users_map.get(str(user_id))
+            username = user["username"] if user else None
+            avatar_url = user["avatar_url"] if user else None
+            badges = user["badges"] if user else []
 
             pres = presence_map.get(user_id) or presence_map.get(str(user_id))
             presence_data = PresenceResponse(status="offline")
@@ -256,13 +298,13 @@ def get_server_members(
                     if raw_member_id
                     else None,
                     user_id=SnowflakeID(user_id),
-                    username=str(user.username) if user else f"User {user_id}",
+                    username=str(username) if username else f"User {user_id}",
                     nickname=nickname,
-                    avatar_url=getattr(user, "avatar_url", None),
+                    avatar_url=avatar_url,
                     joined_at=joined_at,
                     roles=[SnowflakeID(r) for r in (roles or [])],
                     presence=presence_data,
-                    badges=getattr(user, "badges", []),
+                    badges=badges,
                     timeout_until=timeout_until,
                     timeout_reason=timeout_reason,
                 )
