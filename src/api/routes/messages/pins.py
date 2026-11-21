@@ -22,7 +22,10 @@ from src.core.servers.exceptions import (
 )
 from .helpers import _message_to_response, require_snowflake
 from .messages_crud.base import MessagesCRUDBase
-from .messages_crud.broadcast import _resolve_recipients
+from .messages_crud.broadcast import (
+    _fanout_safe_message_body,
+    _resolve_recipients,
+)
 
 router = APIRouter(tags=["Messages"])
 
@@ -243,8 +246,15 @@ async def pin_message(
                         )
 
                         if user_ids:
+                            # The response is serialized for the PINNER as
+                            # viewer, but this one body is fanned out to every
+                            # channel viewer. Strip that viewer's poll results,
+                            # read state and reaction "me" flags from the
+                            # on-wire copy (the actor's HTTP result is a bare
+                            # SuccessResponse, so nothing viewer-specific is
+                            # lost). Fail closed via the shared sanitizer.
                             event = build_message_update(
-                                response.model_dump(),
+                                _fanout_safe_message_body(response),
                                 channel_id=cid,
                                 server_id=event_server_id,
                             )
@@ -398,8 +408,15 @@ async def unpin_message(
                         )
 
                         if user_ids:
+                            # The response is serialized for the PINNER as
+                            # viewer, but this one body is fanned out to every
+                            # channel viewer. Strip that viewer's poll results,
+                            # read state and reaction "me" flags from the
+                            # on-wire copy (the actor's HTTP result is a bare
+                            # SuccessResponse, so nothing viewer-specific is
+                            # lost). Fail closed via the shared sanitizer.
                             event = build_message_update(
-                                response.model_dump(),
+                                _fanout_safe_message_body(response),
                                 channel_id=cid,
                                 server_id=event_server_id,
                             )
