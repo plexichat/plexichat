@@ -10,6 +10,8 @@ from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 from typing import Optional, Tuple
 
 
+from ...database.cache.request_local import coalesced_cache_get
+
 from ..models import SignedUrl
 from ..exceptions import SigningError, SignatureExpiredError, SignatureInvalidError
 
@@ -51,7 +53,44 @@ class UrlSigner:
 
         Returns:
             SignedUrl object
+
+        A message listing can carry the same media file on many attachments
+        and messages. Signing is a pure function of these inputs apart from
+        the wall-clock expiry it embeds, so identical requests are coalesced
+        within one request instead of recomputing the HMAC, the URL parse and
+        the base64 encoding for every attachment. The viewer id is part of the
+        key, so a URL signed for one credential can never be served to another;
+        the memo is request-scoped and never outlives the request.
         """
+        extra_key = None
+        if extra_data:
+            extra_key = tuple(sorted((str(k), str(v)) for k, v in extra_data.items()))
+        cache_key = f"urlsign:{url}:{file_id}:{user_id}:{expires_in}:{extra_key}"
+
+        def _sign() -> SignedUrl:
+            return self._sign_url_uncached(
+                url, file_id, user_id, expires_in, extra_data
+            )
+
+        signed = coalesced_cache_get(cache_key, loader=_sign)
+        # ``SignedUrl`` is a mutable dataclass. Return a fresh instance to each
+        # caller so one consumer cannot mutate what another observes.
+        return SignedUrl(
+            url=signed.url,
+            expires_at=signed.expires_at,
+            signature=signed.signature,
+            file_id=signed.file_id,
+        )
+
+    def _sign_url_uncached(
+        self,
+        url: str,
+        file_id: int,
+        user_id: Optional[int] = None,
+        expires_in: Optional[int] = None,
+        extra_data: Optional[dict] = None,
+    ) -> SignedUrl:
+        """Compute a signed URL without the per-request coalescing layer."""
         expiry_seconds = expires_in or self._default_expiry
         now_ms = int(time.time() * 1000)
         expires_at = now_ms + (expiry_seconds * 1000)
