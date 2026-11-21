@@ -206,6 +206,15 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         12.0,
         "waits out the coalescing eviction window: 5.89s idle, 9.47s in #2534",
     ),
+    # Its cost is the fixture, not the assertions: the test seeds 105 shared
+    # workbooks one create_workbook + grant_workbook call at a time, then makes
+    # four listing calls that are supposed to cost one grant read each. Under
+    # the shard's own workers that seeding queues, and #2736 measured 14.77s
+    # against a 14.75s ceiling -- a budget, not the code, being gated.
+    "src.tests.suite.test_sum_workbook_listing_grant_batch::test_list_workbooks_page_bounds_keep_one_grant_query": (
+        12.0,
+        "seeds 105 shared workbooks one grant at a time: ~3s idle, 14.77s at 2.95x load (#2736)",
+    ),
     "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeLoggerSetup::test_every_production_module_imports": (
         10.0,
         "child-interpreter import of the whole tree: 2.7s idle, 7.7s at 2x oversubscription, 15.7s at 3x",
