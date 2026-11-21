@@ -43,6 +43,29 @@ def _scope_id(value):
         return str(value)
 
 
+# DM/group event audiences were the last gateway audience still resolved from
+# scratch on every event: ``_get_dm_participant_ids`` lists every conversation
+# participant and resolves a two-way block set, so a burst of messages/typing/
+# reactions in the same conversation repeats the whole scan. Memoize the fully
+# filtered audience in the same bounded, copy-safe, short-TTL primitive used
+# for presence. The key is the complete resolution identity -- channel, acting
+# user (block exclusions depend on it), audience sources and router -- so one
+# conversation/actor can never reuse another's recipients, and a source/router
+# swap always re-resolves. Fail-closed empty results are cached too: withholding
+# for one TTL window is safer than widening an audience to a blocked party.
+_dm_participant_cache = RecipientResolutionCache()
+
+
+def clear_dm_participant_cache() -> None:
+    """Invalidate all cached DM participant audiences (setup, tests)."""
+    _dm_participant_cache.clear()
+
+
+def get_dm_participant_cache_stats() -> Dict[str, int]:
+    """Expose hit/miss/size counters for observability and regression tests."""
+    return _dm_participant_cache.stats()
+
+
 # Hard ceiling on the number of recipients one event may resolve to. The
 # recipient list is a shared input to every delivery lane: critical
 # subscribers are invoked with it on the emitting request thread, the bounded
@@ -352,6 +375,32 @@ class EventRouter:
         return members if members else []
 
     def _get_dm_participant_ids(
+        self, channel_id: int, acting_user_id: Optional[int] = None
+    ) -> List[int]:
+        """Get participant user IDs for a DM/group conversation (cached).
+
+        See ``_resolve_dm_participant_ids`` for the resolution and block-filter
+        semantics. The resolved audience is memoized for a short epoch in a
+        bounded, copy-safe cache keyed by the complete resolution identity, so
+        a burst of events in the same conversation pays for one scan. The acting
+        user is part of the key because the two-way block exclusions depend on
+        it; a different actor therefore never reuses another's filtered list.
+        """
+        cache_key = (
+            _scope_id(channel_id),
+            _scope_id(acting_user_id),
+            id(self._messaging),
+            id(self._relationships),
+            id(self),
+        )
+        cached = _dm_participant_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = self._resolve_dm_participant_ids(channel_id, acting_user_id)
+        _dm_participant_cache.put(cache_key, result)
+        return result
+
+    def _resolve_dm_participant_ids(
         self, channel_id: int, acting_user_id: Optional[int] = None
     ) -> List[int]:
         """Get participant user IDs for a DM/group conversation.
