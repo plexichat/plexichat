@@ -640,6 +640,17 @@ class AccountReaper:
                 "DELETE FROM admin_role_assignments WHERE admin_id = ?",
                 (user_id,),
             )
+            # Purging an admin must also revoke its admin bearer sessions.
+            # SessionMixin.validate_session only rejects tokens for accounts
+            # with auth_users.account_locked = 1; once the auth_users row is
+            # erased below, that guard no longer fires, so without this
+            # delete a purged admin keeps a valid admin token until natural
+            # expiry. Role assignments above are already removed for the
+            # same reason, so this admin table is known to exist here.
+            self._db.execute(
+                "DELETE FROM admin_sessions WHERE admin_id = ?",
+                (user_id,),
+            )
             self._db.execute(
                 "DELETE FROM srv_member_roles WHERE member_id IN (SELECT id FROM srv_members WHERE user_id = ?)",
                 (user_id,),

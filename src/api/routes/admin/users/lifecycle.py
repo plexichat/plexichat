@@ -9,6 +9,11 @@ from fastapi import Request, HTTPException
 from src.api.schemas.admin import ForceUsernameChangeRequest
 from src.api.schemas.common import SuccessResponse
 from ..utils import check_host_restriction, require_admin_permission
+from .admin_users import (
+    _assert_hierarchy_at_write,
+    _can_manage_admin_at,
+    _load_admin_hierarchy,
+)
 from .base import AdminUsersRouterProtocol
 import utils.logger as logger
 
@@ -150,9 +155,33 @@ class LifecycleMixin(AdminUsersRouterProtocol):
         check_host_restriction(request)
         admin_id = require_admin_permission(request, "users.force_purge")
 
+        db = self._get_db()
         auth = self._get_auth()
         try:
             uid = self._parse_user_id(user_id)
+            # A force purge is a destructive admin-targeting mutation: the
+            # reaper cascade removes the target's admin role assignments and
+            # auth account. Every other admin-targeting route (update/delete/
+            # toggle-status, ban/unban admin, force-password-change) refuses a
+            # target at or above the actor's position. Refuse here too, fail
+            # closed on lookup errors, and re-assert at write time against a
+            # concurrent promotion/revocation.
+            hierarchy = _load_admin_hierarchy(db, int(admin_id), uid)
+            if hierarchy["target_exists"] and not _can_manage_admin_at(
+                int(admin_id), uid, hierarchy["current_pos"], hierarchy["target_pos"]
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Cannot purge admins at or above your own position",
+                        }
+                    },
+                )
+            if hierarchy["target_exists"]:
+                _assert_hierarchy_at_write(db, int(admin_id), uid)
+
             auth.force_purge_account(uid, admin_id=int(admin_id))
             logger.warning(f"Admin {admin_id} force-purged user {uid}")
 
