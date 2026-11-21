@@ -82,12 +82,36 @@ def _recipient_accepts_friend_requests(recipient_id: int) -> bool:
     return str(raw).strip().lower() not in _FRIEND_REQUESTS_DISABLED_VALUES
 
 
-async def _check_friend_request_rate_limit(user_id: int) -> None:
-    """Throttle friend-request submission per user (best-effort).
+def _rate_limiter_unavailable() -> HTTPException:
+    """Uniform 503 for a friend-request limiter we cannot trust.
 
-    Reuses the shared rate-limit manager used elsewhere (reports, feedback).
-    If it cannot be initialised we skip the check rather than blocking
-    legitimate requests.
+    Friend requests deliver a message to another user, so an unenforced limit
+    is an abuse primitive (harassment/spam), not a degraded nicety. Every path
+    that cannot establish or spend the shared counter must deny with the same
+    opaque 503 rather than silently waving the request through.
+    """
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "error": {
+                "code": 503,
+                "message": "Friend requests are temporarily unavailable",
+            }
+        },
+    )
+
+
+async def _check_friend_request_rate_limit(user_id: int) -> None:
+    """Throttle friend-request submission per user in the shared store.
+
+    This limiter fails CLOSED. The previous version returned (allowing the
+    send) whenever the limiter could not be set up or the counter update
+    raised, which turned any store outage into an unbounded friend-request
+    flood. Report and feedback submission use the same fail-closed contract.
+
+    The budget is spent with a single atomic increment. The former
+    check-then-increment pair let concurrent requests all observe the same
+    sub-limit count and then each push the counter past the budget.
     """
     try:
         import src.core.ratelimit as ratelimit
@@ -96,30 +120,29 @@ async def _check_friend_request_rate_limit(user_id: int) -> None:
         if not ratelimit.is_setup():
             ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
         manager = ratelimit.get_manager()
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"Friend-request rate limit unavailable, skipping check: {e}")
-        return
+    except Exception as exc:
+        logger.error("Friend-request rate limiter unavailable: %s", exc)
+        raise _rate_limiter_unavailable() from exc
 
     now_seconds = int(time.time())
     minute_window = now_seconds - (now_seconds % 60)
     key = f"friend_requests:send:minute:{user_id}:{minute_window}"
     try:
-        count = await manager.aincrement_custom_usage(key, "count", 0, ttl=120)
-        if count >= FRIEND_REQUEST_RATE_LIMIT:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={
-                    "error": {
-                        "code": 429,
-                        "message": "Too many friend requests sent. Please slow down.",
-                    }
-                },
-            )
-        await manager.aincrement_custom_usage(key, "count", 1, ttl=120)
-    except HTTPException:
-        raise
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"Friend-request rate limit increment failed: {e}")
+        count = await manager.aincrement_custom_usage(key, "count", 1, ttl=120)
+    except Exception as exc:
+        logger.error("Friend-request rate-limit spend failed: %s", exc)
+        raise _rate_limiter_unavailable() from exc
+
+    if count > FRIEND_REQUEST_RATE_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many friend requests sent. Please slow down.",
+                }
+            },
+        )
 
 
 class FriendRequestMixin:
