@@ -211,8 +211,20 @@ def check_host_restriction(request: Request, require_admin_ui: bool = True) -> N
                         status_code=403,
                         detail={"error": {"code": 403, "message": "Access denied"}},
                     )
-        except ImportError:
-            pass
+        except ImportError as exc:
+            # Fail closed: without the licensing module we cannot tell whether
+            # this instance runs on a provisional/test license, so we cannot
+            # enforce its host allowlist. Letting the request through would
+            # allow a test-licensed deployment to be administered from any
+            # host, defeating the guard that keeps provisional licenses off
+            # networked deployments.
+            logger.warning(
+                "Licensing module unavailable; denying admin access: %s", exc
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            ) from exc
 
     admin_config = config.get("admin_ui", {})
     if require_admin_ui and not admin_config.get("enabled", False):
