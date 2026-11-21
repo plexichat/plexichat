@@ -19,6 +19,7 @@ IP), or by a shared sentinel bucket.
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Optional, Tuple
 
 from .constants import MAX_COMPONENT_KEY_LENGTH
@@ -72,14 +73,13 @@ def normalise_resource_id(value: object) -> Optional[int]:
 
 
 def normalise_ip_address(value: object) -> Optional[str]:
-    """Return a bounded IP principal.
+    """Return a bounded, canonical IP principal.
 
     Non-string or empty inputs yield ``None`` (no IP bucket). Oversized
     values collapse onto :data:`INVALID_IP_PRINCIPAL` rather than producing a
-    fresh hashed bucket, so header rotation cannot grow the keyspace. IPv6
-    literals keep their colons -- :mod:`.keys` escapes key separators, so a
-    colon cannot forge an extra segment here (unlike the legacy user-id path).
-    Control characters are rejected outright.
+    fresh hashed bucket, so header rotation cannot grow the keyspace. Control
+    characters are rejected outright. Parseable addresses are canonicalized so
+    every textual spelling of one host shares a single rate-limit bucket.
     """
     if not isinstance(value, str):
         return None
@@ -90,7 +90,18 @@ def normalise_ip_address(value: object) -> Optional[str]:
         return INVALID_IP_PRINCIPAL
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
         return INVALID_IP_PRINCIPAL
-    return candidate
+    try:
+        parsed = ipaddress.ip_address(candidate)
+    except ValueError:
+        # Unparseable but bounded input stays attributable and limited
+        # verbatim; none of the checks above are weakened.
+        return candidate
+    # An IPv4 peer may surface as ::ffff:a.b.c.d from a dual-stack socket but
+    # as a.b.c.d in X-Forwarded-For; fold the mapped form so both spellings
+    # share one budget.
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+        return str(parsed.ipv4_mapped)
+    return str(parsed)
 
 
 def normalise_principal(
