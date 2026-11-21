@@ -45,17 +45,19 @@ _SQL_NON_CODE_RE = re.compile(
 
 # Statement types that are guaranteed not to mutate table data. Everything
 # else is treated as a write by the query-result-cache invalidation check:
-# fail closed. In particular ``WITH`` is deliberately absent -- a leading CTE
-# can wrap INSERT/UPDATE/DELETE (``WITH ... UPDATE ...``), and those writes
-# would otherwise leave cached SELECTs over the mutated table stale (a cached
-# authorization verdict surviving a role demotion, for example). Over-
-# invalidating the short-lived query cache for the rare ``WITH ... SELECT``
-# reader is harmless; serving a pre-write snapshot is not.
+# fail closed. ``WITH`` is deliberately absent -- a leading CTE can wrap
+# INSERT/UPDATE/DELETE (``WITH ... UPDATE ...``). ``EXPLAIN`` is absent too:
+# bare ``EXPLAIN`` only prints a plan, but PostgreSQL's ``EXPLAIN ANALYZE``
+# (also ``EXPLAIN (ANALYZE, ...)``) EXECUTES its target statement, so
+# ``EXPLAIN ANALYZE UPDATE ...`` commits a write that the prefix check would
+# otherwise call a read -- leaving cached SELECTs over the mutated table stale
+# (a cached authorization verdict surviving a role demotion, for example).
+# Over-invalidating the short-lived query cache for rare ``WITH ... SELECT`` /
+# ``EXPLAIN SELECT`` readers is harmless; serving a pre-write snapshot is not.
 _QUERY_CACHE_READ_PREFIXES = (
     "SELECT",
     "PRAGMA",
     "VALUES",
-    "EXPLAIN",
     "SHOW",
     "DESCRIBE",
     "DESC",
