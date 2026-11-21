@@ -70,7 +70,7 @@ def test_cookie_mismatch_failure_clears_state_cookie(test_client, monkeypatch):
     )
 
     assert result.status_code == 400, result.text
-    assert "state cookie" in result.json()["error"]["message"]
+    assert result.json()["error"]["message"] == "Security verification failed"
     headers = _delete_header(result)
     assert headers, "failed callback must send a Set-Cookie clearing the state cookie"
     assert "Max-Age=0" in headers[0]

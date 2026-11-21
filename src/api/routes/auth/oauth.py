@@ -44,6 +44,17 @@ except ImportError:  # pragma: no cover
 
 router = APIRouter()
 
+# Every failure in the OAuth state / state-cookie gate returns this ONE static
+# message. ``verify_oauth_state`` deliberately returns distinct internal
+# reasons ("Invalid state token" vs "State token already used"/"State token
+# expired"/"provider mismatch"/"redirect URI mismatch"), but echoing them to
+# an unauthenticated callback caller is an existence oracle: it lets anyone
+# who supplies a guessed or intercepted state token learn whether it ever
+# existed and, if so, what happened to it. The detailed reason stays in the
+# server-side log (where operators need it); the client only ever sees this
+# uniform response.
+_OAUTH_STATE_FAILURE_MESSAGE = "Security verification failed"
+
 
 # ----------------------------- redirect_uri allow-list -----------------------------
 #
@@ -718,7 +729,7 @@ async def oauth_callback(
             detail={
                 "error": {
                     "code": 400,
-                    "message": f"Security verification failed: {error_msg}",
+                    "message": _OAUTH_STATE_FAILURE_MESSAGE,
                 }
             },
             headers=_oauth_state_cookie_clear_headers(),
@@ -741,7 +752,9 @@ async def oauth_callback(
                 detail={
                     "error": {
                         "code": 400,
-                        "message": "Security verification failed: state cookie mismatch",
+                        # Reaching this branch already proves the state token
+                        # exists, so a distinct message would be an oracle too.
+                        "message": _OAUTH_STATE_FAILURE_MESSAGE,
                     }
                 },
                 headers=_oauth_state_cookie_clear_headers(),
