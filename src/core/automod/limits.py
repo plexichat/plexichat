@@ -46,9 +46,19 @@ def bounded_reason(value, field="reason"):
 
 
 def clip_text(value, maximum, field="text"):
-    """Clip untrusted text before it is stored in a violation/audit row."""
-    import re
+    """Clip untrusted text before it is stored in a violation/audit row.
 
-    text = str(value or "")
-    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
+    The text is quoted from a *violating user's* message (matched keywords,
+    regex captures, examples, ...) and lands in ``automod_violations`` and the
+    ``automod_audit.reason`` column, which moderators and log shippers render as
+    single-line entries.  A local C0+DEL-only regex let U+0085 (NEL), the
+    Unicode LINE/PARAGRAPH SEPARATORs (U+2028/U+2029) and the bidi format
+    controls through, so one crafted message could forge extra audit lines or
+    render as a different string than the one actually recorded.  Use the shared
+    primitive so every consumer stays on the same side of that parser
+    differential; it removes the whole forbidden set, never less than before.
+    """
+    from src.core.security.hardening.text import strip_control_characters
+
+    text = strip_control_characters(value)
     return text[:maximum]
