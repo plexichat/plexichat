@@ -198,6 +198,43 @@ class ConversationService(BaseService):
             )
         return conv
 
+    def enforce_group_dm_privacy(
+        self, initiator_id: SnowflakeID, participant_id: SnowflakeID
+    ) -> None:
+        """Fail-closed DM-privacy gate for adding a user to a group DM."""
+        relationships = _get_relationships_module()
+        if relationships is not None:
+            if relationships.is_blocked_by_either(initiator_id, participant_id):
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+        else:
+            try:
+                blocked_row = self._db.fetch_one(
+                    "SELECT 1 AS ok FROM rel_blocked WHERE "
+                    "(blocker_id = ? AND blocked_id = ?) OR "
+                    "(blocker_id = ? AND blocked_id = ?)",
+                    (initiator_id, participant_id, participant_id, initiator_id),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Group DM block fallback lookup failed for "
+                    f"({initiator_id}, {participant_id}) (failing closed): {e}"
+                )
+                raise ConversationAccessDeniedError(
+                    "Recipient does not accept DMs"
+                ) from e
+            if blocked_row is not None:
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+
+        settings = self._user_settings_svc.get_message_settings(participant_id)
+        if settings.allow_dms_from == "none":
+            raise ConversationAccessDeniedError("Recipient does not accept DMs")
+        if settings.allow_dms_from == "friends":
+            if relationships is None:
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+            friend_ids = relationships.get_friend_ids(participant_id)
+            if int(initiator_id) not in {int(fid) for fid in (friend_ids or [])}:
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+
     def create_group(
         self,
         owner_id: SnowflakeID,
@@ -243,6 +280,12 @@ class ConversationService(BaseService):
         for uid, exists in existence.items():
             if not exists:
                 raise InvalidRecipientError(f"User {uid} does not exist")
+
+        # Enforce the same DM privacy rules create_dm applies before any row is
+        # written; group sends are outside the DM-only send gate.
+        for uid in participants:
+            if uid != owner_id:
+                self.enforce_group_dm_privacy(owner_id, uid)
 
         now = self._get_timestamp()
         conv_id = self._generate_id()
