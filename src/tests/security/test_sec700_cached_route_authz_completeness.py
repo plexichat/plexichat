@@ -27,6 +27,7 @@ proven non-vacuous before the real tree is trusted.
 
 import ast
 import os
+import sys
 import textwrap
 from pathlib import Path
 
@@ -154,13 +155,78 @@ PUBLIC_CACHED = {
 # ---------------------------------------------------------------------------
 
 
-def _is_cached(fn):
+# Decorators whose local aliases must resolve back to the canonical symbol.
+_TRACKED_DECORATORS = frozenset({"cached"})
+
+
+def _canonical_names(tree):
+    """Resolve local aliases of tracked decorators to their canonical name.
+
+    ``from src.core.database import cached as memo`` and ``memo = cached`` both
+    decorate a handler that is just as cached as a bare ``@cached``. Discovery
+    that keys off the bare decorator name would silently drop such a handler
+    from the registry, leaving a genuinely ungated cached route unclassified and
+    undetected. Module-qualified use (``cache.cached``) already yields the
+    canonical attribute name and needs no mapping.
+
+    Resolution runs to a fixpoint so chained aliases (``import as memo;
+    wire = memo``) collapse too. Over-resolution is safe here: it can only make
+    discovery see *more* decorated functions, never fewer.
+    """
+    aliases: dict[str, str] = {}
+
+    def resolve(name):
+        seen: set[str] = set()
+        while name in aliases and name not in seen:
+            seen.add(name)
+            name = aliases[name]
+        return name
+
+    nodes = list(ast.walk(tree))
+    for _ in range(len(nodes) + 1):
+        changed = False
+        for node in nodes:
+            pairs: list[tuple[str, str]] = []
+            if isinstance(node, ast.ImportFrom):
+                pairs = [
+                    (alias.asname or alias.name, alias.name)
+                    for alias in node.names
+                    if alias.name in _TRACKED_DECORATORS
+                ]
+            elif isinstance(node, ast.Assign):
+                value = node.value
+                canonical = None
+                if isinstance(value, ast.Name):
+                    canonical = resolve(value.id)
+                elif isinstance(value, ast.Attribute):
+                    canonical = resolve(value.attr)
+                if canonical in _TRACKED_DECORATORS:
+                    pairs = [
+                        (target.id, canonical)
+                        for target in node.targets
+                        if isinstance(target, ast.Name)
+                    ]
+            for local, canonical in pairs:
+                if aliases.get(local) != canonical:
+                    aliases[local] = canonical
+                    changed = True
+        if not changed:
+            break
+    return aliases
+
+
+def _is_cached(fn, aliases=None):
+    """True when ``fn`` carries a (possibly aliased) ``@cached`` decorator."""
+    if aliases is None:
+        aliases = {}
     for deco in fn.decorator_list:
         func = deco.func if isinstance(deco, ast.Call) else deco
-        if isinstance(func, ast.Name) and func.id == "cached":
-            return True
-        if isinstance(func, ast.Attribute) and func.attr == "cached":
-            return True
+        if isinstance(func, ast.Name):
+            if aliases.get(func.id, func.id) == "cached":
+                return True
+        elif isinstance(func, ast.Attribute):
+            if func.attr == "cached":
+                return True
     return False
 
 
@@ -187,9 +253,10 @@ def _discover():
     """All @cached functions in the route tree, keyed by (relpath, name)."""
     found = {}
     for rel, tree in _route_trees():
+        aliases = _canonical_names(tree)
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_cached(
-                node
+                node, aliases
             ):
                 found[(rel, node.name)] = node
     return found
@@ -404,6 +471,78 @@ def test_detector_recognises_gate_positions():
     assert _own_or_route_gate(_first_fn(_GOOD_OWN), gates) is True
     assert _own_or_route_gate(_first_fn(_GOOD_ROUTE), gates) is True
     assert _own_or_route_gate(_first_fn(_BAD), gates) is False
+
+
+_ALIASED_CACHED_SOURCE = textwrap.dedent(
+    """
+    from src.core.database import cached as memo
+    from src.core.database import cached
+
+    wire = memo
+    assigned = cached
+
+    import src.core.database as cache
+
+    @cached(ttl=5)
+    def direct_cached():
+        return 1
+
+    @memo(ttl=5)
+    def import_aliased_cached():
+        return 1
+
+    @wire(ttl=5)
+    def chained_aliased_cached():
+        return 1
+
+    @assigned(ttl=5)
+    def assigned_aliased_cached():
+        return 1
+
+    @cache.cached(ttl=5)
+    def module_qualified_cached():
+        return 1
+
+    @some_other_decorator
+    def not_cached():
+        return 1
+    """
+)
+
+
+def test_detector_recognises_aliased_cached_decorators(monkeypatch):
+    """A renamed ``@cached`` must not let a cached handler escape discovery.
+
+    Discovery keyed on the bare decorator name would drop an aliased handler
+    from *both* registries, so the completeness check would pass without ever
+    gating it -- the same name-resolution hole as aliased builder calls in the
+    fan-out guard, but failing open.
+    """
+    tree = ast.parse(_ALIASED_CACHED_SOURCE)
+    aliases = _canonical_names(tree)
+    fns = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    cached = {name for name, fn in fns.items() if _is_cached(fn, aliases)}
+    assert cached == {
+        "direct_cached",
+        "import_aliased_cached",
+        "chained_aliased_cached",
+        "assigned_aliased_cached",
+        "module_qualified_cached",
+    }
+
+    # Non-vacuity at the integration boundary: _discover() must use the same
+    # alias resolution, not just the helper in isolation.
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_route_trees",
+        lambda: iter([("synthetic.py", tree)]),
+    )
+    discovered = set(_discover())
+    assert discovered == {("synthetic.py", name) for name in cached}, discovered
 
 
 def test_detector_flags_ungated_cached_call_site():
