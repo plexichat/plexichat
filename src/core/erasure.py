@@ -623,6 +623,22 @@ def purge_user_credentials(db: Any, user_id: int) -> int:
             logger.debug(
                 "Erase: optional credential cleanup skipped (%s): %s", table, exc
             )
+
+    # ``verify_api_access_token`` memoises its read-only verdict in a
+    # process-local bounded LRU for a few seconds. Deleting the rows above is
+    # not enough: a token used just before the purge would keep authenticating
+    # from a warm verdict after its row (and the account) were erased -- the
+    # side-effect writes even fail on the now-missing token row. Drop those
+    # verdicts as part of the erasure so every purge path (reaper harvest,
+    # admin force-purge, orphan sweep) revokes the credential immediately.
+    try:
+        from src.core.auth.managers.api_token import (
+            _invalidate_api_token_verify_cache,
+        )
+
+        _invalidate_api_token_verify_cache()
+    except Exception as exc:  # pragma: no cover - auth module always importable
+        logger.debug("Erase: API token verify cache invalidation skipped: %s", exc)
     return affected
 
 
