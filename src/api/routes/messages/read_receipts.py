@@ -76,9 +76,7 @@ def _filter_blocked_dm_ack_recipients(actor_id, user_ids, relationships=None):
             return user_ids
         relationships = rel_module
     try:
-        blocked_ids = {
-            int(x) for x in relationships.get_all_blocked_ids(actor_id)
-        }
+        blocked_ids = {int(x) for x in relationships.get_all_blocked_ids(actor_id)}
     except Exception as e:
         logger.debug(f"read receipt DM block lookup failed: {e}")
         return []
@@ -340,6 +338,15 @@ async def acknowledge_messages(
                             user_ids = resolve_channel_event_recipients(
                                 cid, guild_id=sid
                             )
+                            # The resolver scopes server channels by channels.view
+                            # only; a blocked pair can still share a server. The
+                            # dispatcher takes this explicit audience, so the
+                            # router's DM block gate never sees it -- apply the
+                            # same two-way gate as the DM path here. A failed
+                            # lookup fails closed (empty audience).
+                            user_ids = _filter_blocked_dm_ack_recipients(
+                                current_user.user_id, user_ids
+                            )
                             logger.debug(
                                 f"ACK: Server channel {cid} in server {sid} scoped to {len(user_ids)} viewers"
                             )
@@ -482,11 +489,14 @@ async def _dispatch_message_ack_broadcast(
                 )
             elif msg_manager is not None:
                 user_ids = msg_manager.get_manager().get_participant_ids(channel_id)
-                # Bulk ACK uses the same explicit-audience dispatch, so apply the
-                # same two-way DM block filter as the single-channel path.
-                user_ids = _filter_blocked_dm_ack_recipients(
-                    current_user_id, user_ids
-                )
+
+            # Both branches feed an explicit-audience dispatch, so the router's
+            # DM block filter never sees either audience. Apply the two-way gate
+            # to BOTH the DM participants and the server-channel viewers: a
+            # blocked pair can share a server, and the single-channel route
+            # already withholds receipts from them. Fails closed on lookup error.
+            if user_ids:
+                user_ids = _filter_blocked_dm_ack_recipients(current_user_id, user_ids)
         except Exception as e:
             logger.debug(
                 f"Bulk ACK: failed to resolve MESSAGE_ACK targets for {channel_id}: {e}"
