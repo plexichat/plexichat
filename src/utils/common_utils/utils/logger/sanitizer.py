@@ -182,14 +182,38 @@ def sanitize_data(data: Union[Dict, List, str, Any]) -> Any:
 _ESCAPE_SEQUENCE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))"
 )
-_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# Keep this set in lockstep with ``hardening.text.CONTROL_CHARACTERS``. Beyond
+# C0/DEL/C1, the Unicode LINE/PARAGRAPH SEPARATORs (U+2028/U+2029) are treated as
+# line breaks by log shippers, proxies and browser viewers, and the bidi /
+# invisible format controls let one value render as another. The request-schema
+# boundary and the audit helpers already reject this whole set; a log line that
+# leaves any of it in place can be read as more than one entry downstream even
+# though it was written as one. This module sits below the application package,
+# so mirror the set locally rather than importing ``src.core`` here.
+_CONTROL_CHARACTER_RE = re.compile(
+    r"[\x00-\x1f\x7f-\x9f"  # C0, DEL and C1 controls (incl. NEL)
+    r"\u061c\u200e\u200f\u070f"  # Arabic/LR/RL marks + Syriac abbreviation mark
+    r"\u202a-\u202e"  # bidi embedding and overrides
+    r"\u2066-\u206f"  # bidi isolates + legacy directional formats
+    r"\u2028\u2029\u2060\ufeff]"  # line/para separators, word joiner, BOM
+)
 
 
 def _scrub_log_control_characters(value: Any) -> str:
-    """Strip ANSI escapes and render C0/C1/DEL controls as visible ``\\xNN``."""
+    """Strip ANSI escapes and render control characters visibly.
+
+    C0/C1/DEL render as ``\\xNN``; the wider Unicode separators and bidi
+    controls render as ``\\uNNNN`` so a shipper that normalises U+2028/U+2029 to
+    a newline cannot forge an extra entry out of a single request value.
+    """
     text = "" if value is None else str(value)
     text = _ESCAPE_SEQUENCE_RE.sub("", text)
-    return _CONTROL_CHARACTER_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+
+    def _escape(match):
+        codepoint = ord(match.group())
+        return f"\\x{codepoint:02x}" if codepoint <= 0xFF else f"\\u{codepoint:04x}"
+
+    return _CONTROL_CHARACTER_RE.sub(_escape, text)
 
 
 def sanitize_log_message(message: str) -> str:

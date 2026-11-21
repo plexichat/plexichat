@@ -97,7 +97,19 @@ _PEM_RE = re.compile(
 _ESCAPE_SEQUENCE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))"
 )
-_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# In lockstep with ``hardening.text.CONTROL_CHARACTERS`` and with the on-disk
+# log sink's ``_scrub_log_control_characters``. The Unicode LINE/PARAGRAPH
+# SEPARATORs (U+2028/U+2029) are newlines for many log shippers, proxies and
+# browser viewers, and the bidi / invisible format controls let one value render
+# as another, so leaving them in "scrubbed" log text reopens the same forgery
+# the C0/C1 range closes. ZWJ (U+200D) stays allowed for emoji sequences.
+_CONTROL_CHARACTER_RE = re.compile(
+    r"[\x00-\x1f\x7f-\x9f"  # C0, DEL and C1 controls (incl. NEL)
+    r"\u061c\u200e\u200f\u070f"  # Arabic/LR/RL marks + Syriac abbreviation mark
+    r"\u202a-\u202e"  # bidi embedding and overrides
+    r"\u2066-\u206f"  # bidi isolates + legacy directional formats
+    r"\u2028\u2029\u2060\ufeff]"  # line/para separators, word joiner, BOM
+)
 
 
 def scrub_control_characters(value: Any) -> str:
@@ -106,11 +118,17 @@ def scrub_control_characters(value: Any) -> str:
     Unlike :func:`scrub_text` (which redacts *secrets*), this is a presentation
     guard: it is applied to already-redacted free text just before it is handed
     to a log viewer or a logger, so an embedded newline, carriage return,
-    backspace, C1 control or ANSI escape cannot alter the surrounding display.
+    backspace, C1 control, Unicode line separator, bidi control or ANSI escape
+    cannot alter the surrounding display or split a downstream log entry.
     """
     text = "" if value is None else str(value)
     text = _ESCAPE_SEQUENCE_RE.sub("", text)
-    return _CONTROL_CHARACTER_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+
+    def _escape(match):
+        codepoint = ord(match.group())
+        return f"\\x{codepoint:02x}" if codepoint <= 0xFF else f"\\u{codepoint:04x}"
+
+    return _CONTROL_CHARACTER_RE.sub(_escape, text)
 
 
 def _is_sensitive_key(key: Any) -> bool:
