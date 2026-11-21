@@ -225,15 +225,25 @@ class ConversationService(BaseService):
             if blocked_row is not None:
                 raise ConversationAccessDeniedError("Recipient does not accept DMs")
 
-        settings = self._user_settings_svc.get_message_settings(participant_id)
-        if settings.allow_dms_from == "none":
-            raise ConversationAccessDeniedError("Recipient does not accept DMs")
-        if settings.allow_dms_from == "friends":
-            if relationships is None:
+        # DM settings belong to each party, so vet the pair in BOTH
+        # directions. create_group already calls this gate once per ordered
+        # pair, so this is a no-op there; add_participant, however, calls it
+        # only as (existing_member, newcomer), and without the reverse check
+        # an owner/admin could insert a participant next to an existing
+        # member who opted out of DMs (none / friends-only non-friend).
+        for sender_id, recipient_id in (
+            (initiator_id, participant_id),
+            (participant_id, initiator_id),
+        ):
+            settings = self._user_settings_svc.get_message_settings(recipient_id)
+            if settings.allow_dms_from == "none":
                 raise ConversationAccessDeniedError("Recipient does not accept DMs")
-            friend_ids = relationships.get_friend_ids(participant_id)
-            if int(initiator_id) not in {int(fid) for fid in (friend_ids or [])}:
-                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+            if settings.allow_dms_from == "friends":
+                if relationships is None:
+                    raise ConversationAccessDeniedError("Recipient does not accept DMs")
+                friend_ids = relationships.get_friend_ids(recipient_id)
+                if int(sender_id) not in {int(fid) for fid in (friend_ids or [])}:
+                    raise ConversationAccessDeniedError("Recipient does not accept DMs")
 
     def create_group(
         self,
