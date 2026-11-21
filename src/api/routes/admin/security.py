@@ -653,6 +653,45 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
     admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
+        # force-logout revokes every session for its target, disabling that
+        # account's access in exactly the same way as lock-user. It shares the
+        # admin.security.sessions scope with lock-user/unlock-user, both of
+        # which refuse an admin target at or above the actor's role position.
+        # Without the same gate here, any holder of that scope could revoke a
+        # superior admin's sessions (or its own), bypassing the hierarchy every
+        # other admin-targeting mutation honours. Mirror lock/unlock: refuse
+        # upward/equal/self targets and re-assert the hierarchy as the write
+        # executes.
+        import src.api as api
+
+        from .users.admin_users import (
+            _assert_hierarchy_at_write,
+            _can_manage_admin_at,
+            _load_admin_hierarchy,
+        )
+
+        db = api.get_db()
+        if db is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
+        hierarchy = _load_admin_hierarchy(db, int(admin_id), uid)
+        if hierarchy["target_exists"] and not _can_manage_admin_at(
+            int(admin_id), uid, hierarchy["current_pos"], hierarchy["target_pos"]
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Cannot force logout admins at or above your own position",
+                    }
+                },
+            )
+        if hierarchy["target_exists"]:
+            _assert_hierarchy_at_write(db, int(admin_id), uid)
+
         from src.core import auth
 
         auth.logout_all(uid)

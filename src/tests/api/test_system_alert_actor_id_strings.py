@@ -155,11 +155,22 @@ def test_force_logout_alert_stringifies_actor():
     app, routes = _security_client()
     capture = _AlertCapture()
     guard_a, guard_b = _patch_guards(routes)
+    # force-logout now honours the admin hierarchy: stub the DB so the target
+    # resolves to an ordinary (non-admin) user and the hierarchy gate is a no-op.
+    non_admin_db = SimpleNamespace(
+        fetch_one=lambda sql, params=(): {
+            "target_exists": False,
+            "current_pos": 0,
+            "target_pos": 0,
+            "account_locked": 0,
+        }
+    )
     with (
         guard_a,
         guard_b,
         patch("src.utils.system_alerts.record_system_alert", capture),
         patch("src.core.auth.logout_all", return_value=None),
+        patch("src.api.get_db", return_value=non_admin_db),
     ):
         resp = TestClient(app, raise_server_exceptions=False).post(
             "/api/v1/admin/security/force-logout",
