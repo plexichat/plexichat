@@ -16,6 +16,21 @@ class UserSearchMixin(SearchManagerBase):
         super().clear_cache()
         clear_result_caches(self)
 
+    @staticmethod
+    def _scope_allows_viewer(user_id: int, server_members: Set[int]) -> bool:
+        """Whether the caller belongs to a resolved server-visibility scope.
+
+        A ``server_id`` scope is a visibility boundary, not merely a filter on
+        hits: the caller must themselves be a member of that server. Otherwise
+        ``/search/users?server_id=X`` is a roster-enumeration oracle for any
+        authenticated caller who can guess a server id. Malformed scope data
+        fails closed (returns False) rather than widening visibility.
+        """
+        try:
+            return int(user_id) in {int(uid) for uid in server_members}
+        except (TypeError, ValueError):
+            return False
+
     # Bound the directory pool fetched when a server scope is enforced. The
     # membership set is filtered in Python rather than splatted into an
     # unbounded ``IN (...)`` (a large server can have thousands of members),
@@ -180,6 +195,13 @@ class UserSearchMixin(SearchManagerBase):
         server_members: Optional[Set[int]] = None
         if server_id:
             server_members = self._get_server_member_ids(server_id)
+            # Fail closed before any lookup/cache use: a caller outside the
+            # server has no visibility into its member roster. The message
+            # search path enforces the same rule via search_server_messages'
+            # _can_access_server gate; server-scoped user search must not be
+            # the weaker sibling.
+            if not self._scope_allows_viewer(user_id, server_members):
+                return []
 
         # Repeated identical directory queries used to replay the FTS lookup,
         # the supplemental LIKE scan, per-user server/friend hydration and
@@ -247,6 +269,11 @@ class UserSearchMixin(SearchManagerBase):
         server_members: Optional[Set[int]] = None
         if server_id:
             server_members = self._get_server_member_ids(server_id)
+            # Same membership gate as the offset path (and message search):
+            # no roster visibility for a caller outside the scope, and no
+            # cache entry is written for the denied request.
+            if not self._scope_allows_viewer(user_id, server_members):
+                return UserSearchResultPage(results=[], next_cursor=None)
 
         scope = tuple(sorted(server_members)) if server_members is not None else ()
         cache = get_result_cache(self, "users_page")

@@ -133,20 +133,22 @@ def test_same_query_different_users_do_not_share_results():
 
 
 def test_server_membership_change_changes_scope_and_misses():
-    host = _UserHost(server_members={10, 20})
+    # Caller 1 must be a member of the scope for a scoped search to be allowed.
+    host = _UserHost(server_members={1, 10, 20})
     host.search_users(user_id=1, query="needle", server_id=42, limit=10)
     host.search_users(user_id=1, query="needle", server_id=42, limit=10)
     assert host._indexer.calls == 1
 
     # A permission change alters the resolved member set; the key includes it
     # so the stale entry can never be reused for the new scope.
-    host._server_members = {10, 20, 30}
+    host._server_members = {1, 10, 20, 30}
     host.search_users(user_id=1, query="needle", server_id=42, limit=10)
     assert host._indexer.calls == 2
 
 
 def test_server_page_scoped_search_is_also_per_user():
-    host = _UserHost(server_members={10, 20})
+    # Both callers are members of the scope; per-user keys keep them separate.
+    host = _UserHost(server_members={1, 2, 10, 20})
     host.search_users_page(user_id=1, query="needle", server_id=42, limit=10)
     host.search_users_page(user_id=2, query="needle", server_id=42, limit=10)
     assert host._indexer.calls == 2
