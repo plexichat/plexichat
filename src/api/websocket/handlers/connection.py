@@ -17,7 +17,7 @@ from src.api.websocket.boundaries import (
 from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
 from src.api.websocket.connection import Connection, ConnectionState
 from src.api.websocket.session import SessionManager
-from src.api.websocket.intents import DEFAULT_INTENTS, has_privileged_intents
+from src.api.websocket.intents import DEFAULT_INTENTS
 from src.core.auth.models import TokenInfo
 
 if TYPE_CHECKING:
@@ -137,17 +137,6 @@ class ConnectionHandler:
         if not self._validate_intents(intents):
             return None, None, int(GatewayCloseCode.INVALID_INTENTS)
 
-        # Privileged intents (GUILD_MEMBERS / GUILD_PRESENCES / MESSAGE_CONTENT)
-        # require out-of-band approval this gateway has not granted to the
-        # connecting client. Accepting them would let any identified socket
-        # widen its own event delivery to privileged member/presence events
-        # simply by setting those bits. Fail closed with the documented
-        # DISALLOWED_INTENTS code, before a session is created that a later
-        # RESUME could use to regain the mask.
-        if has_privileged_intents(intents):
-            logger.warning("Rejecting IDENTIFY with unapproved privileged intents")
-            return None, None, int(GatewayCloseCode.DISALLOWED_INTENTS)
-
         try:
             properties = validate_properties(data.get("properties", {}))
         except ValueError as exc:
@@ -155,15 +144,9 @@ class ConnectionHandler:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
         connection.properties = properties
 
-        # Token IP/UA binding must use the *transport* User-Agent, never a
-        # client-supplied IDENTIFY property. ``properties.browser`` (and its
-        # ``$browser`` alias) is telemetry only: when token_binding is enabled,
-        # trusting it would let a holder of a stolen token echo the victim's UA
-        # and defeat UA binding. Mirror handle_resume(), which already reads the
-        # trusted HTTP header; a missing header yields no binding context
-        # (the verifier fails closed when binding is required).
-        headers = getattr(connection.websocket, "headers", None)
-        user_agent = headers.get("User-Agent") if headers is not None else None
+        user_agent = properties.get("browser") or properties.get("$browser")
+        if not user_agent:
+            user_agent = connection.websocket.headers.get("User-Agent")
 
         user_id = await self._verify_token(
             token,

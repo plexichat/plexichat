@@ -297,6 +297,16 @@ class MessagingManager(BaseManager):
         if role == ParticipantRole.OWNER:
             raise ConversationAccessDeniedError("Cannot add participant as owner")
 
+        # Enforce the same DM privacy rules create_dm applies, against every
+        # current member (not just the actor): an admin must not be able to
+        # insert a user who blocked another member, or a none/friends-only
+        # recipient, into a group outside the DM-only send gate.
+        for existing_id in self._participant_svc.get_participant_ids(conversation_id):
+            if existing_id != participant_id:
+                self._conversation_svc.enforce_group_dm_privacy(
+                    existing_id, participant_id
+                )
+
         participant = self._participant_svc.add_participant(
             conversation_id, participant_id, role
         )
