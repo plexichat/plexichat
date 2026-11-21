@@ -13,7 +13,11 @@ These tests pin the gate: an upward/equal/self admin force-logout is refused
 before ``auth.logout_all`` runs (and the write-time hierarchy re-assert is
 issued for allowed admin targets), while logging out a subordinate admin or an
 ordinary user still works. A static guard enumerates every admin-id-targeting
-route in the two security route modules and asserts each carries the gate.
+route in the two security route modules and asserts each carries the gate. It
+also pins every call that consumes the caller-supplied target id, so a new
+ungated mutation added under a different name is still caught, and it only
+counts gate calls on the handler's own execution path (a gate buried in an
+uninvoked nested helper is dead evidence and does not silence the guard).
 """
 
 import ast
@@ -183,28 +187,121 @@ _EXPECTED_GATED_HANDLERS = {
     ("lifecycle.py", "admin_force_purge_account"),
 }
 
+# Id-plumbing calls that legitimately receive the target id but are not
+# mutations, so they are excluded from the target-id mutation sweep below.
+_UID_PASSTHROUGH_CALLS = {"str", "int", "get_user_details"}
+
+# Every call in these two modules that consumes the caller-supplied target id
+# (``uid``) is swept below. The three lifecycle mutations listed here are
+# reviewed as deliberately NOT hierarchy-gated: forcing a username change or
+# cancelling/delaying a scheduled deletion does not disable or demote the
+# target. Every other target-id mutation must appear in _TARGET_MUTATIONS and
+# carry the full gate. Pinning the whole set makes a newly added target-id
+# mutation (under any name) fail the sweep until it is classified here.
+_REVIEWED_UNGATED_UID_MUTATIONS = {
+    ("lifecycle.py", "admin_force_username_change", "force_username_change"),
+    ("lifecycle.py", "admin_cancel_account_deletion", "cancel_account_deletion"),
+    ("lifecycle.py", "admin_delay_account_deletion", "delay_account_deletion"),
+}
+
+_EXPECTED_UID_MUTATIONS = {
+    ("security.py", "force_logout", "logout_all"),
+    ("security.py", "admin_lock_user", "lock_user"),
+    ("security.py", "admin_unlock_user", "unlock_user"),
+    ("lifecycle.py", "admin_force_purge_account", "force_purge_account"),
+} | _REVIEWED_UNGATED_UID_MUTATIONS
+
+
+def _own_calls(node):
+    """Yield Call nodes that execute on ``node``'s own path.
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a helper that calls a gate
+    does not run it. Counting a dead nested gate call as protection lets an
+    admin-targeting route silence this invariant with fake evidence -- the same
+    vacuity already fixed in the cached-route and generic-decorator guards.
+    """
+    stack = [node]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Call):
+                yield child
+            stack.append(child)
+
+
+def _call_name(call):
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
 
 def _call_names(node):
-    """All function/method names called anywhere inside ``node``."""
-    names = set()
-    for call in ast.walk(node):
-        if not isinstance(call, ast.Call):
-            continue
-        func = call.func
-        if isinstance(func, ast.Name):
-            names.add(func.id)
-        elif isinstance(func, ast.Attribute):
-            names.add(func.attr)
-    return names
+    """Names of calls that execute on ``node``'s own path."""
+    return {name for call in _own_calls(node) if (name := _call_name(call))}
 
 
-def _route_handlers(path):
-    tree = ast.parse(path.read_text())
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+def _uid_mutations(node):
+    """Names of calls that consume the caller-supplied target id (``uid``)."""
+    return {
+        name
+        for call in _own_calls(node)
+        if (name := _call_name(call))
+        and name not in _GATE_CALLS
+        and name not in _UID_PASSTHROUGH_CALLS
+        and any(isinstance(a, ast.Name) and a.id == "uid" for a in call.args)
+    }
+
+
+def _functions_in(source):
+    """Route-handler-shaped defs: module functions and methods, not nested defs.
+
+    Class methods (the lifecycle mixin handlers) must be included, but a helper
+    defined *inside* a handler is not itself a route and is skipped -- it is
+    reached, if at all, only through its parent handler.
+    """
+    result = []
+    stack = [(ast.parse(source), False)]
+    while stack:
+        parent, inside_function = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not inside_function:
+                    result.append(child)
+                stack.append((child, True))
+            elif isinstance(child, ast.Lambda):
+                stack.append((child, True))
+            else:
+                stack.append((child, inside_function))
+    return result
+
+
+def _sweep(nodes, label):
+    """Apply the gate check to ``nodes``; return (gated, uid_mutations).
+
+    Gate evidence must sit on the handler's own execution path -- a gate call
+    in a nested helper/lambda is dead and does not count.
+    """
+    gated, uid_mutations = set(), set()
+    for handler in nodes:
+        calls = _call_names(handler)
+        mutations = calls & _TARGET_MUTATIONS
+        if mutations:
+            gated.add((label, handler.name))
+            missing = _GATE_CALLS - calls
+            assert not missing, (
+                f"{label}:{handler.name} calls {sorted(mutations)} "
+                f"without hierarchy gate calls {sorted(missing)}"
+            )
+        uid_mutations |= {
+            (label, handler.name, name) for name in _uid_mutations(handler)
+        }
+    return gated, uid_mutations
 
 
 def test_every_admin_targeting_route_is_hierarchy_gated():
@@ -212,26 +309,80 @@ def test_every_admin_targeting_route_is_hierarchy_gated():
 
     Finds every route handler that invokes an admin-id-targeting mutation and
     asserts it loads the hierarchy, checks the position with self-refusal, and
-    re-asserts at write time. The equality assertion makes the enumeration
-    non-vacuous: adding a new admin-targeting handler here without a gate (or
-    removing a known one) fails the test.
+    re-asserts at write time. Independently, every call consuming the
+    caller-supplied target id is swept and pinned: a newly added target-id
+    mutation under any name fails the sweep until it is classified (gated or
+    explicitly reviewed as benign). Both equality assertions keep the
+    enumeration non-vacuous.
     """
-    matched = set()
+    gated, uid_mutations = set(), set()
     for label, path in (
         ("security.py", _SECURITY_SRC),
         ("lifecycle.py", _LIFECYCLE_SRC),
     ):
-        for handler in _route_handlers(path):
-            calls = _call_names(handler)
-            if not (calls & _TARGET_MUTATIONS):
-                continue
-            matched.add((label, handler.name))
-            missing = _GATE_CALLS - calls
-            assert not missing, (
-                f"{label}:{handler.name} calls {sorted(calls & _TARGET_MUTATIONS)} "
-                f"without hierarchy gate calls {sorted(missing)}"
-            )
+        found_gated, found_uid = _sweep(_functions_in(path.read_text()), label)
+        gated |= found_gated
+        uid_mutations |= found_uid
 
-    assert matched == _EXPECTED_GATED_HANDLERS, (
-        f"unexpected admin-targeting route set: {sorted(matched)}"
+    assert gated == _EXPECTED_GATED_HANDLERS, (
+        f"unexpected admin-targeting route set: {sorted(gated)}"
     )
+    assert uid_mutations == _EXPECTED_UID_MUTATIONS, (
+        f"unexpected target-id mutation set: {sorted(uid_mutations)}; "
+        "classify any new mutation as gated or reviewed-benign"
+    )
+
+
+def test_gate_detector_is_not_vacuous():
+    """Synthetic handlers prove the detector fires and recognises live gates."""
+    ungated = """
+async def bad(request, body):
+    uid = int(body.user_id)
+    auth.logout_all(uid)
+"""
+    with pytest.raises(AssertionError, match="without hierarchy gate calls"):
+        _sweep(_functions_in(ungated), "synthetic.py")
+
+    gated = """
+async def good(request, body):
+    uid = int(body.user_id)
+    hierarchy = _load_admin_hierarchy(db, uid, uid)
+    if not _can_manage_admin_at(uid, uid, hierarchy["current_pos"], hierarchy["target_pos"]):
+        raise HTTPException(status_code=403)
+    _assert_hierarchy_at_write(db, uid, uid)
+    auth.logout_all(uid)
+"""
+    found, uid_mutations = _sweep(_functions_in(gated), "synthetic.py")
+    assert found == {("synthetic.py", "good")}
+    assert uid_mutations == {("synthetic.py", "good", "logout_all")}
+
+
+def test_dead_nested_gate_calls_do_not_protect_route():
+    """Gate calls in a never-invoked nested callable must NOT satisfy the guard.
+
+    Regression: the original detector used ``ast.walk``, which descends into
+    nested functions and lambdas. An admin-targeting route could invoke its
+    mutation with no real gate yet pass the sweep by defining a helper (or
+    lambda) that merely mentions the three gate calls.
+    """
+    source = """
+async def nested(request, body):
+    uid = int(body.user_id)
+    def _fake_gate():
+        _load_admin_hierarchy(db, uid, uid)
+        _can_manage_admin_at(uid, uid, 0, 0)
+        _assert_hierarchy_at_write(db, uid, uid)
+    auth.logout_all(uid)
+
+async def lambda_gate(request, body):
+    uid = int(body.user_id)
+    _ = lambda: (
+        _load_admin_hierarchy(db, uid, uid),
+        _can_manage_admin_at(uid, uid, 0, 0),
+        _assert_hierarchy_at_write(db, uid, uid),
+    )
+    admin.lock_user(uid, 60)
+"""
+    for handler in _functions_in(source):
+        with pytest.raises(AssertionError, match="without hierarchy gate calls"):
+            _sweep([handler], "synthetic.py")
