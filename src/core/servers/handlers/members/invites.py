@@ -164,7 +164,7 @@ class MemberInviteMixin:
                 return code
 
     def _enforce_invite_quota(
-        self, user_id: SnowflakeID, server_id: SnowflakeID
+        self, user_id: SnowflakeID, server_id: SnowflakeID, cfg: Optional[dict] = None
     ) -> None:
         """Rate-limit and *advisory*-cap invite creation per user / per server.
 
@@ -180,8 +180,13 @@ class MemberInviteMixin:
         count past the cap between this SELECT and the later INSERT. The
         authoritative, race-free cap check lives in the atomic guarded INSERT
         in :meth:`create_invite`.
+
+        ``cfg`` is an optional config snapshot supplied by the sole caller so
+        the hot path reads ``invites`` config exactly once per mint; when it is
+        omitted the helper still loads the config itself.
         """
-        cfg = _invite_config()
+        if cfg is None:
+            cfg = _invite_config()
 
         # --- Per-user creation rate limit (sliding window) ---
         _check_invite_creation_rate(user_id, cfg)
@@ -259,10 +264,15 @@ class MemberInviteMixin:
             user_id, channel.server_id, "invites.create", channel_id
         )
 
-        # Best-effort early feedback; the atomic INSERT below is authoritative.
-        self._enforce_invite_quota(user_id, channel.server_id)
-
+        # Read the invites config once and reuse the same snapshot for both
+        # the advisory quota checks and the authoritative INSERT guards, so a
+        # single mint costs one config lookup instead of two (and the caps
+        # cannot drift between the two reads if config changes mid-request).
         cfg = _invite_config()
+
+        # Best-effort early feedback; the atomic INSERT below is authoritative.
+        self._enforce_invite_quota(user_id, channel.server_id, cfg=cfg)
+
         max_per_user = int(cfg.get("max_active_per_user", 25))
         max_per_server = int(cfg.get("max_active_per_server", 100))
 
