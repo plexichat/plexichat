@@ -251,6 +251,48 @@ async def _dispatch_emoji_update(server_id: int):
         logger.debug(f"Failed to dispatch emoji update for server {server_id}: {e}")
 
 
+@cached(
+    ttl=_EMOJI_CACHE_TTL,
+    prefix=_EMOJI_LIST_CACHE_PREFIX,
+    key_builder=_emoji_list_cache_key,
+    l1_ttl=_EMOJI_CACHE_L1_TTL,
+)
+async def _load_server_emojis_page(
+    server_id: str, current_user: TokenInfo
+) -> List[EmojiResponse]:
+    """Data-only cold path for a server's emoji list.
+
+    The membership gate runs in the route handler on EVERY request, including
+    cache hits. The ``@cached`` decorator returns before this body on a warm
+    entry, so leaving the gate here would let a member who lost access keep
+    reading their still-warm list for the whole cache TTL.
+    """
+    reactions = api.get_reactions()
+    if not reactions:
+        logger.error("Reactions module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
+        )
+
+    try:
+        sid = _bounded_id(server_id, "server ID")
+        emojis = reactions.get_server_custom_emojis(sid)
+        return [_emoji_to_response(e) for e in emojis]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch emojis for server {server_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
 @router.get(
     "/{server_id}/emojis",
     response_model=List[EmojiResponse],
@@ -262,70 +304,31 @@ async def _dispatch_emoji_update(server_id: int):
         503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
-@cached(
-    ttl=_EMOJI_CACHE_TTL,
-    prefix=_EMOJI_LIST_CACHE_PREFIX,
-    key_builder=_emoji_list_cache_key,
-    l1_ttl=_EMOJI_CACHE_L1_TTL,
-)
 async def get_server_emojis(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[EmojiResponse]:
-    """
-    Get all custom emojis for a server.
-
-    Returns a list of custom emojis available in the server.
-    """
-    reactions = api.get_reactions()
+    """Get all custom emojis for a server (members only)."""
     servers = api.get_servers()
-
-    if not reactions:
-        logger.error("Reactions module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": {"code": 500, "message": "Reactions module not available"}
-            },
-        )
-
     try:
-        try:
-            sid = _bounded_id(server_id, "server ID")
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid server ID format: {server_id}")
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid server ID"}},
-            )
-
-        # Check if user is member of server (fail closed when unavailable)
-        _require_server_membership(servers, current_user.user_id, sid, "emoji listing")
-
-        try:
-            emojis = reactions.get_server_custom_emojis(sid)
-            return [_emoji_to_response(e) for e in emojis]
-        except Exception as e:
-            logger.error(f"Failed to fetch emojis for server {sid}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": {
-                        "code": 500,
-                        "message": "Internal server error",
-                    }
-                },
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Unexpected error in get_server_emojis for server {server_id}: {e}",
-            exc_info=True,
-        )
+        sid = _bounded_id(server_id, "server ID")
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid server ID format: {server_id}")
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
         )
+
+    # LIVE GATE before the cached read. The membership check used to live inside
+    # the @cached body, so a warm hit skipped it and a kicked member kept their
+    # old list for the full TTL. Revocation also evicts this namespace, but that
+    # is best-effort (other revocation paths / stale L1 copies can miss it), so
+    # the per-request check is the authoritative one. Fail closed if it cannot
+    # be evaluated.
+    _require_server_membership(servers, current_user.user_id, sid, "emoji listing")
+
+    return await _load_server_emojis_page(
+        server_id=server_id, current_user=current_user
+    )
 
 
 @router.get(
@@ -402,6 +405,59 @@ async def get_emoji_counts(
         )
 
 
+@cached(
+    ttl=_EMOJI_CACHE_TTL,
+    prefix=_EMOJI_DETAIL_CACHE_PREFIX,
+    key_builder=_emoji_detail_cache_key,
+    l1_ttl=_EMOJI_CACHE_L1_TTL,
+)
+async def _load_emoji_detail(
+    server_id: str, emoji_id: str, current_user: TokenInfo
+) -> EmojiResponse:
+    """Data-only cold path for one emoji detail.
+
+    Membership is gated live by the route handler before this cached body is
+    reached. On a cache hit the decorator returns without entering this
+    function, which is why the gate cannot live here.
+    """
+    reactions = api.get_reactions()
+    if not reactions:
+        logger.error("Reactions module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Reactions module not available"}
+            },
+        )
+
+    try:
+        eid = _bounded_id(emoji_id, "emoji ID")
+        emoji = reactions.get_custom_emoji(eid)
+        if not emoji:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Emoji not found"}},
+            )
+
+        # Verify emoji belongs to the server (IDOR defence in depth).
+        if str(emoji.server_id) != server_id:
+            logger.warning(f"Emoji {eid} does not belong to server {server_id}")
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Emoji not found"}},
+            )
+
+        return _emoji_to_response(emoji)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch emoji {emoji_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
 @router.get(
     "/{server_id}/emojis/{emoji_id}",
     response_model=EmojiResponse,
@@ -413,92 +469,31 @@ async def get_emoji_counts(
         503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
-@cached(
-    ttl=_EMOJI_CACHE_TTL,
-    prefix=_EMOJI_DETAIL_CACHE_PREFIX,
-    key_builder=_emoji_detail_cache_key,
-    l1_ttl=_EMOJI_CACHE_L1_TTL,
-)
 async def get_emoji(
     server_id: str, emoji_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> EmojiResponse:
-    """
-    Get a specific custom emoji.
-
-    Returns emoji details if found and user has access.
-    """
-    reactions = api.get_reactions()
+    """Get a specific custom emoji (members only)."""
     servers = api.get_servers()
-
-    if not reactions:
-        logger.error("Reactions module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": {"code": 500, "message": "Reactions module not available"}
-            },
-        )
-
     try:
-        try:
-            eid = _bounded_id(emoji_id, "emoji ID")
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid emoji ID format: {emoji_id}")
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid emoji ID"}},
-            )
-
-        try:
-            emoji = reactions.get_custom_emoji(eid)
-            if not emoji:
-                raise HTTPException(
-                    status_code=404,
-                    detail={"error": {"code": 404, "message": "Emoji not found"}},
-                )
-
-            # Verify emoji belongs to the server
-            if str(emoji.server_id) != server_id:
-                logger.warning(f"Emoji {eid} does not belong to server {server_id}")
-                raise HTTPException(
-                    status_code=404,
-                    detail={"error": {"code": 404, "message": "Emoji not found"}},
-                )
-
-            # Fail closed on membership: this endpoint previously returned any
-            # emoji in any server to any authenticated caller because it never
-            # consulted the servers module at all.
-            _require_server_membership(
-                servers,
-                current_user.user_id,
-                _bounded_id(server_id, "server ID"),
-                "emoji detail",
-            )
-
-            return _emoji_to_response(emoji)
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to fetch emoji {emoji_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": {
-                        "code": 500,
-                        "message": "Internal server error",
-                    }
-                },
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Unexpected error in get_emoji for emoji {emoji_id}: {e}", exc_info=True
+        sid = _bounded_id(server_id, "server ID")
+        _bounded_id(emoji_id, "emoji ID")
+    except (ValueError, TypeError):
+        logger.warning(
+            f"Invalid id for emoji detail: server={server_id} emoji={emoji_id}"
         )
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid emoji ID"}},
         )
+
+    # LIVE GATE before the cached read: a revoked member must not receive a
+    # still-warm detail response. The check used to sit inside the @cached body
+    # and was skipped on every cache hit; keep it here and fail closed.
+    _require_server_membership(servers, current_user.user_id, sid, "emoji detail")
+
+    return await _load_emoji_detail(
+        server_id=server_id, emoji_id=emoji_id, current_user=current_user
+    )
 
 
 @router.post(
