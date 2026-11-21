@@ -356,6 +356,26 @@ class ChannelInvitesMixin(ChannelBase):
                         },
                     )
 
+                # An exhausted invite (uses reached max_uses) is just as
+                # unusable as an expired one. Core keeps the row (revoked = 0)
+                # so the join path can report its 410, but this endpoint must
+                # not hand the server/channel/inviter metadata to anyone who
+                # merely holds the code. Fail closed with the same static 404
+                # as the expired case, keeping the two unusable states
+                # indistinguishable to a non-member probing invite codes.
+                max_uses = getattr(invite, "max_uses", 0) or 0
+                uses = getattr(invite, "uses", 0) or 0
+                if max_uses > 0 and uses >= max_uses:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": {
+                                "code": 404,
+                                "message": "Invite not found or expired",
+                            }
+                        },
+                    )
+
                 server_name = getattr(invite, "server_name", None)
                 if not server_name and hasattr(invite, "server_id"):
                     server_name = _resolve_invite_server_name(
