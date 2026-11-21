@@ -209,8 +209,14 @@ class GatewayDispatcher:
         Returns:
             Number of connections event was sent to
         """
-        # Ensure user_ids are integers for lookup
-        user_ids = [int(uid) for uid in user_ids]
+        # SECURITY: explicit-audience callers may hand this boundary raw DB
+        # projections (e.g. get_participant_ids() -> msg_participants.user_id
+        # in the read-receipt routes). int() laundering of a malformed-but-
+        # coercible value ("05"->5, 7.9->7, " 8 "->8, True->1) would admit a
+        # recipient that never proved membership/view rights, leaking the
+        # event to the wrong principal. type() also rejects bool; genuine
+        # integer ids are preserved verbatim.
+        user_ids = [uid for uid in user_ids if type(uid) is int]
 
         connections = self._session_manager.get_connections_for_users(user_ids)
 
@@ -429,7 +435,11 @@ class GatewayDispatcher:
         Returns:
             Number of connections the frame was sent to
         """
-        target_ids = [int(uid) for uid in user_ids]
+        # SECURITY: same fan-out boundary hardening as dispatch_event. Callers
+        # may hand raw DB-sourced ids (e.g. voice recipient resolution); int()
+        # laundering would admit a wrong principal to this opcode fan-out.
+        # type() also rejects bool; genuine integer ids are preserved.
+        target_ids = [uid for uid in user_ids if type(uid) is int]
         if not target_ids:
             return 0
 
