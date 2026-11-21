@@ -32,6 +32,12 @@ class RatelimitMixin(ApplicationManagerProtocol):
         outcome: dict = {}
 
         def _bucket_check(state: dict) -> None:
+            # SECURITY: record that the mutation actually ran. A backend that
+            # accepts ``update_bucket`` but silently skips ``mutate_fn``
+            # (swallowed error, unacquirable lock, no-op fallback) would
+            # otherwise leave ``outcome`` empty and the limiter would report
+            # "allowed" -- turning a store fault into an unlimited path.
+            outcome["applied"] = True
             tokens = float(state.get("tokens", float(burst_limit)))
             last_refill = float(state.get("last_refill", now))
             max_tokens = float(burst_limit)
@@ -47,7 +53,28 @@ class RatelimitMixin(ApplicationManagerProtocol):
             state["max_tokens"] = max_tokens
             state["refill_rate"] = refill_rate
 
-        storage.update_bucket(key, _bucket_check, ttl=86400)
+        try:
+            storage.update_bucket(key, _bucket_check, ttl=86400)
+        except Exception as exc:
+            # Fail closed on a store outage: deny with the same public error a
+            # real limit breach produces instead of surfacing an arbitrary
+            # backend exception that a caller could treat as a soft failure.
+            logger.error(
+                "Application rate-limit store unavailable for %s: %s",
+                application_id,
+                exc,
+            )
+            raise RateLimitError(
+                f"Rate limit unavailable for application {application_id}", 60
+            ) from exc
+
+        # A backend that returned without running ``mutate_fn`` left no
+        # ``applied`` verdict, so no token was actually spent. Deny rather than
+        # silently granting the request.
+        if not outcome.get("applied"):
+            raise RateLimitError(
+                f"Rate limit unavailable for application {application_id}", 60
+            )
         if "retry_after" in outcome:
             raise RateLimitError(
                 f"Rate limit exceeded for application {application_id}",
