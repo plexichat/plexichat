@@ -36,10 +36,20 @@ _SQL_LITERAL_SPLIT_RE = re.compile(r"('(?:[^']|'')*')")
 # pattern fails to neutralise (nested block comments, ...) can only add a
 # spurious separator -- i.e. over-invalidate the short-lived cache -- which is
 # safe. Missing a real separator is not: see ``_has_multiple_statements``.
+#
+# NOTE: ``#`` is deliberately NOT treated as a comment here. Neither supported
+# dialect uses it as one (both use ``--`` and ``/* ... */``); on PostgreSQL it is
+# the integer XOR operator, and parameterless statements go through pg8000's
+# simple-query protocol, which executes EVERY ``;``-separated statement in the
+# string. Neutralising ``#[^\n]*`` would hide a stacked ``; UPDATE ...`` behind
+# an XOR expression (e.g. ``SELECT 1 # 1; UPDATE authz_roles ...``) from
+# ``_has_multiple_statements``, leaving the query cache uncleared after a write.
+# SQLite's ``#`` tails are stripped by ``_sanitize_sqlite_query`` before
+# execution, so classifying them as writes here can only over-invalidate.
 _SQL_NON_CODE_RE = re.compile(
     r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\""
     r"|\$\$.*?\$\$|\$(?P<dollar_tag>[A-Za-z_][A-Za-z_0-9]*)\$.*?\$(?P=dollar_tag)\$"
-    r"|--[^\n]*|#[^\n]*|/\*.*?\*/",
+    r"|--[^\n]*|/\*.*?\*/",
     re.DOTALL,
 )
 
