@@ -70,7 +70,18 @@ class VerificationMixin(AuthManagerProtocol):
             if not allowed:
                 raise TokenInvalidError("Token verification rate limit exceeded")
 
-        return self._verify_token(token, ip_address, user_agent)
+        result = self._verify_token(token, ip_address, user_agent)
+
+        # The memoised verifier caches the whole verdict for a short TTL. Its
+        # expiry check runs only on a cache *miss*, so an expiry reached inside
+        # that window would otherwise keep authenticating until eviction.
+        # Re-check the cached verdict's expiry on every call (mirroring
+        # verify_api_access_token) so an expired credential fails closed even
+        # on a hit. Bot tickets carry no expiry (None) and are unaffected.
+        expires_at = getattr(result, "expires_at", None)
+        if expires_at is not None and is_expired(expires_at):
+            raise TokenExpiredError("Expired")
+        return result
 
     @cached(
         ttl=10,
@@ -83,8 +94,7 @@ class VerificationMixin(AuthManagerProtocol):
         # verification of the same token within a request/connection paid for a
         # full DB lookup + constant-time hash comparison again.
         key_builder=lambda self, token, ip_address=None, user_agent=None: (
-            safe_token_cache_key(token)
-            + safe_token_binding_key(ip_address, user_agent)
+            safe_token_cache_key(token) + safe_token_binding_key(ip_address, user_agent)
         ),
         # Only single-use WS tickets and malformed input bypass the cache. A
         # replay of a ticket within the TTL would bypass its atomic consumption;
