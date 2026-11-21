@@ -102,8 +102,16 @@ def get_feedback_tickets(
         if isinstance(row, dict):
             # Encrypted mode is ciphertext-only; never expose a legacy
             # plaintext column when ciphertext is absent or invalid.
-            internal_notes = None if encrypt_internal_notes else row["internal_notes"]
-            if encrypt_internal_notes and row.get("internal_notes_encrypted"):
+            internal_notes = (
+                None
+                if not include_internal_notes or encrypt_internal_notes
+                else row["internal_notes"]
+            )
+            if (
+                include_internal_notes
+                and encrypt_internal_notes
+                and row.get("internal_notes_encrypted")
+            ):
                 from src.utils.encryption import decrypt_data
 
                 try:
@@ -129,8 +137,15 @@ def get_feedback_tickets(
             )
         else:
             # Handle tuple rows (legacy)
-            internal_notes = None if encrypt_internal_notes else row[10]
-            if encrypt_internal_notes and len(row) > 11 and row[11]:
+            internal_notes = (
+                None if not include_internal_notes or encrypt_internal_notes else row[10]
+            )
+            if (
+                include_internal_notes
+                and encrypt_internal_notes
+                and len(row) > 11
+                and row[11]
+            ):
                 from src.utils.encryption import decrypt_data
 
                 try:
