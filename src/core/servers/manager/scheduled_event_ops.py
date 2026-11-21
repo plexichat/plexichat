@@ -33,6 +33,28 @@ from ..exceptions import (
 )
 
 
+# One statement re-checks the per-server event capacity at the instant of the
+# insert. The old flow ran a separate ``SELECT COUNT(*)`` quota check
+# (``_count_active_events``) and only then issued a bare ``INSERT``; two
+# concurrent creators could both read a below-cap count and both insert,
+# pushing a server over ``max_events_per_server`` (a TOCTOU quota bypass).
+# The guard subquery sees the table state *before* the new row exists, so
+# exactly the callers that still fit get a row, and ``rowcount == 0`` is an
+# authoritative "limit reached" signal. SQLite serialises this single statement
+# with its write lock; PostgreSQL's READ COMMITTED snapshot would let two
+# statements both pass, so create_event() additionally takes an advisory xact
+# lock (see there).
+_ATOMIC_EVENT_INSERT_SQL = """
+INSERT INTO srv_scheduled_events
+    (id, server_id, creator_id, name, description, event_type, channel_id,
+     location, start_time, end_time, timezone, status, image_url, rrule,
+     created_at, updated_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE (SELECT COUNT(*) FROM srv_scheduled_events
+       WHERE server_id = ? AND status IN ('scheduled', 'active')) < ?
+"""
+
+
 class ScheduledEventManager:
     """Manages scheduled server events."""
 
@@ -171,31 +193,66 @@ class ScheduledEventManager:
 
         event_id = self._generate_id()
 
-        self._db.execute(
-            """INSERT INTO srv_scheduled_events 
-               (id, server_id, creator_id, name, description, event_type, channel_id, 
-                location, start_time, end_time, timezone, status, image_url, rrule, 
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                event_id,
-                server_id,
-                user_id,
-                name,
-                description,
-                event_type.value,
-                channel_id,
-                location,
-                start_time,
-                end_time,
-                timezone_str,
-                ScheduledEventStatus.SCHEDULED.value,
-                image_url,
-                rrule,
-                now,
-                now,
-            ),
-        )
+        # The _count_active_events() check above is advisory fast-fail only:
+        # two concurrent creators can both read a below-cap count. The
+        # authoritative guard is the atomic INSERT below, which re-checks
+        # capacity at the instant of the write.
+        #
+        # PostgreSQL READ COMMITTED would let two concurrent guarded INSERTs
+        # both see a stale count. Serialise per server with an advisory xact
+        # lock. Namespace 140 stays clear of the invite (1/2), emoji (100/101),
+        # sticker (102), soundboard (120) and webhook (130) quota locks; masking
+        # to 30 bits keeps the second key in signed int4 range.
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (140, int(server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self._db.begin_transaction()
+
+            cursor = self._db.execute(
+                _ATOMIC_EVENT_INSERT_SQL,
+                (
+                    event_id,
+                    server_id,
+                    user_id,
+                    name,
+                    description,
+                    event_type.value,
+                    channel_id,
+                    location,
+                    start_time,
+                    end_time,
+                    timezone_str,
+                    ScheduledEventStatus.SCHEDULED.value,
+                    image_url,
+                    rrule,
+                    now,
+                    now,
+                    server_id,
+                    max_events,
+                ),
+            )
+            # rowcount 0 means the count guard found the server already at (or
+            # over) its cap at insert time -- a concurrent creator lost the
+            # race. Roll back and surface the same quota error the advisory
+            # check would have raised.
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise ScheduledEventError(
+                    f"Maximum {max_events} scheduled events per server"
+                )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
         self._log_audit(
             server_id, user_id, AuditLogAction.EVENT_CREATE, "event", event_id
