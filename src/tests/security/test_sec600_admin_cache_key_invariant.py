@@ -21,6 +21,7 @@ non-vacuity test proves the scan really sees the helper functions it guards.
 """
 
 import ast
+import copy
 import textwrap
 from pathlib import Path
 
@@ -35,13 +36,34 @@ REQUEST_ROLES = "src/core/admin/request_roles.py"
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
 
+def _own_body_nodes(node: ast.AST):
+    """Yield nodes on ``node``'s own execution path, skipping nested callables.
+
+    Descend through statement-level nesting (``if``/``for``/``with``/``try``)
+    but never into a nested function, async function or lambda: *defining* a
+    helper that references a cache-key or identity-binding marker does not
+    execute it. Crediting such dead evidence lets an unpartitioned or ungated
+    cache satisfy this ratchet with names that never run.
+    """
+    stack = [node]
+    while stack:
+        for child in ast.iter_child_nodes(stack.pop()):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            yield child
+            stack.append(child)
+
+
 def _loaded_names(node):
-    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+    return {n.id for n in _own_body_nodes(node) if isinstance(n, ast.Name)}
 
 
 def _module_constants(tree):
@@ -60,7 +82,11 @@ def _grant_key_missing(fn):
     if fn is None:
         return ["_make_key function"]
     names = _loaded_names(fn)
-    return [f"key component {m}" for m in ("credential", "subject", "DIRECT_CREDENTIAL") if m not in names]
+    return [
+        f"key component {m}"
+        for m in ("credential", "subject", "DIRECT_CREDENTIAL")
+        if m not in names
+    ]
 
 
 def _grant_use_missing(fn):
@@ -76,7 +102,9 @@ def _request_roles_gate_missing(fn):
     if fn is None:
         return ["cached_session_roles function"]
     names = _loaded_names(fn)
-    return [m for m in ("_bound_request_context", "id", "cached_admin_id") if m not in names]
+    return [
+        m for m in ("_bound_request_context", "id", "cached_admin_id") if m not in names
+    ]
 
 
 def _tree(relative):
@@ -89,7 +117,9 @@ def _scan():
     constants = _module_constants(grant_tree)
     return {
         "key_missing": _grant_key_missing(_find_function(grant_tree, "_make_key")),
-        "use_missing": _grant_use_missing(_find_function(grant_tree, "get_cached_grants")),
+        "use_missing": _grant_use_missing(
+            _find_function(grant_tree, "get_cached_grants")
+        ),
         "gate_missing": _request_roles_gate_missing(
             _find_function(roles_tree, "cached_session_roles")
         ),
@@ -118,7 +148,9 @@ def test_self_test_detectors_catch_synthetic_violations():
         """
     )
     assert _grant_key_missing(_find_function(ast.parse(good_key), "_make_key")) == []
-    bad_key_missing = _grant_key_missing(_find_function(ast.parse(bad_key), "_make_key"))
+    bad_key_missing = _grant_key_missing(
+        _find_function(ast.parse(bad_key), "_make_key")
+    )
     assert "key component credential" in bad_key_missing
     assert "key component DIRECT_CREDENTIAL" in bad_key_missing
 
@@ -142,8 +174,13 @@ def test_self_test_detectors_catch_synthetic_violations():
             return value
         """
     )
-    assert _grant_use_missing(_find_function(ast.parse(good_use), "get_cached_grants")) == []
-    assert set(_grant_use_missing(_find_function(ast.parse(bad_use), "get_cached_grants"))) == {
+    assert (
+        _grant_use_missing(_find_function(ast.parse(good_use), "get_cached_grants"))
+        == []
+    )
+    assert set(
+        _grant_use_missing(_find_function(ast.parse(bad_use), "get_cached_grants"))
+    ) == {
         "_MAX_ENTRIES",
         "ttl",
         "frozenset",
@@ -188,6 +225,103 @@ def test_self_test_detectors_catch_synthetic_violations():
             _find_function(ast.parse(bad_roles), "cached_session_roles")
         )
     ) == {"_bound_request_context", "id"}
+
+
+def test_detectors_reject_dead_nested_key_evidence():
+    """Markers living only in a never-called nested callable are not protection.
+
+    Regression: ``_loaded_names`` used ``ast.walk``, which descends into nested
+    functions and lambdas. An unpartitioned key, unbounded accessor or ungated
+    cache reuse could pass every check by parking the required names in dead
+    nested code.
+    """
+    dead = textwrap.dedent(
+        """
+        def _make_key(db, subject):
+            def _never_called():
+                return (token, path, credential or DIRECT_CREDENTIAL, subject)
+            return None
+        """
+    )
+    fn = _find_function(ast.parse(dead), "_make_key")
+    assert set(_grant_key_missing(fn)) == {
+        "key component credential",
+        "key component subject",
+        "key component DIRECT_CREDENTIAL",
+    }
+
+    dead = textwrap.dedent(
+        """
+        def get_cached_grants(db, subject):
+            helper = lambda: (
+                len(_ENTRIES) >= _MAX_ENTRIES and ttl and frozenset()
+            )
+            return None
+        """
+    )
+    fn = _find_function(ast.parse(dead), "get_cached_grants")
+    assert set(_grant_use_missing(fn)) == {"_MAX_ENTRIES", "ttl", "frozenset"}
+
+    dead = textwrap.dedent(
+        """
+        def cached_session_roles(db, admin_id):
+            def _never_called():
+                return _bound_request_context() is id(db) and cached_admin_id
+            return None
+        """
+    )
+    fn = _find_function(ast.parse(dead), "cached_session_roles")
+    assert set(_request_roles_gate_missing(fn)) == {
+        "_bound_request_context",
+        "id",
+        "cached_admin_id",
+    }
+
+    # Live markers still pass behind statement-level nesting, even when an
+    # unrelated dead helper is present in the same handler.
+    live = textwrap.dedent(
+        """
+        def _make_key(db, credential, subject):
+            def _unrelated_helper():
+                return 1
+            token, path = _db_identity(db)
+            if token:
+                return (token, path, credential or DIRECT_CREDENTIAL, subject)
+            return None
+        """
+    )
+    fn = _find_function(ast.parse(live), "_make_key")
+    assert _grant_key_missing(fn) == []
+
+
+def test_real_scan_is_not_vacuous_under_in_memory_mutation():
+    """Renaming real in-body evidence makes each detector report the loss."""
+    grant_tree = _tree(GRANT)
+    roles_tree = _tree(REQUEST_ROLES)
+
+    key_fn = _find_function(grant_tree, "_make_key")
+    assert _grant_key_missing(key_fn) == []
+    clone = copy.deepcopy(key_fn)
+    for node in _own_body_nodes(clone):
+        if isinstance(node, ast.Name) and node.id == "credential":
+            node.id = "_credential_renamed"
+    assert "key component credential" in _grant_key_missing(clone)
+
+    use_fn = _find_function(grant_tree, "get_cached_grants")
+    assert _grant_use_missing(use_fn) == []
+    clone = copy.deepcopy(use_fn)
+    for node in _own_body_nodes(clone):
+        if isinstance(node, ast.Name) and node.id == "_MAX_ENTRIES":
+            node.id = "_MAX_ENTRIES_renamed"
+    assert "_MAX_ENTRIES" in _grant_use_missing(clone)
+
+    gate_fn = _find_function(roles_tree, "cached_session_roles")
+    assert _request_roles_gate_missing(gate_fn) == []
+    clone = copy.deepcopy(gate_fn)
+    for node in _own_body_nodes(clone):
+        if isinstance(node, ast.Name) and node.id == "_bound_request_context":
+            node.id = "_bound_request_context_renamed"
+    assert "_bound_request_context" in _request_roles_gate_missing(clone)
 
 
 def test_scan_is_not_vacuous():
