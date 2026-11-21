@@ -139,17 +139,26 @@ class MessagesCRUDBase:
         with a live ``get_channel`` (view) and ``messages.send`` decision. Any
         lookup/permission that cannot be resolved denies the send.
         """
-        if not servers_mod:
-            return  # no servers store => the id can only be a DM/group conversation
-        if getattr(servers_mod, "_setup_complete", True) is False:
-            # Present but uninitialized: no server-channel store exists here.
-            return
 
         def _deny() -> HTTPException:
             return HTTPException(
                 status_code=403,
                 detail={"error": {"code": 403, "message": "Access denied"}},
             )
+
+        if not servers_mod:
+            # The backing-channel lookup cannot be evaluated without the
+            # servers module. A private-channel alias can exist in the DB
+            # (srv_channels.conversation_id) independently of that module, so
+            # skipping this gate when it is unwired would let any participant
+            # post into a channel whose messages.send grant was never checked.
+            # Deny instead. A *wired* store that is merely uninitialized has no
+            # channel table from which an alias could be produced and is
+            # handled below, so fail-closed is not a blanket DM denial.
+            raise _deny()
+        if getattr(servers_mod, "_setup_complete", True) is False:
+            # Present but uninitialized: no server-channel store exists here.
+            return
 
         lookup = getattr(servers_mod, "get_channel_by_conversation", None)
         if not callable(lookup):
