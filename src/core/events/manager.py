@@ -293,7 +293,13 @@ class EventManager:
                         "id": _ENVELOPE_ID_MARKER,
                         "t": event.event_type.value,
                         "d": event.data,
-                        "u": [int(uid) for uid in recipients],
+                        # SECURITY: recipients reach here via the router,
+                        # which dedupes/caps but does not type-check; callers of
+                        # events.dispatch(user_ids=...) may hand raw DB ids.
+                        # int() laundering would stamp a wrong principal into the
+                        # cross-worker wire audience. type() also rejects bool;
+                        # genuine integer ids are preserved verbatim.
+                        "u": [uid for uid in recipients if type(uid) is int],
                         "sw": self._worker_id,
                         "scope": [scope_server, scope_channel],
                     }

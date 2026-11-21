@@ -487,13 +487,18 @@ def resolve_channel_event_recipients(
         return cached
 
     def _final(ids) -> List[int]:
-        """Coerce, dedupe (preserving order), drop excluded ids and cache."""
+        """Dedupe genuine ints (preserving order), drop excluded ids, cache."""
         seen = set()
         result = []
         for uid in ids:
-            try:
-                uid = int(uid)
-            except (TypeError, ValueError):
+            # SECURITY: _final is the common audience boundary for the raw
+            # srv_members.user_id and msg_participants.user_id projections
+            # (no type filtering at source). int() laundering of a malformed-
+            # but-coercible value ("05"->5, 7.9->7, " 8 "->8, True->1) would
+            # admit a principal that never proved view/participation rights,
+            # then persist it in the recipient cache. type() also rejects bool;
+            # genuine integer ids are preserved verbatim.
+            if type(uid) is not int:
                 continue
             if uid not in exclude and uid not in seen:
                 seen.add(uid)
