@@ -597,6 +597,14 @@ class TwoFactorMixin(AuthManagerProtocol):
                 "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
                 (user_id,),
             )
+        # A device marked trusted before 2FA existed skips the challenge on the
+        # next password login, so leaving that trust intact would make the
+        # freshly enabled second factor protect nothing against a stolen/lost
+        # remembered device. Retire trusted devices as part of the same
+        # credential transition (password change/reset already do this). This
+        # runs before totp_enabled is flipped, so a cleanup failure aborts the
+        # enable rather than leaving 2FA "on" with a live bypass (fail closed).
+        self._invalidate_trusted_devices(user_id)
         # A just-revoked session must not keep answering from the verify cache.
         invalidate_pattern("token_verify:*")
         self._db.execute(
