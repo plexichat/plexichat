@@ -62,6 +62,24 @@ _SOUND_USE_CACHE_MAX_BYTES = 64 * 1024
 _CACHE_MISS = object()
 
 
+# One statement re-checks the per-server sound cap at the instant of the
+# insert. The old flow ran a separate ``SELECT COUNT(*)`` quota check and only
+# then INSERTed; two concurrent uploads could both read a below-cap count and
+# both insert, pushing a server over ``max_sounds_per_server`` (a TOCTOU quota
+# bypass). The guard subquery sees the table state *before* the new row exists,
+# so exactly the callers that still fit get a row and ``rowcount == 0`` is an
+# authoritative "limit reached" signal. SQLite serialises this single statement
+# with its write lock; PostgreSQL's READ COMMITTED snapshot would let two
+# statements both pass, so upload_sound() additionally takes an advisory xact
+# lock (see there).
+_ATOMIC_SOUND_INSERT_SQL = """
+INSERT INTO soundboard_sounds
+    (id, server_id, name, format, emoji, url, size, duration_seconds, volume, created_by, created_at)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE (SELECT COUNT(*) FROM soundboard_sounds WHERE server_id = ?) < ?
+"""
+
+
 class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
     """Core soundboard manager handling all operations."""
 
@@ -466,11 +484,16 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
         # ``volume < 0.0 or volume > 1.0`` guard let through unchanged.
         volume = clamp_finite_float(volume, 0.0, 1.0, default=0.0)
 
+        max_sounds = self._config.get("max_sounds_per_server", 100)
+
+        # Early, advisory quota feedback (avoids a wasted insert). It is NOT the
+        # authoritative check: two concurrent creators can both read a
+        # below-cap count, so the atomic guarded INSERT below is what actually
+        # enforces the cap.
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM soundboard_sounds WHERE server_id = ?",
             (server_id,),
         )
-        max_sounds = self._config.get("max_sounds_per_server", 100)
         if count_row and count_row["count"] >= max_sounds:
             raise SoundLimitError(
                 f"Server has reached maximum of {max_sounds} sounds",
@@ -489,24 +512,61 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
         # disabled" (0 — no cooldown).  See schema note on
         # ``cooldown_seconds``.
 
-        self._db.execute(
-            """INSERT INTO soundboard_sounds
-               (id, server_id, name, format, emoji, url, size, duration_seconds, volume, created_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                sound_id,
-                server_id,
-                name,
-                format.value,
-                emoji,
-                url,
-                size,
-                duration_seconds,
-                volume,
-                user_id,
-                now,
-            ),
-        )
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            # PostgreSQL READ COMMITTED would let two concurrent INSERT..SELECT
+            # statements both see a stale count. Serialise per server with an
+            # advisory xact lock. Namespace 120 stays clear of the invite (1/2)
+            # and emoji (100/101) lock namespaces; masking to 30 bits keeps the
+            # key in signed int4 range.
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (120, int(server_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
+        try:
+            if not is_postgres:
+                self._db.begin_transaction()
+
+            cursor = self._db.execute(
+                _ATOMIC_SOUND_INSERT_SQL,
+                (
+                    sound_id,
+                    server_id,
+                    name,
+                    format.value,
+                    emoji,
+                    url,
+                    size,
+                    duration_seconds,
+                    volume,
+                    user_id,
+                    now,
+                    server_id,
+                    max_sounds,
+                ),
+            )
+            # rowcount 0 means the count guard found the server already at (or
+            # over) its cap at insert time — a concurrent creator lost the
+            # race. Roll back and surface the same quota error the advisory
+            # check would have raised.
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise SoundLimitError(
+                    f"Server has reached maximum of {max_sounds} sounds",
+                    max_sounds,
+                    max_sounds,
+                )
+            self._db.commit()
+        except SoundLimitError:
+            self._db.rollback()
+            raise
+        except Exception:
+            self._db.rollback()
+            raise
 
         logger.debug(f"Uploaded sound {sound_id} to server {server_id}")
 
