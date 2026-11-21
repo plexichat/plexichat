@@ -135,6 +135,16 @@ async def trigger_typing(
                         )
                         user_ids = []
 
+                    # Typing frames carry an explicit recipient list, so the
+                    # gateway router's block filter (implicit routing only)
+                    # never sees them. Channel-view permission alone is not a
+                    # block check: a blocked pair can share a server. Apply the
+                    # same two-way block gate used for DM recipients so a
+                    # blocked user cannot watch this sender's typing frames.
+                    user_ids = _filter_blocked_dm_recipients(
+                        current_user.user_id, user_ids
+                    )
+
         if servers_mod and not is_server_channel:
             # ``get_channel`` also returns None when the actor lost access or
             # the lookup errored. Probe membership-agnostically before treating
