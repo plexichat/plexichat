@@ -29,10 +29,25 @@ user:
 Failures to consult the tracker are not tolerated as stale data: a claim with
 no recorded write (e.g. a concurrent first call still in flight) is treated as
 a miss and the caller performs the full write path.
+
+Why expiry is a heap, not a full LRU scan
+----------------------------------------
+The first implementation called ``claim()`` on every heartbeat frame and
+pruned by walking the *entire* LRU (up to 4096 users) each time. With a warm
+tracker that made one frame's cost proportional to the total number of tracked
+users, not to the number of heartbeats actually coalesced: a 4096-entry
+tracker spent ~2 ms per claim in pure Python iteration. Expiries are now held
+in a min-heap keyed by deadline, so pruning touches only entries that really
+expired (O(log N) each) and a claim that expires nothing is O(1). Stale heap
+items (from ``record``/``invalidate``/LRU eviction) are skipped by generation
+and the heap is compacted when it outgrows the bounded LRU. Coalescing
+decisions and counters are unchanged -- only the cost of finding expired
+claims drops from O(tracked_users) to O(expired_users).
 """
 
 from __future__ import annotations
 
+import heapq
 import threading
 import time
 from collections import OrderedDict
@@ -46,6 +61,11 @@ DEFAULT_WINDOW_SECONDS = 1.0
 #: Ample for simultaneous heartbeats across many users while keeping retained
 #: state tightly bounded.
 DEFAULT_MAX_ENTRIES = 4096
+
+#: Rebuild the expiry heap once it grows past this multiple of the LRU size.
+#: Replacing stale heap items is amortised O(1) per claim and keeps the heap
+#: bounded even under sustained invalidate/re-claim churn.
+_EXPIRY_HEAP_FACTOR = 2
 
 
 class HeartbeatWriteClaim:
@@ -65,7 +85,7 @@ class HeartbeatWriteClaim:
 
 
 class HeartbeatWriteCoalescer:
-    """Thread-safe LRU of per-user heartbeat-write claims."""
+    """Thread-safe LRU of per-user heartbeat-write claims with heap pruning."""
 
     def __init__(
         self,
@@ -78,8 +98,13 @@ class HeartbeatWriteCoalescer:
             raise ValueError("window_seconds must be positive")
         self._max_entries = max(1, int(max_entries))
         self._clock = clock or time.monotonic
-        # user_id -> (claimed_at_monotonic, last_seen_of_persisted_write)
-        self._entries: "OrderedDict[int, Tuple[float, Optional[int]]]" = OrderedDict()
+        # user_id -> (claimed_at_monotonic, last_seen_of_persisted_write, gen)
+        # ``gen`` is a generation tag used to discard stale heap items.
+        self._entries: "OrderedDict[int, Tuple[float, Optional[int], int]]" = OrderedDict()
+        # Min-heap of (deadline_monotonic, generation, user_id). Only the head
+        # is ever inspected on claim, so a warm tracker pays O(1), not O(N).
+        self._expiries: "list[Tuple[float, int, int]]" = []
+        self._generation = 0
         self._coalesced = 0
         self._writes = 0
         self._lock = threading.Lock()
@@ -105,10 +130,14 @@ class HeartbeatWriteCoalescer:
                 return HeartbeatWriteClaim(False, entry[1])
 
             self._writes += 1
-            self._entries[uid] = (now, None)
+            self._generation += 1
+            generation = self._generation
+            self._entries[uid] = (now, None, generation)
+            heapq.heappush(self._expiries, (now + self._window, generation, uid))
             self._entries.move_to_end(uid)
             while len(self._entries) > self._max_entries:
                 self._entries.popitem(last=False)
+            self._compact_expiries_locked()
             return HeartbeatWriteClaim(True)
 
     def record(self, user_id: int, last_seen: int) -> None:
@@ -117,7 +146,9 @@ class HeartbeatWriteCoalescer:
         with self._lock:
             entry = self._entries.get(uid)
             if entry is not None:
-                self._entries[uid] = (entry[0], int(last_seen))
+                # Keep the original claim time and generation: the deadline
+                # depends on when the slot was claimed, not when it was filled.
+                self._entries[uid] = (entry[0], int(last_seen), entry[2])
 
     def invalidate(self, user_id: Optional[int] = None) -> int:
         """Drop matching claims; return the number removed.
@@ -138,6 +169,8 @@ class HeartbeatWriteCoalescer:
         """Drop every claim and reset counters (e.g. in tests)."""
         with self._lock:
             self._entries.clear()
+            self._expiries.clear()
+            self._generation = 0
             self._coalesced = 0
             self._writes = 0
 
@@ -152,10 +185,27 @@ class HeartbeatWriteCoalescer:
             }
 
     def _prune_expired_locked(self, now: float) -> None:
-        """Drop claims older than the window so expiry is exact, not lazy."""
-        if not self._entries:
+        """Drop only claims whose deadline has passed.
+
+        A min-heap keeps the deadline-ordered work proportional to the number
+        of *expired* claims. Heap items whose generation no longer matches the
+        live entry (re-claimed, invalidated or LRU-evicted) are skipped lazily.
+        """
+        expiries = self._expiries
+        entries = self._entries
+        while expiries and expiries[0][0] <= now:
+            _deadline, generation, uid = heapq.heappop(expiries)
+            entry = entries.get(uid)
+            if entry is None or entry[2] != generation:
+                continue
+            del entries[uid]
+
+    def _compact_expiries_locked(self) -> None:
+        """Rebuild the heap from live entries when stale items accumulate."""
+        if len(self._expiries) <= _EXPIRY_HEAP_FACTOR * self._max_entries:
             return
-        window = self._window
-        for uid, value in list(self._entries.items()):
-            if now - value[0] >= window:
-                self._entries.pop(uid, None)
+        self._expiries = [
+            (claimed_at + self._window, generation, uid)
+            for uid, (claimed_at, _last_seen, generation) in self._entries.items()
+        ]
+        heapq.heapify(self._expiries)
