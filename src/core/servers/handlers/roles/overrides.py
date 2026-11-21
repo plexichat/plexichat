@@ -92,7 +92,19 @@ class RoleOverrideMixin(RoleHandlerProtocol):
                 raise MemberNotFoundError(
                     "Override target is not a member of this server"
                 )
-            if server is not None and server.owner_id == target_id:
+            # SECURITY: both ids are authoritative -- owner_id is projected from
+            # the srv_servers row, target_id from the API route. Loose ``==``
+            # let a text/float encoded owner id ("5", 5.9) compare unequal to
+            # the genuine int target, skipping this protected-target rule.
+            # Fail closed: a genuine int attests to identity (type() rejects
+            # bool); a malformed owner/target id cannot prove the target is NOT
+            # the owner, so deny the override.
+            owner_id = server.owner_id if server is not None else None
+            if server is not None and type(owner_id) is not int:
+                raise RoleHierarchyError("Cannot verify server owner identity")
+            if type(target_id) is not int:
+                raise RoleHierarchyError("Cannot verify override target identity")
+            if owner_id == target_id:
                 raise RoleHierarchyError("Cannot override the server owner")
             user_roles = self.manager._get_member_role_rows(server_id, user_id)
             target_roles = self.manager._get_member_role_rows(server_id, target_id)
@@ -114,10 +126,9 @@ class RoleOverrideMixin(RoleHandlerProtocol):
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
-        # channels.manage is a server-scoped permission; resolving it with a
-        # channel_id would let a per-channel override authorize rewriting this
-        # (or other) channel's overrides. Check it at server scope.
-        self.manager.require_permission(user_id, channel.server_id, "channels.manage")
+        self.manager.require_permission(
+            user_id, channel.server_id, "channels.manage", channel_id
+        )
         self._guard_override_target(user_id, channel.server_id, target_type, target_id)
 
         # Override allow/deny dicts carry the same power as role permissions:
@@ -207,10 +218,9 @@ class RoleOverrideMixin(RoleHandlerProtocol):
         channel = self.manager.get_channel(channel_id, user_id)
         if not channel:
             raise ChannelNotFoundError("Channel not found")
-        # channels.manage is a server-scoped permission; resolving it with a
-        # channel_id would let a per-channel override authorize rewriting this
-        # (or other) channel's overrides. Check it at server scope.
-        self.manager.require_permission(user_id, channel.server_id, "channels.manage")
+        self.manager.require_permission(
+            user_id, channel.server_id, "channels.manage", channel_id
+        )
         self._guard_override_target(user_id, channel.server_id, target_type, target_id)
 
         self.db.execute(
