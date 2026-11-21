@@ -12,6 +12,11 @@ from .users import UserPublicResponse
 from src.core.security.outbound import resolve_outbound_url
 
 
+# Bound rule bodies: stored as JSON and replayed into matchers on worker start.
+MAX_AUTOMOD_ACTIONS = 32
+MAX_AUTOMOD_ID_LIST = 256
+
+
 def _validate_icon_url(url: Optional[str]) -> Optional[str]:
     """SSRF-gate the server icon URL through the shared outbound gate.
 
@@ -444,15 +449,17 @@ class AutomodRuleCreateRequest(BaseModel):
     name: UIText = Field(..., min_length=1, max_length=100)
     rule_type: str = Field(..., description="Rule type")
     config: Dict[str, Any] = Field(..., description="Rule configuration")
-    actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
+    actions: List[AutomodRuleAction] = Field(
+        ..., max_length=MAX_AUTOMOD_ACTIONS, description="Actions to take"
+    )
     applied_roles: Optional[List[SnowflakeID]] = Field(
-        None, description="Role IDs this rule applies to"
+        None, max_length=MAX_AUTOMOD_ID_LIST, description="Role IDs this rule applies to"
     )
     exempt_roles: Optional[List[SnowflakeID]] = Field(
-        None, description="Exempt role IDs"
+        None, max_length=MAX_AUTOMOD_ID_LIST, description="Exempt role IDs"
     )
     exempt_channels: Optional[List[SnowflakeID]] = Field(
-        None, description="Exempt channel IDs"
+        None, max_length=MAX_AUTOMOD_ID_LIST, description="Exempt channel IDs"
     )
     priority: Optional[int] = Field(0, description="Rule priority")
     check_all: Optional[bool] = Field(False, description="Whether to check all rules")
@@ -466,10 +473,18 @@ class AutomodRuleUpdateRequest(BaseModel):
 
     name: Optional[UIText] = Field(None, min_length=1, max_length=100)
     config: Optional[Dict[str, Any]] = None
-    actions: Optional[List[AutomodRuleAction]] = None
-    applied_roles: Optional[List[SnowflakeID]] = None
-    exempt_roles: Optional[List[SnowflakeID]] = None
-    exempt_channels: Optional[List[SnowflakeID]] = None
+    actions: Optional[List[AutomodRuleAction]] = Field(
+        None, max_length=MAX_AUTOMOD_ACTIONS
+    )
+    applied_roles: Optional[List[SnowflakeID]] = Field(
+        None, max_length=MAX_AUTOMOD_ID_LIST
+    )
+    exempt_roles: Optional[List[SnowflakeID]] = Field(
+        None, max_length=MAX_AUTOMOD_ID_LIST
+    )
+    exempt_channels: Optional[List[SnowflakeID]] = Field(
+        None, max_length=MAX_AUTOMOD_ID_LIST
+    )
     priority: Optional[int] = None
     check_all: Optional[bool] = None
     enabled: Optional[bool] = None
