@@ -100,12 +100,12 @@ class ReactionOpsMixin(ReactionProtocol):
                         "Custom emoji not found in this server"
                     )
 
-        existing = self._db.fetch_one(
-            "SELECT 1 FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
-            (message_id, user_id, normalized_emoji),
-        )
-        if existing:
-            raise ReactionExistsError("You have already reacted with this emoji")
+        # The duplicate-reaction check used to run here *and* again inside the
+        # transaction below.  The in-transaction probe is the authoritative one
+        # (it is race-safe, and the UNIQUE(message_id, user_id, emoji) constraint
+        # is the final backstop), so this pre-transaction copy was a redundant
+        # extra query on every single add.  Dropping it saves one round trip on
+        # the hot path without changing the error mapping.
 
         max_reactions = self._config.get("max_reactions_per_message", 20)
         if channel:
@@ -213,9 +213,20 @@ class ReactionOpsMixin(ReactionProtocol):
             f"Reaction {reaction_id} added to message {message_id} by user {user_id}"
         )
 
-        result = self.get_reaction(reaction_id)
-        assert result is not None
-        return result
+        # Build the result from the values just written instead of re-reading
+        # the row with ``get_reaction``.  Every field below is exactly what the
+        # INSERT above persisted (``is_custom`` is stored as 0/1 and restored
+        # to bool), so callers receive an identical ``Reaction`` without the
+        # extra SELECT on this hot path.
+        return Reaction(
+            id=reaction_id,
+            message_id=message_id,
+            user_id=user_id,
+            emoji=normalized_emoji,
+            is_custom=bool(is_custom),
+            custom_emoji_id=custom_emoji_id,
+            created_at=now,
+        )
 
     def remove_reaction(
         self, user_id: SnowflakeID, message_id: SnowflakeID, emoji: str
