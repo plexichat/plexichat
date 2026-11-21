@@ -191,6 +191,32 @@ class MemberInviteMixin:
         # --- Per-user creation rate limit (sliding window) ---
         _check_invite_creation_rate(user_id, cfg)
 
+        # The sliding-window registry above is process-local: under
+        # ``--scale backend=N`` every worker keeps its own copy, so on its own
+        # it multiplies a user's creation budget by N. Spend a slot in the
+        # SHARED, atomic rate-limit backend as well so the configured budget is
+        # enforced globally. ``check_rate_limit`` increments one shared counter
+        # atomically and fails closed on a backend fault, so neither a
+        # read-modify-write race nor a store outage can reopen the corridor.
+        creation_max = int(cfg.get("creation_max_per_window", 20))
+        if creation_max > 0:
+            from src.core.database import check_rate_limit
+
+            creation_window = int(cfg.get("creation_window_seconds", 3600))
+            try:
+                allowed, _remaining = check_rate_limit(
+                    f"invites:creation:{user_id}", creation_max, creation_window
+                )
+            except Exception:
+                # An out-of-range config or a limiter backend that cannot run
+                # must deny, never silently become an unlimited path.
+                allowed = False
+            if not allowed:
+                raise InviteRateLimitedError(
+                    "Invite creation rate limit exceeded",
+                    retry_after_seconds=creation_window,
+                )
+
         # --- Active-invite quotas (advisory; see docstring) ---
         now_ms = self.manager._get_timestamp()
 
