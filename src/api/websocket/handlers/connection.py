@@ -314,7 +314,18 @@ class ConnectionHandler:
         user_agent: Optional[str] = None,
         is_selftest: bool = False,
     ) -> Optional[int]:
-        """Verify a token and return user ID."""
+        """Verify a token and return the gateway principal it binds to.
+
+        A bot token's ``user_id`` is its OWNER (``_verify_bot_token`` stores the
+        bot's own account in ``account_id`` and the owner in ``user_id``), while
+        the REST layer rejects bot credentials on every owner-scoped surface
+        (``require_user_token``). Binding a gateway socket to ``user_id`` would
+        therefore give a bot the owner's entire real-time audience: READY
+        guilds, friend presence, private DMs and any per-event fan-out keyed on
+        the owner id. Rebind bot credentials to the bot's own account so the
+        socket only receives bot-scoped events; legitimate bot connections keep
+        working and human session tickets are unchanged.
+        """
         if not self._auth:
             return None
 
@@ -326,9 +337,22 @@ class ConnectionHandler:
                 user_agent,
                 is_selftest=is_selftest,
             )
-            return token_info.user_id
         except Exception:
             return None
+
+        if getattr(token_info, "token_type", "user") == "bot":
+            bot_id = getattr(token_info, "account_id", None)
+            # Fail closed: a bot verdict without a distinct bot account must
+            # never fall back to the owner's user_id.
+            try:
+                bot_id = int(bot_id)
+            except (TypeError, ValueError):
+                return None
+            if bot_id <= 0 or bot_id == token_info.user_id:
+                return None
+            return bot_id
+
+        return token_info.user_id
 
     async def _build_ready_payload(
         self,
