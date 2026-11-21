@@ -32,6 +32,13 @@ import utils.config as config
 #: realistic number of concurrently active uploads.
 MAX_USER_SESSIONS = 200
 
+# A single expired-upload sweep must stay bounded. The maintenance loop runs
+# every few minutes, so capping the due set per pass lets a large backlog drain
+# over successive cycles instead of materialising every expired row (and its
+# temp path) in one unbounded query. The same cap bounds the batched DELETE's
+# bind parameters so no driver's variable limit can be hit.
+_SWEEP_BATCH_SIZE = 500
+
 
 class UploadSessionStatus(Enum):
     """Status of an upload session."""
@@ -940,15 +947,28 @@ class ChunkedUploadManager:
         )
 
     def cleanup_expired(self) -> int:
-        """Clean up expired sessions. Returns count of cleaned sessions."""
+        """Clean up expired sessions. Returns count of cleaned sessions.
+
+        The due set is bounded and keyset-ordered so one maintenance tick can
+        never materialise an unbounded number of expired rows. Writes are
+        collapsed from one ``DELETE`` per row into a bounded ``execute_many``
+        batch. Each delete is guarded on ``expires_at < now`` so two workers
+        sweeping the same batch cannot both count (or delete) the same row:
+        the second worker's guarded delete simply affects zero rows.
+        """
         now = int(time.time() * 1000)
 
         rows = self._db.fetch_all(
-            "SELECT id, temp_path FROM media_upload_sessions WHERE expires_at < ?",
-            (now,),
+            "SELECT id, temp_path FROM media_upload_sessions "
+            "WHERE expires_at < ? ORDER BY expires_at ASC LIMIT ?",
+            (now, _SWEEP_BATCH_SIZE),
         )
+        if not rows:
+            return 0
 
-        count = 0
+        # Temp files can only be unlinked one at a time (filesystem I/O), but
+        # the database writes collapse into a handful of bounded batches.
+        delete_params = []
         for row in rows:
             session_id = row["id"] if isinstance(row, dict) else row[0]
             temp_path = row["temp_path"] if isinstance(row, dict) else row[1]
@@ -963,10 +983,15 @@ class ChunkedUploadManager:
                 except OSError as unlink_error:
                     logger.debug(f"chunked upload temp unlink failed: {unlink_error}")
 
-            self._db.execute(
-                "DELETE FROM media_upload_sessions WHERE id = ?", (session_id,)
+            delete_params.append((session_id, now))
+
+        count = 0
+        for start in range(0, len(delete_params), _SWEEP_BATCH_SIZE):
+            cursor = self._db.execute_many(
+                "DELETE FROM media_upload_sessions WHERE id = ? AND expires_at < ?",
+                delete_params[start : start + _SWEEP_BATCH_SIZE],
             )
-            count += 1
+            count += getattr(cursor, "rowcount", 0) or 0
 
         if count > 0:
             logger.info(f"Cleaned up {count} expired upload sessions")
