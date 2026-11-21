@@ -153,18 +153,20 @@ def test_query_and_path_survive_the_rebuild(monkeypatch):
 
 
 def test_userinfo_is_never_forwarded(monkeypatch):
-    """A stored ``user:pass@`` must not be replayed to the endpoint."""
-    _resolve_to(monkeypatch, PUBLIC_IP)
+    """A stored ``user:pass@`` must not be replayed to the endpoint.
+
+    The endpoint gate now refuses credential-bearing URLs outright, before
+    any DNS lookup or POST, so there is no userinfo left to strip at the
+    transport. The assertion is that nothing reaches the wire.
+    """
     client = _Recorder()
 
-    WebhookDeliverer(client=client).deliver(
-        _record("https://user:secret@hooks.example.com/e")
-    )
+    with pytest.raises(WebhookDeliveryError, match="SSRF validation"):
+        WebhookDeliverer(client=client).deliver(
+            _record("https://user:secret@hooks.example.com/e")
+        )
 
-    call = client.calls[0]
-    assert "user" not in call["url"]
-    assert "secret" not in call["url"]
-    assert call["headers"]["Host"] == "hooks.example.com"
+    assert client.calls == [], "a credential-bearing endpoint must never be fetched"
 
 
 def test_ipv6_resolved_address_is_bracketed(monkeypatch):

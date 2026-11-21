@@ -65,9 +65,9 @@ def validate_delivery_endpoint(
         Tuple of ``(hostname, resolved_ip)`` on success.
 
     Raises:
-        ValueError: When the URL fails validation (wrong scheme, blocked
-            hostname, resolves to a private/reserved address, or DNS
-            failure).
+        ValueError: When the URL fails validation (wrong scheme, embedded
+            credentials, blocked hostname, resolves to a private/reserved
+            address, or DNS failure).
     """
     if not isinstance(url, str) or not url or len(url) > MAX_ENDPOINT_URL_LENGTH:
         raise ValueError("Invalid endpoint URL: empty, non-string or too long")
@@ -78,6 +78,16 @@ def validate_delivery_endpoint(
         raise ValueError(
             f"Endpoint scheme {scheme!r} not allowed; only http/https supported"
         )
+
+    # Cheap structural rejection, before DNS and before the loopback test seam:
+    # mirror the sibling outbound gate (``parse_outbound_url``) so an endpoint
+    # carrying ``user:pass@``/``user@``/``:pass@`` can never be persisted in the
+    # retry queue or echoed to logs/errors. The transport happened to strip
+    # userinfo when rebuilding the pinned request, but that was an accident of
+    # the sink rather than a property of this gate. Own the rule here.
+    if parsed.username or parsed.password:
+        raise ValueError("Invalid endpoint URL: must not embed credentials")
+
     hostname = parsed.hostname
     if not hostname or len(hostname) > MAX_HOSTNAME_LENGTH:
         raise ValueError("Invalid endpoint URL: missing or overlong hostname")
