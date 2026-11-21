@@ -127,6 +127,20 @@ def invalidate_member_count_cache() -> None:
     # write must evict it too, or a removed member keeps receiving presence /
     # typing fan-out and an added member stays invisible until the TTL expires.
     invalidate_shared_member_cache()
+    # The typing-audience cache memoizes each channel's permission-filtered
+    # viewer set -- the exact audience that receives TYPING_START / TYPING_STOP
+    # frames -- from these same srv_members rows plus each member's
+    # channels.view decision. It was previously evicted only on gateway
+    # disconnect, so a kick/ban/leave that does not tear down the removed
+    # member's socket kept them in the warm viewer set and leaked typing frames
+    # to them for the whole TTL. Evict it here with the other fan-out caches.
+    # Lazy import keeps the core membership tier decoupled from the websocket
+    # layer at module load (and membership writes are rare).
+    from src.api.websocket.handlers.presence import (
+        invalidate_typing_audience_cache,
+    )
+
+    invalidate_typing_audience_cache()
 
 
 def member_count_cache_stats() -> dict:
