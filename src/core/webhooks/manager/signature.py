@@ -46,7 +46,9 @@ WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
 # the boundary finds an expired marker and is accepted twice. Keep an explicit
 # margin so the marker always strictly outlives the pair's remaining validity.
 _REPLAY_TTL_MARGIN_SECONDS = 60
-_REPLAY_CACHE_TTL_SECONDS = WEBHOOK_REPLAY_WINDOW_SECONDS * 2
+_REPLAY_CACHE_TTL_SECONDS = (
+    WEBHOOK_REPLAY_WINDOW_SECONDS * 2 + _REPLAY_TTL_MARGIN_SECONDS
+)
 
 # An Ed25519 signature is exactly 64 bytes. Checking the length in constant
 # time before the public-key operation rejects malformed/oversized headers
