@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key, require_user_token
 from src.api.schemas.servers import (
     ChannelResponse,
     ChannelCreateRequest,
@@ -104,12 +105,26 @@ def _require_channel_list_access(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=30, prefix="server_channels_api")
+# The channel list is permission-filtered per ``current_user.user_id``. A bot
+# token carries its owner's ``user_id`` (the bot's own id is in ``account_id``),
+# so with the default key builder it replayed the owner's warm
+# ``server_channels_api:...:TokenInfo:<uid>`` entry on a cache hit and read the
+# owner's channel visibility on a miss. Reject bots before any lookup and
+# partition the cache by credential: bots get their own namespace so a warm
+# owner entry can never be served on a hit (the body guard only runs on misses),
+# while user tokens keep the legacy key layout so ``server_channels_api:*``
+# invalidation globs still match.
+@cached(
+    ttl=30,
+    prefix="server_channels_api",
+    key_builder=authenticated_cache_key("server_channels_api"),
+)
 def get_server_channels(
     server_id: str,
     current_user: TokenInfo = Depends(get_current_user),
     _channel_list_access_gate: None = Depends(_require_channel_list_access),
 ) -> List[ChannelResponse]:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
