@@ -106,7 +106,7 @@ _URL_JUNK_RE = re.compile(r"[\x00-\x20\x7f]")
 # a colon in its first segment, so any value matching this is either an
 # absolute URI or a malformed relative reference -- it must never fall through
 # to the "benign relative URL" branch below.
-_SENTINEL_ABC = 1  # _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _safe_url(value: str) -> Optional[str]:
