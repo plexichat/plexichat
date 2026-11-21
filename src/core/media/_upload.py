@@ -39,6 +39,28 @@ from .security.validation import (
 logger = logging.getLogger(__name__)
 
 
+def _has_blocked_extension(filename: str) -> bool:
+    """True when any suffix of an untrusted filename is on the blocklist.
+
+    A bare ``os.path.splitext(filename)[1]`` only sees the final suffix, so a
+    caller could hide a dangerous one from the executable allow-list with:
+
+    * a trailing dot/space (``loader.exe.``) - Windows strips these when it
+      opens the file, and the serve path's header sanitizer strips them too;
+    * an NTFS alternate-data-stream tail (``loader.exe::$DATA``);
+    * a second, harmless-looking extension (``loader.exe.png``).
+
+    Normalise those forms and check *every* suffix, failing closed on anything
+    that resolves to a blocked executable/script type.
+    """
+    normalised = str(filename or "").lower().rstrip(". \t\r\n")
+    # Windows collapses ``name.ext::$DATA`` (and other ADS suffixes) to the
+    # underlying file name; do the same before inspecting the extensions.
+    normalised = normalised.split(":", 1)[0].rstrip(". \t\r\n")
+    suffixes = normalised.split(".")[1:]
+    return any(("." + suffix) in BLOCKED_EXTENSIONS for suffix in suffixes)
+
+
 class _UploadMixin:
     """Upload pipeline methods mixed into MediaManager."""
 
@@ -236,11 +258,12 @@ class _UploadMixin:
         self._validate_content_type(content_type, media_type)
         self._validate_file_size(file_size, media_type)
 
-        # Blocked extensions
-        ext = os.path.splitext(filename.lower())[1]
-        if ext in BLOCKED_EXTENSIONS:
+        # Blocked extensions: inspect every suffix, not just the final one,
+        # so trailing dots/ADS tails and double extensions cannot hide a
+        # dangerous type from this gate.
+        if _has_blocked_extension(filename):
             raise FileTypeError(
-                f"File type not allowed: {ext}",
+                "File type not allowed: executable or script extension",
                 content_type,
                 ["Executable and script files are blocked for security"],
             )
@@ -537,10 +560,13 @@ class _UploadMixin:
                     ["This content type is blocked for security"],
                 )
 
-            ext = os.path.splitext(filename.lower())[1]
-            if ext in BLOCKED_EXTENSIONS:
+            # Same normalised, all-suffix extension check as the bytes path:
+            # the stream/chunked sink is where a client-controlled filename
+            # reaches this gate without the attachment route's stricter
+            # basename sanitizer.
+            if _has_blocked_extension(filename):
                 raise FileTypeError(
-                    f"File type not allowed: {ext}",
+                    "File type not allowed: executable or script extension",
                     content_type,
                     ["Executable and script files are blocked for security"],
                 )

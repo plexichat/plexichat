@@ -17,7 +17,28 @@ from .boundaries import (
     bounded_batch,
     payload_size,
 )
-from .intents import validate_intents
+from .intents import PRIVILEGED_INTENTS, validate_intents
+
+
+def _safe_resume_intents(raw: Any) -> int:
+    """Return the intent mask a resumed connection is allowed to use.
+
+    IDENTIFY creates sessions only with a validated, non-privileged intent
+    mask.  A gateway session, however, deliberately outlives its socket and
+    may be hydrated from another worker's persisted (Valkey) payload, so the
+    mask cached on it is untrusted at resume time: it can be stale (created
+    before privileged intents required approval) or corrupted.  Restoring it
+    verbatim would let a resumed session regain privileged event visibility
+    (GUILD_MEMBERS / GUILD_PRESENCES / MESSAGE_CONTENT) that it could no
+    longer obtain at IDENTIFY -- a privilege re-escalation via RESUME.
+
+    Fail closed: an invalid mask grants nothing, and privileged bits are
+    always stripped.  This only ever *reduces* the mask, so no existing
+    check is weakened.
+    """
+    if not isinstance(raw, int) or isinstance(raw, bool) or not validate_intents(raw):
+        return 0
+    return raw & ~PRIVILEGED_INTENTS
 
 
 # Sentinel for a value whose serialized size cannot be proven from a cheap
@@ -757,7 +778,14 @@ class SessionManager:
                 user_conns.discard(old_conn_id)
             user_conns.add(connection.connection_id)
 
-        connection.set_identified(session.user_id, session_id, session.intents)
+        # Never hand a resuming client the cached intent mask verbatim. A
+        # persisted/stale session can carry privileged bits (or a corrupted
+        # value) that IDENTIFY would reject; strip them fail-closed here so a
+        # RESUME cannot re-escalate privileges. Heal the cached value too, so
+        # the sanitized mask is what gets persisted for sibling workers.
+        resume_intents = _safe_resume_intents(session.intents)
+        session.intents = resume_intents
+        connection.set_identified(session.user_id, session_id, resume_intents)
         connection.sequence = session.sequence
 
         # Valkey I/O outside the lock. The NEW connection id must be

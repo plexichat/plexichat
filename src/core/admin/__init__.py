@@ -345,12 +345,22 @@ def force_password_change(
     if not manageable:
         return False, "Insufficient role position to force this admin's password change"
 
-    return force_password_change_target(
+    result = force_password_change_target(
         db=db,
         acting_admin_id=actor_id,
         target_admin_id=target_id,
         client_ip=client_ip,
     )
+    # The force_password_change flag is only consulted at login
+    # (check_password_change_required); no admin route gates on it. Without
+    # dropping the target's existing admin sessions, a bearer token minted
+    # before this operator-mandated revocation keeps authorising admin actions
+    # until natural expiry. Every other password-change path revokes sessions;
+    # do the same here, and only on the success path so a refused/failed
+    # mutation (e.g. audit failure) has no side effect.
+    if result[0]:
+        db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (target_id,))
+    return result
 
 
 def get_security_status(admin_id: int):
