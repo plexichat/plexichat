@@ -11,6 +11,7 @@ Provides reliable webhook delivery with:
 
 import json
 import secrets
+from collections import OrderedDict
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
@@ -18,6 +19,86 @@ from src.core.base import timestamp_ms, generate_id
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.webhooks.canonical import canonical_payload_bytes
 from src.core.webhooks.url_safety import validate_delivery_endpoint
+
+
+# When one event fans out to N webhook endpoints, all N retry rows carry the
+# exact same canonical payload JSON string. get_pending_retries() used to run
+# ``json.loads`` once per row, so a 500-subscriber fan-out paid for 500 full
+# decodes of an identical string. Memoize the decoded dict by that full stored
+# string: it is the compact ``json.dumps(payload, sort_keys=True)`` produced at
+# enqueue, so it encodes every input to the parse. A different payload yields a
+# different key and can never observe stale data. The cache is bounded, and
+# oversized keys are skipped, so a flood of distinct/forged rows retains at
+# most this many strings.
+MAX_PARSED_PAYLOAD_CACHE_ENTRIES = 64
+# Keys larger than the stored-payload bound (1 MiB) cannot represent a
+# deliverable row anyway; skipping them keeps a forged oversized record from
+# filling the cache with a multi-megabyte string.
+_MAX_PARSED_PAYLOAD_CACHE_KEY_BYTES = 1024 * 1024
+
+
+class _ParsedPayloadCache:
+    """Bounded LRU of ``canonical payload JSON -> parsed payload dict``."""
+
+    def __init__(self, max_entries: int = MAX_PARSED_PAYLOAD_CACHE_ENTRIES) -> None:
+        self._max_entries = max(1, int(max_entries))
+        self._entries: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        """Return the cached dict, or ``None`` on a miss (also counted)."""
+        value = self._entries.get(key)
+        if value is None:
+            self._misses += 1
+            return None
+        self._hits += 1
+        self._entries.move_to_end(key)
+        return value
+
+    def put(self, key: str, value: Dict[str, Any]) -> None:
+        self._entries[key] = value
+        if len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
+
+    def stats(self) -> Dict[str, int]:
+        """Hit/miss counters and size, for observability and regression tests."""
+        return {
+            "size": len(self._entries),
+            "max_entries": self._max_entries,
+            "hits": self._hits,
+            "misses": self._misses,
+        }
+
+
+_PARSED_PAYLOAD_CACHE = _ParsedPayloadCache()
+
+
+def _parse_payload_json(raw_json: str) -> Dict[str, Any]:
+    """Decode a canonical payload string, sharing the work across fan-out rows.
+
+    The cached dict is returned as a fresh shallow copy so callers cannot
+    mutate the cached value through its top-level keys. Nested values are
+    shared and must be treated as read-only by delivery (they are: signing,
+    the size bound and the HTTP body only read the payload). Keys larger than
+    the stored-payload bound bypass the cache entirely so a forged oversized
+    row cannot fill it with a multi-megabyte string.
+    """
+    cached = None
+    use_cache = len(raw_json) <= _MAX_PARSED_PAYLOAD_CACHE_KEY_BYTES
+    if use_cache:
+        cached = _PARSED_PAYLOAD_CACHE.get(raw_json)
+    if cached is not None:
+        return dict(cached)
+    try:
+        parsed = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    if use_cache:
+        _PARSED_PAYLOAD_CACHE.put(raw_json, parsed)
+    return dict(parsed)
 
 
 class WebhookRetryQueue:
@@ -167,12 +248,12 @@ class WebhookRetryQueue:
         metadata = {}
         if not signing_headers and self._webhook_manager is not None:
             try:
-                sign_bytes = getattr(
+                sign_bytes: Any = getattr(
                     self._webhook_manager, "sign_payload_bytes", None
                 )
                 if callable(sign_bytes):
                     # Manager supports pre-serialized bytes: no second encode.
-                    signing_headers = sign_bytes(webhook_id, payload_bytes)
+                    signing_headers = sign_bytes(webhook_id, payload_bytes)  # type: ignore[assignment]
                 else:
                     # Back-compat with older/injected managers that only
                     # expose sign_payload(webhook_id, payload).
@@ -351,14 +432,11 @@ class WebhookRetryQueue:
             if data.get("payload") and isinstance(data["payload"], str):
                 # Keep the stored canonical JSON alongside the parsed dict.
                 # Every row fanning out one event carries the same string, so
-                # the delivery engine uses it as a cache key and derives the
-                # payload byte size once instead of re-encoding per row.
+                # the delivery engine uses it as a cache key (for the byte-size
+                # bound) and we decode it once instead of once per subscriber.
                 raw_payload_json = data["payload"]
-                try:
-                    data["payload"] = json.loads(raw_payload_json)
-                    data["payload_raw_json"] = raw_payload_json
-                except (json.JSONDecodeError, TypeError):
-                    data["payload"] = {}
+                data["payload"] = _parse_payload_json(raw_payload_json)
+                data["payload_raw_json"] = raw_payload_json
             if data.get("metadata") and isinstance(data["metadata"], str):
                 try:
                     data["metadata"] = json.loads(data["metadata"])
