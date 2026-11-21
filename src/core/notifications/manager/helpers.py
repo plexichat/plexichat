@@ -19,8 +19,19 @@ from src.core.base import SnowflakeID
 # zero-width format characters let them visually disguise a link or reverse
 # the apparent direction of a preview. None of these are legitimate in a
 # single-line preview, so strip them at every read/write boundary.
+# This set must stay in lockstep with ``hardening.text.CONTROL_CHARACTERS``
+# (the rule every header/log/URL consumer uses). It used to stop at U+2069,
+# leaving the word joiner (U+2060), the legacy directional formats (U+206A-
+# U+206F) and the Syriac abbreviation mark (U+070F) intact: those are invisible
+# Cf characters a message author can smuggle into a preview to glue words
+# together or change how a link renders on a device. Reject the full set here.
 _UNSAFE_PREVIEW_CHARS = re.compile(
-    "[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff\u061c\u00ad]"
+    "[\x00-\x1f\x7f-\x9f"
+    "\u061c\u070f\u00ad"  # Arabic letter mark, Syriac abbrev mark, soft hyphen
+    "\u200b-\u200f"  # zero-width space/joiners + LRM/RLM
+    "\u2028-\u202e"  # line/para separators + bidi embedding/overrides
+    "\u2060\u2066-\u206f"  # word joiner + bidi isolates + legacy formats
+    "\ufeff]"  # BOM
 )
 
 
