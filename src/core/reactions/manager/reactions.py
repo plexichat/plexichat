@@ -54,8 +54,44 @@ class ReactionOpsMixin(ReactionProtocol):
         if is_custom:
             if custom_emoji_id is None:
                 raise CustomEmojiNotFoundError("Custom emoji not found")
-            if not self._validate_custom_emoji_exists(custom_emoji_id):
+            # Resolve the owning server from the database, never from the
+            # attacker-controlled token. Channel messages already scope the
+            # emoji to the channel's server below, but a DM has no channel and
+            # previously skipped every server check: any caller who knew an
+            # emoji id could use an emoji owned by a server they are not in
+            # (including private servers). Gate on real membership of the
+            # owning server in every context and fail closed when it cannot
+            # be verified.
+            owner_row = self._db.fetch_one(
+                "SELECT server_id FROM react_custom_emoji "
+                "WHERE id = ? AND available = 1",
+                (custom_emoji_id,),
+            )
+            if not owner_row:
                 raise CustomEmojiNotFoundError("Custom emoji not found")
+            owner_server_id = owner_row["server_id"]
+            if owner_server_id:
+                servers_mod = self._servers
+                if not servers_mod:
+                    logger.warning(
+                        "Servers module unavailable; denying custom emoji %s "
+                        "whose owning server cannot be verified",
+                        custom_emoji_id,
+                    )
+                    raise CustomEmojiNotFoundError("Custom emoji not found")
+                try:
+                    member = servers_mod.get_member(owner_server_id, user_id)
+                except Exception as exc:
+                    logger.error(
+                        "Failed to verify membership for custom emoji %s in "
+                        "server %s: %s",
+                        custom_emoji_id,
+                        owner_server_id,
+                        exc,
+                    )
+                    raise CustomEmojiNotFoundError("Custom emoji not found") from exc
+                if not member:
+                    raise CustomEmojiNotFoundError("Custom emoji not found")
             if channel:
                 if not self._validate_custom_emoji_for_server(
                     custom_emoji_id, channel["server_id"]
@@ -491,9 +527,7 @@ class ReactionOpsMixin(ReactionProtocol):
         )
         return self._cached_reaction_read(key, _load_user_reactions)
 
-    def _accessible_reaction_message_ids(
-        self, user_id: int, message_ids: List[int]
-    ):
+    def _accessible_reaction_message_ids(self, user_id: int, message_ids: List[int]):
         """Live authorization gate for a batch reaction read.
 
         One bounded query resolves which of the requested messages this viewer

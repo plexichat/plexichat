@@ -259,8 +259,13 @@ class TestReactionErrors:
 class TestReactionCustomEmoji:
     """Test custom emoji reactions."""
 
-    def test_custom_emoji_reaction(self, reaction_manager, test_db):
+    def test_custom_emoji_reaction(self, reaction_manager, test_db, monkeypatch):
         """Can react with an existing custom emoji even in a DM context."""
+        # Owning-server authorization is covered by
+        # test_custom_emoji_cross_server_use_gate.py. This test isolates the
+        # reaction write for a hand-inserted emoji whose server (999) has no
+        # real member rows, so stub that gate here.
+        monkeypatch.setattr(reaction_manager._servers, "get_member", lambda *a: object())
         test_db.execute(
             "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
         )
