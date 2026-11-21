@@ -499,7 +499,11 @@ class MessagesCRUDBase:
         return known_codes
 
     def _enforce_channel_slowmode(
-        self, channel_id: int, user_id: int, servers_mod: Any
+        self,
+        channel_id: int,
+        user_id: int,
+        servers_mod: Any,
+        channel: Optional[Any] = None,
     ) -> None:
         """Reject sends that violate the channel's slowmode interval.
 
@@ -520,6 +524,14 @@ class MessagesCRUDBase:
             return
 
         try:
+            if channel is None:
+                retry_after = checker(user_id, channel_id)
+            else:
+                retry_after = checker(user_id, channel_id, channel=channel)
+        except TypeError as e:
+            msg = str(e).lower()
+            if "unexpected keyword" not in msg or "channel" not in msg:
+                raise
             retry_after = checker(user_id, channel_id)
         except Exception as e:
             logger.warning(

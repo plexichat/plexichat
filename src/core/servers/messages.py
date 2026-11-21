@@ -33,7 +33,10 @@ def send_channel_message(
 
 
 def check_channel_slowmode(
-    user_id: SnowflakeID, channel_id: SnowflakeID
+    user_id: SnowflakeID,
+    channel_id: SnowflakeID,
+    channel: Optional[Any] = None,
+    permissions: Optional[Dict[str, bool]] = None,
 ) -> Optional[float]:
     """Return the seconds *user_id* must wait before posting, or None.
 
@@ -42,7 +45,11 @@ def check_channel_slowmode(
     only the manager had it, the route's ``getattr`` probe found nothing and
     a member could post as fast as they liked in a slow channel.
     """
-    return _get_manager().check_channel_slowmode(user_id, channel_id)
+    if channel is None and permissions is None:
+        return _get_manager().check_channel_slowmode(user_id, channel_id)
+    return _get_manager().check_channel_slowmode(
+        user_id, channel_id, channel=channel, permissions=permissions
+    )
 
 
 def get_channel_messages(
