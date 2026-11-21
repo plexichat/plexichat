@@ -34,6 +34,89 @@ from .broadcast import BroadcastMixin
 from .base import MessagesCRUDBase
 
 
+def _edit_not_found() -> HTTPException:
+    """Same opaque 404 a missing message produces (no existence oracle)."""
+    return HTTPException(
+        status_code=404,
+        detail={"error": {"code": 404, "message": "Message not found"}},
+    )
+
+
+def _require_edit_channel_view(
+    url_cid: int, conversation_id: int, user_id: int, servers_mod
+) -> None:
+    """Fail closed when the message's backing server channel is not viewable.
+
+    ``get_message`` plus the channel-scope check only prove *participation*,
+    which every server member has regardless of ``channels.view``. Message
+    routes also accept a server channel's linked ``conversation_id`` as a URL
+    alias; ``get_channel``/``channel_exists`` only know channel ids and treat
+    that alias as a DM. Resolve the authoritative conversation -> channel
+    mapping and require a live ``get_channel`` grant on the real channel before
+    the edit is applied, so a member denied view cannot edit in a private
+    channel through either spelling of the id.
+    """
+    if not servers_mod:
+        return  # No servers store => the id can only be a DM/group conversation.
+
+    get_channel = getattr(servers_mod, "get_channel", None)
+    channel_exists = getattr(servers_mod, "channel_exists", None)
+    reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+
+    # 1) URL id used directly as a channel id.
+    if callable(get_channel):
+        try:
+            if get_channel(url_cid, user_id) is not None:
+                return  # live view grant on the addressed channel
+        except HTTPException:
+            raise
+        except Exception:
+            raise _edit_not_found()
+
+    # 2) The URL id or the message's authoritative conversation may be a server
+    #    channel's linked conversation id (the URL alias). Resolve it
+    #    membership-agnostically and require a live grant on the backing channel.
+    for candidate in (conversation_id, url_cid):
+        if not callable(reverse):
+            break
+        try:
+            info = reverse(int(candidate))
+        except Exception:
+            raise _edit_not_found()
+        if info is None:
+            continue
+        real_channel_id = (
+            info.get("id") if isinstance(info, dict) else getattr(info, "id", None)
+        )
+        if real_channel_id is None:
+            raise _edit_not_found()
+        try:
+            real_channel_id = int(real_channel_id)
+        except (TypeError, ValueError):
+            raise _edit_not_found()
+        if not callable(get_channel):
+            raise _edit_not_found()
+        try:
+            channel = get_channel(real_channel_id, user_id)
+        except Exception:
+            raise _edit_not_found()
+        if channel is None:
+            raise _edit_not_found()
+        return
+
+    # 3) No backing server channel found. If the URL id is nevertheless a known
+    #    server channel, the caller cannot view it -> same 404 as a missing
+    #    message. Otherwise it is a genuine DM/group conversation, whose access
+    #    is governed by the messaging layer's participation check.
+    if callable(channel_exists):
+        try:
+            exists = channel_exists(url_cid)
+        except Exception:
+            exists = True  # unproven -> fail closed
+        if exists:
+            raise _edit_not_found()
+
+
 class EditMixin(BroadcastMixin, MessagesCRUDBase):
     async def edit_message(
         self,
@@ -89,6 +172,16 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
             )
 
             real_cid = int(getattr(msg, "conversation_id"))
+
+            # Participation (checked by the messaging layer) is granted to
+            # every server member and is NOT a channel-view boundary. The URL
+            # id may be the channel's linked conversation id, which the channel
+            # probes do not recognise as a channel. Gate both spellings before
+            # any mutation runs so a member denied channels.view cannot edit a
+            # message in a private channel via the conversation-id alias.
+            _require_edit_channel_view(
+                cid, real_cid, current_user.user_id, servers_mod
+            )
 
             server_id = None
             # Share the resolved channel with the automod-context helper so it
