@@ -237,7 +237,17 @@ class _ValidationMixin:
                     if _lic_bytes < max_size:
                         max_size = _lic_bytes
         except (RuntimeError, ImportError):
-            pass
+            # Fail CLOSED: a licensed instance whose ``max_file_size_mb`` cap
+            # cannot be evaluated used to swallow the error and fall back to
+            # the (looser) configured limit, bypassing the license ceiling.
+            # Free tier never reaches this handler (``is_free_tier()`` above
+            # short-circuits), so refuse the upload when a licensed cap cannot
+            # be verified.
+            raise FileSizeError(
+                "File size limit could not be verified; upload denied",
+                max_size,
+                size,
+            )
 
         if size > max_size:
             raise FileSizeError(
