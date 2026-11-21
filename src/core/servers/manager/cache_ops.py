@@ -89,6 +89,9 @@ class CacheOpsMixin(ServerProtocol):
         # Bump the bounded L1 epoch so no cached channel-view decision from the
         # old permission snapshot can be replayed after this change.
         get_channel_access_cache().bump(server_id, user_id)
+        from .member_role_rows_cache import invalidate_member_role_rows_cache
+
+        invalidate_member_role_rows_cache()
 
     def _invalidate_server_permission_caches(self, server_id: SnowflakeID) -> None:
         """Drop every permission result cached for *server_id*.
@@ -109,6 +112,9 @@ class CacheOpsMixin(ServerProtocol):
         # A role-wide change invalidates every member's channel-view decision
         # in the server; advancing the server epoch retires them all at once.
         get_channel_access_cache().bump(server_id)
+        from .member_role_rows_cache import invalidate_member_role_rows_cache
+
+        invalidate_member_role_rows_cache()
 
     def _invalidate_owner_cache(self, server_id: SnowflakeID) -> None:
         """Drop cached ownership so an ownership transfer takes effect now.
@@ -129,6 +135,9 @@ class CacheOpsMixin(ServerProtocol):
         # Ownership changes alter administrator/role decisions for the whole
         # server; retire every cached channel-view verdict for that scope.
         get_channel_access_cache().bump(server_id)
+        from .member_role_rows_cache import invalidate_member_role_rows_cache
+
+        invalidate_member_role_rows_cache()
 
     def _invalidate_member_caches(
         self, server_id: SnowflakeID, user_id: SnowflakeID
@@ -245,15 +254,37 @@ class CacheOpsMixin(ServerProtocol):
     def _get_member_role_rows(
         self, server_id: SnowflakeID, user_id: SnowflakeID
     ) -> List[Dict[str, Any]]:
-        member = self.get_member(server_id, user_id)
-        if not member:
-            return []
+        """Resolve a member's roles, memoized by identity and RBAC epoch.
 
-        rows = self._db.fetch_all(
-            """SELECT r.* FROM srv_roles r
-               INNER JOIN srv_member_roles mr ON r.id = mr.role_id
-               WHERE mr.member_id = ? AND r.deleted = 0""",
-            (member.id,),
+        This is consulted repeatedly while resolving permissions and hierarchy
+        for one request. The bounded, epoch-keyed L0 collapses those repeated
+        joins; a miss or any cache error recomputes from the authoritative
+        tables. The key includes server, user and the shared RBAC epoch, so no
+        member's roles can be served for another and a revoked role becomes
+        unreachable the moment its mutation bumps the epoch.
+        """
+        from .member_role_rows_cache import (
+            _MISS as _ROLE_ROWS_MISS,
+            get_cached_member_role_rows,
+            prime_member_role_rows,
         )
 
-        return [dict(row) for row in rows]
+        sid, uid = int(server_id), int(user_id)
+        cached = get_cached_member_role_rows(sid, uid)
+        if cached is not _ROLE_ROWS_MISS:
+            return cached
+
+        member = self.get_member(server_id, user_id)
+        if not member:
+            rows: List[Dict[str, Any]] = []
+        else:
+            db_rows = self._db.fetch_all(
+                """SELECT r.* FROM srv_roles r
+                   INNER JOIN srv_member_roles mr ON r.id = mr.role_id
+                   WHERE mr.member_id = ? AND r.deleted = 0""",
+                (member.id,),
+            )
+            rows = [dict(row) for row in db_rows]
+
+        prime_member_role_rows(sid, uid, rows)
+        return rows
