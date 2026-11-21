@@ -353,6 +353,19 @@ class ScheduledMessageService:
         for scheduled in due_messages:
             scheduled_id = scheduled["id"]
             try:
+                # SECURITY: the channel gate applied when this message was
+                # SCHEDULED is captured authority, not live authority. The
+                # messaging layer's only check is ``is_participant`` (server
+                # membership), so a member who lost ``messages.send``, lost
+                # view of the channel, or was timed out since scheduling would
+                # still get the queued post delivered. Re-apply the same live
+                # channel gate here, at execution time, and FAIL CLOSED: a
+                # denial (or an unavailable checker) marks the row failed via
+                # the handler below and never reaches ``send_message``.
+                self._assert_channel_post_access(
+                    scheduled["conversation_id"], scheduled["author_id"]
+                )
+
                 # Build attachment data if present
                 attachments = None
                 if scheduled.get("attachments"):
