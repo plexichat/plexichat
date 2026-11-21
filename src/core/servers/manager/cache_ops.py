@@ -212,6 +212,14 @@ class CacheOpsMixin(ServerProtocol):
         # helper) rely on this funnel alone. Evict it here so every revocation
         # closes the stale channel-list access at the core tier too.
         invalidate_pattern("server_channels:*")
+        # The HTTP channel-list response is cached in its own per-viewer
+        # namespace (``server_channels_api``) behind this same membership
+        # gate. The router's ``_invalidate_member_access_caches`` clears it
+        # for HTTP kicks, but core-only removals never reach that helper, so
+        # a kicked member kept replaying a warm 200 channel list for the full
+        # API TTL. Evict that namespace here as well so both list tiers fall
+        # together for every revocation path.
+        invalidate_pattern("server_channels_api:*")
         self._invalidate_permission_caches(server_id, user_id)
 
     def _validate_server_name(self, name: str) -> str:
