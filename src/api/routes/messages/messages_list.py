@@ -11,6 +11,8 @@ from starlette.concurrency import run_in_threadpool
 import src.api as api
 import utils.logger as logger
 from src.core.database import cached
+from src.core.base import SnowflakeID
+from src.core.database.cache.request_local import coalesced_cache_get
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.messages import MessageResponse
 from src.api.schemas.common import ErrorResponse
@@ -354,6 +356,31 @@ async def get_channel_messages(
         )
 
 
+def _pins_channel_cache_key(channel_id: SnowflakeID, user_id: SnowflakeID) -> str:
+    """Request-local memo key for the pins channel-resolution decision."""
+    return f"pins:channel:{int(channel_id)}:{int(user_id)}"
+
+
+def _resolve_pins_channel(
+    servers_mod: Any, channel_id: SnowflakeID, user_id: SnowflakeID
+) -> Any:
+    """Resolve ``get_channel`` at most once per request for the pins route.
+
+    The live access gate (``_verify_pinned_channel_access``) and the cached
+    endpoint body both need the *same* ``get_channel(channel_id, user_id)``
+    decision. Outside the memo they each pay a Valkey channel-row GET, a DB
+    membership query and the ``channels.view`` permission walk. The
+    request-local store coalesces the second lookup into the first; it lives
+    only for this ASGI request (see ``request_local``), never crosses the
+    request boundary, and memoises the exact value the authoritative resolver
+    returned -- including ``None`` and exceptions -- so it never widens a grant.
+    """
+    return coalesced_cache_get(
+        _pins_channel_cache_key(channel_id, user_id),
+        loader=lambda: servers_mod.get_channel(channel_id, user_id),
+    )
+
+
 async def _verify_pinned_channel_access(
     channel_id: str,
     current_user: TokenInfo = Depends(get_current_user),
@@ -385,7 +412,7 @@ async def _verify_pinned_channel_access(
 
     try:
         channel = await run_in_threadpool(
-            servers_mod.get_channel, cid, current_user.user_id
+            _resolve_pins_channel, servers_mod, cid, current_user.user_id
         )
     except (ChannelAccessDeniedError, PermissionDeniedError) as exc:
         logger.debug(f"pins channel access denied for {cid}: {exc}")
@@ -473,7 +500,12 @@ async def get_pinned_messages(
 
                 db = api_module.get_db()
                 try:
-                    return servers_mod.get_channel(cid, current_user.user_id)
+                    # Reuse the resolution already performed by the live gate
+                    # earlier in this request instead of paying for get_channel
+                    # a second time (Valkey row GET + membership query + perm).
+                    return _resolve_pins_channel(
+                        servers_mod, cid, current_user.user_id
+                    )
                 finally:
                     if db:
                         db.close()
