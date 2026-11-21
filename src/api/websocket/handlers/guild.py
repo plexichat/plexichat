@@ -17,6 +17,7 @@ import utils.logger as logger
 import src.core.events as events_mod
 from starlette.concurrency import run_in_threadpool
 
+from src.api.websocket.boundaries import parse_snowflake
 from src.api.websocket.connection import Connection
 from src.api.websocket.opcodes import GatewayCloseCode
 
@@ -103,8 +104,15 @@ class GuildHandler:
         if not guild_id:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
+        # Parse the client-supplied guild id through the gateway's canonical
+        # snowflake gate, not bare ``int()``. ``int`` accepts Unicode digit
+        # homoglyphs (``"٤٢"``/``"４２"`` -> 42), PEP 515 separators (``"1_0"``
+        # -> 10), signs and values past 2**63-1, so it resolved a token the
+        # client/other hops read as text to a *different* server id before any
+        # membership check. The gate is ASCII-only and range-bounded, and a
+        # rejection keeps this opcode's existing DECODE_ERROR contract.
         try:
-            guild_id = int(guild_id)
+            guild_id = parse_snowflake(guild_id, "guild_id")
         except (ValueError, TypeError):
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 

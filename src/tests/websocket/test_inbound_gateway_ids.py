@@ -27,6 +27,7 @@ from src.api.websocket.handlers.guild import GuildHandler
 from src.api.websocket.handlers.presence import PresenceHandler
 from src.api.websocket.handlers.sum import _workbook_id
 from src.api.websocket.handlers.voice import VoiceHandler
+from src.api.websocket.opcodes import GatewayCloseCode
 
 # The first integer a JS ``Number`` cannot represent exactly: ``float`` rounds
 # it to 9007199254740992, so a lossy hop changes the value by one.
@@ -87,6 +88,45 @@ async def test_guild_request_members_parses_guild_id_exactly(monkeypatch) -> Non
 
     assert servers.get_server.call_args[0][0] == BIG
     assert servers.get_members.call_args[0][1] == BIG
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "٤٢",  # Arabic-Indic digits: int() -> 42
+        "４２",  # fullwidth digits: int() -> 42
+        "1_0",  # PEP 515 separator: int() -> 10
+        "-1",  # negative
+        "0",  # below the snowflake floor
+        "99999999999999999999",  # past the snowflake ceiling
+        True,  # bool is not an id
+    ],
+)
+async def test_guild_request_members_rejects_non_canonical_id(
+    monkeypatch, malformed
+) -> None:
+    """A gid int() would reinterpret must be refused before any lookup.
+
+    Bare ``int()`` on the wire value accepts homoglyph digits, separators,
+    signs and oversized numbers, so a token the client reads as text resolves
+    to a *different* server id. The canonical gateway gate must reject it with
+    the opcode's DECODE_ERROR contract and must never reach the servers module.
+    """
+    import src.api.websocket as websocket_mod
+
+    servers = Mock()
+    dispatcher = Mock()
+    dispatcher.dispatch_to_connection = AsyncMock(return_value=True)
+    monkeypatch.setattr(websocket_mod, "get_dispatcher", lambda: dispatcher)
+
+    _, _, close = await GuildHandler(servers_module=servers).handle_request_guild_members(
+        _authed(), {"guild_id": malformed}
+    )
+
+    assert close == int(GatewayCloseCode.DECODE_ERROR)
+    servers.get_server.assert_not_called()
+    servers.get_members.assert_not_called()
 
 
 @pytest.mark.asyncio
