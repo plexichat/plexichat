@@ -279,6 +279,13 @@ class OnboardingManager:
         """Validate step options based on step type."""
         if step_type == OnboardingStepType.SELECT_ROLES:
             role_ids = options.get("role_ids", [])
+            # Bulk self-service grant: the whitelist is the only authorization
+            # on the completion path. Record who authored it so completion can
+            # re-validate rank + grantability against that principal's CURRENT
+            # state. A role's permissions may be edited after the whitelist is
+            # stored, which otherwise lets a member self-assign grants the
+            # author never held -- a grantability bypass via this bulk path.
+            options["_whitelist_author"] = user_id
             max_options = self._config.get("max_step_options", 25)
             if len(role_ids) > max_options:
                 raise OnboardingError(f"Maximum {max_options} role options allowed")
@@ -535,7 +542,29 @@ class OnboardingManager:
 
         if step.step_type == OnboardingStepType.SELECT_ROLES and response:
             selected_roles = response.get("selected_roles", [])
-            allowed_roles = (step.options or {}).get("role_ids", [])
+            step_options = step.options or {}
+            allowed_roles = step_options.get("role_ids", [])
+            if allowed_roles:
+                # Re-run the author's rank + grantability validation against
+                # CURRENT roles. Without this, an admin could raise a
+                # whitelisted role's permissions after the step was saved and
+                # any member completing it would inherit grants the author
+                # never held -- a grantability bypass on this bulk path.
+                author_id = step_options.get("_whitelist_author")
+                if author_id is None:
+                    raise OnboardingError(
+                        "Onboarding role whitelist has no recorded author"
+                    )
+                try:
+                    self._validate_step_options(
+                        int(author_id), server_id, step.step_type, step_options
+                    )
+                except OnboardingError:
+                    raise
+                except Exception as exc:
+                    raise OnboardingError(
+                        "Onboarding role whitelist is no longer authorized"
+                    ) from exc
             # Self-service assignment restricted to the admin-defined role
             # whitelist captured in the step's options. This intentionally
             # does not require "members.manage_roles" - the step creator's
