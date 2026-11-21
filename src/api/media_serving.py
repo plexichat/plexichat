@@ -668,4 +668,3 @@ def register_attachment_route(app: FastAPI) -> None:
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
-# CANARY_TEST_MARKER

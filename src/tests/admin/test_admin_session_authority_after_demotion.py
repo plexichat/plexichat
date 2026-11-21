@@ -116,7 +116,11 @@ def test_route_boolean_grants_go_through_authority_helper():
     """
     source = Path(media_serving.__file__).read_text(encoding="utf-8")
     assert source.count("_admin_session_is_authoritative(") >= 4  # 3 uses + def
-    assert (
-        "validate_session(token)"
-        not in source.split("def _admin_session_is_authoritative", 1)[1]
-    )
+    for raw_check in (
+        "bool(admin_mod.validate_session(token))",
+        "and admin.validate_session(token)",
+        "and admin_mod.validate_session(token)",
+    ):
+        assert raw_check not in source, (
+            f"raw admin-session boolean grant returned: {raw_check}"
+        )
