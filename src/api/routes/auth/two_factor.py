@@ -409,7 +409,11 @@ async def confirm_2fa_setup(
         )
 
     try:
-        success = auth.confirm_2fa(current_user.user_id, code)
+        success = auth.confirm_2fa(
+            current_user.user_id,
+            code,
+            except_session_id=current_user.session_id,
+        )
     except TwoFactorInvalidError as e:
         msg = str(e)
         if "Too many attempts" in msg:

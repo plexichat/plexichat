@@ -18,9 +18,17 @@ def setup_2fa(user_id: int) -> TwoFactorSetup:
     return _get_auth_manager().get_instance().setup_2fa(user_id)
 
 
-def confirm_2fa(user_id: int, code: str) -> bool:
-    """Confirm 2FA setup with a valid TOTP code."""
-    return _get_auth_manager().get_instance().confirm_2fa(user_id, code)
+def confirm_2fa(user_id: int, code: str, except_session_id=None) -> bool:
+    """Confirm 2FA setup with a valid TOTP code.
+
+    ``except_session_id`` preserves the caller's session while the other
+    password-only sessions are revoked; pass None to revoke every session.
+    """
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .confirm_2fa(user_id, code, except_session_id)
+    )
 
 
 def disable_2fa(

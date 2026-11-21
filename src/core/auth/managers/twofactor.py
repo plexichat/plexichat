@@ -539,7 +539,12 @@ class TwoFactorMixin(AuthManagerProtocol):
             username=user["username"],
         )
 
-    def confirm_2fa(self, user_id: int, code: str) -> bool:
+    def confirm_2fa(
+        self,
+        user_id: int,
+        code: str,
+        except_session_id: Optional[int] = None,
+    ) -> bool:
         user = self._db.fetch_one(
             "SELECT totp_secret_encrypted FROM auth_users WHERE id = ?", (user_id,)
         )
@@ -561,6 +566,25 @@ class TwoFactorMixin(AuthManagerProtocol):
         if not ok:
             raise TwoFactorInvalidError("Invalid code")
 
+        # Enabling 2FA is a credential transition just like disabling it: every
+        # session minted so far was authenticated with the password alone. If
+        # those sessions survive, a bearer token stolen before the switch keeps
+        # full access and the new second factor protects nothing. Revoke them
+        # BEFORE flipping totp_enabled so a revocation failure cannot leave a
+        # "2FA enabled" account with live pre-2FA sessions (fail closed). The
+        # session that just proved possession of the code may be preserved.
+        if except_session_id is not None:
+            self._db.execute(
+                "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0 AND id != ?",
+                (user_id, except_session_id),
+            )
+        else:
+            self._db.execute(
+                "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+                (user_id,),
+            )
+        # A just-revoked session must not keep answering from the verify cache.
+        invalidate_pattern("token_verify:*")
         self._db.execute(
             "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
         )
