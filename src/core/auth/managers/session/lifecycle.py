@@ -1,5 +1,6 @@
 """Session lifecycle: create, extend, refresh, revoke and list sessions."""
 
+import hmac
 from typing import List, Optional
 
 import utils.logger as logger
@@ -231,15 +232,30 @@ class LifecycleMixin(AuthManagerProtocol):
             if not ip_address:
                 raise TokenInvalidError("IP Binding Required")
 
+            # SECURITY: binding is MANDATORY when enabled. Guarding the
+            # comparison on ``row.get("ip_index")``/``row.get("ua_index")`` let a
+            # session with no stored index (minted with no IP/UA, a legacy row,
+            # or a failed index write) skip the comparison entirely, so a stolen
+            # bearer token could be replayed from any address. Missing/corrupt
+            # binding material now fails closed and comparisons are constant
+            # time, mirroring the hardened live verifier in VerificationMixin.
+            stored_ip_index = row.get("ip_index")
+            if not isinstance(stored_ip_index, str) or not stored_ip_index:
+                raise TokenInvalidError("IP Binding Required")
             current_ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
-            if row.get("ip_index") and row["ip_index"] != current_ip_index:
+            if not hmac.compare_digest(stored_ip_index, current_ip_index):
                 raise TokenInvalidError("IP Binding Mismatch")
 
             if not user_agent:
                 raise TokenInvalidError("User-Agent Binding Required")
 
+            stored_ua_index = row.get("ua_index")
+            if not isinstance(stored_ua_index, str) or not stored_ua_index:
+                raise TokenInvalidError("User-Agent Binding Required")
             current_ua_index = self._ua_index(user_agent)
-            if row.get("ua_index") and row["ua_index"] != current_ua_index:
+            if not isinstance(current_ua_index, str) or not current_ua_index:
+                raise TokenInvalidError("User-Agent Binding Required")
+            if not hmac.compare_digest(stored_ua_index, current_ua_index):
                 raise TokenInvalidError("User-Agent Binding Mismatch")
 
         now = self._get_timestamp()
