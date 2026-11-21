@@ -15,6 +15,7 @@ from ...exceptions import (
 from ...permission_utils import can_manage_member
 from ...manager.converters import _row_to_ban
 from src.utils.encryption import encrypt_data
+import utils.logger as logger
 
 
 class MemberBanMixin:
@@ -75,6 +76,34 @@ class MemberBanMixin:
                 "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                 (server_id, member_user_id),
             )
+        # Ban must mirror kick/leave: drop the banned user from every
+        # server-channel conversation. Joining a server seeds a direct
+        # participant row per channel, and the messaging membership oracle
+        # short-circuits on that row without re-checking server membership.
+        # Without this cleanup a banned member keeps editing/deleting (and,
+        # for a channel creator/OWNER participant, deleting other users'
+        # messages) inside a server they can no longer access. Removing the
+        # participant also invalidates the messaging participant cache.
+        if self.manager._messaging:
+            try:
+                channels = self.db.fetch_all(
+                    "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND deleted = 0",
+                    (server_id,),
+                )
+                conv_ids = [
+                    ch["conversation_id"] for ch in channels if ch["conversation_id"]
+                ]
+                if conv_ids and hasattr(
+                    self.manager._messaging, "remove_participant_from_conversations"
+                ):
+                    self.manager._messaging.remove_participant_from_conversations(
+                        member_user_id, conv_ids
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Error removing banned member {member_user_id} from server conversations: {e}"
+                )
+
         self.manager._invalidate_member_caches(server_id, member_user_id)
 
         now = self.manager._get_timestamp()
