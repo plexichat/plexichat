@@ -129,7 +129,18 @@ class SumManagerBase(SumManagerProtocol):
                 for member_id in (
                     self._servers.get_member_user_ids(int(server_id)) or []
                 ):
-                    ids[int(member_id)] = None
+                    # SECURITY: only a genuine integer id from the authoritative
+                    # srv_members roster may attest a viewer of a server-scoped
+                    # workbook. get_member_user_ids() returns the raw
+                    # srv_members.user_id projection with no type filtering, so
+                    # int() laundering of a malformed-but-coercible value
+                    # ("07"->7, " 8 "->8, 7.9->7, True->1) would admit the wrong
+                    # principal to the authorized-viewer audience (WORKBOOK_UPDATE
+                    # realtime fan-out) even though no genuine membership for
+                    # that id was ever proven. type() also rejects bool.
+                    # Legitimate genuine-int members are preserved.
+                    if type(member_id) is int:
+                        ids[member_id] = None
             except Exception:
                 import utils.logger as logger
 
