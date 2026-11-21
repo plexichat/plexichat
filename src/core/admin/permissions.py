@@ -16,6 +16,8 @@ import utils.logger as logger
 
 from .request_roles import (
     cached_session_roles,
+    cached_parsed_session_roles,
+    remember_parsed_session_roles,
     clear_session_roles,
     current_session_credential,
 )
@@ -298,11 +300,19 @@ def check_permission(
         # or a different admin/db) simply takes the original query below.
         cached = cached_session_roles(db, admin_id)
         if cached is not None:
-            payloads = tuple(
-                parsed
-                for parsed in (_parse_permission_payload(raw) for raw in cached)
-                if parsed is not None
-            )
+            # The raw blobs are fixed for the request, but JSON-decoding them
+            # on every gate was pure repeated work (maintenance routes stack
+            # two scopes). Decode once per request and reuse the dicts across
+            # subsequent gates; the memo uses the same identity guard as the
+            # raw cache and is cleared on any privilege mutation.
+            payloads = cached_parsed_session_roles(db, admin_id)
+            if payloads is None:
+                payloads = tuple(
+                    parsed
+                    for parsed in (_parse_permission_payload(raw) for raw in cached)
+                    if parsed is not None
+                )
+                remember_parsed_session_roles(db, admin_id, payloads)
             if not payloads:
                 return AdminPermission(
                     has_permission=False, reason="No roles assigned to admin"

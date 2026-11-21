@@ -51,6 +51,19 @@ _session_roles: ContextVar[Optional[_CachedRoles]] = ContextVar(
     "admin_session_roles", default=None
 )
 
+# Parsed (dict) form of the role permission payloads, memoised for the rest of
+# the request. ``check_permission`` must turn the raw JSON blobs into dicts
+# before it can decide a grant. When a request stacks several permission gates
+# (e.g. the maintenance routes that check an action scope *and* ``maintenance``)
+# the same blobs were re-parsed on every gate. This cache holds the parsed form
+# behind the exact same identity guard as the raw payloads, so the JSON is
+# decoded once per request and a different admin/db/request can never observe
+# another caller's parsed grants. It is cleared on re-validation and by
+# ``clear_session_roles`` (which privilege mutations invoke).
+_session_parsed_roles: ContextVar[Optional[_CachedRoles]] = ContextVar(
+    "admin_session_parsed_roles", default=None
+)
+
 # Fingerprint of the admin session credential that was validated for this
 # request. It is a one-way hash (never the raw bearer value) and is only used
 # to partition the short-lived role-grant cache by caller. ``None`` means no
@@ -70,21 +83,12 @@ def current_session_credential() -> Optional[str]:
     return _session_credential.get()
 
 
-def remember_session_roles(db, admin_id: int, permission_payloads) -> None:
-    """Store the role payloads resolved alongside a successful session lookup."""
-    _session_roles.set(
-        (id(db), admin_id, tuple(permission_payloads), _bound_request_context())
-    )
+def _payloads_for(value, db, admin_id) -> Optional[Tuple[Any, ...]]:
+    """Apply the shared identity guard to a cached payload tuple.
 
-
-def cached_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
-    """Return the cached role payloads for ``admin_id`` on ``db``, if any.
-
-    Returns ``None`` when no session was validated in this request or when the
-    cached value belongs to a different admin/database; callers then fall back
-    to the ordinary role lookup.
+    Both the raw and the parsed role caches use this so a value recorded for a
+    different admin, database or request can never be observed.
     """
-    value = _session_roles.get()
     if value is None:
         return None
     db_identity, cached_admin_id, payloads, bound_context = value
@@ -107,7 +111,44 @@ def cached_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
     return None
 
 
+def remember_session_roles(db, admin_id: int, permission_payloads) -> None:
+    """Store the role payloads resolved alongside a successful session lookup."""
+    _session_roles.set(
+        (id(db), admin_id, tuple(permission_payloads), _bound_request_context())
+    )
+    # A fresh validation supersedes any parsed form derived from older raw
+    # payloads; the next permission check will decode the new blobs once.
+    _session_parsed_roles.set(None)
+
+
+def cached_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
+    """Return the cached role payloads for ``admin_id`` on ``db``, if any.
+
+    Returns ``None`` when no session was validated in this request or when the
+    cached value belongs to a different admin/database; callers then fall back
+    to the ordinary role lookup.
+    """
+    return _payloads_for(_session_roles.get(), db, admin_id)
+
+
+def remember_parsed_session_roles(db, admin_id: int, parsed_payloads) -> None:
+    """Store the parsed (dict) role payloads for the current request."""
+    _session_parsed_roles.set(
+        (id(db), admin_id, tuple(parsed_payloads), _bound_request_context())
+    )
+
+
+def cached_parsed_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
+    """Return parsed role payloads recorded for ``admin_id`` on ``db``, if any.
+
+    The returned dicts are request-private and treated as immutable by the
+    permission gate; ``None`` means the caller must parse the raw payloads.
+    """
+    return _payloads_for(_session_parsed_roles.get(), db, admin_id)
+
+
 def clear_session_roles() -> None:
     """Drop the cached roles (used by tests and request-boundary tooling)."""
     _session_roles.set(None)
+    _session_parsed_roles.set(None)
     _session_credential.set(None)
