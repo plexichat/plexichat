@@ -20,7 +20,7 @@ a fan-out, while the dispatcher keeps one shared cache for fan-outs.
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 #: Entries kept per cache. Presence payloads are small; 64 distinct renderings
 #: is ample while bounding retention of cached payload structures.
@@ -63,15 +63,32 @@ class PayloadRenderCache:
         self._entries: "OrderedDict[Any, Any]" = OrderedDict()
         self._hits = 0
         self._misses = 0
+        self._key_builds = 0
 
-    def render(self, data: Any, renderer: Callable[[Any], Any]) -> Any:
+    def render(
+        self,
+        data: Any,
+        renderer: Callable[[Any], Any],
+        *,
+        key: Optional[Any] = None,
+    ) -> Any:
         """Return the rendered form of ``data``, computing it at most once.
 
         ``renderer`` is supplied at call time (rather than captured at
         construction) so the shared snowflake helper stays the single source
         of truth and tests can spy on it.
+
+        ``key`` is the pre-computed :func:`freeze_payload` fingerprint. A
+        fan-out renders one identical payload for every recipient; rebuilding
+        that structural key once per recipient is O(payload) work that the
+        cache itself exists to avoid. Callers that already hold the key can
+        pass it here so the walk happens once for the whole fan-out. The
+        hit/miss semantics are unchanged: callers still invoke ``render`` once
+        per consumer, so cache counters stay comparable across both paths.
         """
-        key = freeze_payload(data)
+        if key is None:
+            key = freeze_payload(data)
+            self._key_builds += 1
         try:
             hash(key)
         except TypeError:  # pragma: no cover - freeze_payload is hashable
@@ -97,4 +114,5 @@ class PayloadRenderCache:
             "max_entries": self._max_entries,
             "hits": self._hits,
             "misses": self._misses,
+            "key_builds": self._key_builds,
         }

@@ -15,7 +15,7 @@ from .opcodes import GatewayOpcode
 from .connection import Connection
 from .session import SessionManager
 from .intents import filter_event_by_intents
-from .rendering import PayloadRenderCache
+from .rendering import PayloadRenderCache, freeze_payload
 
 if TYPE_CHECKING:
     from src.core.events.manager import EventManager
@@ -225,6 +225,12 @@ class GatewayDispatcher:
 
         sent_count = 0
         tasks = []
+        # The event payload is byte-for-byte identical for every recipient.
+        # Freeze its structural key once for the whole fan-out instead of once
+        # per connection: the old path rebuilt the key inside every
+        # ``render()`` call (O(payload) recursive walk x N recipients) even
+        # though the cache then hit on that same key N-1 times.
+        data_key = None
 
         for connection in connections:
             if not filter_event_by_intents(event, connection.intents):
@@ -251,7 +257,9 @@ class GatewayDispatcher:
                 )
                 continue
 
-            payload = self._build_dispatch_payload(connection, event)
+            if data_key is None:
+                data_key = freeze_payload(event.data)
+            payload = self._build_dispatch_payload(connection, event, data_key=data_key)
             tasks.append(self._send_to_connection(connection, payload))
 
         if tasks:
@@ -357,6 +365,8 @@ class GatewayDispatcher:
         opcode: GatewayOpcode,
         data: Optional[Any] = None,
         event_type: Optional[str] = None,
+        *,
+        data_key: Optional[Any] = None,
     ) -> bool:
         """
         Dispatch a raw gateway message.
@@ -382,7 +392,7 @@ class GatewayDispatcher:
             # Cached: repeated raw DISPATCH frames (e.g. RATCHET_UPDATE
             # broadcasts) reuse the identical rendering.
             payload["d"] = self._render_cache.render(
-                data or {}, stringify_snowflake_ids
+                data or {}, stringify_snowflake_ids, key=data_key
             )
 
             if connection.session_id:
@@ -391,7 +401,9 @@ class GatewayDispatcher:
             # Non-DISPATCH frames (VOICE_SPEAKING, VOICE_SDP_*, HELLO, ...)
             # carry ids too; stringify id keys so a future caller cannot
             # leak a numeric snowflake. Scalars (bool/None) pass through.
-            payload["d"] = self._render_cache.render(data, stringify_snowflake_ids)
+            payload["d"] = self._render_cache.render(
+                data, stringify_snowflake_ids, key=data_key
+            )
 
         return await self._send_to_connection(connection, payload)
 
@@ -426,6 +438,8 @@ class GatewayDispatcher:
             return 0
 
         tasks = []
+        # One structural freeze for the whole fan-out (see dispatch_event).
+        data_key = None
         for connection in connections:
             if not getattr(
                 connection, "is_selftest", False
@@ -437,7 +451,10 @@ class GatewayDispatcher:
                     f"(user={connection.user_id}); dropped raw opcode {int(opcode)}"
                 )
                 continue
-            tasks.append(self.dispatch_raw(connection, opcode, data))
+            if data_key is None:
+                key_data = (data or {}) if opcode == GatewayOpcode.DISPATCH else data
+                data_key = freeze_payload(key_data)
+            tasks.append(self.dispatch_raw(connection, opcode, data, data_key=data_key))
 
         if not tasks:
             return 0
@@ -545,8 +562,14 @@ class GatewayDispatcher:
         self,
         connection: Connection,
         event: Event,
+        *,
+        data_key: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Build a DISPATCH payload from an event."""
+        """Build a DISPATCH payload from an event.
+
+        ``data_key`` is the fan-out's pre-frozen structural key. Single-target
+        callers leave it unset and the cache computes it as before.
+        """
         seq = connection.increment_sequence()
         payload = {
             "op": int(GatewayOpcode.DISPATCH),
@@ -555,8 +578,11 @@ class GatewayDispatcher:
             # Central backstop: every id that crosses the wire is a decimal
             # string, regardless of how the event was built. Rendered through
             # the shared cache: a presence/type event fanned out to N
-            # connections is stringified once, not N times.
-            "d": self._render_cache.render(event.data, stringify_snowflake_ids),
+            # connections is stringified once, not N times. The key is shared
+            # across the fan-out so the recursive freeze runs once as well.
+            "d": self._render_cache.render(
+                event.data, stringify_snowflake_ids, key=data_key
+            ),
         }
 
         if connection.session_id:

@@ -111,6 +111,78 @@ async def test_dispatcher_fanout_renders_presence_payload_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_fanout_freezes_payload_once(monkeypatch):
+    """One structural freeze per fan-out, not one per recipient.
+
+    The render cache already stringified an identical payload once, but it
+    rebuilt the structural key inside ``render()`` for every connection. That
+    made fan-out cost O(payload) per recipient even on a cache hit. Precompute
+    the key once for the whole fan-out and pass it down.
+    """
+    import src.api.websocket.dispatcher as dispatcher_module
+
+    real_freeze = dispatcher_module.freeze_payload
+    freeze_calls = []
+
+    def counting_freeze(data):
+        freeze_calls.append(data)
+        return real_freeze(data)
+
+    monkeypatch.setattr(dispatcher_module, "freeze_payload", counting_freeze)
+
+    conns = [_fake_connection(f"c{i}") for i in range(6)]
+    dispatcher = GatewayDispatcher(cast(SessionManager, _FakeSessionManager(conns)))
+    data = {
+        "user_id": 999,
+        "status": "online",
+        "embeds": [{"title": "t", "fields": [{"name": "a", "value": "b"}]}],
+    }
+    event = Event(event_type=EventType.PRESENCE_UPDATE, data=data)
+
+    sent = await dispatcher.dispatch_event(event, [999])
+
+    assert sent == 6
+    assert freeze_calls == [data]  # frozen once for all six recipients
+    # Hit/miss semantics are unchanged from the per-recipient path.
+    assert dispatcher.get_render_cache_stats()["misses"] == 1
+    assert dispatcher.get_render_cache_stats()["hits"] == 5
+    for conn in conns:
+        frame = cast(AsyncMock, conn.websocket.send_json).await_args.args[0]
+        assert frame["d"]["user_id"] == "999"
+        assert frame["d"]["status"] == "online"
+
+
+@pytest.mark.asyncio
+async def test_raw_fanout_freezes_payload_once(monkeypatch):
+    """Raw opcode fan-outs share one frozen key and render every id once."""
+    import src.api.websocket.dispatcher as dispatcher_module
+    from src.api.websocket.opcodes import GatewayOpcode
+
+    real_freeze = dispatcher_module.freeze_payload
+    freeze_calls = []
+
+    def counting_freeze(value):
+        freeze_calls.append(value)
+        return real_freeze(value)
+
+    monkeypatch.setattr(dispatcher_module, "freeze_payload", counting_freeze)
+
+    conns = [_fake_connection(f"c{i}") for i in range(4)]
+    dispatcher = GatewayDispatcher(cast(SessionManager, _FakeSessionManager(conns)))
+    data = {"user_id": 42, "channel_id": 123}
+
+    sent = await dispatcher.dispatch_raw_to_users(
+        [7], GatewayOpcode.VOICE_SPEAKING, data
+    )
+
+    assert sent == 4
+    assert freeze_calls == [data]
+    for conn in conns:
+        frame = cast(AsyncMock, conn.websocket.send_json).await_args.args[0]
+        assert frame["d"] == {"user_id": "42", "channel_id": "123"}
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_reuses_rendering_for_identical_presence_updates(monkeypatch):
     import src.api.websocket.dispatcher as dispatcher_module
 
