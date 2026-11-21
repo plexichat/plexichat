@@ -16,6 +16,7 @@ class ThreadProtocol:
 
     _is_member: Any = None
     _is_server_member: Any = None
+    _live_server_member_ids: Any = None
     _can_view_thread_row: Any = None
 
     def _get_timestamp(self) -> int:

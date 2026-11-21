@@ -93,10 +93,15 @@ def test_active_listing_uses_one_query_with_membership_join():
     result = mgr.get_active_threads(42, 1)
 
     assert [t.id for t in result] == [101, 103]
-    assert len(db.fetch_all_calls) == 1
+    # One index-backed listing query plus one batched live-roster read for the
+    # private threads in the page -- constant, not one probe per private row.
+    assert len(db.fetch_all_calls) == 2
     sql, params = db.fetch_all_calls[0]
     assert "LEFT JOIN thread_members" in sql
     assert params == (42, 1, ThreadState.ACTIVE.value)
+    member_sql, member_params = db.fetch_all_calls[1]
+    assert "SELECT server_id FROM srv_members WHERE user_id = ?" in member_sql
+    assert member_params == (42,)
 
 
 def test_archived_listing_uses_one_query_with_membership_join():
@@ -109,10 +114,14 @@ def test_archived_listing_uses_one_query_with_membership_join():
     result = mgr.get_archived_threads(42, 1)
 
     assert [t.id for t in result] == [201, 202]
-    assert len(db.fetch_all_calls) == 1
+    # One listing query plus one batched live-roster read (see active listing).
+    assert len(db.fetch_all_calls) == 2
     sql, params = db.fetch_all_calls[0]
     assert "LEFT JOIN thread_members" in sql
     assert params == (42, 1, ThreadState.ARCHIVED.value, 50)
+    member_sql, member_params = db.fetch_all_calls[1]
+    assert "SELECT server_id FROM srv_members WHERE user_id = ?" in member_sql
+    assert member_params == (42,)
 
 
 def test_archived_before_cursor_stays_one_query():

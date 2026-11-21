@@ -117,6 +117,19 @@ class ThreadListingMixin(ThreadProtocol):
         if not active_threads:
             return []
 
+        # One batched roster read for every private thread in this page,
+        # instead of an ``_is_server_member`` point read per row. Both the
+        # membership JOIN and this live check are fail closed.
+        live_member_servers = self._live_server_member_ids(
+            user_id,
+            {
+                thread.server_id
+                for thread in active_threads
+                if thread.thread_type == ThreadType.PRIVATE
+                and thread.id in member_thread_ids
+            },
+        )
+
         # SECURITY: ``has_server_view`` was resolved above from the channel
         # itself, so an empty listing cannot bypass the check. Public threads
         # are revealed only by that positive result.
@@ -126,8 +139,9 @@ class ThreadListingMixin(ThreadProtocol):
                 # survives a server departure. Mirror ``can_view_thread``'s
                 # private branch and require a live ``srv_members`` row too,
                 # so a former member cannot keep enumerating the thread.
-                if thread.id in member_thread_ids and self._is_server_member(
-                    user_id, thread.server_id
+                if (
+                    thread.id in member_thread_ids
+                    and thread.server_id in live_member_servers
                 ):
                     threads.append(thread)
             elif has_server_view:
@@ -189,6 +203,18 @@ class ThreadListingMixin(ThreadProtocol):
         if not archived_threads:
             return []
 
+        # Same batched live-roster read as the active listing: one query for
+        # the whole page rather than a point read per private thread.
+        live_member_servers = self._live_server_member_ids(
+            user_id,
+            {
+                thread.server_id
+                for thread in archived_threads
+                if thread.thread_type == ThreadType.PRIVATE
+                and thread.id in member_thread_ids
+            },
+        )
+
         # SECURITY: same up-front, contents-independent check as
         # get_active_threads (and the same fail-closed default).
         threads = []
@@ -197,8 +223,9 @@ class ThreadListingMixin(ThreadProtocol):
                 # Same live-roster gate as ``get_active_threads``: a stale
                 # thread_members row must not keep a departed member in the
                 # private-thread audience.
-                if thread.id in member_thread_ids and self._is_server_member(
-                    user_id, thread.server_id
+                if (
+                    thread.id in member_thread_ids
+                    and thread.server_id in live_member_servers
                 ):
                     threads.append(thread)
             elif has_server_view:
@@ -266,9 +293,21 @@ class ThreadListingMixin(ThreadProtocol):
         Evaluate the identical ``_check_permission`` call from the row in hand
         instead: same authorization decision, no per-row fetch.
         """
+        threads = [_row_to_thread(row, self._encrypt_thread_names) for row in rows]
+        # These listings are unpaginated and span servers, so resolve every
+        # backing server's live roster in one read rather than one
+        # ``_is_server_member`` point read per private thread.
+        live_member_servers = self._live_server_member_ids(
+            user_id,
+            {
+                thread.server_id
+                for thread in threads
+                if thread.thread_type == ThreadType.PRIVATE
+            },
+        )
+
         visible: List[Thread] = []
-        for row in rows:
-            thread = _row_to_thread(row, self._encrypt_thread_names)
+        for thread in threads:
             if thread.thread_type == ThreadType.PRIVATE:
                 # The listing JOIN proves membership, but leaving/kicking a
                 # server deletes only ``srv_members`` -- the thread_members row
@@ -276,7 +315,7 @@ class ThreadListingMixin(ThreadProtocol):
                 # server roster row here, exactly as ``can_view_thread``
                 # requires. Without it, a former member keeps reading their
                 # private threads (name/owner/counts) via ``/users/@me/threads``.
-                if self._is_server_member(user_id, thread.server_id):
+                if thread.server_id in live_member_servers:
                     visible.append(thread)
             elif self._check_permission(
                 user_id, thread.server_id, "channels.view", thread.channel_id

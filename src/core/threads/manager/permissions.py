@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 import utils.logger as logger
 
@@ -58,6 +58,36 @@ class ThreadPermissionMixin(ThreadProtocol):
             )
             return False
         return row is not None
+
+    def _live_server_member_ids(self, user_id: int, server_ids: Any) -> set:
+        """Batch the live-roster probe used by private-thread listings.
+
+        ``_is_server_member`` answers one ``srv_members`` point read per call,
+        so gating a listing of N private threads with it issues N roster
+        queries. This resolves every backing server with a single read. The
+        returned set holds only server ids that still have a live
+        ``srv_members`` row for ``user_id``; a departed member's server is
+        absent (no proof = no grant), and a failed lookup yields an empty set,
+        so the fail-closed decision is identical to ``_is_server_member``.
+        """
+        wanted = {int(sid) for sid in server_ids if sid is not None}
+        if not wanted:
+            return set()
+        try:
+            rows = self._db.fetch_all(
+                "SELECT server_id FROM srv_members WHERE user_id = ?", (user_id,)
+            )
+        except Exception as e:
+            logger.error(
+                "Batched server membership probe failed CLOSED for thread "
+                f"listing (user={user_id}): {e}"
+            )
+            return set()
+        return {
+            int(row["server_id"])
+            for row in rows or []
+            if row.get("server_id") is not None
+        } & wanted
 
     def _can_view_thread_row(self, user_id: int, thread) -> bool:
         """Visibility decision for a thread row the caller already holds.
