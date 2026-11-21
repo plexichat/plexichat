@@ -170,13 +170,16 @@ def map_invite_join_error(exc: BaseException) -> NoReturn:
         raise _http(409, "Already a member of this server")
     if isinstance(exc, srv.UserBannedError):
         raise _http(403, "You are banned from this server")
-    if isinstance(exc, srv.InviteMaxUsesError):
-        # Exhausted: 410 Gone, static message (counters stay server-side).
-        raise _http(410, "Invite is no longer usable")
-    if isinstance(exc, srv.InviteExpiredError):
-        # Expired: also gone, static message (no expired_at leaked).
-        raise _http(410, "Invite is no longer usable")
-    if isinstance(exc, srv.InviteNotFoundError):
+    if isinstance(
+        exc,
+        (srv.InviteNotFoundError, srv.InviteExpiredError, srv.InviteMaxUsesError),
+    ):
+        # Core keeps expired / maxed-out invite rows so the redeem path can
+        # tell them apart, but exposing that as a 410 here is an existence
+        # oracle: a client guessing codes could distinguish "real but dead"
+        # from "never existed". Collapse every unusable state onto the same
+        # static 404 the invite-info route already returns. This changes only
+        # the error response -- the invite is still refused, never redeemed.
         raise _http(404, "Invite not found or expired")
     raise_mapped(
         exc,

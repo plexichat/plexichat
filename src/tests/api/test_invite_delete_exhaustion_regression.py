@@ -108,8 +108,8 @@ async def test_f5_delete_falls_back_to_zero_only_when_invite_has_none(caplog):
     assert emitted["server_id"] == 0
 
 
-async def test_f6_exhausted_invite_join_returns_410_generic():
-    """Exhausted invite via the join route maps to 410, generic body (F6)."""
+async def test_f6_exhausted_invite_join_returns_uniform_404():
+    """Exhausted invite via the join route is indistinguishable from missing."""
     mixin = _mixin()
 
     class FakeServers:
@@ -124,17 +124,17 @@ async def test_f6_exhausted_invite_join_returns_410_generic():
         with pytest.raises(HTTPException) as ei:
             await mixin._join_server_via_invite("EXHAUST1", _user())
 
-    assert ei.value.status_code == 410
+    assert ei.value.status_code == 404
     body = cast(dict[str, Any], ei.value.detail)
-    assert body["error"]["code"] == 410
-    assert body["error"]["message"] == "Invite is no longer usable"
+    assert body["error"]["code"] == 404
+    assert body["error"]["message"] == "Invite not found or expired"
     # No internal counters or raw exception text leaked.
     assert "5" not in body["error"]["message"]
     assert "max" not in body["error"]["message"].lower()
 
 
 async def test_f6_sibling_invite_errors_map_honestly():
-    """Revoked/not-found -> 404, expired -> 410, all with generic bodies."""
+    """Every unusable invite state maps to the same 404, generic body."""
     from src.api.routes.exception_mapping import map_invite_join_error
 
     with pytest.raises(HTTPException) as ei:
@@ -149,7 +149,11 @@ async def test_f6_sibling_invite_errors_map_honestly():
         map_invite_join_error(
             srv.InviteExpiredError("Invite has expired", expired_at=12345)
         )
-    assert ei.value.status_code == 410
+    assert ei.value.status_code == 404
+    assert (
+        cast(dict[str, Any], ei.value.detail)["error"]["message"]
+        == "Invite not found or expired"
+    )
     assert "12345" not in str(ei.value.detail)
 
 

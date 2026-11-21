@@ -201,7 +201,6 @@ class ChannelInvitesMixin(ChannelBase):
                     "description": "Invite not found or expired",
                 },
                 409: {"model": ErrorResponse, "description": "Already a member"},
-                410: {"model": ErrorResponse, "description": "Invite no longer usable"},
                 500: {"model": ErrorResponse, "description": "Internal server error"},
             },
         )

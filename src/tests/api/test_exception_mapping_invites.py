@@ -22,7 +22,8 @@ from src.core.servers import exceptions as srv
 pytestmark = pytest.mark.unit
 
 
-def test_invite_max_uses_join_flow_maps_to_400():
+def test_invite_max_uses_join_flow_maps_to_uniform_404():
+    """Exhausted invites must be indistinguishable from never-existed ones."""
     exc = srv.InviteMaxUsesError(
         "Invite has reached maximum uses (max_uses=1, current_uses=1)",
         max_uses=1,
@@ -30,12 +31,12 @@ def test_invite_max_uses_join_flow_maps_to_400():
     )
     with pytest.raises(HTTPException) as ei:
         map_invite_join_error(exc)
-    assert ei.value.status_code == 410
+    assert ei.value.status_code == 404
     # Static message — no internal error text leaked.
     detail = cast(dict[str, Any], ei.value.detail)
     assert "max_uses" not in str(detail)
     assert "1" not in str(detail.get("error", {}).get("message", ""))
-    assert detail["error"]["message"] == "Invite is no longer usable"
+    assert detail["error"]["message"] == "Invite not found or expired"
 
 
 def test_invite_max_uses_generic_mapping_maps_to_permission_family():
