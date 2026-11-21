@@ -86,6 +86,7 @@ def _patch(monkeypatch, db, admin_id=1):
     monkeypatch.setattr(api, "get_db", lambda: db)
     monkeypatch.setattr(api, "get_auth", lambda: object())
     monkeypatch.setattr(perm_core, "log_admin_action", lambda *a, **kw: True)
+    monkeypatch.setattr(perm_core, "can_grant_existing_role", lambda *a, **kw: True)
     monkeypatch.setattr(au, "invalidate_privilege_caches", lambda: None)
 
 

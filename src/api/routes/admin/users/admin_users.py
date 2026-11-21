@@ -395,6 +395,24 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                     },
                 )
 
+            # Object-level gate: the position hierarchy is not enough. A
+            # low-position role can still carry scopes the actor does not hold;
+            # assigning it to a freshly created admin (whose password the actor
+            # sets) would launder those privileges. Mirror the check the
+            # dedicated /roles/assign route applies to the same concrete role.
+            from src.core.admin.permissions import can_grant_existing_role
+
+            if not can_grant_existing_role(db, admin_id, role_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Cannot assign a role carrying permissions you do not hold",
+                        }
+                    },
+                )
+
             existing = db.fetch_one(
                 "SELECT id FROM auth_users WHERE LOWER(username) = LOWER(?)",
                 (user_data.username,),
@@ -556,6 +574,21 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                             "error": {
                                 "code": 403,
                                 "message": "Cannot assign this admin role",
+                            }
+                        },
+                    )
+                # Same object-level gate as the dedicated role-assignment
+                # route: retargeting an admin must not be a laundering path for
+                # scopes the actor does not itself hold.
+                from src.core.admin.permissions import can_grant_existing_role
+
+                if not can_grant_existing_role(db, admin_id, role_id):
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error": {
+                                "code": 403,
+                                "message": "Cannot assign a role carrying permissions you do not hold",
                             }
                         },
                     )

@@ -52,6 +52,7 @@ def _patch(monkeypatch, admin_id=1):
     monkeypatch.setattr(au, "check_host_restriction", lambda request: None)
     monkeypatch.setattr(au, "require_admin_permission", lambda request, perm: admin_id)
     monkeypatch.setattr(perm_core, "log_admin_action", lambda *a, **kw: True)
+    monkeypatch.setattr(perm_core, "can_grant_existing_role", lambda *a, **kw: True)
 
 
 @pytest.mark.unit
