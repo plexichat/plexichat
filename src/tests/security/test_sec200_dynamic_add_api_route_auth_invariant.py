@@ -143,6 +143,71 @@ def _own_body_guard_calls(fn: ast.AST):
     return hits
 
 
+def _canonical_names(tree):
+    """Resolve local aliases of ``add_api_route`` to its canonical name.
+
+    ``add = router.add_api_route`` followed by ``add(...)`` is a plain
+    ``ast.Name`` call, not the ``ast.Attribute`` this detector keys on. Without
+    resolution such a state-changing registration is never added to
+    ``_DYNAMIC_ROUTES`` and every invariant below passes vacuously for it, even
+    when its endpoint carries no auth -- the same name-resolution fail-open
+    fixed for the fan-out, cached-route and admin-destructive guards.
+
+    Resolution runs to a fixpoint so chained aliases
+    (``add = router.add_api_route; wire = add``) collapse too. A bare call
+    spelled ``add_api_route`` with no resolvable alias is still treated as a
+    registration, so over-resolution can only *add* sites to the inventory,
+    never drop one -- the guard fails closed.
+    """
+    aliases = {}
+    nodes = list(ast.walk(tree))
+
+    def resolve(name):
+        seen = set()
+        while name in aliases and name not in seen:
+            seen.add(name)
+            name = aliases[name]
+        return name
+
+    for _ in range(len(nodes) + 1):
+        changed = False
+        for node in nodes:
+            pairs = []
+            if isinstance(node, ast.ImportFrom):
+                pairs = [
+                    (a.asname or a.name, a.name)
+                    for a in node.names
+                    if a.name == "add_api_route"
+                ]
+            elif isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+                canonical = None
+                if isinstance(value, ast.Attribute) and value.attr == "add_api_route":
+                    canonical = "add_api_route"
+                elif isinstance(value, ast.Name):
+                    canonical = resolve(value.id)
+                if canonical == "add_api_route":
+                    pairs = [
+                        (t.id, canonical) for t in targets if isinstance(t, ast.Name)
+                    ]
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                value = node.value
+                canonical = None
+                if isinstance(value, ast.Attribute) and value.attr == "add_api_route":
+                    canonical = "add_api_route"
+                elif isinstance(value, ast.Name):
+                    canonical = resolve(value.id)
+                if canonical == "add_api_route" and isinstance(node.target, ast.Name):
+                    pairs = [(node.target.id, canonical)]
+            for local, canonical in pairs:
+                if aliases.get(local) != canonical:
+                    aliases[local] = canonical
+                    changed = True
+        if not changed:
+            break
+    return aliases
+
+
 def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
     """Yield (key, protected) for each mutating ``add_api_route`` registration.
 
@@ -156,6 +221,7 @@ def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
     One registration can declare several methods; each mutating method is
     yielded separately. An unresolvable endpoint fails closed (protected=False).
     """
+    aliases = _canonical_names(tree)
     functions_by_name = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -165,7 +231,15 @@ def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr != "add_api_route":
+        if isinstance(func, ast.Attribute):
+            if func.attr != "add_api_route":
+                continue
+        elif isinstance(func, ast.Name):
+            # Resolve (possibly aliased) bare-name registrations. A bare
+            # ``add_api_route(...)`` with no alias is counted too (fail closed).
+            if aliases.get(func.id, func.id) != "add_api_route":
+                continue
+        else:
             continue
 
         raw_path = ""
@@ -297,6 +371,51 @@ class SyntheticMixin:
     assert found[("src/api/routes/synthetic.py", "delete", "/good")] is True, (
         "detector failed to recognise Depends(get_current_user) on an endpoint"
     )
+
+
+def test_aliased_add_api_route_registrations_are_inventoried():
+    """Aliased runtime registrations must not slip past the inventory.
+
+    ``add = router.add_api_route`` then ``add(...)`` is an ``ast.Name`` call the
+    attribute-only detector used to skip entirely, so every invariant passed
+    vacuously for that route. Fixpoint resolution must inventory both the direct
+    alias and a chained one, flag the unguarded endpoints, honour a live guard,
+    and leave a literal read-only alias unflagged (fail closed, not noisy).
+    """
+    source = """
+router = APIRouter()
+add = router.add_api_route
+wire = add
+
+async def nuke(request, body=None):
+    return None
+
+async def guarded(request, current_user=Depends(get_current_user), body=None):
+    return None
+
+add("/aliased-nuke", nuke, methods=["POST"])
+wire("/chained-nuke", nuke, methods=["DELETE"])
+add("/aliased-good", guarded, methods=["POST"])
+add("/aliased-readonly", nuke, methods=["GET"])
+wire("/chained-readonly", nuke, methods=["GET"])
+"""
+    tree = ast.parse(source)
+    aliases = _canonical_names(tree)
+    assert aliases["add"] == "add_api_route"
+    assert aliases["wire"] == "add_api_route"  # chained alias collapses
+
+    found = dict(_dynamic_routes_in_tree(tree, "src/api/routes/synthetic.py"))
+    base = "src/api/routes/synthetic.py"
+    # Aliased unguarded mutations are inventoried and flagged.
+    assert found[(base, "post", "/aliased-nuke")] is False
+    assert found[(base, "delete", "/chained-nuke")] is False
+    # A live auth dependency still protects an aliased registration.
+    assert found[(base, "post", "/aliased-good")] is True
+    # Literal read-only aliases are not over-flagged.
+    assert not any(
+        path in {"/aliased-readonly", "/chained-readonly"}
+        for _, _, path in found
+    ), f"read-only alias over-flagged: {found}"
 
 
 def test_guard_name_matcher_rejects_response_model_lookalikes():
