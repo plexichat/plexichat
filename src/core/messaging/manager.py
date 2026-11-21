@@ -328,6 +328,15 @@ class MessagingManager(BaseManager):
         role: ParticipantRole = ParticipantRole.MEMBER,
     ) -> None:
         """Add a participant to multiple conversations (for server joins)."""
+        # The batch add is a public entry point that accepts arbitrary
+        # conversation ids, so it must not be a back door around the DM privacy
+        # enforced by create_group / add_participant. Vet group DMs against
+        # every current member before the bulk insert; server channel
+        # conversations (GROUP rows with a server_id) are left alone.
+        for conversation_id in conversation_ids:
+            self._conversation_svc.enforce_conversation_dm_privacy(
+                conversation_id, user_id
+            )
         self._participant_svc.add_user_to_multiple_conversations(
             user_id, conversation_ids, role
         )

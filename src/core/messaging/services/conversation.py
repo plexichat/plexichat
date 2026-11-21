@@ -245,6 +245,43 @@ class ConversationService(BaseService):
                 if int(sender_id) not in {int(fid) for fid in (friend_ids or [])}:
                     raise ConversationAccessDeniedError("Recipient does not accept DMs")
 
+    def enforce_conversation_dm_privacy(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Fail-closed DM-privacy gate for the batch participant-add path.
+
+        ``add_participant_to_conversations`` inserts a user into arbitrary
+        conversation ids without the per-pair checks that ``create_group`` and
+        ``add_participant`` apply. A group DM id handed to that public API would
+        otherwise re-admit a blocked / ``none`` / friends-only-excluded user.
+
+        Server channel conversations are also GROUP rows, but they are backed
+        by a ``server_id`` and admit members via server membership, not DM
+        privacy; those are skipped. Anything else GROUP-shaped is treated as a
+        group DM, including rows with unreadable metadata, so a malformed row
+        can never downgrade the check.
+        """
+        row = self._repo.get_by_id(conversation_id)
+        if row is None:
+            # No roster to vet; the batch insert surfaces the missing row.
+            return
+
+        conv_type = row.get("conversation_type")
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+        if conv_type != ConversationType.GROUP.value:
+            return
+
+        metadata = self._repo._json_loads(row.get("metadata"))
+        if isinstance(metadata, dict) and metadata.get("server_id"):
+            return  # server channel, not a group DM
+
+        for existing_id in self._participant_svc.get_participant_ids(conversation_id):
+            if existing_id != user_id:
+                self.enforce_group_dm_privacy(existing_id, user_id)
+
     def create_group(
         self,
         owner_id: SnowflakeID,
