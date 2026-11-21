@@ -51,7 +51,18 @@ class ThreadMembershipMixin(ThreadProtocol):
                WHERE tm.thread_id = ?""",
             (server_id, thread_id),
         )
-        return [int(row["user_id"]) for row in rows or []]
+        # SECURITY: a joined thread_members/srv_members.user_id vouches for a
+        # live member of the private thread's audience only while it is a
+        # genuine integer id. Coercing a malformed value with int() (e.g.
+        # "05"->5, True->1, 5.9->5) would put a user in the gateway event
+        # audience whose membership was never actually proven, leaking private
+        # thread name/owner/existence and message/typing activity. Fail closed:
+        # only exact int ids from the authoritative roster may enter.
+        return [
+            uid
+            for uid in (row["user_id"] for row in rows or [])
+            if type(uid) is int
+        ]
 
     def get_thread_type_value(self, thread_id: int) -> Optional[Any]:
         """Internal-only: the ``thread_type`` value of a thread row.
