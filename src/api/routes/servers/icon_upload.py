@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, File, UploadFile
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.servers import ServerResponse
 from src.api.schemas.common import ErrorResponse
 
@@ -31,6 +32,8 @@ async def upload_server_icon(
     file: UploadFile = File(...),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ServerResponse:
+    require_user_token(current_user)
+
     servers_mod = api.get_servers()
     media = api.get_media()
 

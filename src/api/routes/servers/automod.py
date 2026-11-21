@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.servers import (
     AutomodRuleResponse,
     AutomodRuleCreateRequest,
@@ -49,6 +50,7 @@ def _parse_id(value: object, label: str) -> int:
 async def get_server_automod_rules(
     server_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> List[AutomodRuleResponse]:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -85,6 +87,7 @@ async def create_server_automod_rule(
     body: AutomodRuleCreateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> AutomodRuleResponse:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -161,6 +164,7 @@ async def update_server_automod_rule(
     body: AutomodRuleUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> AutomodRuleResponse:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -232,6 +236,7 @@ async def update_server_automod_rule(
 async def delete_server_automod_rule(
     server_id: str, rule_id: str, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -277,6 +282,7 @@ async def get_server_automod_violations(
     before: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[AutomodViolationResponse]:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
@@ -339,6 +345,7 @@ async def get_server_automod_violation(
     violation_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> AutomodViolationResponse:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
