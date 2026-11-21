@@ -37,6 +37,12 @@ _EXPLICIT_ALLOWLIST_PATHS = (
     # URL-preview scheme gate (SSRF): an operator narrowing to https-only must
     # not have http silently re-added by the deep merge.
     ("embeds", "url_preview", "allowed_schemes"),
+    # Admin-surface host gate: the deep merge re-adds default loopback hosts
+    # (127.0.0.1, localhost, ::1) to an operator-narrowed or empty list. The
+    # admin gate also re-reads the raw file itself (hot-path cached), but
+    # restoring the explicit value here keeps every config.get("admin_ui")
+    # consumer authoritative too, instead of only that one call site.
+    ("admin_ui", "host_restriction", "allowed_hosts"),
 )
 
 
