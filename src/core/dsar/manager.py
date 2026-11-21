@@ -123,14 +123,24 @@ class DSARManager:
         if request["status"] not in ("pending",):
             raise ValueError(f"Cannot approve request in status: {request['status']}")
 
-        self._db.execute(
+        # SECURITY: the advisory read is not authoritative. A concurrent admin
+        # decision or harvester/cancel transition can move the row out of
+        # 'pending' before the write lands. Bind the transition to 'pending'
+        # and fail closed on a lost race, before any cache/audit side effect:
+        # a late approval can never clobber a denial that landed first.
+        cursor = self._db.execute(
             """
             UPDATE dsar_requests
             SET status = 'approved', admin_id = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'pending'
             """,
             (admin_id, request_id),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise ValueError(
+                f"DSAR request {request_id} changed state concurrently; "
+                "refusing to approve"
+            )
 
         self._invalidate_cache("dsar_request:*")
 
@@ -159,14 +169,21 @@ class DSARManager:
         if request["status"] != "pending":
             raise ValueError(f"Cannot deny request in status: {request['status']}")
 
-        self._db.execute(
+        # SECURITY: same guarded state machine as approve_request. Refuse to
+        # overwrite a newer decision that landed after the advisory read.
+        cursor = self._db.execute(
             """
             UPDATE dsar_requests
             SET status = 'denied', admin_id = ?, denial_reason = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'pending'
             """,
             (admin_id, reason, request_id),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise ValueError(
+                f"DSAR request {request_id} changed state concurrently; "
+                "refusing to deny"
+            )
 
         self._invalidate_cache("dsar_request:*")
 
