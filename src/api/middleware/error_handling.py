@@ -215,6 +215,33 @@ def _safe_error_message(
     return _generic_message_for_exception(exc, status_code)
 
 
+def _redact_validation_error_inputs(errors: Any) -> list:
+    """Return Pydantic validation errors safe to write to the server log.
+
+    ``exc.errors()`` embeds the rejected request value under ``input``.  On
+    auth endpoints that value is a password, reset token or 2FA code.  The
+    shared ``sanitize_log_message`` keyword patterns cannot mask it because
+    the dict key is ``input`` (not ``password``/``token``), so the raw secret
+    would otherwise be persisted verbatim (CWE-532).  Drop the submitted value
+    while keeping the diagnostic ``type``/``loc``/``msg`` fields.  ``ctx`` can
+    echo the same value via a custom validator, so it is scrubbed too; any
+    unexpected shape is omitted outright rather than logged verbatim (fail
+    closed).
+    """
+    safe: list = []
+    if not isinstance(errors, (list, tuple)):
+        return safe
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        scrubbed = dict(error)
+        for key in ("input", "ctx"):
+            if key in scrubbed:
+                scrubbed[key] = "<redacted>"
+        safe.append(scrubbed)
+    return safe
+
+
 def _merge_error_headers(
     cors_headers: Dict[str, str], exc_headers: Optional[Mapping[str, str]]
 ) -> Dict[str, str]:
@@ -559,8 +586,12 @@ def setup_exception_handlers(app: FastAPI):
 
         # Log validation detail server-side only; clients get a generic,
         # stable message (M6) so field names/paths/validators never leak.
+        # SECURITY: exc.errors()['input'] holds the raw rejected value (a
+        # password/token/code on auth routes). Redact it before logging so the
+        # credential never reaches the log sink.
         logger.warning(
-            f"Validation error on {request.method} {request.url.path}: {errors}"
+            f"Validation error on {request.method} {request.url.path}: "
+            f"{_redact_validation_error_inputs(errors)}"
         )
         # SECURITY: Do not read/log full request body to avoid memory DOS
 
