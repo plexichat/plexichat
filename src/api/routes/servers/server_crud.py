@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import authenticated_cache_key, require_user_token
 from src.api.schemas.servers import (
     ServerCreateRequest,
     ServerUpdateRequest,
@@ -83,10 +84,24 @@ def _require_server_member(sid: int, user_id: int) -> None:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=30, prefix="user_servers_api")
+# This response is the authenticated account's private "which servers did I
+# join" list. A bot token's ``user_id`` is its human owner, so two things used
+# to go wrong: the handler read the owner's list, and the default
+# ``generate_cache_key`` reduced the credential to ``TokenInfo:<user_id>`` so a
+# bot replayed the owner's warm entry. Reject bots before either can happen;
+# ``authenticated_cache_key`` additionally gives any residual bot call its own
+# namespace so a warm owner entry can never be served on a cache hit (the
+# body-level guard only runs on misses). For user tokens it keeps the legacy
+# key layout, so ``invalidate_user_servers`` globs still match.
+@cached(
+    ttl=30,
+    prefix="user_servers_api",
+    key_builder=authenticated_cache_key("user_servers_api"),
+)
 def get_servers(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[ServerResponse]:
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
