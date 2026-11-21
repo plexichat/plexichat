@@ -379,8 +379,18 @@ class ArtifactManager(BaseManager):
 
             messaging = api_mod.get_messaging()
             if messaging is not None:
+                # SECURITY: get_participant_ids() returns the raw
+                # msg_participants.user_id projection with no type filtering.
+                # int() laundering of a malformed-but-coercible value
+                # ("07"->7, 7.9->7, " 8 "->8, True->1) would hand the artifact
+                # lifecycle event fan-out a recipient that was never a genuine
+                # participant. events.dispatch(user_ids=...) consumes this list
+                # verbatim as "who gets this", so this is the sole audience gate.
+                # type() also rejects bool; genuine integer ids are preserved.
                 return [
-                    int(uid) for uid in messaging.get_participant_ids(conversation_id)
+                    uid
+                    for uid in messaging.get_participant_ids(conversation_id)
+                    if type(uid) is int
                 ]
         except Exception as exc:  # pragma: no cover - best-effort
             logger.debug("Artifact event participant lookup failed: %s", exc)

@@ -759,8 +759,15 @@ def _emit_artifact_message(
         messaging_mod = api.get_messaging()
         if conversation_id is not None and messaging_mod is not None:
             try:
+                # SECURITY: get_participant_ids() is the raw
+                # msg_participants.user_id projection with no type filtering.
+                # int() laundering ("07"->7, 7.9->7, " 8 "->8, True->1) would
+                # add a recipient that was never a genuine participant to this
+                # event fan-out audience. type() also rejects bool.
                 user_ids = [
-                    int(u) for u in messaging_mod.get_participant_ids(conversation_id)
+                    u
+                    for u in messaging_mod.get_participant_ids(conversation_id)
+                    if type(u) is int
                 ]
             except Exception as e:  # pragma: no cover - defensive
                 logger.debug(f"Failed to resolve participants: {e}")
