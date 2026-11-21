@@ -89,6 +89,10 @@ INBOUND_RATE_LIMITS: Dict[int, Tuple[int, float]] = {
     int(GatewayOpcode.ARTIFACT_OP): (200, 10.0),
     int(GatewayOpcode.SUM_SUBSCRIBE): (20, 10.0),
     int(GatewayOpcode.SUM_OP): (100, 10.0),
+    # SUM_UNSUBSCRIBE re-runs reauthorize_subscriptions() on every frame:
+    # ~3 synchronous DB reads per held workbook subscription (up to 128),
+    # so an identified socket can loop it for unbounded DB/threadpool work.
+    int(GatewayOpcode.SUM_UNSUBSCRIBE): (20, 10.0),
 }
 
 # Client-sendable extension opcodes that have no server-side consumer yet,
