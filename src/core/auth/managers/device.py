@@ -215,5 +215,11 @@ class DeviceMixin(AuthManagerProtocol):
         )
         if getattr(cursor, "rowcount", 0) == 0:
             return False
+        self._db.execute(
+            "UPDATE auth_sessions SET revoked = 1 WHERE device_id IN "
+            "(SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?)",
+            (user_id, fingerprint),
+        )
+        invalidate_pattern("token_verify:*")
         self._log_audit(AuditEventType.DEVICE_UNTRUSTED, user_id, True)
         return True
