@@ -176,6 +176,20 @@ class RelationshipHelpersMixin(BaseManager):
         if cache is not None:
             cache.clear()
 
+        # The gateway presence-audience resolution cache (EventRouter) is a
+        # separate L0 from the DB-tier ``presence_targets:*`` keys evicted
+        # below. It memoizes each subject's PRESENCE_UPDATE recipients -- their
+        # friends + shared-server members minus blocked users -- for a short
+        # TTL. A block/unblock or friend change alters that audience for both
+        # parties, so without an eager evict a just-blocked user keeps
+        # receiving the blocker's real (and custom) presence until the TTL
+        # lapses. Evict it here with the other relationship-derived caches.
+        # Lazy import keeps the relationship tier decoupled from the gateway
+        # at module load (and relationship writes are rare).
+        from src.core.events.router import clear_presence_audience_cache
+
+        clear_presence_audience_cache()
+
         seen_ids = set()
         for user_id in user_ids:
             normalized_id = int(user_id)

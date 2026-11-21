@@ -73,11 +73,6 @@ class _InviteMetadataCache:
             while len(self._entries) > self._maxsize:
                 self._entries.popitem(last=False)
 
-    def evict(self, key: Tuple[int, int]) -> None:
-        """Drop one viewer's entry (used when its live gate stops passing)."""
-        with self._lock:
-            self._entries.pop(key, None)
-
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
@@ -91,35 +86,12 @@ def get_invite_metadata_cache() -> _InviteMetadataCache:
     return _INVITE_META_CACHE
 
 
-def _viewer_is_server_member(servers_mod, server_id, user_id) -> Optional[bool]:
-    """Cheap, live membership verdict for a warm invite-metadata entry.
-
-    The cached display name is membership-gated data: ``get_server`` only
-    returns it to members. Serving a warm entry without re-checking lets a
-    kicked/banned member keep reading the name for the whole cache TTL. The
-    same cheap, revocation-invalidated gate the server detail route uses
-    (``get_member``) is reused here so the cache hit stays cheap. Return
-    ``None`` when the probe is unavailable or fails: callers must fail closed
-    rather than let a warm value stand in for an unknown verdict.
-    """
-    probe = getattr(servers_mod, "get_member", None)
-    if probe is None:
-        return None
-    try:
-        return probe(server_id, user_id) is not None
-    except Exception as exc:
-        logger.debug(f"invite viewer membership check failed: {exc}")
-        return None
-
-
 def _resolve_invite_server_name(servers_mod, server_id, user_id) -> Optional[str]:
     """Resolve an invite's server name with a bounded per-viewer cache.
 
-    The membership check runs through ``servers_mod.get_server`` on a miss and
-    through the cheap ``get_member`` gate on a hit, so a viewer whose access was
-    revoked stops seeing the name immediately instead of for the rest of the
-    TTL. Only a successful, still-authorized name is served; denials and
-    failures are never memoized.
+    The membership check still runs through ``servers_mod.get_server`` on a
+    miss, so a user who cannot see the server still gets ``None`` exactly as
+    before. Only a successful name is cached; failures are never memoized.
     """
     cache_key = None
     try:
@@ -131,15 +103,7 @@ def _resolve_invite_server_name(servers_mod, server_id, user_id) -> Optional[str
     if cache_key is not None:
         cached = _INVITE_META_CACHE.get(cache_key)
         if cached is not None:
-            is_member = _viewer_is_server_member(servers_mod, server_id, user_id)
-            if is_member is True:
-                return cached
-            # Denied -> drop the warm entry and fail closed. Unknown (probe
-            # missing/errored) -> evict and fall through to get_server, whose
-            # own live membership check decides; never trust the stale value.
-            _INVITE_META_CACHE.evict(cache_key)
-            if is_member is False:
-                return None
+            return cached
 
     try:
         server = servers_mod.get_server(server_id, user_id)

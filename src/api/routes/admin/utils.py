@@ -103,24 +103,7 @@ def is_authenticated_self_test(request: Request) -> bool:
 
 # Config deep-merge re-adds default loopback hosts to an operator-narrowed
 # allowlist. Cache the raw-file value so an explicit allowlist stays authoritative.
-#
-# ``check_host_restriction`` runs on every admin route, so the raw-file lookup
-# used to ``os.stat`` config.yaml on every request even though the parsed value
-# was already cached by (path, mtime, size). A short staleness ceiling throttles
-# the stat itself on that hot path: within the window the last (path, mtime,
-# size) key and its parsed value are reused with no filesystem access. The value
-# is still version-keyed, so a real on-disk edit is observed once the ceiling
-# elapses, and ``invalidate_explicit_hosts_cache`` lets admin config-reload
-# callers drop it immediately.
-_EXPLICIT_HOSTS_STAT_MAX_AGE_SECONDS = 5.0
-_explicit_hosts_cache: dict = {"key": None, "value": None, "checked_at": 0.0}
-
-
-def invalidate_explicit_hosts_cache() -> None:
-    """Drop the cached explicit allowlist (admin config-reload / tests)."""
-    _explicit_hosts_cache["key"] = None
-    _explicit_hosts_cache["value"] = None
-    _explicit_hosts_cache["checked_at"] = 0.0
+_explicit_hosts_cache: dict = {"key": None, "value": None}
 
 
 def _explicit_admin_allowed_hosts():
@@ -135,20 +118,9 @@ def _explicit_admin_allowed_hosts():
         path = getattr(instance, "config_path", None)
         if not path:
             return None
-        now = time.monotonic()
-        within_ceiling = (
-            _explicit_hosts_cache["key"] is not None
-            and (now - _explicit_hosts_cache["checked_at"])
-            < _EXPLICIT_HOSTS_STAT_MAX_AGE_SECONDS
-        )
-        if within_ceiling:
-            return _explicit_hosts_cache["value"]
         stat = os.stat(path)
         cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
         if _explicit_hosts_cache["key"] == cache_key:
-            # Nothing changed on disk: keep the parsed value, just refresh the
-            # check clock so the hot path skips the stat again for a window.
-            _explicit_hosts_cache["checked_at"] = now
             return _explicit_hosts_cache["value"]
         with open(path, "rb") as fh:
             raw = fh.read()
@@ -169,7 +141,6 @@ def _explicit_admin_allowed_hosts():
                     value = list(hr["allowed_hosts"])
         _explicit_hosts_cache["key"] = cache_key
         _explicit_hosts_cache["value"] = value
-        _explicit_hosts_cache["checked_at"] = now
         return value
     except Exception:
         return None
