@@ -219,7 +219,16 @@ class ChunkedUploadManager:
                     if _lic_bytes < max_size:
                         max_size = _lic_bytes
         except (RuntimeError, ImportError):
-            pass
+            # Fail CLOSED: an uninitialised license manager or a missing
+            # licensing module used to be swallowed here, silently dropping the
+            # licensed ``max_file_size_mb`` ceiling and falling back to the
+            # looser configured limit. That let a licensed instance accept
+            # oversized files through the chunked-upload path even though the
+            # direct-upload path (_ValidationMixin) denied them. Free tier
+            # short-circuits above before a cap is evaluated, so this handler
+            # only runs when a licensed cap was expected but could not be
+            # verified -- deny the session when that happens.
+            return False
 
         return total_size <= max_size
 
