@@ -73,6 +73,30 @@ class ScheduledEventManager:
         """Generate a new Snowflake ID."""
         return generate_snowflake_id()
 
+    def _count_active_events(self, server_id: int) -> int:
+        """Count a server's non-terminal scheduled events, failing closed.
+
+        ``max_events_per_server`` is a configured capacity bound, but it was
+        loaded in :meth:`_load_config` and never applied: any actor with
+        ``events.manage`` could insert unbounded event rows (and
+        ``generate_recurring_instances`` multiplied that further). Only
+        ``scheduled``/``active`` rows consume capacity so that completed and
+        cancelled events do not permanently exhaust a server. A missing or
+        malformed count denies creation rather than treating it as zero.
+        """
+        row = self._db.fetch_one(
+            "SELECT COUNT(*) AS count FROM srv_scheduled_events "
+            "WHERE server_id = ? AND status IN ('scheduled', 'active')",
+            (server_id,),
+        )
+        if row is None:
+            raise ScheduledEventError("Cannot verify scheduled event capacity")
+        try:
+            value = row["count"] if isinstance(row, dict) else row[0]
+            return int(value)
+        except (KeyError, TypeError, ValueError, IndexError):
+            raise ScheduledEventError("Cannot verify scheduled event capacity")
+
     def create_event(
         self,
         user_id: int,
@@ -94,6 +118,15 @@ class ScheduledEventManager:
             raise ServerNotFoundError("Server not found")
 
         self._server_manager.require_permission(user_id, server_id, "events.manage")
+
+        # Enforce the configured per-server capacity before any write. Without
+        # this, ``max_events_per_server`` was dead config and callers could
+        # grow the event table without bound.
+        max_events = int(self._config.get("max_events_per_server", 100))
+        if self._count_active_events(server_id) >= max_events:
+            raise ScheduledEventError(
+                f"Maximum {max_events} scheduled events per server"
+            )
 
         name = name.strip()
         if not name:
@@ -496,6 +529,12 @@ class ScheduledEventManager:
 
         max_instances = self._config.get("max_recurring_instances", 50)
         count = min(count, max_instances)
+        # Generated instances are scheduled events too; cap them by the
+        # remaining per-server capacity so the recurrence path cannot bypass
+        # the same bound enforced by create_event.
+        max_events = int(self._config.get("max_events_per_server", 100))
+        remaining = max_events - self._count_active_events(event.server_id)
+        count = max(0, min(count, remaining))
 
         if rrulestr is None:
             raise ScheduledEventError("Recurring events require python-dateutil")
