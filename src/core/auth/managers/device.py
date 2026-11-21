@@ -1,3 +1,4 @@
+import time
 from typing import Dict, List, Optional
 
 import utils.logger as logger
@@ -7,6 +8,32 @@ from ..models import AuditEventType, Device
 
 
 from .protocol import AuthManagerProtocol
+
+
+# ``is_trusted_device`` sits on the login hot path (TOTP enabled + a device
+# fingerprint). Its schema guard used to introspect ``auth_devices`` (PRAGMA
+# table_info / information_schema) on *every* probe, even though the trust
+# columns are added once by migration and are permanent (ADD COLUMN). Login
+# writes clear the DB's short-lived result cache, so that introspection really
+# re-executed per request. Memoize the "columns present" verdict with a
+# bounded, short-TTL cache keyed by the live db object (the strong reference
+# prevents id() reuse). The TTL bounds staleness across workers, the cap keeps
+# the cache tiny, and an explicit hook lets migrations/tests force a refresh.
+# We only cache after ensure_trusted_devices_columns() returns normally; that
+# helper adds any missing columns, so a cached True is safe for the table's
+# lifetime. Trust state itself is never cached - only the schema fact.
+_TRUSTED_COLS_TTL_SECONDS = 30.0
+_TRUSTED_COLS_MAX_ENTRIES = 16
+_trusted_columns_verdicts: Dict[int, tuple] = {}  # id(db) -> (db, expires_at_monotonic)
+
+
+def invalidate_trusted_device_schema_cache() -> None:
+    """Force the next trusted-device probe to re-introspect the schema.
+
+    Call after a migration that (re)creates ``auth_devices`` so the memo cannot
+    outlive the schema it describes.
+    """
+    _trusted_columns_verdicts.clear()
 
 
 # Keep batched lookups inside SQLite's classic bind-parameter ceiling and well
@@ -125,10 +152,24 @@ class DeviceMixin(AuthManagerProtocol):
 
     def _ensure_trusted_device_columns(self) -> None:
         """Lazy guard so databases created before the trust columns existed
-        are covered without paying the DDL cost on every request."""
+        are covered without paying the DDL cost on every request.
+
+        The verdict is memoized per db object (bounded + short TTL) because the
+        trust columns are permanent once present; see the module-level cache
+        note. This keeps a trusted-device login probe at a single SELECT.
+        """
+        db = self._db
+        key = id(db)
+        now = time.monotonic()
+        cached = _trusted_columns_verdicts.get(key)
+        if cached is not None and cached[0] is db and cached[1] > now:
+            return
         from ..schema import ensure_trusted_devices_columns
 
-        ensure_trusted_devices_columns(self._db)
+        ensure_trusted_devices_columns(db)
+        if len(_trusted_columns_verdicts) >= _TRUSTED_COLS_MAX_ENTRIES:
+            _trusted_columns_verdicts.clear()
+        _trusted_columns_verdicts[key] = (db, now + _TRUSTED_COLS_TTL_SECONDS)
 
     def is_trusted_device(self, user_id: int, fingerprint: Optional[str]) -> bool:
         """True when this (user, fingerprint) pair is marked trusted.
