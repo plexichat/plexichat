@@ -120,7 +120,12 @@ def test_cache_is_db_scoped_and_invalidation_is_per_user(isolated_features_cache
 
     assert features.get_user_tier(1) == "alpha"
     assert features.get_user_tier(2) == "premium"
-    assert features.get_user_features(1) is features.get_user_features(1)
+    # Two warm reads must agree on value (the cache is doing its job) but must
+    # not be the same object: the memoized verdict is never handed out directly.
+    first = features.get_user_features(1)
+    second = features.get_user_features(1)
+    assert first == second
+    assert first is not second
 
     # Dropping user 1 leaves user 2's cached row untouched.
     features._invalidate_user_features_cache(1)
@@ -148,9 +153,7 @@ def test_expired_entry_is_recomputed(isolated_features_cache, monkeypatch):
 
     with features._features_cache_lock:
         expiry = next(
-            entry[0]
-            for key, entry in features._features_cache.items()
-            if key[1] == 7
+            entry[0] for key, entry in features._features_cache.items() if key[1] == 7
         )
 
     class _Clock:
@@ -171,7 +174,9 @@ def test_expired_entry_is_recomputed(isolated_features_cache, monkeypatch):
 def test_time_bound_grant_is_never_cached(isolated_features_cache):
     """A grant with an expiry bypasses the cache so expiry stays authoritative."""
     db = _FakeDB()
-    db.rows[5] = _FakeDB.row(5, tier="alpha", expires_at=int(time.time() * 1000) + 60_000)
+    db.rows[5] = _FakeDB.row(
+        5, tier="alpha", expires_at=int(time.time() * 1000) + 60_000
+    )
     features.setup(db)
 
     features.get_user_features(5)

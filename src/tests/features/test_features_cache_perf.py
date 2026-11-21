@@ -39,7 +39,10 @@ class TestUserFeaturesCache:
             first = features.get_user_features(test_user.id)
             second = features.get_user_features(test_user.id)
 
-        assert first is second
+        # A hit is a value-equal but distinct object: callers can never reach
+        # the memoized instance and mutate shared tier/flag/badge state.
+        assert first == second
+        assert first is not second
         assert len(calls) == 1
 
     def test_write_invalidates_cached_tier(self, db, test_user):

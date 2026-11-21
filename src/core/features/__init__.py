@@ -116,9 +116,7 @@ _setup_complete = False
 # single least-recently-used key keeps hot users cached and bounds the store.
 _FEATURES_CACHE_TTL = 5.0
 _FEATURES_CACHE_MAX = 1024
-_features_cache: "OrderedDict[tuple[Any, int], tuple[float, Optional[UserFeatures]]]" = (
-    OrderedDict()
-)
+_features_cache: "OrderedDict[tuple[Any, int], tuple[float, Optional[UserFeatures]]]" = OrderedDict()
 _features_cache_lock = threading.Lock()
 _FEATURES_CACHE_STATS = {"hits": 0, "misses": 0, "evictions": 0}
 
@@ -553,6 +551,25 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
 # === User Features ===
 
 
+def _copy_user_features(
+    value: Optional[UserFeatures],
+) -> Optional[UserFeatures]:
+    """Return an independent copy of a memoized user-features verdict.
+
+    ``UserFeatures`` is a mutable dataclass and its ``badges`` field is a
+    mutable list. The store is process-wide and keyed only by (db token, user),
+    and every rate-limit / feature / badge decision funnels through
+    ``get_user_features``. Handing the memoized instance to a caller would let
+    one in-place edit (``rate_limit_tier = "premium"`` or
+    ``badges.append("admin")``) silently widen those gates for every later
+    request for the whole TTL. Deep-copy on both the store and read paths so
+    the cached object is never reachable by a caller.
+    """
+    if value is None:
+        return None
+    return deepcopy(value)
+
+
 def get_user_features(user_id: int) -> Optional[UserFeatures]:
     """
     Get all features for a user.
@@ -561,7 +578,9 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
         user_id: User ID
 
     Returns:
-        UserFeatures object or None if no features set
+        UserFeatures object or None if no features set. The returned object is
+        always detached from the process-wide memo: callers may freely mutate
+        it without poisoning later tier/feature/badge decisions.
     """
     db = _get_db()
 
@@ -574,7 +593,9 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
         if cached is not None and cached[0] > now:
             _features_cache.move_to_end(cache_key)
             _FEATURES_CACHE_STATS["hits"] += 1
-            return cached[1]
+            # Detach the memoized verdict: a caller editing its copy must never
+            # change the tier/flags/badges every later request observes.
+            return _copy_user_features(cached[1])
         if cached is not None:
             # Expired entries must never be served; drop them on access.
             _features_cache.pop(cache_key, None)
@@ -616,7 +637,9 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
         # window in which the row is reused.
         expires = time.monotonic() + _FEATURES_CACHE_TTL
         with _features_cache_lock:
-            _features_cache[cache_key] = (expires, result)
+            # Store a snapshot; the freshly built ``result`` returned to this
+            # first caller stays caller-owned and can never alias the memo.
+            _features_cache[cache_key] = (expires, _copy_user_features(result))
             _features_cache.move_to_end(cache_key)
             while len(_features_cache) > _FEATURES_CACHE_MAX:
                 _features_cache.popitem(last=False)
