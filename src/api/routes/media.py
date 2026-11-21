@@ -129,16 +129,30 @@ def _existing_pending_hash_report(user_id: int, hash_value: str):
 # === Proxy request policy (parsed once per config version) ===
 
 
-def _proxy_config_version() -> tuple:
-    """Cheap version token for the cached proxy policy.
+# The proxy policy is read on every uncached proxy fetch, so the version token
+# must stay cheap.  Its in-memory parts (loader identity + ``repr`` of the tiny
+# ``proxy_rate_limit`` mapping) already catch a new ``config.setup()`` and any
+# in-place edit made by tests/admin reloads on the very next access.  Only the
+# ``os.stat`` of the config file is genuinely expensive; memoise just that
+# piece behind a short staleness ceiling.  Unlike a blanket snapshot ceiling,
+# this keeps immediate detection of in-memory changes while cutting the stat
+# traffic on the hot path to at most once per window.
+_PROXY_FILE_VERSION_MAX_AGE_SECONDS = 5.0
+_proxy_file_version_cache: dict[str, Any] = {"at": 0.0, "version": None}
 
-    A new loader instance (``config.setup`` in tests/reload paths), an
-    on-disk edit, or a direct in-place change to the small
-    ``proxy_rate_limit`` mapping all produce a new token, so the parsed
-    integers below are rebuilt on the next request instead of being served
-    stale. The ``repr`` of that tiny mapping is enough to observe in-memory
-    edits that bypass the loader's ``set``/reload APIs.
+
+def _proxy_config_version() -> tuple:
+    """Version token for the cached proxy policy, with a throttled file stat.
+
+    A new loader instance (``config.setup`` in tests/reload paths) or a direct
+    in-place change to the small ``proxy_rate_limit`` mapping is reflected by
+    the cheap in-memory parts of the token on the very next access.  The
+    ``file_version`` component (an ``os.stat``) is memoised for a short window
+    so an on-disk edit is still observed, but at most once per ceiling rather
+    than on every proxy request.
     """
+    import time as _time
+
     import utils.config as _config
 
     loader = getattr(_config, "_config_instance", None)
@@ -147,7 +161,15 @@ def _proxy_config_version() -> tuple:
         rate_cfg = _config.get("media", {}).get("proxy_rate_limit", {})
     except Exception:
         rate_cfg = {}
-    return (id(loader), file_version(path), repr(rate_cfg))
+
+    cached = _proxy_file_version_cache
+    now = _time.monotonic()
+    if cached["version"] is None or (
+        now - cached["at"]
+    ) >= _PROXY_FILE_VERSION_MAX_AGE_SECONDS:
+        cached["version"] = file_version(path)
+        cached["at"] = now
+    return (id(loader), cached["version"], repr(rate_cfg))
 
 
 def _load_proxy_policy() -> Dict[str, Any]:
@@ -161,6 +183,10 @@ def _load_proxy_policy() -> Dict[str, Any]:
     }
 
 
+# The snapshot checks its version on every access so the cheap in-memory parts
+# of the token (loader id + ``repr(rate_cfg)``) are seen immediately.  The
+# expensive ``os.stat`` inside that token is throttled separately (see
+# ``_proxy_config_version``).
 _proxy_policy_snapshot = VersionedConfigSnapshot(
     _load_proxy_policy, version_fn=_proxy_config_version
 )
