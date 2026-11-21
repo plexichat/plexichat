@@ -113,6 +113,14 @@ def test_unverifiable_server_scope_does_not_rebuild_server_audience(monkeypatch)
 
     monkeypatch.setattr(api, "get_servers", lambda: servers)
     monkeypatch.setattr(api, "get_messaging", lambda: None)
+    # Server-channel audiences now pass through the two-way block gate. Wire a
+    # relationship source with no blocks so this test keeps asserting the
+    # permission-filtered audience (the gate itself is tested separately).
+    class _NoBlocks:
+        def get_all_blocked_ids_bulk(self, ids):
+            return {int(uid): [] for uid in ids}
+
+    monkeypatch.setattr(api, "get_relationships", lambda: _NoBlocks())
     from src.core.events.gateway_emit import resolve_channel_event_recipients
 
     result = resolve_channel_event_recipients(
@@ -137,6 +145,14 @@ def test_verified_server_channel_still_resolves_viewers(monkeypatch):
 
     monkeypatch.setattr(api, "get_servers", lambda: servers)
     monkeypatch.setattr(api, "get_messaging", lambda: None)
+    # Server-channel audiences now pass through the two-way block gate. Wire a
+    # relationship source with no blocks so this test keeps asserting the
+    # permission-filtered audience (the gate itself is tested separately).
+    class _NoBlocks:
+        def get_all_blocked_ids_bulk(self, ids):
+            return {int(uid): [] for uid in ids}
+
+    monkeypatch.setattr(api, "get_relationships", lambda: _NoBlocks())
     from src.core.events.gateway_emit import resolve_channel_event_recipients
 
     result = resolve_channel_event_recipients(
