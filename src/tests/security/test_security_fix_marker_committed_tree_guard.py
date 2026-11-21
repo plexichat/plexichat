@@ -126,6 +126,44 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "list and makes the sweep vacuous"
         ),
     ),
+    # cd9bcf44 (private-index repair): three channel gates now DENY when the
+    # servers module is unwired instead of skipping the backing-channel check.
+    # All three files are still MM in the working tree with the pre-fix `return`
+    # restored, so a peer staging a whole file would silently re-open the leak.
+    # The marker is the distinctive fail-closed comment that exists only in the
+    # repaired blob (absent from every stale working-tree copy).
+    CommittedFixMarker(
+        key="cd9bcf44-attachment-unwired-send-gate",
+        path="src/api/routes/channels/attachments.py",
+        marker="The backing-channel lookup cannot be evaluated without the servers",
+        why=(
+            "cd9bcf44: attachment upload fails closed when servers is unwired; "
+            "a stale staged copy restores the bare `return` and lets any "
+            "participant upload into a private-channel conversation-id alias "
+            "whose messages.send/view grants were never checked"
+        ),
+    ),
+    CommittedFixMarker(
+        key="cd9bcf44-forward-unwired-send-gate",
+        path="src/api/routes/features/forwarding.py",
+        marker="The backing-channel lookup cannot be evaluated without the servers",
+        why=(
+            "cd9bcf44: message forwarding fails closed when servers is unwired; "
+            "a stale staged copy restores the bare `return` and lets a member "
+            "forward into a channel whose messages.send grant was never checked"
+        ),
+    ),
+    CommittedFixMarker(
+        key="cd9bcf44-edit-unwired-view-gate",
+        path="src/api/routes/messages/messages_crud/edit.py",
+        marker="The backing-channel lookup cannot be evaluated without the servers",
+        why=(
+            "cd9bcf44: message edit fails closed when servers is unwired; a "
+            "stale staged copy restores the bare `return` and lets a member "
+            "denied channels.view edit a private-channel message through the "
+            "conversation-id alias"
+        ),
+    ),
 )
 
 
