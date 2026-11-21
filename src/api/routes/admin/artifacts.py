@@ -5,7 +5,7 @@ All endpoints are admin-guarded (host restriction + admin token). They operate
 across every server and are intended for instance-level administration.
 """
 
-from src.core.security.hardening import bounded_int
+from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
 
 from typing import Any, Dict
 
@@ -153,9 +153,15 @@ async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str,
         )
 
     try:
+        # Bind the path segment through the canonical ASCII snowflake gate. A
+        # bare ``int()`` accepted homoglyph digits ("٤٢" -> 42), PEP-515
+        # separators ("1_2" -> 12), signs/whitespace, negatives and unbounded
+        # integers, so a segment one hop reads as text was silently
+        # reinterpreted as a different id at a destructive, cross-server
+        # endpoint. Every other admin route family parses ids with parse_id.
         try:
-            aid = int(artifact_id)
-        except ValueError:
+            aid = parse_id(artifact_id, "artifact_id")
+        except (HardeningViolation, TypeError, ValueError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
@@ -246,14 +252,13 @@ async def admin_set_server_retention(
     require_admin_permission(request, "admin.artifacts.manage")
 
     try:
+        # Defense in depth: the request schema already vets the id, but go
+        # through the same ASCII snowflake gate as every other route boundary
+        # so a directly-constructed body cannot smuggle a bool, float, homoglyph
+        # or oversized id into the retention write.
         try:
-            server_id = int(body.server_id)
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid server_id"}},
-            )
-        if server_id <= 0:
+            server_id = parse_id(body.server_id, "server_id")
+        except (HardeningViolation, TypeError, ValueError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"error": {"code": 400, "message": "Invalid server_id"}},
@@ -365,14 +370,14 @@ async def admin_set_feature_settings(
     # Accept a decimal-string snowflake (the admin UI sends ids as strings to
     # avoid Number() rounding) as well as an int, then bind a real int so the
     # query works on both SQLite and Postgres.
+    # ``settings`` is a free-form dict, so ``server_id`` has no schema gate at
+    # all. Route it through the canonical snowflake parser: bare ``int()``
+    # truncated floats (1.9 -> 1), accepted bools (True -> 1), homoglyph digits
+    # and unbounded values, any of which could target the wrong server's
+    # feature overrides.
     try:
-        server_id = int(server_id)
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid server_id"}},
-        )
-    if server_id <= 0:
+        server_id = parse_id(server_id, "server_id")
+    except (HardeningViolation, TypeError, ValueError):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid server_id"}},
