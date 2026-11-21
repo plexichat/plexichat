@@ -137,6 +137,14 @@ def _can_view_conversation_messages(user_id, conversation_id) -> bool:
     servers = _get_servers_module()
     if servers is None:
         return True
+    # A server store that has not been initialised cannot back ANY
+    # conversation with a channel, so there is no channel alias to gate.
+    # Mirror the no-store case instead of treating the failed reverse lookup
+    # as a denied view: otherwise every DM/group write fails closed when
+    # messaging is wired without the servers module. Real aliases (an
+    # initialised store that cannot prove the view) still fail closed below.
+    if getattr(servers, "_setup_complete", True) is False:
+        return True
     reverse = getattr(servers, "get_channel_by_conversation", None)
     if not callable(reverse):
         return True  # legacy/stub store: only the URL-id gate can be checked
