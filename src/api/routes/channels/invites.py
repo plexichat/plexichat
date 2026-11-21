@@ -339,6 +339,23 @@ class ChannelInvitesMixin(ChannelBase):
                         },
                     )
 
+                # Expired invites must not leak metadata through the info
+                # endpoint: core ``get_invite`` keeps expired rows so the
+                # redeem path can report its 410, but this endpoint promises
+                # 404 for "not found or expired". Fail closed using the same
+                # epoch-ms clock the invite was minted with.
+                expires_at = getattr(invite, "expires_at", None)
+                if expires_at is not None and expires_at <= int(time.time() * 1000):
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": {
+                                "code": 404,
+                                "message": "Invite not found or expired",
+                            }
+                        },
+                    )
+
                 server_name = getattr(invite, "server_name", None)
                 if not server_name and hasattr(invite, "server_id"):
                     server_name = _resolve_invite_server_name(
