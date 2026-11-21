@@ -46,7 +46,11 @@ def _can_view_poll_message(
 
     servers = _get_servers_module()
     if servers is None:
-        return True  # no servers store => conversation can only be a DM/group
+        # The backing-channel lookup cannot be evaluated without the servers
+        # module. Deny rather than skip the live view gate (the
+        # unwired-dependency invariant in
+        # src/tests/api/test_unwired_dependency_fails_closed.py).
+        return False
     if getattr(servers, "_setup_complete", True) is False:
         # Present but not initialized (unit harnesses / early startup): there
         # is no server-channel store in this runtime, so a DM/group is the only

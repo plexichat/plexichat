@@ -47,7 +47,9 @@ def can_post_poll_message(
 
     servers = _get_servers_module()
     if servers is None:
-        return True  # no servers store => conversation can only be a DM/group
+        # The backing-channel lookup cannot be resolved without the servers
+        # module. Deny the write rather than skipping the messages.send gate.
+        return False
     if getattr(servers, "_setup_complete", True) is False:
         return True  # present but uninitialized: no server-channel store exists
     lookup = getattr(servers, "get_channel_by_conversation", None)

@@ -136,13 +136,17 @@ def _can_view_conversation_messages(user_id, conversation_id) -> bool:
     """
     servers = _get_servers_module()
     if servers is None:
-        return True
+        # The backing-channel lookup cannot be evaluated without the servers
+        # module. Deny instead of skipping the gate: an unwired dependency is
+        # exactly the state in which the reverse lookup cannot prove the
+        # absence of a private-channel alias (the unwired-dependency invariant
+        # in src/tests/api/test_unwired_dependency_fails_closed.py).
+        return False
     # A server store that has not been initialised cannot back ANY
     # conversation with a channel, so there is no channel alias to gate.
-    # Mirror the no-store case instead of treating the failed reverse lookup
-    # as a denied view: otherwise every DM/group write fails closed when
-    # messaging is wired without the servers module. Real aliases (an
-    # initialised store that cannot prove the view) still fail closed below.
+    # Real aliases (an initialised store that cannot prove the view) still
+    # fail closed below; an uninitialised store has no channel table from
+    # which an alias could be produced in the first place.
     if getattr(servers, "_setup_complete", True) is False:
         return True
     reverse = getattr(servers, "get_channel_by_conversation", None)
