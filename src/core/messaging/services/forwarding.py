@@ -72,7 +72,9 @@ class ForwardingService:
     MAX_FORWARDS_PER_USER_PER_HOUR = 50
     MAX_HISTORY = 50
 
-    def __init__(self, db, messaging_module=None, participant_svc=None, servers_mod=None):
+    def __init__(
+        self, db, messaging_module=None, participant_svc=None, servers_mod=None
+    ):
         self._db = db
         self._messaging = messaging_module
         self._participant_svc = participant_svc
@@ -130,31 +132,27 @@ class ForwardingService:
     def _safe_send_via_messaging(
         self, user_id: int, target_conversation_id: int, content: str
     ) -> Optional[Any]:
-        """Try to send the forwarded message via the messaging module.
+        """Send the forwarded message via the gated messaging path.
 
-        Returns the new Message on success, or None if the messaging module
-        is unavailable, not initialized, or the send raised an exception.
-        The forwarding record is still written even if the live send fails
-        so the forward isn't lost (a follow-up background sync can pick
-        up the slack).
+        SECURITY: _safe_send_via_messaging propagates send rejections. A
+        rejection by ``send_message`` (``InvalidContentError``,
+        ``ConversationAccessDeniedError``, slowmode, blocks, ...) MUST
+        propagate: recording a forward after a denied send claimed that a
+        live message was delivered into the target conversation with content
+        the normal send path had rejected, and fabricated a message id for a
+        row that never existed. None is returned only when there is no
+        messaging module wired at all (no live send path to gate through).
         """
         if not self._messaging:
             return None
         send = getattr(self._messaging, "send_message", None)
         if send is None or not callable(send):
             return None
-        try:
-            return send(
-                user_id=user_id,
-                conversation_id=target_conversation_id,
-                content=content,
-            )
-        except Exception as e:
-            logger.warning(
-                "Forward: messaging.send_message raised %s; recording forward without live message",
-                e,
-            )
-            return None
+        return send(
+            user_id=user_id,
+            conversation_id=target_conversation_id,
+            content=content,
+        )
 
     @staticmethod
     def _extract_message_id(message: Any) -> Optional[int]:
@@ -244,10 +242,9 @@ class ForwardingService:
         if fwd_count and _count_value(fwd_count) >= self.MAX_FORWARDS_PER_MESSAGE:
             raise ValueError("Message has been forwarded too many times")
 
-        # Create the forwarded message via the messaging module, if available.
-        # The send is best-effort: even if it fails (e.g. content filter
-        # rejected a forwarded blob) we still want to record the forward so
-        # the audit trail isn't lost.
+        # Create the forwarded message via the gated messaging path, if one is
+        # wired. A rejected send propagates: no forward record is written for
+        # a message the send path refused to create.
         forward_id = self._generate_id()
         now = self._get_timestamp()
 
@@ -395,4 +392,3 @@ class ForwardingService:
             (user_id, limit),
         )
         return [_forwarded_row_to_dict(row) for row in rows]
-
