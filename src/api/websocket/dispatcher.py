@@ -93,6 +93,30 @@ def _event_scope_from_data(event_data: Any) -> tuple:
     return server_id, channel_id
 
 
+def _replay_frame_allowed(payload: Dict[str, Any], intents: int) -> bool:
+    """Re-apply the intent gate to a frame restored from a replay buffer."""
+    from src.core.events.types import EventType
+
+    event_type_name = payload.get("t")
+    if not isinstance(event_type_name, str):
+        return True
+    try:
+        event_type = EventType(event_type_name)
+    except ValueError:
+        return True
+    data = payload.get("d")
+    if not isinstance(data, dict):
+        data = {}
+    server_id, channel_id = _event_scope_from_data(data)
+    event = Event(
+        event_type=event_type,
+        data=data,
+        server_id=server_id,
+        channel_id=channel_id,
+    )
+    return filter_event_by_intents(event, intents)
+
+
 class GatewayDispatcher:
     """Dispatches events to connected WebSocket clients."""
 
@@ -552,6 +576,12 @@ class GatewayDispatcher:
 
         count = 0
         for event_payload in events:
+            # A persisted replay buffer can hold frames recorded under a wider
+            # intent mask than the resuming connection now has. Re-gate each
+            # frame against the current mask so RESUME cannot re-escalate event
+            # visibility by replaying privileged events.
+            if not _replay_frame_allowed(event_payload, connection.intents):
+                continue
             success = await self._send_to_connection(connection, event_payload)
             if success:
                 count += 1
@@ -933,3 +963,24 @@ class GatewayDispatcher:
 
         logger.info(f"Closed {closed_count} WebSocket connections")
         return closed_count
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
