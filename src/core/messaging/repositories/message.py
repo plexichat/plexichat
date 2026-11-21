@@ -14,6 +14,10 @@ from src.core.base import SnowflakeID
 from src.utils.encryption import decrypt_message, is_message_encrypted, decrypt_data
 
 _MAX_SEARCH_TOKENS = 64
+# Bound bulk write batches so one replacement cannot exceed SQLite/Postgres
+# bind-parameter limits or hold an unbounded in-memory batch. Matches the
+# sibling repositories' chunk size.
+_MAX_BULK_CHUNK = 500
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
 
@@ -322,19 +326,31 @@ class MessageRepository(BaseRepository[Message]):
         token_indexes: List[str],
         auto_commit: bool = True,
     ) -> None:
-        """Replace the per-token search blind indexes for a message."""
+        """Replace the per-token search blind indexes for a message.
+
+        The old loop issued one ``INSERT OR IGNORE`` per token, so a long
+        message paid N statement round-trips on every send/edit. The inserts
+        are now folded into bounded ``executemany`` chunks: N statements become
+        ``ceil(N / _MAX_BULK_CHUNK)`` calls. The preceding DELETE, SQL text,
+        column order, ``OR IGNORE`` conflict handling, position numbering and
+        the caller-chosen ``auto_commit`` boundary are all unchanged.
+        """
         self._execute(
             "DELETE FROM msg_message_tokens WHERE message_id = ?",
             (msg_id,),
             auto_commit=auto_commit,
         )
-        for position, token_index in enumerate(token_indexes):
-            self._execute(
-                "INSERT OR IGNORE INTO msg_message_tokens "
-                "(message_id, token_index, position) VALUES (?, ?, ?)",
-                (msg_id, token_index, position),
-                auto_commit=auto_commit,
-            )
+        query = (
+            "INSERT OR IGNORE INTO msg_message_tokens "
+            "(message_id, token_index, position) VALUES (?, ?, ?)"
+        )
+        for start in range(0, len(token_indexes), _MAX_BULK_CHUNK):
+            chunk = token_indexes[start : start + _MAX_BULK_CHUNK]
+            data = [
+                (msg_id, token_index, start + position)
+                for position, token_index in enumerate(chunk)
+            ]
+            self._db.execute_many(query, data, auto_commit=auto_commit)
 
     def update_content(
         self,
