@@ -161,6 +161,16 @@ def _session_admin_id(current_user: TokenInfo) -> int:
     if current_user is None or getattr(current_user, "user_id", None) is None:
         raise _error(401, "Authentication required")
 
+    # SECURITY: a bot token carries its *owner's* ``user_id``, so mapping the
+    # credential straight onto the shared admin id space would hand the bot
+    # its owner's full instance-admin authority (e.g. ``admin.plexijoin.manage``
+    # over the client-facing /Join surface). These routes act on a human
+    # admin's authority and must only accept a real user token. Fail closed
+    # before any admin lookup so a bot credential can never borrow the owner's
+    # admin identity.
+    if getattr(current_user, "token_type", "user") != "user":
+        raise _error(403, "A user token is required for this endpoint")
+
     import src.api as api
 
     db = api.get_db()
