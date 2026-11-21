@@ -15,6 +15,7 @@ from ..exceptions import (
 from ..models import PollOption, PollResults
 from ..limits import validate_option_ids
 from .base import PollManagerBase, _is_unique_violation
+from .post_gate import require_poll_post_access
 
 
 class VotingMixin(PollManagerBase):
@@ -46,6 +47,10 @@ class VotingMixin(PollManagerBase):
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
+
+        # View alone is not enough to mutate: a read-only channel viewer
+        # must not vote. Fail closed before any write.
+        require_poll_post_access(self, poll.message_id, user_id)
 
         if poll.is_ended or (poll.ends_at and self._get_timestamp() >= poll.ends_at):
             if not poll.is_ended:
@@ -152,6 +157,9 @@ class VotingMixin(PollManagerBase):
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
+
+        # A read-only channel viewer may not change a vote there.
+        require_poll_post_access(self, poll.message_id, user_id)
 
         if poll.is_ended or (poll.ends_at and self._get_timestamp() >= poll.ends_at):
             if not poll.is_ended:
@@ -341,6 +349,9 @@ class VotingMixin(PollManagerBase):
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
+
+        # A read-only channel viewer may not remove a vote there.
+        require_poll_post_access(self, poll.message_id, user_id)
 
         if poll.is_ended or (poll.ends_at and self._get_timestamp() >= poll.ends_at):
             if not poll.is_ended:

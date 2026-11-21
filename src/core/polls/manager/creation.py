@@ -22,6 +22,7 @@ from ..limits import (
 )
 from ..models import Poll, PollResultsVisibility
 from .base import PollManagerBase, _is_unique_violation
+from .post_gate import require_poll_post_access
 
 
 class CreationMixin(PollManagerBase):
@@ -66,6 +67,10 @@ class CreationMixin(PollManagerBase):
             raise MessageNotFoundError("Message not found")
         if msg.author_id != user_id:
             raise PermissionDeniedError("Can only create polls on own messages")
+
+        # Creation attaches a poll to a channel message: require the live
+        # messages.send grant BEFORE the INSERT below. DMs need no gate.
+        require_poll_post_access(self, message_id, user_id)
 
         # ``poll_polls.message_id`` is UNIQUE -- a message may carry at
         # most one poll.  Report that as a domain error up front so the

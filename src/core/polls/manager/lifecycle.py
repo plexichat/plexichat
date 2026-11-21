@@ -12,6 +12,7 @@ from ..exceptions import (
 from ..limits import bound_timestamp
 from ..models import Poll
 from .base import PollManagerBase
+from .post_gate import require_poll_post_access
 
 
 # A single expiry sweep can span thousands of polls. Bound both the ``IN``
@@ -42,6 +43,9 @@ class LifecycleMixin(PollManagerBase):
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
+
+        # Closing is a write: require the live messages.send grant.
+        require_poll_post_access(self, poll.message_id, user_id)
 
         # Normalize both sides to int (F10): SQLite returns ints while the
         # postgres driver returns strings, and a direct != comparison would
@@ -86,6 +90,9 @@ class LifecycleMixin(PollManagerBase):
         poll = self.get_poll(poll_id, user_id)
         if not poll:
             raise PollNotFoundError("Poll not found")
+
+        # Deleting is a write: require the live messages.send grant too.
+        require_poll_post_access(self, poll.message_id, user_id)
 
         # F10: normalize both sides to int (see close_poll) so the creator
         # check holds on both SQLite and postgres drivers.
