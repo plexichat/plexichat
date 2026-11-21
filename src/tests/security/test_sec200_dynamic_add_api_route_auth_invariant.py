@@ -109,19 +109,38 @@ def _is_protected(fn: ast.AST) -> bool:
                 if kw.arg == "dependencies":
                     if any(_looks_like_auth(n) for n in _dependency_names(kw.value)):
                         return True
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Call):
-            func = node.func
-            name = (
-                func.id
-                if isinstance(func, ast.Name)
-                else func.attr
-                if isinstance(func, ast.Attribute)
-                else ""
-            )
-            if _is_guard_call_name(name):
-                return True
-    return False
+    # Only a guard that executes when the route runs counts. ``ast.walk``
+    # descends into nested functions/lambdas, where a guard call is dead until
+    # that callable is invoked; it must not mark the route as protected.
+    return bool(_own_body_guard_calls(fn))
+
+
+def _own_body_guard_calls(fn: ast.AST):
+    """Guard-like calls that execute on this function's own path.
+
+    Descend through statement-level nesting (if/for/with/try) but skip nested
+    function and lambda bodies so dead evidence cannot silence the invariant.
+    """
+    hits = []
+    stack = [fn]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Call):
+                func = child.func
+                name = (
+                    func.id
+                    if isinstance(func, ast.Name)
+                    else func.attr
+                    if isinstance(func, ast.Attribute)
+                    else ""
+                )
+                if _is_guard_call_name(name):
+                    hits.append(child)
+            stack.append(child)
+    return hits
 
 
 def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
@@ -305,3 +324,39 @@ def test_guard_name_matcher_rejects_response_model_lookalikes():
         "check_permission",
     ):
         assert _is_guard_call_name(guard), guard
+
+
+def test_dead_nested_guard_does_not_protect_dynamic_route():
+    """A guard inside a never-called nested callable must not gate an endpoint.
+
+    ``ast.walk(fn)`` used to descend into nested functions/lambdas, so a dead
+    guard there made an unauthenticated dynamically registered route pass. A
+    live guard inside statement-level nesting must still count.
+    """
+    source = """
+class SyntheticMixin:
+    def _register(self):
+        self.router.add_api_route("/dead-nested", self._dead_nested, methods=["POST"])
+        self.router.add_api_route("/dead-lambda", self._dead_lambda, methods=["POST"])
+        self.router.add_api_route("/live", self._live, methods=["POST"])
+
+    async def _dead_nested(self, body: str):
+        def never_called():
+            check_admin_permission(body)
+        return body
+
+    async def _dead_lambda(self, body: str):
+        _ = lambda: verify_token(body)
+        return body
+
+    async def _live(self, body: str):
+        if body:
+            check_admin_permission(body)
+        return body
+"""
+    found = dict(
+        _dynamic_routes_in_tree(ast.parse(source), "src/api/routes/synthetic.py")
+    )
+    assert found[("src/api/routes/synthetic.py", "post", "/dead-nested")] is False
+    assert found[("src/api/routes/synthetic.py", "post", "/dead-lambda")] is False
+    assert found[("src/api/routes/synthetic.py", "post", "/live")] is True
