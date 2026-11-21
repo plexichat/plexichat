@@ -44,6 +44,73 @@ def _validate_export_id(export_id: str) -> str:
     return export_id
 
 
+def _export_not_found() -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail={"error": {"code": 404, "message": "Channel not found"}},
+    )
+
+
+def _require_export_channel_view(servers_mod, cid, user_id) -> None:
+    """Fail closed when ``cid`` is a server channel the caller cannot view.
+
+    ``get_channel`` returns ``None`` both for "not a server channel" and for a
+    channel denied by ``channels.view``. The direct-conversation fallback in
+    ``request_transcript_export`` treats that ``None`` as a DM-style id and
+    authorizes on bare participation -- which every server member has,
+    independent of ``channels.view``. The URL id may also be the channel's
+    linked *conversation* id, so gate both spellings membership-agnostically
+    before any participation-only transcript read can happen.
+    """
+    if not servers_mod:
+        return
+    get_channel = getattr(servers_mod, "get_channel", None)
+    channel_exists = getattr(servers_mod, "channel_exists", None)
+    reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+
+    # 1) cid used directly as a channel id.
+    if callable(get_channel):
+        try:
+            if get_channel(cid, user_id) is not None:
+                return  # live view grant on the addressed channel
+        except Exception:
+            raise _export_not_found()
+    if callable(channel_exists):
+        try:
+            if channel_exists(cid):
+                raise _export_not_found()
+        except HTTPException:
+            raise
+        except Exception:
+            # Cannot prove it is NOT a server channel; keep checking the
+            # reverse lookup rather than serving a possibly private export.
+            pass
+
+    # 2) cid used as the linked conversation id (server-channel alias).
+    if callable(reverse):
+        try:
+            backing = reverse(cid)
+        except Exception:
+            raise _export_not_found()
+        if backing is not None:
+            channel_id = (
+                backing.get("id")
+                if isinstance(backing, dict)
+                else getattr(backing, "id", None)
+            )
+            if channel_id is None or not callable(get_channel):
+                raise _export_not_found()
+            try:
+                if get_channel(int(channel_id), user_id) is None:
+                    raise _export_not_found()
+            except HTTPException:
+                raise
+            except Exception:
+                raise _export_not_found()
+    # No server channel backs this id: a genuine DM/group conversation whose
+    # access is gated by the participation check in the caller.
+
+
 @router.post(
     "/channels/{channel_id}/messages/export",
     response_model=TranscriptExportResponse,
@@ -164,10 +231,16 @@ async def request_transcript_export(
         if hasattr(channel, "conversation_id") and channel.conversation_id:
             conv_id = channel.conversation_id
     else:
-        # Channel not resolvable through the servers module: authorize
-        # directly against messaging data. DM/group conversations are
-        # never exportable, and the requester MUST be a participant of
-        # the target conversation.
+        # Channel not resolvable through the servers module. ``get_channel``
+        # returns ``None`` for a view-denied channel as well as for a genuine
+        # DM, and the URL id may be the channel's linked conversation id, so
+        # gate that alias membership-agnostically before the participation-only
+        # authorization below (a server member is a participant regardless of
+        # ``channels.view``).
+        _require_export_channel_view(servers_mod, cid, current_user.user_id)
+        # Now authorize directly against messaging data. DM/group conversations
+        # are never exportable, and the requester MUST be a participant of the
+        # target conversation.
         db = api.get_db()
         try:
             conv = (
