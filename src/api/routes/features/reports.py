@@ -797,8 +797,17 @@ async def get_report_details(
     else:
         data = dict(zip(row_columns, row))
     is_reporter = data.get("reporter_id") == current_user.user_id
-    is_admin = db.fetch_one(
-        "SELECT id FROM admin_users WHERE id = ?", (current_user.user_id,)
+    # Bare membership in admin_users is not sufficient for full report
+    # visibility. Admin accounts are scoped by role, and every sibling admin
+    # report listing requires reports.read: without that scope an admin whose
+    # roles grant no report permissions (e.g. a tickets-only support admin)
+    # could read any report here -- including the reporter's identity and the
+    # plaintext preview of a message from a server they are not in.
+    from src.core.admin.permissions import check_admin_permission
+
+    is_admin = bool(
+        db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (current_user.user_id,))
+        and check_admin_permission(current_user.user_id, "reports.read", db)
     )
 
     if not is_reporter and not is_admin:
