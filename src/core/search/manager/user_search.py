@@ -2,11 +2,20 @@ from typing import List, Optional, Set
 
 from .base import SearchManagerBase
 from .message_search import validate_search_query
+from .result_cache import CACHE_MISS, clear_result_caches, get_result_cache, make_key
 from ..exceptions import SearchLimitError
 from ..models import IndexedUser, UserSearchResult, UserSearchResultPage
 
 
 class UserSearchMixin(SearchManagerBase):
+    def clear_cache(self) -> None:
+        # Message/server search memoize their final results for a short TTL;
+        # user search was the one path that replayed the whole pipeline on
+        # every identical request. Keep its memos in the same registry so an
+        # explicit invalidation (permission/index change) drops all of them.
+        super().clear_cache()
+        clear_result_caches(self)
+
     # Bound the directory pool fetched when a server scope is enforced. The
     # membership set is filtered in Python rather than splatted into an
     # unbounded ``IN (...)`` (a large server can have thousands of members),
@@ -161,15 +170,42 @@ class UserSearchMixin(SearchManagerBase):
 
         self._check_rate_limit(user_id)
 
-        results = self._indexer.search_users(query, limit * 2, offset)
-
-        # Resolve the scope ONCE and apply it to every source of results. The
-        # supplemental directory fallback used to run after this filter with
-        # no scope of its own, so a server-scoped search could return users who
-        # are not members of that server (scope/IDOR bypass).
+        # Resolve the server scope ONCE and fold it into the authz key. Like
+        # message search, the memo must be scoped to the subject AND to the set
+        # of ids the request may see: a different user — or the same user after
+        # a membership change (different member set) — can never reuse an entry
+        # computed under another scope. Resolution still happens before the
+        # lookup (as it does for message search's readable conversations), so
+        # authz is never taken from the cache.
         server_members: Optional[Set[int]] = None
         if server_id:
             server_members = self._get_server_member_ids(server_id)
+
+        # Repeated identical directory queries used to replay the FTS lookup,
+        # the supplemental LIKE scan, per-user server/friend hydration and
+        # ranking on every call. Memoize the final page for the short TTL the
+        # message/server paths already use; the key is per-user and bounded.
+        scope = tuple(sorted(server_members)) if server_members is not None else ()
+        cache = get_result_cache(self, "users")
+        cache_key = make_key(
+            "users.v1",
+            (user_id, scope),
+            query=query,
+            server_id=server_id,
+            limit=limit,
+            offset=offset,
+        )
+        cached = cache.get(cache_key)
+        if cached is not CACHE_MISS:
+            return cached
+
+        results = self._indexer.search_users(query, limit * 2, offset)
+
+        # Apply the resolved scope to every source of results. The supplemental
+        # directory fallback used to run after this filter with no scope of its
+        # own, so a server-scoped search could return users who are not members
+        # of that server (scope/IDOR bypass).
+        if server_members is not None:
             results = [r for r in results if r.user_id in server_members]
 
         results = self._merge_supplemental_users(
@@ -179,7 +215,9 @@ class UserSearchMixin(SearchManagerBase):
 
         results = self._ranking_engine.rank_user_results(results, query, user_id)
 
-        return results[:limit]
+        final = results[:limit]
+        cache.put(cache_key, final)
+        return final
 
     def search_users_page(
         self,
@@ -203,13 +241,32 @@ class UserSearchMixin(SearchManagerBase):
 
         self._check_rate_limit(user_id)
 
+        # Same per-user, scope-aware memo as the offset path: a repeated first
+        # page (cursor=None) otherwise replays the directory scan and the
+        # per-user server/friend hydration that produces mutual counts.
+        server_members: Optional[Set[int]] = None
+        if server_id:
+            server_members = self._get_server_member_ids(server_id)
+
+        scope = tuple(sorted(server_members)) if server_members is not None else ()
+        cache = get_result_cache(self, "users_page")
+        cache_key = make_key(
+            "users_page.v1",
+            (user_id, scope),
+            query=query,
+            server_id=server_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        cached = cache.get(cache_key)
+        if cached is not CACHE_MISS:
+            return cached
+
         results, next_cursor = self._indexer.search_users_page(query, limit, cursor)
 
         # Mirror the offset path: the scope applies to the supplemental
         # directory fallback too, not just to the indexer hits.
-        server_members: Optional[Set[int]] = None
-        if server_id:
-            server_members = self._get_server_member_ids(server_id)
+        if server_members is not None:
             results = [r for r in results if r.user_id in server_members]
 
         results = self._merge_supplemental_users(
@@ -218,7 +275,9 @@ class UserSearchMixin(SearchManagerBase):
         results = self._enrich_user_results(results, user_id)
         results = self._ranking_engine.rank_user_results(results, query, user_id)
 
-        return UserSearchResultPage(results=results, next_cursor=next_cursor)
+        final_page = UserSearchResultPage(results=results, next_cursor=next_cursor)
+        cache.put(cache_key, final_page)
+        return final_page
 
     def index_user(
         self,
