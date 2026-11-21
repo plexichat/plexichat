@@ -285,7 +285,13 @@ class RateLimitManager:
             if config.scope == BucketType.RESOURCE and resource_id is not None:
                 checks.append(
                     self._check_resource_limit(
-                        user_id, route, resource_id, config, cost, unix_now
+                        user_id,
+                        ip_address,
+                        route,
+                        resource_id,
+                        config,
+                        cost,
+                        unix_now,
                     )
                 )
             elif config.scope == BucketType.WEBHOOK and webhook_id is not None:
@@ -393,16 +399,25 @@ class RateLimitManager:
     def _check_resource_limit(
         self,
         user_id: Optional[int],
+        ip_address: Optional[str],
         route: str,
         resource_id: int,
         config: RateLimitConfig,
         cost: int,
         unix_now: float,
     ) -> RateLimitResult:
-        """Check per-resource rate limit."""
+        """Check per-resource rate limit.
+
+        SECURITY: an unauthenticated caller has no ``user_id``, so the IP must
+        scope the bucket. Otherwise every IP shares one resource bucket and a
+        single client can exhaust (or be blocked by) another client's budget.
+        ``generate_bucket_key`` prefers ``user_id`` when present, so an
+        authenticated user's key is unchanged by the extra argument.
+        """
         key = self._generate_bucket_key(
             BucketType.RESOURCE,
             user_id=user_id,
+            ip_address=ip_address,
             route=route,
             resource_id=resource_id,
         )
@@ -556,7 +571,13 @@ class RateLimitManager:
             if config.scope == BucketType.RESOURCE and resource_id is not None:
                 checks.append(
                     await self._acheck_resource_limit(
-                        user_id, route, resource_id, config, cost, unix_now
+                        user_id,
+                        ip_address,
+                        route,
+                        resource_id,
+                        config,
+                        cost,
+                        unix_now,
                     )
                 )
             elif config.scope == BucketType.WEBHOOK and webhook_id is not None:
@@ -644,16 +665,21 @@ class RateLimitManager:
     async def _acheck_resource_limit(
         self,
         user_id: Optional[int],
+        ip_address: Optional[str],
         route: str,
         resource_id: int,
         config: RateLimitConfig,
         cost: int,
         unix_now: float,
     ) -> RateLimitResult:
-        """Awaitable counterpart of :meth:`_check_resource_limit`."""
+        """Awaitable counterpart of :meth:`_check_resource_limit`.
+
+        Same IP scoping for unauthenticated callers; see the sync form.
+        """
         key = self._generate_bucket_key(
             BucketType.RESOURCE,
             user_id=user_id,
+            ip_address=ip_address,
             route=route,
             resource_id=resource_id,
         )
