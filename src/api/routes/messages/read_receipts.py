@@ -217,6 +217,11 @@ async def get_unread_count(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
+        # A linked conversation id is accepted as an alias for its server
+        # channel. Gate both spellings before the participation-only unread
+        # lookup below (participation is every server member).
+        _require_read_receipt_channel_view(cid, current_user.user_id, servers_mod)
+
         # Resolve channel_id to conversation_id for server channels. Only
         # "not a server channel" outcomes may fall back to treating the id as
         # a DM conversation id: swallowing access/permission errors here used
@@ -308,6 +313,11 @@ async def acknowledge_messages(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
+
+        # A linked conversation id is accepted as an alias for its server
+        # channel. Gate both spellings before mark_read, which only checks
+        # participation (every server member, regardless of channels.view).
+        _require_read_receipt_channel_view(cid, current_user.user_id, servers_mod)
 
         # Check if this is a voice channel - voice channels don't have messages to ack
         conv_id = cid  # Default to channel ID (for DMs)
@@ -903,6 +913,10 @@ async def mark_unread(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid channel ID"}},
         )
+
+    # A linked conversation id is an alias for its server channel; gate both
+    # spellings before the participation-only mark-unread lookup below.
+    _require_read_receipt_channel_view(cid, current_user.user_id, servers_mod)
 
     conv_id = cid
     if servers_mod:
