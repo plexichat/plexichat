@@ -25,6 +25,57 @@ router = APIRouter()
 _ROLES_CACHE_PREFIX = "server_roles_api"
 
 
+async def _require_roles_manage(
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> None:
+    """Live, per-request ``roles.manage`` gate for the cached roles listing.
+
+    ``get_server_roles`` memoises its response for up to the cache TTL. The
+    cached lookup cannot also be where authorization is enforced: on a cache
+    hit the endpoint body never runs, so a caller whose ``roles.manage`` grant
+    was revoked -- or who was removed from the server by a path that does not
+    invalidate this API cache (e.g. an admin-side permission edit) -- would
+    keep reading the privileged role set from a still-warm entry.
+
+    FastAPI resolves dependencies *before* entering the endpoint (and thus
+    before the ``@cached`` wrapper reads the cache), so enforcing the check
+    here keeps authorization on every request while the expensive fetch stays
+    cached. Error mapping mirrors ``get_server_roles`` so the endpoint's HTTP
+    contract is unchanged.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+    try:
+        sid = parse_id(server_id, "server ID")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
+    try:
+        servers_mod.require_permission(current_user.user_id, sid, "roles.manage")
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Server not found"}},
+            )
+        if "Access" in exc_name or "Permission" in exc_name:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+        raise
+
+
 def _invalidate_roles_listing_cache() -> None:
     """Drop cached role listings and permission-derived channel visibility.
 
@@ -77,7 +128,9 @@ def role_to_dict(role, server_id: int) -> dict:
 )
 @cached(ttl=300, prefix=_ROLES_CACHE_PREFIX)
 async def get_server_roles(
-    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+    _roles_manage_gate: None = Depends(_require_roles_manage),
 ) -> List[RoleResponse]:
     servers_mod = api.get_servers()
     if not servers_mod:
