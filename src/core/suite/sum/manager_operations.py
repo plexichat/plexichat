@@ -42,8 +42,17 @@ class SumManagerOperations(SumManagerProtocol):
         workbook = self._db.fetch_one(
             "SELECT owner_id FROM sum_workbooks WHERE id = ?", (int(workbook_id),)
         )
-        if workbook and int(workbook["owner_id"]) == int(user_id):
-            return
+        # SECURITY: the authoritative sum_workbooks.owner_id vouches for the
+        # caller's ownership only while it is a genuine integer id. Coercing a
+        # malformed-but-coercible value with int() ("05"->5, 5.9->5, True->1)
+        # would mark a non-owner as the workbook owner and skip every read-only
+        # range / protected-band check, granting full edit authority. Fail
+        # closed: only an exact integer id may satisfy the check (type() also
+        # rejects bool).
+        if workbook:
+            owner_id = workbook["owner_id"]
+            if type(owner_id) is int and owner_id == int(user_id):
+                return
         read_only = self._db.fetch_all(
             "SELECT row_start, row_end, column_start, column_end FROM sum_range_permissions WHERE workbook_id = ? AND sheet_id = ? AND permission = 'read_only'",
             (int(workbook_id), int(sheet_id)),
@@ -647,8 +656,14 @@ class SumManagerOperations(SumManagerProtocol):
         workbook = self._db.fetch_one(
             "SELECT owner_id FROM sum_workbooks WHERE id = ?", (int(workbook_id),)
         )
-        if workbook and int(workbook["owner_id"]) == int(user_id):
-            return
+        # SECURITY: see _check_range_permissions. A malformed-but-coercible
+        # owner_id must not be laundered into workbook-owner authority that
+        # skips the protected-band check below. Only a genuine int attests to
+        # ownership (type() also rejects bool).
+        if workbook:
+            owner_id = workbook["owner_id"]
+            if type(owner_id) is int and owner_id == int(user_id):
+                return
         if insert:
             return
         read_only = self._db.fetch_all(
