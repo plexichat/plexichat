@@ -170,6 +170,15 @@ class ProfileMixin(AuthManagerProtocol):
                     "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?",
                     (user_id,),
                 )
+                # A device marked trusted skips the 2FA challenge at login with
+                # only the password, i.e. it is a persistent second-factor
+                # bypass. The address change above retired every session but
+                # that is not enough: a stale trusted device (lost, stolen, or
+                # in an attacker's hands) would keep skipping 2FA with the
+                # account's new recovery identifier. Mirror password change /
+                # reset and 2FA enable: retire remembered devices as part of
+                # the same credential transition.
+                self._invalidate_trusted_devices(user_id)
         if permissions is not None:
             from ..permissions import PERMISSIONS, BOT_RESTRICTED_PERMISSIONS
 
