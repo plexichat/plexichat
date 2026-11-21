@@ -149,6 +149,11 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
         accessible: List[Dict[str, Any]] = []
         for row in rows:
             conv_id = row.get("conversation_id")
+            if conv_id is None:
+                # Nothing to check membership against, so this row can never be
+                # proven visible: fail closed here instead of looking it up in
+                # the per-conversation cache under a None key.
+                continue
             if conv_id not in participant_cache:
                 try:
                     participant_cache[conv_id] = bool(

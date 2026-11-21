@@ -200,11 +200,15 @@ class BaseService:
             if now < self._last_timestamp:
                 raise RuntimeError("Clock moved backwards")
 
-            if self._reserve_cursor is None:
-                self._reserve_cursor = self._id_counter
+            # Take the cursor into a local first: it is re-assigned below, so the
+            # None check has to hold on the value actually used.
+            reserve_cursor = self._reserve_cursor
+            if reserve_cursor is None:
+                reserve_cursor = self._id_counter
+                self._reserve_cursor = reserve_cursor
 
             if now == self._last_timestamp:
-                counter = self._reserve_cursor + 1
+                counter = reserve_cursor + 1
                 if counter > 0xFFF:
                     # Sequence space exhausted: wait for the next millisecond.
                     while now <= self._last_timestamp:

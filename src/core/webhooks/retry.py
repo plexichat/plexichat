@@ -170,7 +170,12 @@ class WebhookRetryQueue:
                 sign_bytes = getattr(self._webhook_manager, "sign_payload_bytes", None)
                 if callable(sign_bytes):
                     # Manager supports pre-serialized bytes: no second encode.
-                    signing_headers = sign_bytes(webhook_id, payload_bytes)
+                    produced = sign_bytes(webhook_id, payload_bytes)
+                    signing_headers = (
+                        {str(name): str(value) for name, value in produced.items()}
+                        if isinstance(produced, dict)
+                        else None
+                    )
                 else:
                     # Back-compat with older/injected managers that only
                     # expose sign_payload(webhook_id, payload).

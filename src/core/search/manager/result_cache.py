@@ -148,17 +148,28 @@ def get_result_cache(
     disable the cache (``ttl_seconds=0``) without reconstructing the manager.
     """
     config = getattr(manager, "_config", {}) or {}
-    if ttl_seconds is None:
-        ttl_seconds = config.get(CONFIG_TTL_KEY, DEFAULT_TTL_SECONDS)
-    if max_entries is None:
-        max_entries = config.get(CONFIG_MAX_ENTRIES_KEY, DEFAULT_MAX_ENTRIES)
+    # ``config`` is an arbitrary mapping on a duck-typed manager, so its values
+    # are untyped and a key may be present holding None. Coerce exactly once
+    # here, so the cache is always built from concrete numbers.
+    raw_ttl = (
+        ttl_seconds
+        if ttl_seconds is not None
+        else config.get(CONFIG_TTL_KEY, DEFAULT_TTL_SECONDS)
+    )
+    raw_max = (
+        max_entries
+        if max_entries is not None
+        else config.get(CONFIG_MAX_ENTRIES_KEY, DEFAULT_MAX_ENTRIES)
+    )
+    resolved_ttl = float(DEFAULT_TTL_SECONDS if raw_ttl is None else raw_ttl)
+    resolved_max = max(1, int(DEFAULT_MAX_ENTRIES if raw_max is None else raw_max))
 
     cache = _caches(manager).get(name)
     if cache is None:
-        cache = _caches(manager)[name] = SearchResultCache(ttl_seconds, max_entries)
+        cache = _caches(manager)[name] = SearchResultCache(resolved_ttl, resolved_max)
     else:
-        cache.ttl_seconds = float(ttl_seconds)
-        cache.max_entries = max(1, int(max_entries))
+        cache.ttl_seconds = resolved_ttl
+        cache.max_entries = resolved_max
     return cache
 
 

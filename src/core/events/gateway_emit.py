@@ -315,6 +315,8 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
         relationships = api.get_relationships()
     except Exception:
         relationships = None
+    if relationships is None:
+        return list(participants)
     if not _module_is_live(relationships):
         # No relationship store at all (module absent, or imported but never
         # set up): there are no block rows to apply, so the audience is kept --
@@ -348,12 +350,15 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
     # burst of Valkey GETs even when warm. The relationship manager's bounded,
     # chunked helper returns the very same sets; fall back to per-id lookups
     # only for lightweight stubs that do not implement it.
-    bulk_lookup = getattr(relationships, "get_all_blocked_ids_bulk", None)
+    # Runtime-probed capability: the manager may be a real one or a lightweight
+    # stub, so the callable is deliberately untyped and guarded below.
+    bulk_lookup: Any = getattr(relationships, "get_all_blocked_ids_bulk", None)
     if callable(bulk_lookup):
         try:
-            blocked_by_id = {
-                int(uid): values for uid, values in bulk_lookup(participant_ids).items()
-            }
+            # Unannotated on purpose: the mapping comes from a duck-typed
+            # manager, and the comprehension below is what validates it.
+            blocked_map: Any = bulk_lookup(participant_ids)
+            blocked_by_id = {int(uid): values for uid, values in blocked_map.items()}
         except Exception as e:
             logger.debug(f"bulk blocked-id lookup failed for DM audience: {e}")
             # Fail closed: without authoritative sets no participant can be
