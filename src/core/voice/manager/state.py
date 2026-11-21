@@ -123,7 +123,15 @@ class StateMixin(VoiceProtocol):
                 updates.append("self_mute = ?")
                 params.append(1)
 
-        if self_mute is not None:
+        # Client-supplied state spoofing: VOICE_STATE_UPDATE carries both
+        # toggles, so a client can send self_deaf=true, self_mute=false in a
+        # single frame. The deafen block above implicitly mutes, but a later
+        # explicit self_mute=false would overwrite that and leave the user
+        # broadcast as deafened while still unmuted (peers are told the user
+        # cannot hear them, yet their audio is live). Enforce the same
+        # deafen=>mute invariant the single-field set_self_deaf path does:
+        # while deafening, the implicit mute wins over any explicit unmute.
+        if self_mute is not None and self_deaf is not True:
             updates.append("self_mute = ?")
             params.append(1 if self_mute else 0)
 
