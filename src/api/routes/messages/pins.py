@@ -88,6 +88,60 @@ def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
         raise _channel_not_found()
 
 
+def _require_message_channel_view(
+    message, cid: int, user_id: int, servers_mod
+) -> None:
+    """Deny when the *target message's* server channel cannot be viewed.
+
+    ``_require_channel_view`` gates only the URL id, but that id is
+    attacker-controlled. ``_resolve_channel_scope`` deliberately accepts the
+    channel's underlying conversation id as an alias (message routes use it
+    for server-channel addressing); probing that alias with
+    ``channel_exists``/``get_channel`` says "not a channel", so the live gate
+    waves the request through. A member barred from a private channel could
+    pin/unpin its messages by putting the conversation id in the URL.
+
+    Resolve the channel backing the message membership-agnostically and
+    require a live view grant on *that* channel, independent of the alias used
+    in the URL. A conversation with no backing channel is a genuine DM/group.
+    """
+    if not servers_mod:
+        return
+    reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+    if not callable(reverse):
+        # Legacy/stub store without the reverse lookup: the addressed-channel
+        # gate above is all that can be checked. Production stores expose it.
+        return
+    try:
+        conversation_id = int(getattr(message, "conversation_id"))
+    except (TypeError, ValueError):
+        raise _channel_not_found()
+    try:
+        channel_row = reverse(conversation_id)
+    except Exception:
+        # An unproven lookup must never allow a pin in a possibly private
+        # server channel.
+        raise _channel_not_found()
+    if channel_row is None:
+        return  # DM/group conversation: participation gates it in messaging.
+    channel_id = channel_row.get("id") if isinstance(channel_row, dict) else None
+    if channel_id is None:
+        raise _channel_not_found()
+    channel_id = int(channel_id)
+    if channel_id == cid:
+        return  # the addressed-channel gate already checked this exact id
+    get_channel = getattr(servers_mod, "get_channel", None)
+    if not callable(get_channel):
+        raise _channel_not_found()
+    try:
+        if get_channel(channel_id, user_id) is None:
+            raise _channel_not_found()
+    except HTTPException:
+        raise
+    except Exception:
+        raise _channel_not_found()
+
+
 @router.put(
     "/channels/{channel_id}/pins/{message_id}",
     response_model=SuccessResponse,
@@ -147,6 +201,9 @@ async def pin_message(
             # Participation alone is not enough for server channels: the
             # caller must also be able to VIEW the addressed channel.
             _require_channel_view(cid, current_user.user_id, api.get_servers())
+            _require_message_channel_view(
+                target, cid, current_user.user_id, api.get_servers()
+            )
             real_cid = int(getattr(target, "conversation_id"))
 
             messaging.pin_message(current_user.user_id, mid)
@@ -302,6 +359,9 @@ async def unpin_message(
             _channel_guard._ensure_message_in_channel(target, scope)
             # Mirror pin: deny unpin when the channel cannot be viewed.
             _require_channel_view(cid, current_user.user_id, api.get_servers())
+            _require_message_channel_view(
+                target, cid, current_user.user_id, api.get_servers()
+            )
             real_cid = int(getattr(target, "conversation_id"))
 
             messaging.unpin_message(current_user.user_id, mid)
