@@ -12,7 +12,10 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.routes.users.helpers import authenticated_cache_key
+from src.api.routes.users.helpers import (
+    authenticated_cache_key,
+    require_user_token,
+)
 from src.api.schemas.reactions import ReactionResponse, ReactionUserResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core import ratelimit
@@ -302,6 +305,11 @@ async def add_reaction(
 
     Adds the specified emoji reaction to the message.
     """
+    # A bot token's ``user_id`` is its human owner. Reject bot credentials
+    # BEFORE the rate-limit spend below charges the owner's
+    # ``user:<owner>:route:PUT /reactions`` bucket (and lets a leaked bot
+    # evade its own quota), and before any view/permission gate can reject.
+    require_user_token(current_user)
     # Rate limit reactions: 10 per second per user
     rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
@@ -519,6 +527,9 @@ async def clear_reactions_for_emoji(
     declaration would swallow ``.../reactions/<emoji>/all`` as emoji
     "<emoji>/all" and the moderator wipe would be unreachable.
     """
+    # A bot token's ``user_id`` is its human owner: reject it before the
+    # owner-scoped rate-limit bucket is charged below.
+    require_user_token(current_user)
     rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
         route="DELETE /reactions/emoji/all",
@@ -638,6 +649,9 @@ async def remove_reaction(
 
     Removes the specified emoji reaction from the message.
     """
+    # A bot token's ``user_id`` is its human owner: reject it before the
+    # owner-scoped rate-limit bucket is charged below.
+    require_user_token(current_user)
     # Rate limit reaction removal: 15 per second per user
     rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
@@ -806,6 +820,9 @@ async def clear_reactions(
     Emits MESSAGE_REACTION_REMOVE_ALL to connected clients so reaction
     pills update live without a refresh.
     """
+    # A bot token's ``user_id`` is its human owner: reject it before the
+    # owner-scoped rate-limit bucket is charged below.
+    require_user_token(current_user)
     rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
         route="DELETE /reactions/all",
