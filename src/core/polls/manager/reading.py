@@ -60,7 +60,33 @@ def _can_view_poll_message(
     except Exception:
         return False
     if info is None:
-        return True  # DM/group conversation: participation already gated it
+        # No reverse row keyed by conversation_id usually means a genuine
+        # DM/group. It does NOT prove one: a *channel id* used in place of its
+        # linked conversation id has no such row either, yet it is still a
+        # server channel. The dangling-conversation-link send path stores
+        # exactly that shape in ``msg_messages.conversation_id``, and
+        # ``is_participant`` grants every server member participation in the
+        # id via ``srv_channels.id`` regardless of ``channels.view``. Treating
+        # the alias as a DM here would hand a member denied view the poll's
+        # question, options and vote counts. Probe membership-agnostically and
+        # require a live view grant whenever the id is actually a channel.
+        probe = getattr(servers, "channel_exists", None)
+        if not callable(probe):
+            probe = getattr(servers, "get_channel_conversation_id", None)
+        if callable(probe):
+            try:
+                is_channel = bool(probe(conversation_id))
+            except Exception:
+                return False  # cannot prove it is a DM -> deny
+            if is_channel:
+                get_channel = getattr(servers, "get_channel", None)
+                if not callable(get_channel):
+                    return False
+                try:
+                    return get_channel(conversation_id, user_id) is not None
+                except Exception:
+                    return False
+        return True  # genuine DM/group conversation
     channel_id = info.get("id") if isinstance(info, dict) else None
     if channel_id is None:
         return False
