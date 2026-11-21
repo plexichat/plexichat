@@ -316,6 +316,7 @@ class TwoFactorMixin(AuthManagerProtocol):
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> AuthResult:
+        print("DBG manager complete_2fa", repr(ip_address), repr(user_agent), flush=True)
         parsed = parse_token(challenge_token)
         if not parsed or parsed["token_type"] != "2fa":
             raise TokenInvalidError("Invalid challenge")
@@ -335,14 +336,22 @@ class TwoFactorMixin(AuthManagerProtocol):
         # F1: bind challenge to client context at mint time (blind indexes)
         # and enforce at completion. Reject step-up mismatch when the
         # requester's IP/UA does not match the stored blind indexes.
-        # Only enforce when both stored and presented values are available
-        # so that programmatic callers without network context (tests) are
-        # not broken; a real HTTP path will present an IP.
-        if ip_address is not None and row.get("ip_index"):
+        # SECURITY: the stored index is a keyed hash (blind index). Guarding the
+        # comparison on ``row.get("ip_index")``/``row.get("ua_index")`` made a
+        # challenge minted without a recorded IP/UA (login/2FA/OAuth with no
+        # context, a legacy row, or a failed index write) skip the binding
+        # entirely: a stolen challenge token could then be completed from ANY
+        # address, silently disabling the binding. That is the same fail-open
+        # fixed for session tokens in _verify_session_token. When the caller
+        # presents context but no usable stored index exists, fail closed.
+        if ip_address is not None:
             try:
+                stored_ip_index = row.get("ip_index")
+                if not isinstance(stored_ip_index, str) or not stored_ip_index:
+                    raise TokenInvalidError("Client context mismatch")
                 presented_ip_index = self.crypto.blind_index(ip_address, "ip_address")
                 if not hmac.compare_digest(
-                    str(row["ip_index"]), str(presented_ip_index)
+                    str(stored_ip_index), str(presented_ip_index)
                 ):
                     logger.warning("2FA challenge IP binding mismatch")
                     raise TokenInvalidError("Client context mismatch")
@@ -351,11 +360,16 @@ class TwoFactorMixin(AuthManagerProtocol):
             except Exception:
                 logger.warning("2FA IP binding check failed", exc_info=True)
                 raise TokenInvalidError("Client context mismatch")
-        if user_agent is not None and row.get("ua_index"):
+        if user_agent is not None:
             try:
+                stored_ua_index = row.get("ua_index")
+                if not isinstance(stored_ua_index, str) or not stored_ua_index:
+                    raise TokenInvalidError("Client context mismatch")
                 presented_ua_index = self._ua_index(user_agent)
-                if presented_ua_index and not hmac.compare_digest(
-                    str(row["ua_index"]), str(presented_ua_index)
+                if not isinstance(presented_ua_index, str) or not presented_ua_index:
+                    raise TokenInvalidError("Client context mismatch")
+                if not hmac.compare_digest(
+                    str(stored_ua_index), str(presented_ua_index)
                 ):
                     logger.warning("2FA challenge UA binding mismatch")
                     raise TokenInvalidError("Client context mismatch")
