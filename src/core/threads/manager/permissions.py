@@ -104,6 +104,16 @@ class ThreadPermissionMixin(ThreadProtocol):
         if not thread:
             return False
 
+        # Managing a thread (archive/lock/rename/delete, membership changes)
+        # must never reach a thread the caller cannot even see. Ownership and
+        # a server-scoped ``threads.manage`` grant both survive a later channel
+        # override that revokes ``channels.view`` (or a server removal), so
+        # without this gate a hidden thread stays fully operable through the
+        # thread endpoints. Reuse the row in hand -- ``_can_view_thread_row``
+        # mirrors ``can_view_thread`` without re-reading it -- and fail closed.
+        if not self._can_view_thread_row(user_id, thread):
+            return False
+
         if thread.owner_id == user_id:
             return True
 
