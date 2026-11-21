@@ -101,7 +101,7 @@ class LifecycleMixin(PollManagerBase):
         self._db.execute("DELETE FROM poll_options WHERE poll_id = ?", (poll_id,))
         self._db.execute("DELETE FROM poll_polls WHERE id = ?", (poll_id,))
 
-        self._invalidate_poll_read_cache()
+        self._invalidate_poll_read_cache(poll_id)
 
         logger.debug(f"Poll {poll_id} deleted")
         return True
@@ -207,8 +207,8 @@ class LifecycleMixin(PollManagerBase):
             "UPDATE poll_polls SET ended_at = ? WHERE id = ?", (now, poll_id)
         )
         # Ending a poll flips ``is_ended`` and, for AFTER_END polls, unlocks
-        # results for every viewer -- every cached body is now stale.
-        self._invalidate_poll_read_cache()
+        # results for this poll's viewers -- their cached bodies are now stale.
+        self._invalidate_poll_read_cache(poll_id)
 
     def _emit_poll_update(
         self,

@@ -17,6 +17,18 @@ from ..models import Poll, PollResults
 from ..read_cache import PollReadCache
 
 
+# The two key namespaces produced by ``_poll_read_key``. Module-level so the
+# invalidation helper works even for test harnesses that borrow the mixin
+# methods without inheriting this class.
+_POLL_READ_KINDS = frozenset({"detail", "results"})
+
+
+# The two key namespaces produced by ``_poll_read_key``. Module-level so the
+# invalidation helper works even for test harnesses that borrow the mixin
+# methods without inheriting this class.
+_POLL_READ_KINDS = frozenset({"detail", "results"})
+
+
 def _is_unique_violation(exc: BaseException) -> bool:
     """Return True if ``exc`` is a UNIQUE-violation error from the driver.
 
@@ -91,17 +103,46 @@ class PollManagerBase(BaseManager):
             uid = user_id
         return (kind, pid, uid)
 
-    def _invalidate_poll_read_cache(self) -> None:
-        """Drop all cached poll detail/results bodies after a mutation.
+    def _invalidate_poll_read_cache(self, *poll_ids) -> None:
+        """Drop cached poll detail/results bodies after a mutation.
 
-        Vote totals and the voter roster are visible to other viewers, so a
-        write to any poll invalidates every viewer's cached body. ``getattr``
-        keeps this a no-op for lightweight callers/managers that never wired a
-        cache (e.g. unit-test stubs borrowing mixin methods).
+        Cached entries are keyed ``(kind, poll_id, viewer_id)`` and every value
+        is derived solely from *one* poll's row/options/votes. A mutation to
+        poll X therefore only makes poll X's entries stale; passing X here
+        drops exactly those entries so the warm bodies of every other poll
+        survive. This matters because a vote is frequent and the cache is
+        shared across all polls: a whole-cache flush made one vote rehydrate
+        hundreds of unrelated polls for every viewer.
+
+        With no ids this keeps the legacy full flush. That path is used by the
+        expiry sweep, which mutates many polls in one batch, and keeps this a
+        no-op for lightweight callers/managers that never wired a cache
+        (e.g. unit-test stubs borrowing mixin methods). Being over-broad is
+        always safe: only *under*-invalidation could serve a stale body.
         """
         cache = getattr(self, "_poll_read_cache", None)
-        if cache is not None:
+        if cache is None:
+            return
+        if not poll_ids:
             cache.clear()
+            return
+        normalized = set()
+        for poll_id in poll_ids:
+            try:
+                normalized.add(int(poll_id))
+            except (TypeError, ValueError):
+                normalized.add(poll_id)
+        # Keys are ``(kind, coerced_poll_id, viewer_id)``; see _poll_read_key.
+        # Match on the poll-id slot only, with a cheap kind guard so an
+        # unrelated future key can never be dropped by accident.
+        cache.invalidate_matching(
+            lambda key: (
+                isinstance(key, tuple)
+                and len(key) >= 2
+                and key[0] in _POLL_READ_KINDS
+                and key[1] in normalized
+            )
+        )
 
     def _require_messaging(self):
         """Fail closed when the messaging module is not wired.

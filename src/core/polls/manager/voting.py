@@ -94,14 +94,24 @@ class VotingMixin(PollManagerBase):
                 auto_commit=False,
             )
 
-            for option_id in unique_option_ids:
-                vote_id = self._generate_id()
-                self._db.execute(
-                    """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (vote_id, poll_id, option_id, user_id, now),
-                    auto_commit=False,
-                )
+            # One batched INSERT for every selected option instead of one
+            # execute() per option. All rows are written inside the same
+            # transaction, so a constraint failure on any one of them rolls
+            # the whole vote back (fail-closed) and the UNIQUE(poll_id,
+            # user_id) guard on poll_voters above still arbitrates racing
+            # voters across nodes. execute_many also clears the query-result
+            # cache for the batch, and the read-cache invalidation below drops
+            # the poll's cached results bodies after commit.
+            vote_rows = [
+                (self._generate_id(), poll_id, option_id, user_id, now)
+                for option_id in unique_option_ids
+            ]
+            self._db.execute_many(
+                """INSERT INTO poll_votes (id, poll_id, option_id, user_id, voted_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                vote_rows,
+                auto_commit=False,
+            )
             self._db.commit()
         except Exception as exc:
             self._db.rollback()
@@ -113,7 +123,7 @@ class VotingMixin(PollManagerBase):
 
         # Counts changed: drop every viewer's cached detail/results body so
         # the get_results() below (and every concurrent reader) recomputes.
-        self._invalidate_poll_read_cache()
+        self._invalidate_poll_read_cache(poll_id)
 
         logger.debug(f"User {user_id} voted on poll {poll_id}")
 
@@ -209,7 +219,7 @@ class VotingMixin(PollManagerBase):
             raise
 
         # Per-option tallies changed even though the voter count did not.
-        self._invalidate_poll_read_cache()
+        self._invalidate_poll_read_cache(poll_id)
 
         logger.debug(f"User {user_id} changed vote on poll {poll_id}")
 
@@ -390,7 +400,7 @@ class VotingMixin(PollManagerBase):
             raise
 
         # Both the headcount and the per-option tallies changed.
-        self._invalidate_poll_read_cache()
+        self._invalidate_poll_read_cache(poll_id)
 
         logger.debug(
             "User %s vote(s) on poll %s cleared (%s/%s row(s))",

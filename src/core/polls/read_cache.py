@@ -7,8 +7,10 @@ short window *provided* two rules hold:
 
 * the caller runs the cheap channel-access gate on every request **before**
   consulting this cache (so a revoked membership is never served a warm body);
-* every poll mutation clears the whole cache (vote counts are visible to other
-  viewers, so a per-poll entry cannot survive a write).
+* every poll mutation invalidates the affected poll's cached bodies (vote
+  counts are visible to other viewers, so that poll's per-viewer entries
+  cannot survive a write). Invalidation can be scoped to one poll via
+  :meth:`invalidate_matching` so an unrelated poll's warm bodies survive.
 
 This is a process-local, best-effort accelerator: a miss is always recomputed
 from the authoritative database, never assumed. All three limits are enforced
@@ -27,7 +29,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Hashable, Optional
+from typing import Any, Hashable
 
 
 def _value_size(value: Any) -> int:
@@ -69,6 +71,7 @@ class PollReadCache:
         self._misses = 0
         self._evictions = 0
         self._expirations = 0
+        self._scoped_invalidations = 0
 
     @property
     def ttl_seconds(self) -> float:
@@ -135,6 +138,27 @@ class PollReadCache:
                 self._bytes -= sz
                 self._evictions += 1
 
+    def invalidate_matching(self, predicate) -> int:
+        """Drop every entry whose key satisfies ``predicate``.
+
+        Scoped invalidation: a mutation to one poll only needs to drop that
+        poll's entries, not every poll's warm bodies. Live and expired entries
+        alike are removed; the byte total is decremented by each entry's exact
+        recorded size so the ``max_bytes`` ceiling stays accurate.
+
+        ``predicate`` is called under the lock with each key; it must be cheap
+        and side-effect free. Returns the number of entries removed.
+        """
+        removed = 0
+        with self._lock:
+            for key, (_exp, _v, sz) in list(self._data.items()):
+                if predicate(key):
+                    del self._data[key]
+                    self._bytes -= sz
+                    self._scoped_invalidations += 1
+                    removed += 1
+        return removed
+
     def clear(self) -> None:
         """Full invalidation: drop every entry (counters are preserved)."""
         with self._lock:
@@ -158,4 +182,5 @@ class PollReadCache:
                 "misses": self._misses,
                 "evictions": self._evictions,
                 "expirations": self._expirations,
+                "scoped_invalidations": self._scoped_invalidations,
             }

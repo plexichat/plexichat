@@ -169,7 +169,7 @@ class CreationMixin(PollManagerBase):
             raise PollError("Failed to create poll: poll not found after insert")
         # Creation is a mutation boundary: leave no memoized read behind so the
         # next read observes the inserted row directly (never a stale body).
-        self._invalidate_poll_read_cache()
+        self._invalidate_poll_read_cache(poll_id)
         return result
 
     def _validate_question(self, question: str) -> str:
