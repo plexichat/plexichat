@@ -134,6 +134,26 @@ class MemberOpsMixin(ServerProtocol):
         server_id: SnowflakeID,
         exclude_user_id: Optional[SnowflakeID] = None,
     ) -> List[SnowflakeID]:
+        """Return the server's member user ids, memoized for the fan-out burst.
+
+        Gateway routing, presence/typing, voice and REST call this for the same
+        server many times per event.  A bounded, short-TTL L0 collapses the
+        repeated reads; the key carries both the server and the exclude filter
+        so one audience can never be served for another.  A miss (or any cache
+        error) recomputes from the authoritative ``srv_members`` table, so the
+        cache can never synthesize or widen a recipient set.  Every membership
+        mutation drops the namespace through the shared funnel.
+        """
+        from .member_id_cache import (
+            _MISS as _MEMBER_IDS_MISS,
+            get_cached_member_user_ids,
+            prime_member_user_ids,
+        )
+
+        cached = get_cached_member_user_ids(server_id, exclude_user_id)
+        if cached is not _MEMBER_IDS_MISS:
+            return cached
+
         query = "SELECT user_id FROM srv_members WHERE server_id = ?"
         params: List[SnowflakeID] = [server_id]
 
@@ -142,7 +162,9 @@ class MemberOpsMixin(ServerProtocol):
             params.append(exclude_user_id)
 
         rows = self._db.fetch_all(query, tuple(params))
-        return [row["user_id"] for row in rows]
+        result = [row["user_id"] for row in rows]
+        prime_member_user_ids(server_id, exclude_user_id, result)
+        return result
 
     def get_all_shared_member_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
         rows = self._db.fetch_all(

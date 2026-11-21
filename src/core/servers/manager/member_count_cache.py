@@ -114,8 +114,14 @@ def invalidate_member_count_cache() -> None:
     """
     _member_count_cache.clear()
     from .channel_audience_cache import invalidate_channel_audience_cache
+    from .member_id_cache import invalidate_member_id_cache
 
     invalidate_channel_audience_cache()
+    # The raw member-id list is the same ``srv_members`` projection used by
+    # gateway/presence/voice fan-out. A join/kick/ban/leave must evict it in the
+    # same funnel so no removed member keeps receiving events and no new member
+    # is left out for the cache TTL.
+    invalidate_member_id_cache()
 
 
 def member_count_cache_stats() -> dict:
