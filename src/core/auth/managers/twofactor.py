@@ -416,7 +416,9 @@ class TwoFactorMixin(AuthManagerProtocol):
             raise TokenInvalidError("2FA no longer enabled")
 
         user_id = user_row["id"]
-        secret = totp_module.decrypt_totp_secret(user_row["totp_secret_encrypted"])
+        secret = totp_module.decrypt_totp_secret(
+            user_row["totp_secret_encrypted"], user_id=user_id
+        )
 
         is_totp_valid = totp_module.verify_totp_code(
             secret,
@@ -545,7 +547,9 @@ class TwoFactorMixin(AuthManagerProtocol):
             raise UserNotFoundError("User not found")
         if not user.get("totp_secret_encrypted"):
             raise AuthError("2FA not initiated")
-        secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
+        secret = totp_module.decrypt_totp_secret(
+            user["totp_secret_encrypted"], user_id=user_id
+        )
         self._check_and_record_2fa_attempt(user_id)
         ok = totp_module.verify_totp_code(
             secret,
@@ -590,7 +594,9 @@ class TwoFactorMixin(AuthManagerProtocol):
             raise AuthError("2FA not enabled")
         if not self.crypto.verify_password(password, user["password_hash"]):
             raise InvalidCredentialsError("Invalid password")
-        secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
+        secret = totp_module.decrypt_totp_secret(
+            user["totp_secret_encrypted"], user_id=user_id
+        )
         self._check_and_record_2fa_attempt(user_id)
         ok = totp_module.verify_totp_code(
             secret,

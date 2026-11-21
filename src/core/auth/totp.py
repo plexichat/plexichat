@@ -26,6 +26,8 @@ except Exception:
 
 import utils.config as config
 
+from src.core.bounded_lru import BoundedLRU
+
 # Import encryption for storing secrets
 from src.utils.encryption import (
     encrypt_data,
@@ -312,17 +314,60 @@ def encrypt_totp_secret(secret: str) -> str:
     return encrypt_data(secret)
 
 
-def decrypt_totp_secret(encrypted_secret: str) -> str:
-    """
-    Decrypt a TOTP secret from database.
+# Every 2FA verification (challenge completion, confirm, disable) re-reads the
+# same ciphertext from ``auth_users.totp_secret_encrypted`` and decrypts it
+# again. ``decrypt_data`` looks its AES key up through the keyring's file lock
+# on every call (~40us here), so repeating the identical decryption for the
+# same account is pure overhead on a credential-check hot path.
+#
+# The cache below memoises only that decryption, keyed by the *non-secret*
+# user id. Security is preserved by binding each cached plaintext to a digest
+# of the exact ciphertext it came from, so a rotated/disabled secret never
+# reuses a stale plaintext (self-invalidating), and by failing closed: a
+# decryption error is never cached and propagates to the caller. The value is
+# process-local, entry/byte/TTL bounded via BoundedLRU, and the plaintext is
+# already held in this same process for the duration of every verification, so
+# a short-lived bounded entry does not widen the secret's exposure surface.
+_TOTP_SECRET_CACHE = BoundedLRU(
+    max_entries=1024,
+    max_bytes=256 * 1024,
+    ttl_seconds=60.0,
+)
 
-    Args:
-        encrypted_secret: Encrypted secret string
 
-    Returns:
-        Plain TOTP secret
+def _totp_secret_fingerprint(encrypted_secret: str) -> bytes:
+    """One-way fingerprint of the ciphertext, used to bind cache entries."""
+    return hashlib.sha256(encrypted_secret.encode("utf-8")).digest()
+
+
+def decrypt_totp_secret(
+    encrypted_secret: str,
+    user_id: Optional[Union[int, str]] = None,
+) -> str:
+    """Decrypt a TOTP secret, memoised per non-secret user id.
+
+    A cached plaintext is served only when its ciphertext fingerprint still
+    matches ``encrypted_secret``; otherwise the secret is decrypted again from
+    the authoritative ciphertext. Decryption failures are never cached and
+    propagate to the caller (fail closed). Omitting ``user_id`` keeps the
+    legacy uncached path for callers without an account identity.
     """
-    return decrypt_data(encrypted_secret)
+    if user_id is None:
+        return decrypt_data(encrypted_secret)
+
+    fingerprint = _totp_secret_fingerprint(encrypted_secret)
+    cached = _TOTP_SECRET_CACHE.get(user_id)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+
+    secret = decrypt_data(encrypted_secret)
+    _TOTP_SECRET_CACHE.set(user_id, (fingerprint, secret))
+    return secret
+
+
+def clear_totp_secret_cache() -> None:
+    """Drop every cached decrypted secret (tests / explicit invalidation)."""
+    _TOTP_SECRET_CACHE.clear()
 
 
 def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) -> str:
