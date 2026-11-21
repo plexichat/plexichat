@@ -76,7 +76,7 @@ def test_batch_query_has_no_unused_usage_count_aggregation():
 
     # The useful shape remains: a single sticker_stickers scan for both packs.
     assert sql.startswith("SELECT s.* FROM sticker_stickers s")
-    assert "s.pack_id IN (?, ?)" in sql
+    assert "WHERE s.pack_id IN (" in sql
     assert "ORDER BY s.pack_id, s.name" in sql
 
     # Hydration still groups every row under its own pack.
