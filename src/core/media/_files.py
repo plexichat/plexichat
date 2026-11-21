@@ -831,16 +831,25 @@ class _FilesMixin:
         # abused the same way by flows that store external URLs. Only a local,
         # path-only reference that names the exact file may confer access.
         avatar_rows = self._db.fetch_all(
-            "SELECT avatar_url FROM auth_users WHERE avatar_url LIKE '%' || ?",
+            "SELECT id, avatar_url FROM auth_users WHERE avatar_url LIKE '%' || ?",
             (search_filename,),
         )
-        if any(
-            _is_local_media_reference(
-                row["avatar_url"] if isinstance(row, dict) else row[0], search_filename
-            )
-            for row in (avatar_rows or [])
-        ):
-            return True
+        for row in avatar_rows or ():
+            avatar_url = row["avatar_url"] if isinstance(row, dict) else row[1]
+            avatar_owner_id = row["id"] if isinstance(row, dict) else row[0]
+            # avatar_url is client-controllable and the core validator accepts
+            # ANY same-origin path, including a private attachment's filename.
+            # A bare local-reference match therefore let a user publish
+            # somebody else's file to everyone by pointing their own avatar at
+            # it. Only treat a local reference as public when the referenced
+            # file was uploaded by the user whose avatar references it; every
+            # other owner fails closed.
+            if (
+                _is_local_media_reference(avatar_url, search_filename)
+                and avatar_owner_id is not None
+                and int(avatar_owner_id) == uploader_id
+            ):
+                return True
 
         icon_rows = self._db.fetch_all(
             "SELECT s.icon_url, s.owner_id FROM srv_servers s JOIN srv_members m "
