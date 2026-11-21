@@ -16,6 +16,59 @@ from typing import Any, Optional, Tuple
 import utils.logger as logger
 
 
+def _fanout_safe_message_body(response) -> dict:
+    """Strip viewer-specific fields from a message body before fan-out.
+
+    MESSAGE_CREATE / MESSAGE_UPDATE serializers build a single
+    ``MessageResponse`` with a concrete viewer — the sender, editor or
+    pinner — and the broadcast helper dumps that one body to *every* channel
+    recipient. Several fields in that dump are resolved through the
+    serializer's viewer window and must never cross that boundary:
+
+    * ``poll_results`` / ``poll.total_votes``: ``get_results(viewer)`` returns
+      per-option counts, the voter headcount and the viewer's own votes for
+      AFTER_VOTE / AFTER_END polls. For a poll-bearing message the actor is
+      usually the author, so the fan-out body hands every recipient the
+      author's private results window.
+    * ``status`` / ``read`` / ``read_by``: documented as "for the current
+      user" — one viewer's delivery/read state is not another's.
+    * reaction ``me`` flags: whether *that* viewer reacted, not the audience's.
+
+    The HTTP response returned to the actor keeps its full viewer-specific
+    fields; this helper only sanitizes the copy that goes on the wire to the
+    many. Fail closed: unknown/oddly-shaped values are dropped rather than
+    forwarded.
+    """
+    data = response.model_dump() if hasattr(response, "model_dump") else dict(response)
+
+    # Poll results are viewer-scoped. The plain poll skeleton (question /
+    # options) survives for UI continuity, but its totals are viewer-scoped
+    # too — mirror the tombstone serializer's fail-closed treatment.
+    data["poll_results"] = None
+    poll = data.get("poll")
+    if isinstance(poll, dict):
+        poll["total_votes"] = None
+        options = poll.get("options")
+        if isinstance(options, list):
+            for option in options:
+                if isinstance(option, dict):
+                    option["vote_count"] = None
+
+    # Read state is "for the current user" (see MessageResponse field docs).
+    data["read"] = False
+    data["read_by"] = []
+    data["status"] = None
+
+    # Reaction "me" flags describe the serializer's viewer, not the receiver.
+    reactions = data.get("reactions")
+    if isinstance(reactions, list):
+        for reaction in reactions:
+            if isinstance(reaction, dict):
+                reaction["me"] = False
+
+    return data
+
+
 def _resolve_recipients(
     servers_mod: Any,
     messaging: Any,
@@ -181,7 +234,7 @@ class BroadcastMixin:
 
                         if user_ids:
                             event = build_message_create(
-                                response.model_dump(),
+                                _fanout_safe_message_body(response),
                                 channel_id=cid,
                                 server_id=resolved_server_id or server_id,
                             )
@@ -227,7 +280,7 @@ class BroadcastMixin:
 
                         if user_ids:
                             event = build_message_update(
-                                response.model_dump(),
+                                _fanout_safe_message_body(response),
                                 channel_id=cid,
                                 server_id=event_server_id,
                             )
