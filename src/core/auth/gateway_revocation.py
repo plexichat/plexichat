@@ -84,3 +84,51 @@ def close_user_gateway_connections(
             user_id,
             exc_info=True,
         )
+
+
+def close_session_gateway_connections(
+    user_id: int,
+    auth_session_id: int,
+    reason: str = "Session revoked",
+) -> None:
+    """Close only the gateway sockets bound to one revoked auth session.
+
+    Non-raising and callable from a synchronous context on or off the serving
+    loop, like :func:`close_user_gateway_connections`. Matching is done by the
+    dispatcher on the verified ``TokenInfo.session_id`` recorded on each socket
+    at IDENTIFY/RESUME, so a sibling session on the same user is left open.
+    """
+    loop = _gateway_loop()
+    if loop is None or loop.is_closed():
+        logger.debug(
+            "No live gateway loop; skipping socket close for revoked session %s",
+            auth_session_id,
+        )
+        return
+
+    async def _close() -> None:
+        try:
+            from src.api.websocket import get_dispatcher, is_setup
+
+            if not is_setup():
+                return
+            await get_dispatcher().close_session_connections(
+                user_id=int(user_id),
+                auth_session_id=int(auth_session_id),
+                reason=reason,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to close gateway connections for revoked session %s",
+                auth_session_id,
+                exc_info=True,
+            )
+
+    try:
+        asyncio.run_coroutine_threadsafe(_close(), loop)
+    except Exception:
+        logger.warning(
+            "Failed to schedule gateway socket close for revoked session %s",
+            auth_session_id,
+            exc_info=True,
+        )

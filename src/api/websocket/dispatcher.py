@@ -940,6 +940,65 @@ class GatewayDispatcher:
         )
         return closed_count
 
+    async def close_session_connections(
+        self,
+        user_id: int,
+        auth_session_id: int,
+        close_code: int = GatewayCloseCode.AUTHENTICATION_FAILED,
+        reason: str = "Session revoked",
+    ) -> int:
+        """Close only local sockets bound to one *auth* session.
+
+        Unlike :meth:`close_user_connections` (which blanket-closes every socket
+        of a user), this targets the single session being revoked. A connection
+        records ``auth_session_id`` from the verified ``TokenInfo.session_id``
+        at IDENTIFY/RESUME; ``session_id`` on the connection is the unrelated
+        gateway replay id. Matching is strict (both ids must agree and neither
+        may be ``None``) so revoking session X can never close a still-valid
+        session Y's socket, and unbound/bot sockets are never matched.
+
+        Uses a non-resumable close code by default and is non-raising, matching
+        :meth:`close_user_connections`. Returns the number closed.
+        """
+        try:
+            uid = int(user_id)
+            sid = int(auth_session_id)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        with self._lock:
+            connections = self._session_manager.get_all_connections()
+        targets = [
+            conn
+            for conn in connections
+            if getattr(conn, "auth_session_id", None) == sid
+            and getattr(conn, "user_id", None) == uid
+        ]
+        if not targets:
+            return 0
+
+        async def _close_conn(conn) -> bool:
+            try:
+                flush = getattr(conn, "flush_outbound", None)
+                if flush is not None:
+                    await flush()
+                conn.set_disconnecting()
+                await conn.websocket.close(code=close_code, reason=reason)
+                conn.set_disconnected()
+                return True
+            except Exception as e:
+                logger.debug(f"Error closing session connection {conn.connection_id}: {e}")
+                return False
+
+        results = await asyncio.gather(
+            *(_close_conn(conn) for conn in targets), return_exceptions=True
+        )
+        closed_count = sum(1 for result in results if result is True)
+        logger.info(
+            f"Closed {closed_count} gateway connections for revoked session {sid} "
+            f"(user {uid})"
+        )
+        return closed_count
+
     async def close_all_connections(
         self,
         close_code: int = 4017,

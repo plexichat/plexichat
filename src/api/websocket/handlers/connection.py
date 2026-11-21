@@ -172,6 +172,7 @@ class ConnectionHandler:
             else None,
             user_agent=user_agent,
             is_selftest=connection.is_selftest,
+            bind_connection=connection,
         )
         if user_id is None:
             return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
@@ -262,6 +263,7 @@ class ConnectionHandler:
             ip_address=ip_address,
             user_agent=user_agent,
             is_selftest=connection.is_selftest,
+            bind_connection=connection,
         )
         if user_id is None:
             return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
@@ -313,6 +315,7 @@ class ConnectionHandler:
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
         is_selftest: bool = False,
+        bind_connection: Optional["Connection"] = None,
     ) -> Optional[int]:
         """Verify a token and return the gateway principal it binds to.
 
@@ -325,6 +328,14 @@ class ConnectionHandler:
         the owner id. Rebind bot credentials to the bot's own account so the
         socket only receives bot-scoped events; legitimate bot connections keep
         working and human session tickets are unchanged.
+
+        On success also records the verified ``TokenInfo.session_id`` (the auth
+        session id) on ``bind_connection`` when one is supplied. Both access
+        tokens and WS tickets carry the same stable ``auth_sessions.id`` there;
+        bot tokens carry ``None``. This is what lets a single-session revoke
+        close only the sockets bound to that auth session. The return value is
+        unchanged so existing callers/mocks that only consume the principal id
+        keep working.
         """
         if not self._auth:
             return None
@@ -339,6 +350,11 @@ class ConnectionHandler:
             )
         except Exception:
             return None
+
+        # Bind only AFTER a successful verification, and only when a connection
+        # was supplied. Never bind on the failure paths below.
+        if bind_connection is not None:
+            bind_connection.auth_session_id = token_info.session_id
 
         if getattr(token_info, "token_type", "user") == "bot":
             bot_id = getattr(token_info, "account_id", None)

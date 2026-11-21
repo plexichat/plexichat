@@ -6,7 +6,10 @@ from typing import List, Optional
 import utils.logger as logger
 from src.core.database import invalidate_pattern
 
-from ...gateway_revocation import close_user_gateway_connections
+from ...gateway_revocation import (
+    close_session_gateway_connections,
+    close_user_gateway_connections,
+)
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AuditEventType, Session
 from ...replay import refresh_replay_guard
@@ -770,6 +773,11 @@ class LifecycleMixin(AuthManagerProtocol):
                 emit_security_alert(user_id, "session_revoked")
             except Exception as exc:
                 logger.debug(f"session_revoked alert not emitted: {exc}")
+            # A SECURITY_ALERT is only a client-side hint. Close the live socket(s)
+            # bound to this auth session server-side, and only those: the user's
+            # other still-valid sessions must keep working. ``rowcount > 0``
+            # proves the row belonged to ``user_id`` before we touch any socket.
+            close_session_gateway_connections(user_id, session_id, "Session revoked")
             return True
         return False
 

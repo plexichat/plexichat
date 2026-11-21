@@ -118,7 +118,14 @@ class Connection:
     connection_id: str
     state: ConnectionState = ConnectionState.CONNECTING
     user_id: Optional[int] = None
+    # Gateway replay session id (hex string from ``generate_session_id``). Do
+    # NOT confuse this with ``auth_session_id`` below.
     session_id: Optional[str] = None
+    # The *auth* session id (``auth_sessions.id``) this socket authenticated
+    # under at IDENTIFY/RESUME. Bound from the verified ``TokenInfo.session_id``
+    # so a single-session revoke can close only this session's sockets instead
+    # of blanket-closing every socket of the user.
+    auth_session_id: Optional[int] = None
     sequence: int = 0
     intents: int = 0
     compress: bool = False
