@@ -18,9 +18,12 @@ before calling pyotp:
 
 This is a pure-AST ratchet over checked-in production source (no app import,
 no DB). It enumerates *every* pyotp verify call site under ``src/`` and fails
-if any is not inside a function that performs an ASCII-canonical gate. The
-detector is self-tested first -- including a decoy whose docstring merely
-*mentions* the canonical helper -- so a broken detector cannot pass vacuously.
+if any is not inside a function that performs an ASCII-canonical gate. Both
+local-variable aliases and import aliases (``import pyotp as p``,
+``from pyotp import TOTP as OTP``) are resolved so an aliased receiver cannot
+hide a verify site. The detector is self-tested first -- including a decoy
+whose docstring merely *mentions* the canonical helper -- so a broken detector
+cannot pass vacuously.
 """
 
 import ast
@@ -48,23 +51,56 @@ KNOWN_VERIFIERS = (
 _PYOTP_CONSTRUCTORS = frozenset({"totp", "hotp"})
 
 
-def _is_pyotp_constructor(node):
+def _import_aliases(tree):
+    """Resolve pyotp module/class import aliases across the whole module.
+
+    Local-variable alias resolution (``_pyotp_alias_names``) cannot help when
+    the *import itself* is aliased: ``import pyotp as p`` binds ``p`` to the
+    module and ``from pyotp import TOTP as OTP`` binds ``OTP`` to a verifier
+    class. A verifier named through either spelling carries no ``totp``/``hotp``
+    text, so a text-only receiver check silently skips its ``.verify()`` call.
+    """
+    module_aliases = set()
+    constructor_aliases = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "pyotp" or alias.name.startswith("pyotp."):
+                    module_aliases.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "pyotp" or module.startswith("pyotp."):
+                for alias in node.names:
+                    if alias.name.lower() in _PYOTP_CONSTRUCTORS:
+                        constructor_aliases.add(alias.asname or alias.name)
+    return module_aliases, constructor_aliases
+
+
+def _is_pyotp_constructor(
+    node, module_aliases=frozenset(), constructor_aliases=frozenset()
+):
     """Whether ``node`` builds a pyotp ``TOTP``/``HOTP`` verifier object."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
     if isinstance(func, ast.Name):
-        # ``from pyotp import TOTP`` followed by ``TOTP(secret)``.
-        return func.id.lower() in _PYOTP_CONSTRUCTORS
+        # ``from pyotp import TOTP`` -> ``TOTP(secret)``, or the same import
+        # under an alias: ``from pyotp import TOTP as OTP`` -> ``OTP(secret)``.
+        return func.id in constructor_aliases or func.id.lower() in _PYOTP_CONSTRUCTORS
     if isinstance(func, ast.Attribute):
-        # ``pyotp.TOTP(secret)`` / ``pyotp.totp.TOTP(secret)``.
-        return func.attr.lower() in _PYOTP_CONSTRUCTORS and "pyotp" in ast.unparse(
-            func.value
-        ).lower()
+        # ``pyotp.TOTP(secret)`` / ``pyotp.totp.TOTP(secret)``, including an
+        # aliased module: ``import pyotp as p`` -> ``p.TOTP(secret)``.
+        if func.attr.lower() not in _PYOTP_CONSTRUCTORS:
+            return False
+        if isinstance(func.value, ast.Name) and func.value.id in module_aliases:
+            return True
+        return "pyotp" in ast.unparse(func.value).lower()
     return False
 
 
-def _pyotp_alias_names(function):
+def _pyotp_alias_names(
+    function, module_aliases=frozenset(), constructor_aliases=frozenset()
+):
     """Local names bound to a freshly constructed pyotp verifier object.
 
     ``verifier = pyotp.TOTP(secret); verifier.verify(code)`` crosses exactly
@@ -72,6 +108,8 @@ def _pyotp_alias_names(function):
     receiver text carries no ``totp``/``hotp`` spelling. Without resolving
     these aliases a text-only scan silently skips such a verify site, so a new
     verifier could reintroduce the NFKC homoglyph replay bypass undetected.
+    Import aliases are resolved first so ``v = p.TOTP(...)`` and ``v = OTP(...)``
+    register just as the unaliased spellings do.
     """
     names = set()
     if function is None:
@@ -83,7 +121,7 @@ def _pyotp_alias_names(function):
             value, targets = node.value, node.targets
         elif isinstance(node, ast.AnnAssign):
             value, targets = node.value, (node.target,)
-        if not _is_pyotp_constructor(value):
+        if not _is_pyotp_constructor(value, module_aliases, constructor_aliases):
             continue
         for target in targets:
             if isinstance(target, ast.Name):
@@ -93,12 +131,15 @@ def _pyotp_alias_names(function):
     return names
 
 
-def _is_pyotp_verify(node, alias_names=frozenset()):
+def _is_pyotp_verify(
+    node, alias_names=frozenset(), module_aliases=frozenset(), constructor_aliases=frozenset()
+):
     """Whether ``node`` is a ``<totp|hotp>.verify(...)`` call.
 
     ``alias_names`` holds local names bound to pyotp verifier objects in the
     enclosing function, so a verifier stored under a non-totp/hotp name is not
-    missed.
+    missed. ``module_aliases``/``constructor_aliases`` cover import aliases so
+    aliased receivers and inline constructions are recognised too.
     """
     if not isinstance(node, ast.Call):
         return False
@@ -114,6 +155,10 @@ def _is_pyotp_verify(node, alias_names=frozenset()):
     if isinstance(func.value, ast.Name) and func.value.id in alias_names:
         return True
     if isinstance(func.value, ast.Attribute) and func.value.attr in alias_names:
+        return True
+    # Inline construction through an import alias: ``OTP(secret).verify()`` or
+    # ``p.TOTP(secret).verify()`` where neither spelling names totp/hotp.
+    if _is_pyotp_constructor(func.value, module_aliases, constructor_aliases):
         return True
     return False
 
@@ -153,6 +198,7 @@ def _has_ascii_gate(function):
 
 def _verify_sites(tree):
     """Yield ``(call_node, innermost_function_or_None)`` for pyotp verifies."""
+    module_aliases, constructor_aliases = _import_aliases(tree)
     parents = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -171,7 +217,12 @@ def _verify_sites(tree):
             if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 function = cur
                 break
-        if _is_pyotp_verify(node, _pyotp_alias_names(function)):
+        if _is_pyotp_verify(
+            node,
+            _pyotp_alias_names(function, module_aliases, constructor_aliases),
+            module_aliases,
+            constructor_aliases,
+        ):
             yield node, function
 
 
@@ -260,6 +311,49 @@ def test_detector_recognises_pyotp_verify_through_local_alias():
         assert len(sites) == 1, f"alias verify not detected in: {source}"
         assert not _has_ascii_gate(sites[0][1])
     sites = _scan_source(gated_alias)
+    assert len(sites) == 1
+    assert _has_ascii_gate(sites[0][1])
+
+
+def test_detector_recognises_pyotp_verify_through_import_alias():
+    """Aliased imports are resolved, so aliased verify sites cannot hide.
+
+    Non-vacuity: before import-alias resolution these three shapes yielded
+    zero sites (the receiver text carries no ``totp``/``hotp`` spelling and no
+    local alias is registered), so a future verifier written with either import
+    form could reintroduce the NFKC homoglyph replay bypass undetected. Removing
+    the alias resolution makes these assertions fail.
+    """
+    module_alias_local = """
+    import pyotp as p
+    def verify(code):
+        v = p.TOTP(secret)
+        return v.verify(code)
+    """
+    class_alias_local = """
+    from pyotp import TOTP as OTP
+    def verify(code):
+        v = OTP(secret)
+        return v.verify(code)
+    """
+    class_alias_inline = """
+    from pyotp import TOTP as OTP
+    def verify(code):
+        return OTP(secret).verify(code)
+    """
+    gated_module_alias = """
+    import pyotp as p
+    def verify(code):
+        if not _is_canonical_totp_code(code):
+            return False
+        v = p.TOTP(secret)
+        return v.verify(code)
+    """
+    for source in (module_alias_local, class_alias_local, class_alias_inline):
+        sites = _scan_source(source)
+        assert len(sites) == 1, f"import-alias verify not detected in: {source}"
+        assert not _has_ascii_gate(sites[0][1])
+    sites = _scan_source(gated_module_alias)
     assert len(sites) == 1
     assert _has_ascii_gate(sites[0][1])
 
