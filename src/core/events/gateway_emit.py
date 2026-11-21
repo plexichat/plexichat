@@ -374,6 +374,25 @@ def _coerce_scope_id(value: Any) -> Optional[int]:
         return None
 
 
+def _rbac_epoch(server_id: int) -> Optional[int]:
+    """Current RBAC revision for ``server_id``, or ``None`` on any failure.
+
+    Every role / membership / override / ownership mutation advances the
+    channel-access cache's server epoch (see ``ChannelAccessCache.bump``). A
+    recipient list is a ``channels.view`` permission verdict, so folding this
+    epoch into the cache key makes a stale audience unreachable the instant a
+    viewer loses access instead of lingering for the whole TTL. ``None`` means
+    the version store could not be read: callers must then skip the memo so an
+    unverifiable audience is never replayed.
+    """
+    try:
+        from src.core.servers.channel_access_cache import get_channel_access_cache
+
+        return int(get_channel_access_cache().version(int(server_id), 0)[0])
+    except Exception:
+        return None
+
+
 def resolve_channel_event_recipients(
     channel_id: Optional[int],
     *,
@@ -399,9 +418,11 @@ def resolve_channel_event_recipients(
 
     The result is memoized in a bounded, short-TTL cache keyed by the *complete*
     resolution identity: channel, guild, actor, exclusions, the identity of the
-    audience-source modules and the threads module. Every input that can change
-    the audience is in the key, so a different scope or a re-setup of the
-    audience sources can never reuse another audience's recipients. Intent
+    audience-source modules and the threads module, and the server's RBAC epoch.
+    Every input that can change the audience is in the key -- including the
+    epoch that a permission revoke bumps -- so a stale ``channels.view`` verdict
+    is unreachable on the very next emit and a different scope or a re-setup of
+    the audience sources can never reuse another audience's recipients. Intent
     filtering remains at dispatch time and is unaffected.
     """
     if channel_id is None:
@@ -430,6 +451,26 @@ def resolve_channel_event_recipients(
         messaging = None
         relationships = None
 
+    # The server scope drives the RBAC epoch that versions this audience. Use
+    # the caller's guild hint when present (free); callers without one (polls,
+    # some read paths) need one channel lookup to discover it, which the
+    # server-channel branch below reuses so the hot path stays at one lookup.
+    server_scope = _coerce_scope_id(guild_id)
+    channel = None
+    if server_scope is None and servers is not None:
+        try:
+            channel = servers.get_channel(channel_id, actor_id)
+        except Exception:
+            channel = None
+        if channel is not None:
+            server_scope = _coerce_scope_id(getattr(channel, "server_id", None))
+
+    rbac_epoch = _rbac_epoch(server_scope) if server_scope is not None else None
+    # A server-scoped audience whose epoch cannot be read must not reuse a warm
+    # list (fail closed for freshness). Unscoped DM resolution has no
+    # permission-filtered membership, so it keeps using the memo.
+    use_cache = server_scope is None or rbac_epoch is not None
+
     cache_parts = (
         _coerce_scope_id(channel_id),
         _coerce_scope_id(guild_id),
@@ -439,8 +480,9 @@ def resolve_channel_event_recipients(
         id(messaging),
         id(relationships),
         id(sys.modules.get("src.core.threads")),
+        rbac_epoch,
     )
-    cached = _channel_recipient_cache.get(cache_parts)
+    cached = _channel_recipient_cache.get(cache_parts) if use_cache else None
     if cached is not None:
         return cached
 
@@ -456,7 +498,8 @@ def resolve_channel_event_recipients(
             if uid not in exclude and uid not in seen:
                 seen.add(uid)
                 result.append(uid)
-        _channel_recipient_cache.put(cache_parts, result)
+        if use_cache:
+            _channel_recipient_cache.put(cache_parts, result)
         return result
 
     # 1. Known private thread: exact member set (fail closed on lookup error).
@@ -473,15 +516,14 @@ def resolve_channel_event_recipients(
         return _final(_dm_participants_without_blocks(thread_members, actor_id))
 
     # 2. Server channel: members with channels.view, never the raw member list.
-    server_id = guild_id
-    channel = None
-    if servers is not None:
+    server_id = server_scope
+    if channel is None and servers is not None:
         try:
             channel = servers.get_channel(channel_id, actor_id)
         except Exception:
             channel = None
         if channel is not None:
-            server_id = getattr(channel, "server_id", None) or server_id
+            server_id = _coerce_scope_id(getattr(channel, "server_id", None)) or server_id
         elif guild_id is not None and actor_id is not None:
             # FAIL CLOSED: the authoritative lookup says the actor cannot see
             # this channel (unknown, deleted, non-member or no channels.view).
