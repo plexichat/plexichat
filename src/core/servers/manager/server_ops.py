@@ -571,10 +571,29 @@ class ServerOpsMixin(ServerProtocol):
         if not self._is_member(server_id, new_owner_id):
             raise MemberNotFoundError("New owner must be a member of the server")
 
-        self._db.execute(
-            "UPDATE srv_servers SET owner_id = ?, updated_at = ? WHERE id = ?",
-            (new_owner_id, self._get_timestamp(), server_id),
+        # Ownership and target membership can both change between the checks
+        # above and this write. Bind the transfer to the authoritative
+        # conditions so a former owner cannot reassign a server that has since
+        # moved, and a kicked target cannot be made owner. Fail closed on a
+        # lost race. (Mirrors ``get_server``'s deleted = 0 visibility gate.)
+        cursor = self._db.execute(
+            "UPDATE srv_servers SET owner_id = ?, updated_at = ? "
+            "WHERE id = ? AND deleted = 0 AND owner_id = ? "
+            "AND EXISTS (SELECT 1 FROM srv_members "
+            "WHERE server_id = srv_servers.id AND user_id = ?)",
+            (
+                new_owner_id,
+                self._get_timestamp(),
+                server_id,
+                int(user_id),
+                int(new_owner_id),
+            ),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise ServerAccessDeniedError(
+                "Server owner or target membership changed concurrently; "
+                "refusing to transfer ownership"
+            )
 
         # Ownership feeds several caches; clear them all so the transfer takes
         # effect immediately rather than after the relevant TTL. In particular
