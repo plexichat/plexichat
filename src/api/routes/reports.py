@@ -141,37 +141,50 @@ def _bounded_evidence_ids(values):
     return result
 
 
-def _server_id_for_conversation(conversation_id) -> int | None:
-    """Resolve the authoritative server for a message's conversation.
+def _report_context_for_conversation(conversation_id) -> tuple[int | None, int | None]:
+    """Resolve authoritative ``(channel_id, server_id)`` for a message report.
 
-    ``server_id`` is moderation context, not user input. The servers module is
-    the only source that can say which server a conversation belongs to; when it
-    is unavailable or returns a malformed row this fails closed to ``None``
-    rather than trusting a caller-supplied value. DMs legitimately have no
-    server and resolve to ``None`` too.
+    Channel and server are moderation context, never user input. Proving the
+    reporter can view a message (via ``get_message``) says nothing about which
+    channel/server the report should be attributed to; the server-side
+    conversation the message lives in is the only authority. The servers module
+    returns ``{"id": <channel_id>, "server_id": <server_id>}`` for a conversation.
+
+    Fail closed to ``(None, None)`` whenever the context cannot be resolved:
+    DMs (no conversation), a missing servers module, a missing lookup, a
+    malformed row or malformed ids. The caller-supplied ``channel_id`` /
+    ``server_id`` are NEVER persisted for a message report -- doing so let a
+    reporter attribute a report to a channel/server they are not even a member
+    of (moderation queue poisoning). This mirrors the fail-closed contract of
+    the enhanced-report path's ``_message_report_context``.
     """
+    if conversation_id is None:
+        return None, None
     try:
         servers = api.get_servers()
     except Exception:
         servers = None
     if servers is None:
-        return None
+        return None, None
     lookup = getattr(servers, "get_channel_by_conversation", None)
     if lookup is None:
-        return None
+        return None, None
     try:
         info = lookup(conversation_id)
     except Exception:
-        return None
+        return None, None
     if not isinstance(info, dict):
-        return None
-    value = info.get("server_id")
-    if value is None:
-        return None
-    try:
-        return _parse_report_id(value, "server_id")
-    except HTTPException:
-        return None
+        return None, None
+
+    def _valid_id(value) -> int | None:
+        if value is None:
+            return None
+        try:
+            return _parse_report_id(value, "report context ID")
+        except HTTPException:
+            return None
+
+    return _valid_id(info.get("id")), _valid_id(info.get("server_id"))
 
 
 def _check_report_rate_limit(user_id: int) -> None:
@@ -334,27 +347,14 @@ async def report_message(
             # should be attributed to. Persisting the body values verbatim let
             # a reporter plant a report in an arbitrary moderation queue —
             # including one they are not a member of — and mislead moderators.
-            # The enhanced submission path already derives this context from the
-            # server-side conversation; do the same here. ``conversation_id`` is
-            # the authoritative channel for the message (guild or DM), so it is
-            # always a valid non-null channel id for message_reports.
+            # Derive BOTH values from the server-authoritative conversation the
+            # message lives in and ignore the caller-supplied ones. When that
+            # context cannot be resolved (DMs, servers module unavailable,
+            # malformed row/ids) fail closed to no context rather than falling
+            # back to the forged body values. This matches the enhanced-report
+            # path's fail-closed contract.
             conversation_id = getattr(msg, "conversation_id", None)
-            if conversation_id is not None:
-                try:
-                    channel_id = _parse_report_id(conversation_id, "channel_id")
-                except HTTPException:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail={
-                            "error": {
-                                "code": 400,
-                                "message": "Invalid message context",
-                            }
-                        },
-                    ) from None
-                # Never copy a caller-supplied server id: it cannot be verified
-                # against the message and is unresolvable for DMs.
-                server_id = _server_id_for_conversation(conversation_id)
+            channel_id, server_id = _report_context_for_conversation(conversation_id)
 
         # De-duplicate: an identical still-pending report is returned as a
         # success instead of creating a second queue entry.
