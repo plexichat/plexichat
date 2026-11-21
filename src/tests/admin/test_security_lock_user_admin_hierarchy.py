@@ -120,10 +120,11 @@ class TestLockUserHierarchyGate:
         db = _HierarchyDB(current_pos=100, target_pos=10)
         core = _AdminCore()
         _patch(monkeypatch, db, core, actor_id=100)
+        subordinate_id = 42
 
-        asyncio.run(security.admin_lock_user(_request(), _body(TARGET_ID)))
+        asyncio.run(security.admin_lock_user(_request(), _body(subordinate_id)))
 
-        assert core.locked == [(TARGET_ID, None)]
+        assert core.locked == [(subordinate_id, None)]
 
     def test_ordinary_user_target_is_not_hierarchy_gated(self, monkeypatch):
         db = _HierarchyDB(current_pos=10, target_pos=0, target_exists=False)
