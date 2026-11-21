@@ -28,6 +28,12 @@ _setup_called = False
 # keys below are restored verbatim from the raw config file after merge.
 _EXPLICIT_ALLOWLIST_PATHS = (
     ("api", "cors_origins"),
+    # CORS method/header gates are allowlists in the same family as origins.
+    # Narrowing them (e.g. read-only methods, dropping X-RateLimit-Bypass) is a
+    # hardening measure; the deep merge must not re-add the broad defaults and
+    # silently re-enable cross-origin state changes or privileged headers.
+    ("api", "cors_allow_methods"),
+    ("api", "cors_allow_headers"),
     # URL-preview scheme gate (SSRF): an operator narrowing to https-only must
     # not have http silently re-added by the deep merge.
     ("embeds", "url_preview", "allowed_schemes"),
