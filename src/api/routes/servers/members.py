@@ -52,6 +52,12 @@ def _invalidate_member_access_caches() -> None:
     removed member keeps reading cached rosters/channels through a valid 200
     response until the 30s TTL expires. Membership revocation must be visible
     at the HTTP boundary immediately, not just in the core.
+
+    The per-viewer role listing (``server_roles_api``, 300s TTL) and emoji reads
+    (``emoji_list_api`` / ``emoji_detail_api``, 10s TTL) are also filled behind
+    a membership check. They were missing here, so a kicked/banned member kept
+    receiving a cached 200 -- including role permission data -- long after the
+    revocation committed. Clear those namespaces too.
     """
     _invalidate_member_list_cache()
     invalidate_pattern("user_servers_api:*")
@@ -60,6 +66,22 @@ def _invalidate_member_access_caches() -> None:
     # must not keep reading a cached 200 past the kick/ban/leave.
     invalidate_pattern("server_stickers_api:*")
     invalidate_pattern("server_sounds_api:*")
+    # Roles and emoji libraries are per-viewer response caches filled behind a
+    # membership gate. A removed member must not keep reading them (roles have
+    # a 300s TTL) after kick/ban/leave, so evict them with the other caches.
+    _invalidate_roles_listing_cache()
+    invalidate_pattern("emoji_list_api:*")
+    invalidate_pattern("emoji_detail_api:*")
+    # Reuse the roles helper so this stays in lockstep with role/permission
+    # changes (it also clears the permission-derived channel caches). Do not
+    # inline a partial glob here: a drift would re-open the stale-authz hole.
+    _invalidate_roles_listing_cache()
+    # Emoji caches are keyed ``<prefix>:sid:<sid>:...`` per credential. Clear
+    # both list and detail namespaces; kick/ban/leave is rare enough that a
+    # global clear is safer than threading server_id through every caller and
+    # risking a missed detail entry.
+    invalidate_pattern("emoji_list_api:*")
+    invalidate_pattern("emoji_detail_api:*")
 
 
 def _resolve_member_user_id(db, server_id: int, member_or_user_id: int):
