@@ -718,16 +718,27 @@ class GatewayDispatcher:
             with self._lock:
                 connections = self._session_manager.get_all_connections()
 
+        # The status frame carries no per-connection field (no sequence number,
+        # no event type): every client receives byte-for-byte the same payload.
+        # Build and render it once for the whole broadcast instead of inside the
+        # loop, where the recursive snowflake walk (and a fresh dict build) ran
+        # once per recipient even though every copy was identical. The render
+        # cache keeps this consistent with the other fan-out paths and lets a
+        # repeated identical status broadcast reuse the same rendering.
+        status_key = freeze_payload(status_data)
+        payload = {
+            "op": int(GatewayOpcode.SERVER_STATUS),
+            # Central backstop (matches _build_dispatch_payload and
+            # dispatch_raw): status_data is caller-built, so stringify
+            # id-shaped keys here or a future key such as server_id
+            # leaks as a JSON number that JS clients round.
+            "d": self._render_cache.render(
+                status_data, stringify_snowflake_ids, key=status_key
+            ),
+        }
+
         for conn in connections:
             if conn.is_authenticated:
-                payload = {
-                    "op": int(GatewayOpcode.SERVER_STATUS),
-                    # Central backstop (matches _build_dispatch_payload and
-                    # dispatch_raw): status_data is caller-built, so stringify
-                    # id-shaped keys here or a future key such as server_id
-                    # leaks as a JSON number that JS clients round.
-                    "d": stringify_snowflake_ids(status_data),
-                }
                 tasks.append(self._send_to_connection(conn, payload))
 
         if tasks:
