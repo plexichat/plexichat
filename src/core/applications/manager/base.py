@@ -9,7 +9,6 @@ from src.core.base import BaseManager
 from src.core.security.hardening import bounded_int
 
 from ..validation import validate_config_url_pattern
-
 from ..oauth import OAuth2Flow
 from ..commands import CommandRegistry
 from ..interactions import InteractionHandler
@@ -19,6 +18,17 @@ from .bot_management import BotManagementMixin
 from .admin import AdminMixin
 from .webhook import WebhookMixin
 from .ratelimit import RatelimitMixin
+
+
+# A configured webhook signing secret must carry at least the strength of the
+# secrets the system generates for this purpose (``secrets.token_urlsafe(48)``
+# here, ``secrets.token_hex(32)`` in config_defaults/startup: 64 urlsafe/hex
+# chars). Every other credential-setting path validates a caller-supplied value
+# before it becomes a bearer/signing secret; without this floor a short
+# operator value becomes the HMAC key for webhook delivery signatures and can be
+# brute-forced from a single captured delivery. Treat an under-strength value
+# exactly like the legacy literal: never use it, rotate to a fresh generated one.
+MIN_WEBHOOK_SECRET_LENGTH = 32
 
 
 class ApplicationManager(
@@ -128,8 +138,18 @@ class ApplicationManager(
         """
         configured = app_config.get("webhook_signature_secret") or ""
         legacy_default = "plexichat-webhook-secret"
-        if configured and configured != legacy_default:
+        if (
+            configured
+            and configured != legacy_default
+            and len(configured) >= MIN_WEBHOOK_SECRET_LENGTH
+        ):
             return configured
+        if configured and configured != legacy_default:
+            logger.warning(
+                "Configured webhook_signature_secret is below the "
+                f"{MIN_WEBHOOK_SECRET_LENGTH}-character minimum; rotating to a "
+                "fresh generated secret"
+            )
 
         generated = secrets.token_urlsafe(48)
         last_exc: Optional[Exception] = None
