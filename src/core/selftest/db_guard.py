@@ -9,7 +9,7 @@ there is deliberately no "disposable database" escape hatch.
 """
 
 import re
-from typing import Any
+from typing import Any, List
 
 
 # SQL comments are whitespace to the database: ``DELETE/**/FROM/**/t`` and
@@ -177,10 +177,9 @@ def _normalize_sql(statement: str, *, escape_backslashes: bool = False) -> str:
 # ``DELETE FROM t ORDER BY id LIMIT 10`` and ``DELETE FROM t USING other``
 # are whole-table wipes that no longer end at the table name, so an
 # end-anchored ``DELETE FROM t$`` denylist silently accepts them. Key the
-# check on the presence of a real WHERE clause instead; a trailing comment
-# that once held a WHERE has already been removed by ``_normalize_sql``.
+# check on the presence of a real, top-level WHERE clause instead; a trailing
+# comment that once held a WHERE has already been removed by ``_normalize_sql``.
 _UNSCOPED_DELETE_RE = re.compile(r"\bDELETE\s+FROM\s+[\"'`]?\w+[\"'`]?", re.IGNORECASE)
-_SCOPE_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
 
 _FORBIDDEN_PATTERNS = (
     re.compile(r"DROP\s+TABLE", re.IGNORECASE),
@@ -188,13 +187,53 @@ _FORBIDDEN_PATTERNS = (
 )
 
 
+def _split_statements(normalized: str) -> List[str]:
+    """Split a normalized statement into its individual top-level statements.
+
+    ``_normalize_sql`` has already blanked every quoted literal and stripped
+    every comment, so a remaining ``;`` is a genuine statement separator rather
+    than literal/comment text. Checking the whole string at once was unsound:
+    a whole-table DELETE could borrow a ``WHERE`` that scoped only a later,
+    harmless statement (``DELETE FROM t; SELECT 1 WHERE 1 = 1``). Screen each
+    statement on its own so a scope restriction can never cross that boundary.
+    """
+    return [part for part in (s.strip() for s in normalized.split(";")) if part]
+
+
+_WHERE_OR_PAREN_RE = re.compile(r"\(|\)|\bWHERE\b", re.IGNORECASE)
+
+
+def _has_top_level_where(statement: str) -> bool:
+    """True when a statement carries a WHERE outside every parenthesised group.
+
+    A WHERE inside a CTE, a subquery or a RETURNING expression does not scope
+    the DELETE that precedes it: ``WITH x AS (SELECT 1 WHERE 1) DELETE FROM t``
+    is still a whole-table wipe. Only a WHERE at the statement's own nesting
+    level is a real scope restriction.
+    """
+    depth = 0
+    for match in _WHERE_OR_PAREN_RE.finditer(statement):
+        token = match.group(0)
+        if token == "(":
+            depth += 1
+        elif token == ")":
+            if depth:
+                depth -= 1
+        elif depth == 0:
+            return True
+    return False
+
+
 def _is_destructive(normalized: str) -> bool:
-    """True if a normalized variant contains a whole-table destructive verb."""
-    if _UNSCOPED_DELETE_RE.search(normalized) and not _SCOPE_WHERE_RE.search(
-        normalized
-    ):
-        return True
-    return any(pattern.search(normalized) for pattern in _FORBIDDEN_PATTERNS)
+    """True if any statement in a normalized variant is a whole-table wipe."""
+    for statement in _split_statements(normalized):
+        if any(pattern.search(statement) for pattern in _FORBIDDEN_PATTERNS):
+            return True
+        if _UNSCOPED_DELETE_RE.search(statement) and not _has_top_level_where(
+            statement
+        ):
+            return True
+    return False
 
 
 def assert_non_destructive(statement: str) -> None:
@@ -205,8 +244,11 @@ def assert_non_destructive(statement: str) -> None:
     and SQL comments are ignored so they cannot be used to disguise an
     otherwise unscoped DELETE; comments used *between* keywords are also
     normalized away so a comment can never act as a keyword separator. A
-    DELETE is accepted only with a genuine WHERE clause -- trailing clauses
-    such as RETURNING / USING / ORDER BY / LIMIT do not scope the delete.
+    DELETE is accepted only with a genuine WHERE clause at its own statement
+    level -- trailing clauses such as RETURNING / USING / ORDER BY / LIMIT do
+    not scope the delete. Stacked statements are screened separately, so a
+    WHERE that belongs to a different statement (or sits inside a CTE or
+    subquery) can never lend scope to an otherwise whole-table wipe.
 
     Quoted literals are ambiguous without the server's
     ``standard_conforming_strings`` setting, and ``E'...'`` escape strings
