@@ -25,6 +25,16 @@ class PermissionMixin(WebhookManagerTrait):
         it we cannot evaluate ``webhooks.manage``, so deny instead of
         granting every authenticated user manage rights over every
         server/channel.
+
+        ``webhooks.manage`` is a SERVER-scoped permission: creating,
+        updating, deleting and moving webhooks (and rotating their tokens)
+        are server-level configuration writes. ``channel_id`` is accepted
+        for call-site compatibility but is deliberately NOT passed to the
+        permission check -- applying per-channel overrides here would let a
+        member granted ``webhooks.manage`` in a single channel escalate to
+        destructive, server-scoped webhook writes. Resolve it at server
+        scope so only a genuine server-wide grant (or owner/administrator)
+        authorizes webhook management.
         """
         if not self._servers:
             logger.error(
@@ -32,6 +42,5 @@ class PermissionMixin(WebhookManagerTrait):
                 "is not wired into the webhooks manager. Denying request."
             )
             return False
-        return self._servers.has_permission(
-            user_id, server_id, "webhooks.manage", channel_id
-        )
+        # channels.manage-style scope fix: do not pass ``channel_id`` here.
+        return self._servers.has_permission(user_id, server_id, "webhooks.manage")
