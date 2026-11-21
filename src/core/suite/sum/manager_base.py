@@ -101,7 +101,16 @@ class SumManagerBase(SumManagerProtocol):
                 (int(workbook["id"]), int(time.time() * 1000)),
             )
             for row in rows:
-                ids[int(row["subject_id"])] = None
+                # SECURITY: only a genuine integer id from the authoritative
+                # sum_grants.subject_id row may attest a grant subject. int()
+                # laundering of a malformed value ("07"->7, 7.9->7, " 8 "->8,
+                # True->1) would admit the wrong principal to the authorized
+                # viewer audience (WORKBOOK_UPDATE realtime fan-out) even
+                # though no valid grant was ever made to them. type() also
+                # rejects bool. Legitimate genuine-int grants are preserved.
+                subject_id = row["subject_id"]
+                if type(subject_id) is int:
+                    ids[subject_id] = None
         except Exception:
             import utils.logger as logger
 
@@ -353,9 +362,7 @@ class SumManagerBase(SumManagerProtocol):
     ) -> bool:
         return permission in self._grant_permissions(workbook_id, user_id)
 
-    def _require_workbook_owner(
-        self, workbook: Dict[str, Any], user_id: int
-    ) -> None:
+    def _require_workbook_owner(self, workbook: Dict[str, Any], user_id: int) -> None:
         """Require owner-level authority for destructive/lifecycle changes.
 
         ``_authorize(..., mutation=True)`` deliberately lets any ``edit``
