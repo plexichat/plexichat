@@ -1,5 +1,7 @@
 """Sum manager mixin: construction, audit, authorization, presence (split from manager.py)."""
 
+# lifecycle-authority guard marker
+
 import json
 import os
 import re
@@ -352,6 +354,51 @@ class SumManagerBase(SumManagerProtocol):
         self, workbook_id: int, user_id: int, permission: str = "view"
     ) -> bool:
         return permission in self._grant_permissions(workbook_id, user_id)
+
+    def _require_workbook_owner(
+        self, workbook: Dict[str, Any], user_id: int
+    ) -> None:
+        """Require owner-level authority for destructive/lifecycle changes.
+
+        ``_authorize(..., mutation=True)`` deliberately lets any ``edit``
+        grantee mutate cells, but lifecycle transitions (delete/restore) and
+        ACL changes are more powerful than cell editing: a workbook only has
+        ``view``/``edit`` grants, so an editor must never be able to delete or
+        resurrect a workbook they do not own.  Only the owner -- or a server
+        manager for a server-scoped workbook -- may perform these acts, and a
+        missing/failing server module fails closed.
+        """
+        uid = int(user_id)
+        if int(workbook["owner_id"]) == uid:
+            return
+        server_id = workbook.get("server_id")
+        if workbook.get("scope") == "server" and server_id is not None:
+            try:
+                if self._servers and self._servers.has_permission(
+                    uid, int(server_id), "server.manage"
+                ):
+                    return
+            except Exception:
+                pass
+        raise SumPermissionError("Not authorized to manage this workbook")
+
+    def _require_workbook_owner(
+        self, workbook: Dict[str, Any], user_id: int
+    ) -> None:
+        """Require owner-level authority for destructive/lifecycle changes."""
+        uid = int(user_id)
+        if int(workbook["owner_id"]) == uid:
+            return
+        server_id = workbook.get("server_id")
+        if workbook.get("scope") == "server" and server_id is not None:
+            try:
+                if self._servers and self._servers.has_permission(
+                    uid, int(server_id), "server.manage"
+                ):
+                    return
+            except Exception:
+                pass
+        raise SumPermissionError("Not authorized to manage this workbook")
 
     def _authorize(
         self, workbook: Dict[str, Any], user_id: int, mutation: bool = False

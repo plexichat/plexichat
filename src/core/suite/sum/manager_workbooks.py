@@ -462,6 +462,7 @@ class SumManagerWorkbooks(SumManagerProtocol):
 
     def delete_workbook(self, user_id: int, workbook_id: int) -> None:
         workbook = self._workbook(user_id, workbook_id, mutation=True)
+        self._require_workbook_owner(workbook, user_id)
         if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
             self._db, "in_transaction", False
         ):
@@ -530,6 +531,7 @@ class SumManagerWorkbooks(SumManagerProtocol):
         if not row:
             raise SumNotFoundError("Deleted workbook not found")
         self._authorize(row, user_id, mutation=True)
+        self._require_workbook_owner(row, user_id)
         if getattr(self._db, "transaction_depth", 0) > 0 or getattr(
             self._db, "in_transaction", False
         ):

@@ -8,7 +8,6 @@ from .manager_protocol import SumManagerProtocol
 from ._shared import (
     MAX_PURGE_BACKUP_BYTES,
     SumNotFoundError,
-    SumPermissionError,
     SumStorageError,
     SumValidationError,
     _WORKBOOK_FILE_CACHE,
@@ -27,19 +26,8 @@ class SumManagerAdmin(SumManagerProtocol):
         workbook -- may manage grants, mirroring the explicit ``share``
         permission PlexiStash requires for the same operation.
         """
-        uid = int(user_id)
-        if int(workbook["owner_id"]) == uid:
-            return
-        server_id = workbook.get("server_id")
-        if workbook.get("scope") == "server" and server_id is not None:
-            try:
-                if self._servers and self._servers.has_permission(
-                    uid, int(server_id), "server.manage"
-                ):
-                    return
-            except Exception:
-                pass
-        raise SumPermissionError("Not authorized to manage workbook sharing")
+        # Lifecycle and ACL changes share one owner-level authority gate.
+        self._require_workbook_owner(workbook, user_id)
 
     def grant_workbook(
         self,
