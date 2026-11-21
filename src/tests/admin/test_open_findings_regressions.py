@@ -111,14 +111,16 @@ def test_admin_login_otp_claim_is_conditional(monkeypatch):
         rowcount = 0  # another request already consumed this code
 
     db = MagicMock()
+    # verify_otp now reads the secret and the reuse guard in one query.
     db.fetch_one.side_effect = [
         {
             "totp_secret": "SECRET",
             "totp_secret_encrypted": None,
             "backup_codes": None,
             "backup_codes_hash": None,
+            "otp_last_used_code": "000000",
+            "otp_last_used_at": 1,
         },
-        {"otp_last_used_code": "000000", "otp_last_used_at": 1},
     ]
     db.execute.return_value = _LostClaimCursor()
 

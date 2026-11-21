@@ -89,8 +89,15 @@ class OTPMixin(SessionMixin, PasswordMixin):
         _consume_otp_challenge(challenge_token)
 
         db = self._db
+        # Read the whole admin_users row in one round trip: the TOTP secret and
+        # the last-used-code reuse guard live on the same row we already pay to
+        # read. Two separate SELECTs per verification were pure overhead on the
+        # admin login hot path. The single-use guarantee below is an atomic
+        # conditional UPDATE keyed on the presented code -- not on anything
+        # read here -- so fetching both columns in one snapshot cannot weaken it.
         row = db.fetch_one(
-            "SELECT totp_secret, totp_secret_encrypted FROM admin_users WHERE id = ?",
+            "SELECT totp_secret, totp_secret_encrypted, otp_last_used_code "
+            "FROM admin_users WHERE id = ?",
             (admin_id,),
         )
         if not row:
@@ -101,6 +108,11 @@ class OTPMixin(SessionMixin, PasswordMixin):
             else (row[1] if len(row) > 1 else None)
         )
         plaintext_secret = row.get("totp_secret") if isinstance(row, dict) else row[0]
+        last_code = (
+            row.get("otp_last_used_code")
+            if isinstance(row, dict)
+            else (row[2] if len(row) > 2 else None)
+        )
         secret = None
         if encrypted_secret:
             try:
@@ -117,20 +129,10 @@ class OTPMixin(SessionMixin, PasswordMixin):
         if not secret:
             return AdminLoginResult(success=False, error="OTP not configured")
 
-        last_row = db.fetch_one(
-            "SELECT otp_last_used_code, otp_last_used_at FROM admin_users WHERE id = ?",
-            (admin_id,),
-        )
-        if last_row:
-            last_code = (
-                last_row.get("otp_last_used_code")
-                if isinstance(last_row, dict)
-                else last_row[0]
+        if _same_otp_code(last_code, code):
+            return AdminLoginResult(
+                success=False, error="Code already used — wait for next code"
             )
-            if _same_otp_code(last_code, code):
-                return AdminLoginResult(
-                    success=False, error="Code already used — wait for next code"
-                )
 
         if not pyotp.TOTP(secret).verify(code, valid_window=1):
             return AdminLoginResult(success=False, error="Invalid OTP code")
@@ -194,8 +196,13 @@ class OTPMixin(SessionMixin, PasswordMixin):
         _consume_otp_challenge(challenge_token)
 
         db = self._db
+        # One round trip for the whole admin_users row (see verify_otp_setup).
+        # The secret, backup codes and the reuse guard are all columns of the
+        # same row; the atomic CAS below is the single-use authority.
         row = db.fetch_one(
-            "SELECT totp_secret, totp_secret_encrypted, backup_codes, backup_codes_hash FROM admin_users WHERE id = ?",
+            "SELECT totp_secret, totp_secret_encrypted, backup_codes, "
+            "backup_codes_hash, otp_last_used_code "
+            "FROM admin_users WHERE id = ?",
             (admin_id,),
         )
         if not row:
@@ -205,11 +212,13 @@ class OTPMixin(SessionMixin, PasswordMixin):
             plaintext_secret = row.get("totp_secret")
             backup_codes_plaintext = row.get("backup_codes")
             backup_codes_hashed = row.get("backup_codes_hash")
+            last_code = row.get("otp_last_used_code")
         else:
             encrypted_secret = row[1] if len(row) > 1 else None
             plaintext_secret = row[0]
             backup_codes_plaintext = row[2] if len(row) > 2 else None
             backup_codes_hashed = row[3] if len(row) > 3 else None
+            last_code = row[4] if len(row) > 4 else None
 
         secret = None
         if encrypted_secret:
@@ -227,20 +236,10 @@ class OTPMixin(SessionMixin, PasswordMixin):
         if not secret:
             return AdminLoginResult(success=False, error="OTP not configured")
 
-        last_row = db.fetch_one(
-            "SELECT otp_last_used_code, otp_last_used_at FROM admin_users WHERE id = ?",
-            (admin_id,),
-        )
-        if last_row:
-            last_code = (
-                last_row.get("otp_last_used_code")
-                if isinstance(last_row, dict)
-                else last_row[0]
+        if _same_otp_code(last_code, code):
+            return AdminLoginResult(
+                success=False, error="Code already used — wait for next code"
             )
-            if _same_otp_code(last_code, code):
-                return AdminLoginResult(
-                    success=False, error="Code already used — wait for next code"
-                )
 
         if pyotp.TOTP(secret).verify(code, valid_window=1):
             # Single-use claim: the pre-check above is racy (two concurrent

@@ -25,13 +25,16 @@ def _db_with_last_code(last_code):
     db.execute.return_value.rowcount = 1
 
     def fetch_one(sql, params=None):
-        if "otp_last_used_code" in sql:
-            return {"otp_last_used_code": last_code, "otp_last_used_at": 1}
+        # verify_otp/verify_otp_setup read the whole admin_users row in
+        # one query; the fake must carry the secret, backup codes and
+        # the reuse guard together on that single row.
         return {
             "totp_secret": "SECRET",
             "totp_secret_encrypted": None,
             "backup_codes": None,
             "backup_codes_hash": None,
+            "otp_last_used_code": last_code,
+            "otp_last_used_at": 1,
         }
 
     db.fetch_one.side_effect = fetch_one
