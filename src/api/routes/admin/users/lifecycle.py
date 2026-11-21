@@ -199,6 +199,8 @@ class LifecycleMixin(AdminUsersRouterProtocol):
                 logger.debug(f"admin user lifecycle alert failed: {alert_error}")
 
             return SuccessResponse(success=True, message="Account purged successfully")
+        except HTTPException:
+            raise
         except ValueError:
             raise HTTPException(
                 status_code=400,
