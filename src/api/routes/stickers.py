@@ -628,6 +628,13 @@ async def send_sticker_usage(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Record sticker usage."""
+    # A bot token's ``user_id`` is its human owner. Without this gate a leaked
+    # bot credential would be charged to the owner's
+    # ``user:<owner>:route:POST /stickers/send`` bucket below (and would track
+    # usage as the owner), draining their quota and evading the bot's own —
+    # before any permission gate can reject. Match create_sticker and every
+    # other owner-scoped rate-limited route: reject bots before the spend.
+    require_user_token(current_user)
     stickers_mod = api.get_stickers()
     if not stickers_mod:
         raise HTTPException(status_code=500, detail="Stickers module not available")
