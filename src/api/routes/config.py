@@ -56,13 +56,22 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
         avatar_cfg = config.get("avatars", {})
         auth_cfg = config.get("authentication", {}) or {}
         oauth_cfg = config.get("oauth", {}) or {}
-        access_required = False
+        # Fail CLOSED on the security-relevant capability flag. The auth
+        # manager itself returns True when it cannot read its config or query
+        # its token table, so an error here must never advertise a weaker
+        # posture than the server actually enforces. A client that believes
+        # tokens are optional on a token-required server cannot obtain a
+        # usable session. Do not memoize the degraded answer: the next poll
+        # must retry the authoritative check once the dependency recovers.
+        access_required = True
+        access_required_degraded = False
         try:
             from src.core import auth
 
-            access_required = auth.is_api_access_token_required()
-        except Exception:
-            access_required = False
+            access_required = bool(auth.is_api_access_token_required())
+        except Exception as exc:
+            access_required_degraded = True
+            logger.error(f"Failed to resolve access-token requirement: {exc}")
 
         try:
             server_version = version_util.current_string()
@@ -108,7 +117,10 @@ async def get_capabilities() -> ServerCapabilitiesResponse:
             oauth_providers=oauth_providers,
             age_gate_mode=age_gate_mode,
         )
-        _snapshot_cache = (now, snapshot)
+        if not access_required_degraded:
+            if not access_required_degraded:
+            if not access_required_degraded:
+            _snapshot_cache = (now, snapshot)
         return snapshot
     except Exception as e:
         logger.error(f"Failed to fetch server capabilities: {e}", exc_info=True)
