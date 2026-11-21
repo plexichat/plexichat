@@ -227,6 +227,16 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
         ):
             raise MessageNotFoundError("Message not found")
 
+        # Participation is granted to every member of a server, independent of
+        # the per-channel ``channels.view`` grant. The edit route gates the URL
+        # channel id, but message routes also accept the backing conversation
+        # id as an alias, and internal/service callers bypass the route gate
+        # entirely. Re-check the live view grant on the channel backing this
+        # message's conversation so a view-denied member cannot edit through
+        # the alias. Reuse the same fail-closed helper as bulk delete.
+        if not _can_view_conversation_messages(user_id, msg_row["conversation_id"]):
+            raise MessageNotFoundError("Message not found")
+
         if msg_row["author_id"] != user_id:
             raise MessageAccessDeniedError("Can only edit own messages")
 
