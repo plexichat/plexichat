@@ -1,3 +1,4 @@
+import copy
 import json
 from typing import Optional, List, Dict, Any
 
@@ -332,11 +333,24 @@ class ProfileMixin(AuthManagerProtocol):
         return self.get_user(row["id"])
 
     @staticmethod
-    def _profile_from_cache(value: Any) -> Optional[Dict[str, Any]]:
+    def _profile_snapshot(profile: Dict[str, Any]) -> Dict[str, Any]:
+        """Return an independent copy of a cached profile, nested values included.
+
+        ``badges`` and ``permissions`` are mutable (list/dict) fields. A shallow
+        copy would still let a caller that appends a badge or edits a permission
+        mutate the object held by the cache, so copy recursively.
+        """
+        return copy.deepcopy(profile)
+
+    @classmethod
+    def _profile_from_cache(cls, value: Any) -> Optional[Dict[str, Any]]:
         """Return a usable cached profile dict, or ``None`` (a miss).
 
         A corrupt entry (unparsable JSON string, wrong shape) is discarded and
-        rebuilt from the database, exactly as on the old per-id path.
+        rebuilt from the database, exactly as on the old per-id path. The dict
+        is copied on the way out so every caller gets its own instance: a
+        mutation (top-level or of nested ``badges``/``permissions``) cannot
+        poison the cached profile seen by later readers.
         """
         if not value:
             return None
@@ -347,7 +361,7 @@ class ProfileMixin(AuthManagerProtocol):
                 logger.debug(f"discarding unparsable cached profile: {exc}")
                 return None
         if isinstance(value, dict) and "created_at" in value:
-            return value
+            return cls._profile_snapshot(value)
         return None
 
     def get_user_profiles_bulk(self, user_ids: List[int]) -> Dict[str, Any]:
@@ -412,7 +426,14 @@ class ProfileMixin(AuthManagerProtocol):
                     result[str(uid)] = usable
                     # Seed the bounded L1 under the same key as the shared cache
                     # so the next listing resolves this id without any lookup.
-                    mem_cache_set(cache_key, usable, PROFILE_BULK_L1_TTL_SECONDS)
+                    # Store a snapshot, not ``usable`` itself: ``usable`` is
+                    # returned to the caller below, and mutating it must not
+                    # reach into the cached entry through the shared object.
+                    mem_cache_set(
+                        cache_key,
+                        self._profile_snapshot(usable),
+                        PROFILE_BULK_L1_TTL_SECONDS,
+                    )
                 else:
                     missing_ids.append(uid)
 
@@ -455,10 +476,17 @@ class ProfileMixin(AuthManagerProtocol):
                 cache_key = f"user_profile:{user_id}"
                 # Seed the bounded L1 under the same key as the shared cache so
                 # the next listing resolves this username without a Valkey GET
-                # or a database query.
-                mem_cache_set(cache_key, profile, PROFILE_BULK_L1_TTL_SECONDS)
+                # or a database query. Store snapshots: ``profile`` is also
+                # returned to the caller, and a caller appending a badge or
+                # editing permissions must not corrupt the cached profile used
+                # by every later listing.
+                mem_cache_set(
+                    cache_key,
+                    self._profile_snapshot(profile),
+                    PROFILE_BULK_L1_TTL_SECONDS,
+                )
                 if use_valkey:
-                    cache_set(cache_key, profile, ttl=300)
+                    cache_set(cache_key, self._profile_snapshot(profile), ttl=300)
 
         return result
 
