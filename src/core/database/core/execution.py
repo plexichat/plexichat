@@ -26,14 +26,20 @@ _DDL_STATEMENT_PREFIXES = ("CREATE", "ALTER")
 # the code segments so string-literal data is never rewritten.
 _SQL_LITERAL_SPLIT_RE = re.compile(r"('(?:[^']|'')*')")
 
-# Quoted literals, quoted identifiers and comments cannot carry a real
-# statement separator. Blank them before counting ``;`` so a semicolon inside
-# e.g. ``'a; b'`` does not look like a second statement. Anything this pattern
-# fails to neutralise (dollar quotes, nested block comments, ...) can only add a
+# Quoted literals, quoted identifiers, dollar-quoted bodies and comments cannot
+# carry a real statement separator. Blank them before counting ``;`` so a
+# semicolon inside e.g. ``'a; b'`` does not look like a second statement.
+# Dollar-quoted bodies (``$$...$$`` / ``$tag$...$tag$``) MUST be blanked as a
+# unit too: left un-neutralised, a lone quote inside one pairs with a quote
+# outside it and swallows a genuine separator (e.g. ``$$'$$; UPDATE ...;
+# $$'$$``), making a stacked write look like a single read. Anything else this
+# pattern fails to neutralise (nested block comments, ...) can only add a
 # spurious separator -- i.e. over-invalidate the short-lived cache -- which is
 # safe. Missing a real separator is not: see ``_has_multiple_statements``.
 _SQL_NON_CODE_RE = re.compile(
-    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|#[^\n]*|/\*.*?\*/",
+    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\""
+    r"|\$\$.*?\$\$|\$(?P<dollar_tag>[A-Za-z_][A-Za-z_0-9]*)\$.*?\$(?P=dollar_tag)\$"
+    r"|--[^\n]*|#[^\n]*|/\*.*?\*/",
     re.DOTALL,
 )
 
