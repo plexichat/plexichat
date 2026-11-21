@@ -88,9 +88,7 @@ def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
         raise _channel_not_found()
 
 
-def _require_message_channel_view(
-    message, cid: int, user_id: int, servers_mod
-) -> None:
+def _require_message_channel_view(message, cid: int, user_id: int, servers_mod) -> None:
     """Deny when the *target message's* server channel cannot be viewed.
 
     ``_require_channel_view`` gates only the URL id, but that id is
