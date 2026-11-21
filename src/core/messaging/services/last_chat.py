@@ -272,7 +272,17 @@ class LastChatService:
             servers = api.get_servers()
         except Exception:
             return False
-        if servers is None or getattr(servers, "_setup_complete", True) is False:
+        if servers is None:
+            # The backing-channel lookup cannot be evaluated without the
+            # servers module. A private-channel alias can exist in the DB
+            # independently of that module, so skipping the gate here would
+            # leak a denied channel's unread count and last-message metadata.
+            # Deny instead (the unwired-dependency invariant in
+            # src/tests/api/test_unwired_dependency_fails_closed.py).
+            return False
+        if getattr(servers, "_setup_complete", True) is False:
+            # Present but uninitialized: no server-channel store exists in
+            # this runtime, so a DM/group is the only possible conversation.
             return True  # no server store: only DM/group conversations exist
 
         channel_id = None
