@@ -328,8 +328,7 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
     if callable(bulk_lookup):
         try:
             blocked_by_id = {
-                int(uid): values
-                for uid, values in bulk_lookup(participant_ids).items()
+                int(uid): values for uid, values in bulk_lookup(participant_ids).items()
             }
         except Exception as e:
             logger.debug(f"bulk blocked-id lookup failed for DM audience: {e}")
@@ -509,7 +508,15 @@ def resolve_channel_event_recipients(
                     recipients.append(uid)
             except Exception:
                 continue
-        return _final(recipients)
+        # The viewer walk above is permission-only: a blocked pair can share a
+        # server and both retain `channels.view`. These recipients are handed to
+        # `dispatch` as an explicit `user_ids` list, so the EventRouter's DM
+        # block gate never sees them. Apply the same two-way gate used by the
+        # DM/private-thread branches here too: a viewer who blocked the actor,
+        # or whom the actor blocked, must not receive the actor's ephemeral
+        # channel event. The helper fails closed when the block set cannot be
+        # resolved. (REST typing/read receipts enforce this at their own layer.)
+        return _final(_dm_participants_without_blocks(recipients, actor_id))
 
     # 3. DM / group conversation participants.
     if messaging is not None:
