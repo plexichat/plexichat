@@ -228,3 +228,91 @@ def test_self_test_bot_owner_fallback_mutation_is_caught(monkeypatch):
     broken_uid, _ = normalise_principal(broken, REAL_CLIENT)
     assert broken_uid == OWNER_ID  # the regression guard test 4 rejects
     assert resolve_credential_principal(credential) is None  # correct behaviour
+
+
+# --- 6. CF-Connecting-IP precedence is part of the trust boundary -----------
+
+
+def test_cf_connecting_ip_authoritative_when_xff_all_trusted_hops(monkeypatch):
+    """CF-Connecting-IP is the client when XFF carried only trusted proxy hops.
+
+    With no untrusted XFF hop to key on, the resolver must fall through to the
+    proxy-set CF-Connecting-IP rather than collapse the bucket onto the proxy's
+    own address. A regression that ignored CF entirely would return the peer
+    and fail here.
+    """
+    _fake_config(monkeypatch, ["10.0.0.0/8"])
+    scope = _scope(
+        TRUSTED_PROXY,
+        [
+            (b"x-forwarded-for", b"10.0.0.9"),
+            (b"cf-connecting-ip", REAL_CLIENT.encode()),
+        ],
+    )
+
+    raw = get_client_ip(scope)
+    assert raw == REAL_CLIENT
+    assert _key(raw) == REAL_CLIENT
+
+
+def test_xff_real_client_wins_over_cf_connecting_ip(monkeypatch):
+    """An XFF-derived real client outranks CF-Connecting-IP.
+
+    If a future edit let CF-Connecting-IP always win, an injected CF header
+    could pick its own bucket even though XFF identified the real client.
+    """
+    _fake_config(monkeypatch, ["10.0.0.0/8"])
+    scope = _scope(
+        TRUSTED_PROXY,
+        [
+            (b"x-forwarded-for", REAL_CLIENT.encode()),
+            (b"cf-connecting-ip", ATTACKER.encode()),
+        ],
+    )
+
+    raw = get_client_ip(scope)
+    assert raw == REAL_CLIENT
+    assert raw != ATTACKER
+
+
+def test_duplicate_cf_connecting_ip_last_value_wins(monkeypatch):
+    """Only the proxy-appended (last) CF-Connecting-IP value is authoritative.
+
+    ASGI allows duplicate headers; honouring an earlier, client-supplied value
+    would let the attacker spoof the client IP the same way XFF duplication
+    was closed. A 'first value wins' regression fails here.
+    """
+    _fake_config(monkeypatch, ["10.0.0.0/8"])
+    scope = _scope(
+        TRUSTED_PROXY,
+        [
+            (b"x-forwarded-for", b"10.0.0.9"),
+            (b"cf-connecting-ip", ATTACKER.encode()),
+            (b"cf-connecting-ip", REAL_CLIENT.encode()),
+        ],
+    )
+
+    raw = get_client_ip(scope)
+    assert raw == REAL_CLIENT
+    assert raw != ATTACKER
+
+
+def test_forwarded_and_x_forwarded_port_headers_cannot_change_key(monkeypatch):
+    """Non-XFF/CF forwarding hints are ignored by the authoritative resolver.
+
+    ``Forwarded`` and ``X-Forwarded-Port`` are not trusted inputs; if a future
+    edit started honouring them the caller could pick its own bucket.
+    """
+    _fake_config(monkeypatch, ["10.0.0.0/8"])
+    scope = _scope(
+        TRUSTED_PROXY,
+        [
+            (b"forwarded", f"for={ATTACKER}".encode()),
+            (b"x-forwarded-port", b"9999"),
+            (b"x-forwarded-for", REAL_CLIENT.encode()),
+        ],
+    )
+
+    raw = get_client_ip(scope)
+    assert raw == REAL_CLIENT
+    assert raw != ATTACKER
