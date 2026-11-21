@@ -70,6 +70,11 @@ class _Manager(VotingMixin):
 
     def __init__(self, db):
         self._db = db
+        # A DM-shaped message has no conversation channel, so the
+        # messages.send gate on poll writes needs no extra grant here.
+        self._messaging = SimpleNamespace(
+            get_message=lambda uid, mid: SimpleNamespace(id=mid)
+        )
         self._generated = 0
         self.emitted = []
         self.invalidated = []
