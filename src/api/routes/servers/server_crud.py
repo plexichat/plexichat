@@ -23,6 +23,56 @@ from .helpers import _server_to_response
 
 router = APIRouter()
 
+#: Short, per-credential cache for the single-server detail response. It holds
+#: data only -- the live membership gate runs in the route handler *before* this
+#: cached loader is entered (see ``get_server`` / ``_require_server_member``).
+_SERVER_DETAIL_CACHE_PREFIX = "server_detail_api"
+
+
+def _require_server_member(sid: int, user_id: int) -> None:
+    """Fail-closed membership gate re-run on every request before the cache read.
+
+    ``_load_server_detail`` retrieves the server through ``get_server``, whose
+    *cold* path enforces membership, but a warm cache hit returns from the
+    ``@cached`` wrapper before that body executes. Core revocations (kick/ban/
+    leave driven by automod, an admin path or a bot) clear the core membership
+    caches but not this HTTP response namespace, so a removed member would
+    otherwise keep reading a still-warm 200 with full server details for the
+    whole TTL. Run an unconditional, fail-closed gate ahead of the cache so
+    revocation is visible immediately no matter which path performed it.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Servers module not available"}},
+        )
+    try:
+        member = servers_mod.get_member(sid, user_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Membership check failed for server detail read of server %s: %s",
+            sid,
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": "Failed to verify server membership",
+                }
+            },
+        ) from exc
+    if not member:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Not a member of this server"}},
+        )
+
 
 @router.get(
     "/",
@@ -122,6 +172,63 @@ async def create_server(
         )
 
 
+async def _require_server_access(
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> None:
+    """Live membership gate for the cached single-server GET.
+
+    ``get_server`` used to enforce membership *inside* its ``@cached`` body via
+    ``servers_mod.get_server(sid, user_id)``. On a warm hit that body never runs,
+    so a member removed by a path with no API-layer eviction (this namespace has
+    no invalidator at all) kept reading the full server response for the whole
+    cache TTL. FastAPI resolves dependencies before entering the endpoint -- and
+    therefore before the ``@cached`` wrapper reads the cache -- so enforcing the
+    check here keeps authorization on every request while the expensive fetch
+    stays memoized. Error mapping mirrors ``get_server`` so the HTTP contract is
+    unchanged; the membership probe failing closed is essential, or a cache hit
+    would still be served when the store is unavailable.
+    """
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+    try:
+        sid = parse_id(server_id, "server_id")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
+    try:
+        member = servers_mod.get_member(sid, current_user.user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to verify membership for server {server_id}: {e}", exc_info=True
+        )
+        # Fail closed: never let a warm body substitute for a denied/unknown gate.
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": "Failed to verify server membership",
+                }
+            },
+        )
+    if not member:
+        # Non-members got 404 from the cached body's ``get_server(...) is None``
+        # branch; keep that contract here.
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Server not found"}},
+        )
+
+
 @router.get(
     "/{server_id}",
     response_model=ServerResponse,
@@ -136,7 +243,9 @@ async def create_server(
 )
 @cached(ttl=60)
 async def get_server(
-    server_id: str, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+    _server_access_gate: None = Depends(_require_server_access),
 ) -> ServerResponse:
     servers_mod = api.get_servers()
     if not servers_mod:
