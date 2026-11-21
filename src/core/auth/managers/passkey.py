@@ -4,6 +4,7 @@ from ..models import AuditEventType
 from ..exceptions import UserNotFoundError, InvalidCredentialsError, AccountLockedError
 from ..models import AuthStatus, User, AccountType, AuthResult
 from ..permissions import permissions_from_json
+from src.core.database import invalidate_pattern
 
 
 from .protocol import AuthManagerProtocol
@@ -225,6 +226,19 @@ class PasskeyMixin(AuthManagerProtocol):
         result = self.passkeys.revoke_passkey(user_id, passkey_id)
 
         if result:
+            # A passkey is a first-factor credential: disabling it only blocks
+            # NEW logins. Sessions carry no credential-version binding, so a
+            # token minted from this key (a lost/stolen security key, or a
+            # passkey synced into a compromised account) would otherwise stay
+            # valid until natural expiry and defeat the user's remediation.
+            # Retire every session as part of the credential removal, exactly
+            # as password change/reset, email change and 2FA changes do.
+            self._db.execute(
+                "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
+            )
+            # A just-revoked session must not keep answering from a warm
+            # ``token_verify:*`` verdict for the length of the verify TTL.
+            invalidate_pattern("token_verify:*")
             self._log_audit(
                 AuditEventType.PASSKEY_REVOKED,
                 user_id,
