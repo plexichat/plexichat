@@ -36,8 +36,16 @@ from .base import WebhookManagerTrait
 WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
 
 # A captured (signature, timestamp) pair stays valid for up to the full
-# replay window after capture; recording it for twice that duration
-# guarantees the cache entry outlives any possible reuse of the pair.
+# replay window after capture. It can be FIRST accepted as early as
+# ``timestamp - window`` (a signer whose clock leads the verifier by the full
+# skew), yet the signature is still accepted at ``timestamp + window`` because
+# the skew check uses ``>`` and skew == window passes. The marker may therefore
+# be written a full window BEFORE the signature's timestamp, giving it a total
+# exposure of 2x the window from the moment it is stored. A TTL of exactly 2x
+# the window expires at that very last valid instant, so a replay landing on
+# the boundary finds an expired marker and is accepted twice. Keep an explicit
+# margin so the marker always strictly outlives the pair's remaining validity.
+_REPLAY_TTL_MARGIN_SECONDS = 60
 _REPLAY_CACHE_TTL_SECONDS = WEBHOOK_REPLAY_WINDOW_SECONDS * 2
 
 # An Ed25519 signature is exactly 64 bytes. Checking the length in constant
