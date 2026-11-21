@@ -8,7 +8,11 @@ from fastapi import Request, HTTPException
 
 from src.api.schemas.admin import ForceUsernameChangeRequest
 from src.api.schemas.common import SuccessResponse
-from ..utils import check_host_restriction, require_admin_permission
+from ..utils import (
+    check_host_restriction,
+    require_admin_permission,
+    require_approved_request,
+)
 from .admin_users import (
     _assert_hierarchy_at_write,
     _can_manage_admin_at,
@@ -181,6 +185,17 @@ class LifecycleMixin(AdminUsersRouterProtocol):
                 )
             if hierarchy["target_exists"]:
                 _assert_hierarchy_at_write(db, int(admin_id), uid)
+
+            # ``users.force_purge`` is a canonical approval-required action
+            # (see APPROVAL_REQUIRED_ACTIONS and docs/admin/user-management.md):
+            # in a multi-admin deployment a single admin must not be able to
+            # irreversibly erase an account -- especially a privileged one --
+            # without the documented second-admin approval. Every other
+            # approval-required destructive route enforces this gate; the
+            # force-purge route was the lone exception. Place it after the
+            # hierarchy checks so a blocked upward/self purge cannot consume
+            # a valid approval, but before any erasure side effect.
+            require_approved_request("users.force_purge")
 
             auth.force_purge_account(uid, admin_id=int(admin_id))
             logger.warning(f"Admin {admin_id} force-purged user {uid}")
