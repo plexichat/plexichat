@@ -9,6 +9,65 @@ from ..models import Poll, PollOption, PollResultsVisibility
 from .base import PollManagerBase
 
 
+def _get_servers_module():
+    """Resolve the servers module lazily (kept separate so it is patchable)."""
+    import src.api as api
+
+    return api.get_servers()
+
+
+def _can_view_poll_message(
+    messaging, message_id: SnowflakeID, user_id: SnowflakeID
+) -> bool:
+    """Single live authz gate for a poll's backing message.
+
+    ``messaging.get_message`` proves only conversation *participation*. For a
+    server channel that is granted to every member of the server regardless of
+    the per-channel ``channels.view`` permission. A poll read exposes the
+    question, options and (through the results path) the vote counts of that
+    message, so a member denied view on a private channel must not be able to
+    read its poll. Resolve the channel backing the message's conversation and
+    require a live view grant on it. A conversation with no backing channel is
+    a genuine DM/group and needs no further gate. Fails closed: any lookup that
+    cannot be resolved denies the read.
+    """
+    msg = messaging.get_message(user_id, message_id)
+    if not msg:
+        return False
+
+    if isinstance(msg, dict):
+        conversation_id = msg.get("conversation_id")
+    else:
+        conversation_id = getattr(msg, "conversation_id", None)
+    # No conversation id means a DM/group (or a minimal test double); the
+    # participation check above is the only boundary that exists there.
+    if not conversation_id:
+        return True
+
+    servers = _get_servers_module()
+    if servers is None:
+        return True  # no servers store => conversation can only be a DM/group
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(lookup):
+        return False
+    try:
+        info = lookup(conversation_id)
+    except Exception:
+        return False
+    if info is None:
+        return True  # DM/group conversation: participation already gated it
+    channel_id = info.get("id") if isinstance(info, dict) else None
+    if channel_id is None:
+        return False
+    get_channel = getattr(servers, "get_channel", None)
+    if not callable(get_channel):
+        return False
+    try:
+        return get_channel(int(channel_id), user_id) is not None
+    except Exception:
+        return False
+
+
 class ReadingMixin(PollManagerBase):
     """Read polls and decide what a viewer is allowed to see."""
 
@@ -16,11 +75,12 @@ class ReadingMixin(PollManagerBase):
         """Cheap, live authorization gate for poll reads.
 
         Fetches only the poll's message id and re-checks the caller's channel
-        access through the messaging layer. Unlike :meth:`get_poll` it does
-        not hydrate options or reconcile vote totals, so callers can run it on
-        *every* request -- before any response-cache lookup -- without paying
-        for the expensive part of a poll read. A missing poll or a viewer
-        without message access returns ``False`` (existence is concealed).
+        access through the messaging layer (participation *and* a live
+        channels.view grant for server channels). Unlike :meth:`get_poll` it
+        does not hydrate options or reconcile vote totals, so callers can run
+        it on *every* request -- before any response-cache lookup -- without
+        paying for the expensive part of a poll read. A missing poll or a
+        viewer without message access returns ``False`` (existence concealed).
         """
         row = self._db.fetch_one(
             "SELECT message_id FROM poll_polls WHERE id = ?", (poll_id,)
@@ -28,7 +88,7 @@ class ReadingMixin(PollManagerBase):
         if not row:
             return False
         messaging = self._require_messaging()
-        return bool(messaging.get_message(user_id, row["message_id"]))
+        return _can_view_poll_message(messaging, row["message_id"], user_id)
 
     def get_poll(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Poll]:
         """Get a poll by ID."""
@@ -40,10 +100,11 @@ class ReadingMixin(PollManagerBase):
         # Verify access to the message (fail closed: without the messaging
         # module there is no way to enforce channel membership). This gate
         # runs on EVERY call, before the cache lookup, so a viewer who lost
-        # channel access cannot be served a still-warm body.
+        # channel access cannot be served a still-warm body. Participation is
+        # not enough for server channels -- the shared gate also requires a
+        # live channels.view grant before any option/vote data is hydrated.
         messaging = self._require_messaging()
-        msg = messaging.get_message(user_id, row["message_id"])
-        if not msg:
+        if not _can_view_poll_message(messaging, row["message_id"], user_id):
             return None
 
         cache = getattr(self, "_poll_read_cache", None)
