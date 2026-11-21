@@ -355,6 +355,18 @@ _DYNAMIC_MESSAGE_PATTERNS = (
     re.compile(r"""['"]message['"]\s*:\s*[^\n,]*\+\s*\w+"""),  # concatenation
     re.compile(r"""\bdetail\s*=\s*f['"]"""),  # interpolated string detail
     re.compile(r"""\bdetail\s*=\s*str\s*\("""),  # str(...) detail
+    # A plain-string ``detail`` is the other common way these modules build a
+    # client body (e.g. helpers.py: `detail="PlexiStash operation failed"` and
+    # grants.py: `detail="Media storage is unavailable"`). The two patterns
+    # above only see f-strings / str(), so a reason-derived refusal built with
+    # .format(), concatenation or old-style %-interpolation on ``detail``
+    # escaped the whole-module scan. Mirror the ``message``-value patterns on
+    # ``detail`` so any error-response path in the scanned modules is covered.
+    re.compile(
+        r"""\bdetail\s*=\s*['"][^'"]*['"]\s*\.format\s*\("""
+    ),  # "{}".format(reason)
+    re.compile(r"""\bdetail\s*=\s*['"][^'"]*['"]\s*\+"""),  # "x " + reason
+    re.compile(r"""\bdetail\s*=\s*['"][^'"]*%[^'"]*['"]\s*%"""),  # "%s" % reason
 )
 
 
@@ -437,8 +449,9 @@ def test_reason_derived_message_detector_is_not_vacuous():
     """Self-test: run the *actual* detector against reason-derived sources.
 
     This proves the guard would flag a reason-derived refusal in every form it
-    claims to cover -- including single quotes, ``.format()``, concatenation, a
-    string ``detail``, and a brand-new endpoint not in _ENDPOINT_SOURCES.
+    claims to cover -- including single quotes, ``.format()``, concatenation,
+    a plain-string ``detail`` built via f-string / str() / .format() / ``+`` /
+    ``%``, and a brand-new endpoint not in _ENDPOINT_SOURCES.
     """
     reason_derived = (
         'detail={"error": {"code": 404, "message": str(exc)}}',
@@ -447,6 +460,13 @@ def test_reason_derived_message_detector_is_not_vacuous():
         'detail={"error": {"code": 400, "message": "bad " + reason}}',
         'raise HTTPException(status_code=404, detail=f"Ticket {reason}")',
         "raise HTTPException(status_code=403, detail=str(exc))",
+        # Plain-string ``detail`` built with the other dynamic forms. These
+        # are the gap this self-test closes: without the mirrored detail
+        # patterns above, each of these reason-derived refusals slipped past
+        # the whole-module scan even though it is a real client-visible body.
+        'raise HTTPException(status_code=404, detail="Ticket " + reason)',
+        'raise HTTPException(status_code=404, detail="Ticket {}".format(reason))',
+        'raise HTTPException(status_code=404, detail="Ticket %s" % reason)',
     )
     for sample in reason_derived:
         assert _reason_derived_message_lines(sample), (
