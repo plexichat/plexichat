@@ -516,6 +516,13 @@ class LifecycleMixin(AuthManagerProtocol):
                 False,
                 details={"reason": "refresh_token_replay"},
             )
+            # A replayed pre-rotation bearer means the credential leaked. The
+            # session row is revoked above, but a socket authenticated under it
+            # stays live server-side unless we close it too. Target only this
+            # auth session so the user's other valid sessions keep working.
+            close_session_gateway_connections(
+                row["user_id"], session_id, "Session revoked"
+            )
 
     def refresh_session(self, token: str) -> Optional[str]:
         parsed = parse_token(token)
