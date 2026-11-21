@@ -78,17 +78,79 @@ class Site:
         return f"Site({self.path}, {self.builder}, {self.data_source!r}, {self.kind})"
 
 
-def _callee_name(call: ast.Call) -> str:
+# Names the guard tracks, plus the local spellings that can resolve to them.
+_TRACKED_NAMES = ALL_BUILDERS | {SAFE_TRANSFORM}
+
+
+def _canonical_names(tree: ast.AST) -> dict[str, str]:
+    """Resolve local aliases of a builder/transform to its canonical name.
+
+    A producer that imports ``build_message_update as bmu`` or binds
+    ``bmu = build_message_update`` is still calling the very same fan-out
+    factory; identifying call sites by the bare name at the call would let
+    such a producer slip past the whole-tree lock. Module attribute access
+    (``events.build_message_update(...)``) already yields the canonical attr
+    name from :func:`_callee_name` and needs no mapping.
+
+    Resolution runs to a fixpoint so chained aliases (``import as bmu;
+    emit = bmu``) collapse to the canonical name too. Over-resolving a name
+    is safe here: it can only make the guard flag *more* sites, never fewer.
+    """
+    aliases: dict[str, str] = {}
+
+    def resolve(name: str) -> str:
+        seen: set[str] = set()
+        while name in aliases and name not in seen:
+            seen.add(name)
+            name = aliases[name]
+        return name
+
+    nodes = list(ast.walk(tree))
+    for _ in range(len(nodes) + 1):
+        changed = False
+        for node in nodes:
+            pairs: list[tuple[str, str]] = []
+            if isinstance(node, ast.ImportFrom):
+                pairs = [
+                    (alias.asname or alias.name, alias.name)
+                    for alias in node.names
+                    if alias.name in _TRACKED_NAMES
+                ]
+            elif isinstance(node, ast.Assign):
+                value = node.value
+                canonical = None
+                if isinstance(value, ast.Name):
+                    canonical = resolve(value.id)
+                elif isinstance(value, ast.Attribute):
+                    canonical = resolve(value.attr)
+                if canonical in _TRACKED_NAMES:
+                    pairs = [
+                        (target.id, canonical)
+                        for target in node.targets
+                        if isinstance(target, ast.Name)
+                    ]
+            for local, canonical in pairs:
+                if aliases.get(local) != canonical:
+                    aliases[local] = canonical
+                    changed = True
+        if not changed:
+            break
+    return aliases
+
+
+def _callee_name(call: ast.Call, aliases: dict[str, str]) -> str:
     func = call.func
     if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return ""
+        name = func.id
+    elif isinstance(func, ast.Attribute):
+        name = func.attr
+    else:
+        return ""
+    return aliases.get(name, name)
 
 
-def _is_safe_transform(expr: ast.AST) -> bool:
-    return isinstance(expr, ast.Call) and _callee_name(expr) == SAFE_TRANSFORM
+def _is_safe_transform(expr: ast.AST, aliases: dict[str, str]) -> bool:
+    return isinstance(expr, ast.Call) and _callee_name(expr, aliases) == SAFE_TRANSFORM
 
 
 def _is_model_dump(expr: ast.AST) -> bool:
@@ -113,11 +175,12 @@ def _data_arg(call: ast.Call, builder: str) -> ast.AST | None:
 def _scan_source(source: str, rel_path: str) -> list[Site]:
     """Classify every message-event-builder call in ``source``."""
     tree = ast.parse(source)
+    aliases = _canonical_names(tree)
     sites: list[Site] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        name = _callee_name(node)
+        name = _callee_name(node, aliases)
         if name not in ALL_BUILDERS:
             continue
 
@@ -142,7 +205,7 @@ def _scan_source(source: str, rel_path: str) -> list[Site]:
             sites.append(Site(rel_path, name, "<missing>", "missing_data"))
             continue
         source_text = " ".join(ast.unparse(data).split())
-        if _is_safe_transform(data):
+        if _is_safe_transform(data, aliases):
             kind = "fanout_safe"
         else:
             # A raw model_dump, a bare variable holding one, a dict literal,
@@ -238,6 +301,59 @@ def test_raw_model_dump_is_flagged():
     assert len(sites) == 1
     assert sites[0].kind == "unprotected"
     assert _offenders(sites), "a raw model_dump fan-out must be flagged"
+
+
+def test_aliased_builder_import_with_raw_dump_is_flagged():
+    """``import ... as`` on the factory must not hide a raw model_dump."""
+    source = "\n".join(
+        (
+            "from src.core.events import build_message_update as bmu",
+            "",
+            "def send(response):",
+            "    return bmu(response.model_dump(), channel_id=1)",
+        )
+    )
+    sites = _scan_source(source, "src/any.py")
+    assert len(sites) == 1
+    assert sites[0].builder == "build_message_update"
+    assert sites[0].kind == "unprotected"
+    assert _offenders(sites), "raw model_dump via aliased builder import was missed"
+
+
+def test_assignment_alias_of_builder_with_raw_dump_is_flagged():
+    """A plain assignment alias of the factory is still the factory."""
+    source = "\n".join(
+        (
+            "bmu = build_message_update",
+            "",
+            "def send(response):",
+            "    return bmu(response.model_dump(), channel_id=1)",
+        )
+    )
+    sites = _scan_source(source, "src/any.py")
+    assert len(sites) == 1
+    assert sites[0].builder == "build_message_update"
+    assert sites[0].kind == "unprotected"
+    assert _offenders(sites), "raw model_dump via assignment alias was missed"
+
+
+def test_aliased_safe_transform_is_recognized():
+    """A renamed safe transform must not create a false positive."""
+    source = "\n".join(
+        (
+            "from src.api.routes.messages.messages_crud.broadcast import (",
+            "    _fanout_safe_message_body as safe,",
+            ")",
+            "",
+            "def send(response):",
+            "    return build_message_update(safe(response), channel_id=1)",
+        )
+    )
+    sites = _scan_source(source, "src/any.py")
+    assert len(sites) == 1
+    assert sites[0].builder == "build_message_update"
+    assert sites[0].kind == "fanout_safe"
+    assert not _offenders(sites)
 
 
 def test_swapping_safe_transform_for_raw_dump_in_real_source_is_flagged():
