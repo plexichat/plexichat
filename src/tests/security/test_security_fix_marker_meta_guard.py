@@ -20,6 +20,17 @@ Scope is deliberately narrow -- only critical, stable fixes, not every helper:
 * the AST helpers (``_own_body_nodes`` / ``_canonical_names``) that keep the
   most important static sweeps from passing vacuously.
 
+A follow-up audit of the rest of the campaign added four more high-value,
+stable classes, each with its own downstream regression test:
+
+* fail-closed query-cache invalidation for CTE/comment/dollar-quote/stacked
+  writes (``_query_mutates_data``) so stale authz verdicts are never served,
+* the shared upper-bound clamp (``clamp_page_limit``) that keeps every dedup
+  listing's ``LIMIT`` bounded and fails closed to an empty page,
+* the SSRF/DNS-rebinding pin (``pinned_urlopen``) used by all outbound fetchers,
+* the SEC500 fail-closed-participation ratchet marker whose invariant string
+  keeps the static sweep from passing vacuously.
+
 A documented ``moved_to`` successor path is tolerated so a benign file rename
 does not produce a false positive.  Non-vacuous self-tests prove that a
 synthetic removal of a marker (and a missing file) are actually flagged, and
@@ -123,6 +134,57 @@ FIX_MARKERS: tuple[FixMarker, ...] = (
         marker="def _own_body_nodes(",
         why="keeps the SQL-builder injection guard non-vacuous",
     ),
+    # --- Follow-up audit: additional distinct critical fixes from the campaign ---
+    FixMarker(
+        key="query-cache-write-classification",
+        path="src/core/database/core/execution.py",
+        marker="def _query_mutates_data(",
+        why=(
+            "fail-closed classification of CTE, comment/dollar-quote-prefixed, "
+            "MERGE/TRUNCATE and stacked writes so the query cache never serves "
+            "a stale authorization verdict after a write"
+        ),
+    ),
+    FixMarker(
+        key="dedup-listing-limit-clamp",
+        path="src/core/media/deduplication/paging.py",
+        marker="def clamp_page_limit(",
+        why=(
+            "shared upper-bound clamp for every dedup listing LIMIT; negative "
+            "or oversized values previously became unbounded reads (LIMIT -1)"
+        ),
+    ),
+    FixMarker(
+        key="outbound-ssrf-pinned-fetch",
+        path="src/utils/outbound.py",
+        marker="def pinned_urlopen(",
+        why=(
+            "validates the URL once and connects to the screened IP (SNI/Host "
+            "carry the hostname) with no second DNS lookup or redirects, closing "
+            "SSRF/DNS-rebinding across all outbound fetchers"
+        ),
+    ),
+    FixMarker(
+        key="messaging-fail-closed-participation-ratchet",
+        path="src/tests/security/test_sec500_messaging_fail_closed_writes.py",
+        marker='FAIL_CLOSED_MESSAGE = "Cannot verify conversation participation"',
+        why=(
+            "invariant string that keeps the SEC500 static sweep non-vacuous: "
+            "messaging write paths must deny when the participation checker is "
+            "unwired/absent instead of silently skipping the check"
+        ),
+    ),
+)
+
+# The four entries added by the follow-up audit.  Kept explicit so the
+# per-entry non-vacuity self-test below covers each of them by name.
+ADDED_MARKER_KEYS: frozenset[str] = frozenset(
+    {
+        "query-cache-write-classification",
+        "dedup-listing-limit-clamp",
+        "outbound-ssrf-pinned-fetch",
+        "messaging-fail-closed-participation-ratchet",
+    }
 )
 
 
@@ -178,6 +240,36 @@ def test_registry_is_documentable_and_unique() -> None:
         assert record.marker, f"empty marker for {record.key!r}"
         assert record.path.startswith("src/"), f"bad path for {record.key!r}"
         assert record.why, f"undocumented purpose for {record.key!r}"
+
+
+def test_added_keys_are_registered() -> None:
+    """The follow-up keys name real, unique registry entries."""
+    keys = [r.key for r in FIX_MARKERS]
+    assert ADDED_MARKER_KEYS, "added-key set must not be empty"
+    assert ADDED_MARKER_KEYS <= set(keys), (
+        "added-key set references keys missing from FIX_MARKERS: "
+        f"{sorted(ADDED_MARKER_KEYS - set(keys))}"
+    )
+
+
+@pytest.mark.parametrize("key", sorted(ADDED_MARKER_KEYS))
+def test_added_marker_synthetic_removal_is_flagged(key: str) -> None:
+    """Non-vacuous per-entry check: removing each new marker must be flagged.
+
+    The parametrized ``test_critical_fix_marker_present`` proves each marker is
+    *present*; this proves the detector actually *cares* when that specific
+    marker disappears (rather than passing vacuously on an unchecked path).
+    """
+    record = next(r for r in FIX_MARKERS if r.key == key)
+    present_in_tree, _ = _evaluate(record)
+    assert present_in_tree, f"added marker {key!r} is not present in the tree"
+
+    def reader_without_marker(rel: str) -> str:
+        return _read_text(rel).replace(record.marker, "")
+
+    present, detail = _evaluate(record, reader_without_marker)
+    assert not present, f"synthetic removal of {key!r} was not detected"
+    assert record.key in detail and record.marker in detail
 
 
 def test_selftest_synthetic_removal_is_flagged() -> None:
