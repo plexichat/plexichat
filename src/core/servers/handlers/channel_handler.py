@@ -260,16 +260,31 @@ class ChannelHandler:
         )
         return True
 
-    @cached(ttl=30, prefix="server_channels")
     def get_channels(
         self,
         user_id: SnowflakeID,
         server_id: SnowflakeID,
         channel_type: Optional[ChannelType] = None,
     ) -> List[Channel]:
-        """Get all channels in a server."""
+        """Get all channels in a server.
+
+        The membership check is deliberately OUTSIDE the cached loader: it is
+        an authorization boundary and must run on every call before any cache
+        tier is consulted. A cached page therefore cannot keep granting a
+        removed member access to the server's channels (even when an eviction
+        on kick/ban/leave failed or was bypassed by a core-only caller).
+        """
         if not self.manager._is_member(server_id, user_id):
             raise ServerAccessDeniedError("Not a member of this server")
+        return self._get_channels_cached(user_id, server_id, channel_type)
+
+    @cached(ttl=30, prefix="server_channels")
+    def _get_channels_cached(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        channel_type: Optional[ChannelType],
+    ) -> List[Channel]:
         query = "SELECT * FROM srv_channels WHERE server_id = ? AND deleted = 0"
         params: List[Any] = [server_id]
 
