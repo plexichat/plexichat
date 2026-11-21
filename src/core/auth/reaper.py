@@ -3,7 +3,10 @@ import threading
 
 import utils.config as config
 import utils.logger as logger
+from src.core.database import invalidate_pattern
+
 from .deletion_log import DeletionLog
+from .gateway_revocation import close_user_gateway_connections
 
 
 class AccountReaper:
@@ -730,6 +733,14 @@ class AccountReaper:
                 purged_metadata["media_object_paths"] = [
                     str(p) for p in unswept_media[:50]
                 ]
+            # purge_user deletes the session rows directly rather than going
+            # through logout_all, so it must clear the verify verdict cache and
+            # close live gateway sockets itself. Without both, a socket that
+            # authenticated before the purge stays usable server-side, and a
+            # cached verdict can outlive the erased sessions.
+            invalidate_pattern("token_verify:*")
+            close_user_gateway_connections(user_id, "Account deleted")
+
             self._log.log_event(user_id, "PURGED", f"user:{user_id}", purged_metadata)
 
             logger.info(f"Reaper: Successfully purged user {user_id}")

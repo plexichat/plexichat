@@ -6,6 +6,7 @@ from typing import List, Optional
 import utils.logger as logger
 from src.core.database import invalidate_pattern
 
+from ...gateway_revocation import close_user_gateway_connections
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AuditEventType, Session
 from ...replay import refresh_replay_guard
@@ -650,6 +651,10 @@ class LifecycleMixin(AuthManagerProtocol):
             except Exception as exc:
                 # Sessions are already revoked; the alert is advisory.
                 logger.debug(f"session_revoked alert not emitted: {exc}")
+            # A SECURITY_ALERT frame only asks the client to leave; close the
+            # live socket server-side too (fail closed for every caller of
+            # logout_all -- lock/disable, force-logout, deletion, reaper).
+            close_user_gateway_connections(user_id, "All sessions revoked")
             return count_row["cnt"] if count_row else 0
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND revoked = 0",
@@ -667,6 +672,9 @@ class LifecycleMixin(AuthManagerProtocol):
             emit_security_alert(user_id, "session_revoked")
         except Exception as exc:
             logger.debug(f"session_revoked alert not emitted: {exc}")
+        # See the except-branch above: the frame is a hint, the close is the
+        # guarantee. Covers the account-level revocation callers of logout_all.
+        close_user_gateway_connections(user_id, "All sessions revoked")
         return count_row["cnt"] if count_row else 0
 
     def logout_all_users(self) -> int:

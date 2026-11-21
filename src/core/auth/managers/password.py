@@ -9,6 +9,8 @@ from ..passwords import validate_password as validate_pwd
 from ..tokens import create_email_token, parse_token, verify_token_hash, is_expired
 from src.core.database import invalidate_pattern
 
+from ..gateway_revocation import close_user_gateway_connections
+
 import utils.logger as logger
 
 from .protocol import AuthManagerProtocol
@@ -104,6 +106,10 @@ class PasswordMixin(AuthManagerProtocol):
             # The password has already changed; a missing alert must not fail
             # the request, so record why instead of swallowing it.
             logger.debug(f"password_change alert not emitted: {exc}")
+        # Password change revokes every session: close the live gateway sockets
+        # too. The alert above is a client-side hint; until the socket is closed
+        # it stays authenticated server-side.
+        close_user_gateway_connections(user_id, "Password changed")
         invalidate_pattern("user_data:*")
         return True
 
@@ -246,6 +252,9 @@ class PasswordMixin(AuthManagerProtocol):
         # with the newly reset password, defeating the recovery entirely.
         self._invalidate_trusted_devices(rec["user_id"])
         invalidate_pattern("token_verify:*")
+        # A reset revokes every session: close live gateway sockets server-side
+        # so the old credential cannot keep using an already-authenticated one.
+        close_user_gateway_connections(rec["user_id"], "Password reset")
         invalidate_pattern(f"user_data:{rec['user_id']}*")
         invalidate_pattern(f"user_api:{rec['user_id']}*")
         return True
