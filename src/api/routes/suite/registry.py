@@ -15,6 +15,7 @@ import utils.logger as logger
 from fastapi import APIRouter, Depends, Query
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
+from src.api.routes.users.helpers import require_user_token
 from src.api.routes.artifacts import _get_manager, _require_server_permission
 from src.api.schemas.common import ErrorResponse
 from src.core.security.hardening import (
@@ -503,6 +504,10 @@ async def list_recent_suite_items(
     personal author scope. Shared/server recent activity will be added only with
     explicit scope authorization and pagination tests.
     """
+    # A bot token's ``user_id`` is its human owner. The feed below keys both
+    # its cache entry and its author-scoped lookups on that id, so without this
+    # gate a bot credential would be served the owner's private recent items.
+    require_user_token(current_user)
     bounded = bounded_int(limit, "limit", minimum=1, maximum=50)
     key = (int(current_user.user_id), "recent", bounded, None)
     cached = _suite_feed_from_cache(key)
@@ -556,6 +561,9 @@ async def list_pinned_suite_items(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return pinned Stash items visible to the caller."""
+    # A bot token's ``user_id`` is its human owner; reject it before the
+    # owner-scoped ``list_items(current_user.user_id, ...)`` lookup below.
+    require_user_token(current_user)
     if not _domain_available("plexistash"):
         return {"schemaVersion": 1, "items": [], "total": 0, "hasMore": False}
     stash_manager, _ = _suite_managers()
@@ -585,6 +593,10 @@ async def list_shared_suite_items(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return server-scoped items after each domain's authorization checks."""
+    # A bot token's ``user_id`` is its human owner. The cache key and the
+    # per-caller visibility lookups below are keyed on that id, so a bot must
+    # not be able to reuse the owner's warm entry.
+    require_user_token(current_user)
     bounded = bounded_int(limit, "limit", minimum=1, maximum=50)
     key = (int(current_user.user_id), "shared", bounded, None)
     cached = _suite_feed_from_cache(key)
@@ -674,6 +686,9 @@ async def list_suite_activity(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return the caller's Suite audit activity, never another user's events."""
+    # A bot token's ``user_id`` is its human owner; the SQL below filters on
+    # that id, so a bot would otherwise read the owner's private audit trail.
+    require_user_token(current_user)
     import src.api as api
 
     db = api.get_db()
@@ -721,6 +736,10 @@ async def search_suite(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Search bounded metadata through existing per-domain visibility rules."""
+    # A bot token's ``user_id`` is its human owner. The search cache key and
+    # the author-scoped lookups below are keyed on that id, so a bot credential
+    # must not read or poison the owner's warm search results.
+    require_user_token(current_user)
     query = clean_suite_search(q)
     if not query:
         return {"schemaVersion": 1, "items": [], "total": 0, "hasMore": False}
