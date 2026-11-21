@@ -448,7 +448,10 @@ class LinkPreviewService:
                    WHERE user_id = ? AND window_start = ?""",
                 (user_id, window_start),
             )
-            allowed = bool(row) and row["request_count"] <= max_requests
+            # The conditional upsert refuses increments at the ceiling, so
+            # a re-read at the ceiling cannot prove this request consumed
+            # a unit; grant only strictly below it (no fail-open past the cap).
+            allowed = bool(row) and row["request_count"] < max_requests
         else:
             allowed = int(rowcount) > 0
 
