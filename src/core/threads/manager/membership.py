@@ -183,6 +183,16 @@ class ThreadMembershipMixin(ThreadProtocol):
         if not thread:
             raise ThreadNotFoundError(f"Thread {thread_id} not found")
 
+        # Membership changes must not reach a thread the caller can no longer
+        # see. A public-thread member keeps their ``thread_members`` row after
+        # a channel override revokes ``channels.view``; the bare membership
+        # check below would otherwise let them add people to -- and hand
+        # access to -- a now-hidden thread. Reuse the row in hand and fail
+        # closed. (Private threads are additionally gated by
+        # ``can_manage_thread`` below, which now enforces this too.)
+        if not self._can_view_thread_row(user_id, thread):
+            raise ThreadAccessDeniedError("Cannot access this thread")
+
         if not self._is_member(user_id, thread_id):
             raise ThreadAccessDeniedError("Must be a member to add others")
 
