@@ -503,9 +503,7 @@ async def get_pinned_messages(
                     # Reuse the resolution already performed by the live gate
                     # earlier in this request instead of paying for get_channel
                     # a second time (Valkey row GET + membership query + perm).
-                    return _resolve_pins_channel(
-                        servers_mod, cid, current_user.user_id
-                    )
+                    return _resolve_pins_channel(servers_mod, cid, current_user.user_id)
                 finally:
                     if db:
                         db.close()
