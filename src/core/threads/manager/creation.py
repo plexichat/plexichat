@@ -45,6 +45,15 @@ class ThreadCreationMixin(ThreadProtocol):
 
         server_id = channel["server_id"]
 
+        # Creating a thread is a write into the parent channel: it must not
+        # bypass the channel's own view/post gates. A server-scoped
+        # ``threads.create_*`` grant can otherwise survive a channel override
+        # that denies ``channels.view`` / ``messages.send`` on this channel,
+        # letting a member spawn threads in a channel they cannot see or post
+        # to. Re-check both here, fail-closed, on the resolved channel.
+        self._require_permission(user_id, server_id, "channels.view", channel_id)
+        self._require_permission(user_id, server_id, "messages.send", channel_id)
+
         if thread_type == ThreadType.PRIVATE:
             self._require_permission(
                 user_id, server_id, "threads.create_private", channel_id
@@ -183,6 +192,12 @@ class ThreadCreationMixin(ThreadProtocol):
             raise ThreadError("Threads can only be created in server channels")
 
         server_id = channel_row["server_id"]
+
+        # Same channel gate as ``create_thread``: the parent-message channel
+        # must be one the caller can view and post in, even when the
+        # ``threads.create_*`` grant comes from a server-wide role.
+        self._require_permission(user_id, server_id, "channels.view", channel_id)
+        self._require_permission(user_id, server_id, "messages.send", channel_id)
 
         if thread_type == ThreadType.PRIVATE:
             self._require_permission(
