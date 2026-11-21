@@ -26,15 +26,28 @@ class ReactionPermissionsMixin(ReactionProtocol):
         the srv_channels id for server channels, otherwise the conversation
         id itself (DM/group conversations have no channel row).
         """
-        conversation_id = self.get_conversation_id_from_message(message_id)
-        if not conversation_id:
+        # One query instead of a message-row fetch followed by a separate
+        # channel lookup. The reactor-list route already paid for a message
+        # fetch in its access gate (and the core manager pays for another one),
+        # so resolving the URL channel must not add a second trip to the same
+        # table. LEFT JOIN keeps DMs (no channel row) and missing messages
+        # behaving exactly as before; there is no ``deleted`` filter on either
+        # side because the previous two-query form had none either.
+        row = self._db.fetch_one(
+            """SELECT m.conversation_id, sc.id AS channel_id
+               FROM msg_messages m
+               LEFT JOIN srv_channels sc ON sc.conversation_id = m.conversation_id
+               WHERE m.id = ?""",
+            (message_id,),
+        )
+        if not row or not row["conversation_id"]:
             return None
-        channel = self._get_channel_for_conversation(conversation_id)
-        channel_id = channel["id"] if channel else None
+        conversation_id = row["conversation_id"]
+        channel_id = row["channel_id"]
         return {
             "conversation_id": conversation_id,
             "channel_id": channel_id or conversation_id,
-            "is_server_channel": channel is not None,
+            "is_server_channel": channel_id is not None,
         }
 
     def can_access_message(self, user_id: SnowflakeID, message_id: SnowflakeID) -> bool:
