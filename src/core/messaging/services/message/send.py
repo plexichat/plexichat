@@ -458,8 +458,23 @@ class SendMixin(BaseService, MessageServiceProtocol):
         ]
 
         if relationships is not None:
+            # One cached two-way block set per sender replaces an authoritative
+            # rel_blocked probe per recipient on every send. For a DM that is
+            # one query avoided per message; for a group it also stops the
+            # check scaling linearly with the participant count. get_all_blocked_ids
+            # is the UNION of "users I blocked" and "users who blocked me"
+            # already used by DM event fan-out, so set membership is exactly
+            # equivalent to the old is_blocked_by_either OR probe: both block
+            # directions stay authoritative. The set is cached per sender under
+            # user_blocked_all:<id> and invalidated for both parties on
+            # block/unblock, so authz is unchanged and the shared Valkey tier
+            # keeps every node coherent. The module-down fallback below still
+            # consults rel_blocked directly and fails closed.
+            blocked_ids = {
+                int(bid) for bid in (relationships.get_all_blocked_ids(user_id) or [])
+            }
             for other_id in other_ids:
-                if relationships.is_blocked_by_either(user_id, other_id):
+                if int(other_id) in blocked_ids:
                     raise ConversationAccessDeniedError(
                         "Cannot send messages in this conversation"
                     )
