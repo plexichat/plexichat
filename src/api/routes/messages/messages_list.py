@@ -435,6 +435,55 @@ async def _verify_pinned_channel_access(
     if channel is not None:
         return  # live access proven for this credential
 
+    # The URL id may be the channel's *conversation* id: message routes accept
+    # that alias, but get_channel/channel_exists only recognise channel ids and
+    # would treat the alias as a DM. Resolve it membership-agnostically; if it
+    # backs a server channel, require a live view grant on THAT channel before
+    # any cached pin body can be served. Mirrors the pin/unpin route fix.
+    reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+    if callable(reverse):
+        try:
+            backing = await run_in_threadpool(reverse, cid)
+        except Exception as exc:
+            logger.debug(f"pins conversation reverse lookup failed for {cid}: {exc}")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            ) from None
+        if backing is not None:
+            try:
+                real_channel_id = int(backing["id"])
+            except (KeyError, TypeError, ValueError, IndexError):
+                raise HTTPException(
+                    status_code=500,
+                    detail={"error": {"code": 500, "message": "Internal server error"}},
+                ) from None
+            try:
+                real_channel = await run_in_threadpool(
+                    _resolve_pins_channel,
+                    servers_mod,
+                    real_channel_id,
+                    current_user.user_id,
+                )
+            except (ChannelAccessDeniedError, PermissionDeniedError) as exc:
+                logger.debug(f"pins backing channel access denied for {cid}: {exc}")
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Channel not found"}},
+                ) from None
+            except Exception as exc:
+                logger.debug(f"pins backing channel probe failed for {cid}: {exc}")
+                raise HTTPException(
+                    status_code=500,
+                    detail={"error": {"code": 500, "message": "Internal server error"}},
+                ) from None
+            if real_channel is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "Channel not found"}},
+                )
+            return  # live access proven on the real backing channel
+
     # get_channel returns None both for "not a server channel" and for "user
     # lost access". Only a membership-agnostic existence probe may tell them
     # apart; if it cannot, fail closed instead of serving a warm private page.
