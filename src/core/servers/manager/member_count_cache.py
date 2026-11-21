@@ -115,6 +115,7 @@ def invalidate_member_count_cache() -> None:
     _member_count_cache.clear()
     from .channel_audience_cache import invalidate_channel_audience_cache
     from .member_id_cache import invalidate_member_id_cache
+    from .shared_member_cache import invalidate_shared_member_cache
 
     invalidate_channel_audience_cache()
     # The raw member-id list is the same ``srv_members`` projection used by
@@ -122,6 +123,10 @@ def invalidate_member_count_cache() -> None:
     # same funnel so no removed member keeps receiving events and no new member
     # is left out for the cache TTL.
     invalidate_member_id_cache()
+    # The shared-server audience is derived from the same rows.  A membership
+    # write must evict it too, or a removed member keeps receiving presence /
+    # typing fan-out and an added member stays invisible until the TTL expires.
+    invalidate_shared_member_cache()
 
 
 def member_count_cache_stats() -> dict:

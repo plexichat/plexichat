@@ -167,6 +167,26 @@ class MemberOpsMixin(ServerProtocol):
         return result
 
     def get_all_shared_member_ids(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Return every user sharing a server with ``user_id``, memoized.
+
+        Presence broadcasts, the presence-read gate, disconnect typing cleanup
+        and profile visibility all ask for this same audience for the same
+        subject in a burst.  The answer only changes on a membership write, so
+        a bounded short-TTL L0 collapses the repeated self-join.  The key is the
+        subject alone (the query has no other input), so one user's audience can
+        never be served for another; a miss/error recomputes from the
+        authoritative ``srv_members`` table and never widens the set.
+        """
+        from .shared_member_cache import (
+            _MISS as _SHARED_MEMBERS_MISS,
+            get_cached_shared_member_ids,
+            prime_shared_member_ids,
+        )
+
+        cached = get_cached_shared_member_ids(user_id)
+        if cached is not _SHARED_MEMBERS_MISS:
+            return cached
+
         rows = self._db.fetch_all(
             """SELECT DISTINCT m2.user_id
                FROM srv_members m1
@@ -174,7 +194,9 @@ class MemberOpsMixin(ServerProtocol):
                WHERE m1.user_id = ? AND m2.user_id != ?""",
             (user_id, user_id),
         )
-        return [row["user_id"] for row in rows]
+        result = [row["user_id"] for row in rows]
+        prime_shared_member_ids(user_id, result)
+        return result
 
     def is_timed_out(self, user_id: SnowflakeID, server_id: SnowflakeID) -> bool:
         member = self.get_member(server_id, user_id)
