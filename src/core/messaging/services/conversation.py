@@ -282,10 +282,18 @@ class ConversationService(BaseService):
                 raise InvalidRecipientError(f"User {uid} does not exist")
 
         # Enforce the same DM privacy rules create_dm applies before any row is
-        # written; group sends are outside the DM-only send gate.
-        for uid in participants:
-            if uid != owner_id:
-                self.enforce_group_dm_privacy(owner_id, uid)
+        # written; group sends are outside the DM-only send gate. Checking only
+        # owner<->participant admits two supplied participants who block each
+        # other (or whose DM settings exclude one another) even though
+        # add_participant rejects the same pair after creation. Mirror that
+        # gate across every pair of non-owner participants.
+        non_owner = [uid for uid in participants if uid != owner_id]
+        for uid in non_owner:
+            self.enforce_group_dm_privacy(owner_id, uid)
+        for i, first in enumerate(non_owner):
+            for second in non_owner[i + 1 :]:
+                self.enforce_group_dm_privacy(first, second)
+                self.enforce_group_dm_privacy(second, first)
 
         now = self._get_timestamp()
         conv_id = self._generate_id()
