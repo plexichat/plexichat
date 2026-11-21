@@ -242,6 +242,56 @@ class EmojiOpsMixin(ReactionProtocol):
         # atomic INSERT below is what actually enforces the cap.
         self._check_emoji_limits(server_id, animated)
 
+        # Fast-fail a duplicate name before the (expensive) media upload so an
+        # upload is never wasted on a name we already have. UNIQUE(server_id,
+        # name) remains authoritative if a concurrent creator wins the same
+        # name after this read (see the UNIQUE handler in the except chain).
+        existing = self._db.fetch_one(
+            "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
+            (server_id, name),
+        )
+        if existing:
+            raise EmojiNameExistsError(
+                f"Emoji with name '{name}' already exists in this server"
+            )
+
+        url = ""
+        width = None
+        height = None
+
+        if self._media:
+            ext = "gif" if animated else content_type.split("/")[-1]
+            filename = f"emoji_{name}.{ext}"
+            try:
+                result = self._media.upload_file(
+                    user_id, image_data, filename, content_type
+                )
+                url = result.url
+                if result.metadata:
+                    width = result.metadata.get("width")
+                    height = result.metadata.get("height")
+
+                if url:
+                    if url.startswith("/"):
+                        pass
+                    elif url.startswith("http://") or url.startswith("https://"):
+                        pass
+                    else:
+                        logger.error(f"Media module returned unsafe URL: {url}")
+                        raise InvalidEmojiFileError(
+                            "Media module returned an unsafe URL"
+                        )
+            except InvalidEmojiFileError:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to upload emoji image: {e}")
+                raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
+
+        # The media upload above is deliberately OUTSIDE the advisory lock and
+        # open transaction: it is storage I/O unrelated to the quota guard.
+        # Holding the per-(server, kind) lock across it would serialise every
+        # emoji creation for the server behind the slowest upload (and nest
+        # the media pipeline's own storage-quota advisory lock inside this one).
         is_postgres = getattr(self._db, "type", "") == "postgres"
         if is_postgres:
             # PostgreSQL READ COMMITTED would let two concurrent INSERT..SELECT
@@ -262,47 +312,10 @@ class EmojiOpsMixin(ReactionProtocol):
             if not is_postgres:
                 self._db.begin_transaction()
 
-            existing = self._db.fetch_one(
-                "SELECT 1 FROM react_custom_emoji WHERE server_id = ? AND name = ?",
-                (server_id, name),
-            )
-            if existing:
-                raise EmojiNameExistsError(
-                    f"Emoji with name '{name}' already exists in this server"
-                )
-
-            url = ""
-            width = None
-            height = None
-
-            if self._media:
-                ext = "gif" if animated else content_type.split("/")[-1]
-                filename = f"emoji_{name}.{ext}"
-                try:
-                    result = self._media.upload_file(
-                        user_id, image_data, filename, content_type
-                    )
-                    url = result.url
-                    if result.metadata:
-                        width = result.metadata.get("width")
-                        height = result.metadata.get("height")
-
-                    if url:
-                        if url.startswith("/"):
-                            pass
-                        elif url.startswith("http://") or url.startswith("https://"):
-                            pass
-                        else:
-                            logger.error(f"Media module returned unsafe URL: {url}")
-                            raise InvalidEmojiFileError(
-                                "Media module returned an unsafe URL"
-                            )
-                except InvalidEmojiFileError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Failed to upload emoji image: {e}")
-                    raise InvalidEmojiFileError(f"Failed to upload emoji: {str(e)}")
-
+            # The UNIQUE(server_id, name) constraint is authoritative for name
+            # collisions: a concurrent creator that slipped past the early read
+            # is translated to EmojiNameExistsError by the UNIQUE handler in the
+            # except chain below. No second fetch_one under the lock is needed.
             now = self._get_timestamp()
             emoji_id = self._generate_id()
 
