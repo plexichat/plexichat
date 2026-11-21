@@ -228,10 +228,10 @@ def _message_to_response(
     poll_viewer_user_id: Optional[int] = None,
     suppress_embeds: Optional[bool] = None,
 ) -> MessageResponse:
-    def get_attr(obj, name, default=None):
-        if isinstance(obj, dict):
-            return obj.get(name, default)
-        return getattr(obj, name, default)
+    # Reuse the module-level accessor instead of allocating a fresh closure on
+    # every call. A list/search/pins page serializes up to 100 messages, so this
+    # used to create 100 throwaway function objects per request.
+    get_attr = _get_attr
 
     msg_id = get_attr(msg, "id")
     author_id = get_attr(msg, "author_id")
@@ -445,6 +445,13 @@ def _message_to_response(
     except Exception as e:
         logger.debug(f"Failed to parse mentions for message {msg_id}: {e}")
 
+    # Resolve the fields the response reads more than once into locals so each
+    # message attribute is looked up exactly once (status was read 3x and
+    # reply_to_id 2x on every message of a list page).
+    reply_to_id_value = get_attr(msg, "reply_to_id")
+    status_value = get_attr(msg, "status")
+    status_out = getattr(status_value, "value", status_value) if status_value else None
+
     return MessageResponse(
         id=SnowflakeID(msg_id),
         channel_id=SnowflakeID(effective_channel_id),
@@ -456,9 +463,7 @@ def _message_to_response(
         attachments=attachments,
         embeds=embeds_out,
         pinned=get_attr(msg, "pinned", False),
-        status=getattr(get_attr(msg, "status"), "value", get_attr(msg, "status"))
-        if get_attr(msg, "status")
-        else None,
+        status=status_out,
         delivery_count=get_attr(msg, "delivery_count", 0),
         read_count=read_count,
         read=bool(get_attr(msg, "read", False)),
