@@ -10,7 +10,11 @@ from pydantic import BaseModel
 from src.api.schemas.common import SuccessResponse
 from src.api.schemas.policy_types import UIText
 from src.core.auth.privilege_cache import invalidate_privilege_caches
-from ..utils import check_host_restriction, require_admin_permission
+from ..utils import (
+    check_host_restriction,
+    require_admin_permission,
+    require_approved_request,
+)
 from .base import AdminUsersRouterProtocol
 import utils.logger as logger
 
@@ -671,6 +675,15 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             # executes. A concurrent promotion of the target turns this into a
             # 409 before any of the cascading deletes below run.
             _assert_hierarchy_at_write(db, admin_id, uid)
+            # ``users.delete`` is a canonical APPROVAL_REQUIRED_ACTIONS entry
+            # (and a default config `require_approval_for` action): deleting an
+            # admin account irreversibly erases its role assignments, sessions
+            # and auth user. A single admin holding `admin.edit` must not be
+            # able to do that in a multi-admin deployment without the
+            # documented second-admin approval. Mirror force-purge: gate after
+            # the hierarchy checks (so a blocked upward/self delete cannot
+            # consume a valid approval) but before any erasure side effect.
+            require_approved_request("users.delete")
             db.execute("DELETE FROM admin_role_assignments WHERE admin_id = ?", (uid,))
             db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (uid,))
             db.execute("DELETE FROM admin_users WHERE id = ?", (uid,))

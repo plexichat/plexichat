@@ -83,6 +83,9 @@ def _request() -> Request:
 def _patch(monkeypatch, db, admin_id=1):
     monkeypatch.setattr(au, "check_host_restriction", lambda request: None)
     monkeypatch.setattr(au, "require_admin_permission", lambda request, perm: admin_id)
+    # Approval enforcement is exercised in its own test module; here we bypass
+    # it so these tests stay focused on the hierarchy gate.
+    monkeypatch.setattr(au, "require_approved_request", lambda action: None)
     monkeypatch.setattr(api, "get_db", lambda: db)
     monkeypatch.setattr(api, "get_auth", lambda: object())
     monkeypatch.setattr(perm_core, "log_admin_action", lambda *a, **kw: True)
