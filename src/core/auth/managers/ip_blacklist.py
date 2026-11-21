@@ -15,8 +15,6 @@ class IpBlacklistMixin(AuthManagerProtocol):
         blocked_by: Optional[int] = None,
         duration_hours: Optional[int] = None,
     ) -> bool:
-        invalidate_pattern("ip_blocked:*")
-
         now = self._get_timestamp()
         expires_at = now + (duration_hours * 3600 * 1000) if duration_hours else None
 
@@ -47,12 +45,15 @@ class IpBlacklistMixin(AuthManagerProtocol):
             ),
             conflict_columns=["ip_index"],
         )
+        # Invalidate AFTER the write: ``is_ip_blocked`` memoises each per-IP
+        # verdict for 300s. A check landing between an early invalidation and
+        # this upsert would re-cache the still-"not blocked" verdict, leaving a
+        # just-blocked IP able to pass the gate for the rest of the TTL.
+        invalidate_pattern("ip_blocked:*")
         logger.info(f"IP blocked by {blocked_by}: {reason}")
         return True
 
     def unblock_ip(self, ip_address: str) -> bool:
-        invalidate_pattern("ip_blocked:*")
-
         ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
         legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
 
@@ -60,6 +61,11 @@ class IpBlacklistMixin(AuthManagerProtocol):
             "DELETE FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",
             (ip_index, legacy_index, legacy_index),
         )
+        # Invalidate after the write (see ``block_ip``): a check landing
+        # between an early invalidation and this DELETE would re-cache the
+        # stale "blocked" verdict and keep a legitimately unblocked IP locked
+        # out for the rest of the TTL.
+        invalidate_pattern("ip_blocked:*")
         logger.info("IP unblocked")
         return True
 
