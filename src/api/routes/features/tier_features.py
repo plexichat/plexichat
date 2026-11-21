@@ -314,6 +314,30 @@ async def update_user_features(
     _check_admin(current_user)
     _validate_feature_settings(body)
 
+    # Bare admin membership is not enough to change another account's tier or
+    # expiry. The admin-session path in ``get_admin_access`` synthesises
+    # ``admin.*`` for *any* valid admin session, and ``_check_admin`` only
+    # tests that wildcard, so a narrowly-scoped admin (e.g. a tickets-only
+    # support admin) could otherwise mutate user tiers here. The sibling
+    # admin route ``PUT /admin/users/{id}/tier`` gates the same mutation on
+    # ``users.tier``; apply that scope here too. Fail closed when the DB is
+    # unavailable or the permission subsystem cannot resolve role grants.
+    import src.api as api
+
+    from src.core.admin.permissions import check_admin_permission
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(current_user.user_id, "users.tier", db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     features = _get_features_module()
     if not features:
         logger.error("Features module not available")
