@@ -9,7 +9,8 @@ from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 from urllib.request import Request
 
-from src.utils.outbound import urlopen
+from src.utils.outbound import pinned_urlopen as _pinned_urlopen
+from src.utils.security import URLValidator
 from urllib.error import URLError, HTTPError
 
 import utils.logger as logger
@@ -21,6 +22,39 @@ from ..exceptions import (
     AIBackendUnavailableError,
     AIBackendTimeoutError,
 )
+
+
+def urlopen(request: Request, timeout: float = 30):
+    """Fetch the configured moderation endpoint through the SSRF gate.
+
+    ``api_url`` is operator/admin config (``automod.ai.openai``). The shared
+    ``urlopen`` transport enforces the scheme allowlist and refuses redirects,
+    but it does not screen the destination IP: a loopback, link-local or private
+    address (or a hostname that answers public to the admin-schema write-time
+    check and private to the fetch-time resolver) reached the socket and
+    received the configured API key. The admin schema gate is a write boundary
+    only -- it neither pins the address nor covers config loaded from disk -- so
+    the fetch site itself has to fail closed. The adapter's own https-only rule
+    below still applies.
+
+    Validate first (fail closed on a disallowed range or a failed resolution),
+    then hand the *approved* IP to ``pinned_urlopen``, which connects to that IP
+    while keeping the real hostname in ``Host`` / TLS SNI. Redirects are refused
+    by the shared transport, so there is no second, unvalidated hop.
+    """
+    url = request.full_url if isinstance(request, Request) else str(request)
+    try:
+        URLValidator().validate_url_for_request(url)
+    except ValueError as exc:
+        raise AIBackendError(
+            "OpenAI endpoint URL refused by SSRF validation", backend="openai"
+        ) from exc
+    headers = dict(request.header_items()) if isinstance(request, Request) else {}
+    method = request.get_method() if isinstance(request, Request) else "GET"
+    data = request.data if isinstance(request, Request) else None
+    return _pinned_urlopen(
+        url, timeout=timeout, method=method, data=data, headers=headers
+    )
 
 
 class OpenAIAdapter(BaseAIAdapter):
