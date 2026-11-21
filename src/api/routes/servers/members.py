@@ -493,6 +493,11 @@ async def assign_role_to_member(
     role_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
+    # A bot token's user_id is its human owner (the bot id lives in
+    # account_id). Passing it to assign_role would let a narrow-scope bot
+    # credential wield the owner's server authority - including granting
+    # privileged roles - in a server it does not manage.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     if not servers_mod:
         raise HTTPException(
