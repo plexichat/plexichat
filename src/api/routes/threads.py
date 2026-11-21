@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.api.schemas.threads import (
     ThreadCreateRequest,
@@ -866,6 +867,11 @@ async def list_archived_threads(
 async def list_my_threads(
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    # A bot token user_id is its human owner (bot id lives in account_id).
+    # This /@me handler returns threads for current_user.user_id, so without
+    # the gate a bot credential would read its owner private thread list.
+    require_user_token(current_user)
+
     threads_mod = _get_threads()
     try:
         threads = threads_mod.get_user_threads(current_user.user_id)
