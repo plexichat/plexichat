@@ -502,13 +502,17 @@ class ProfileMixin(AuthManagerProtocol):
                 # returned to the caller, and a caller appending a badge or
                 # editing permissions must not corrupt the cached profile used
                 # by every later listing.
+                # One snapshot serves both tiers: neither cache function mutates
+                # the object it is handed, so the second deepcopy was repeated
+                # work on every cold miss.
+                snapshot = self._profile_snapshot(profile)
                 mem_cache_set(
                     cache_key,
-                    self._profile_snapshot(profile),
+                    snapshot,
                     PROFILE_BULK_L1_TTL_SECONDS,
                 )
                 if use_valkey:
-                    cache_set(cache_key, self._profile_snapshot(profile), ttl=300)
+                    cache_set(cache_key, snapshot, ttl=300)
 
         return result
 
