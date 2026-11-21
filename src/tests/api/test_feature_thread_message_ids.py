@@ -109,7 +109,7 @@ async def test_forward_message_stringifies_ids(monkeypatch):
     import src.api.routes.features.forwarding as forwarding_module
 
     class _ForwardingSvc:
-        def __init__(self, db, messaging=None, participant_svc=None):
+        def __init__(self, db, messaging=None, participant_svc=None, servers_mod=None):
             pass
 
         def forward_message(self, user_id, message_id, target_conversation_id):
@@ -127,6 +127,7 @@ async def test_forward_message_stringifies_ids(monkeypatch):
     monkeypatch.setattr(forwarding_module, "ForwardingService", _ForwardingSvc)
     monkeypatch.setattr(forwarding_module.api, "get_db", lambda: object())
     monkeypatch.setattr(forwarding_module.api, "get_messaging", lambda: None)
+    monkeypatch.setattr(forwarding_module.api, "get_servers", lambda: None)
 
     body = forwarding_module.ForwardMessageRequest(
         message_id=str(BIG), target_conversation_id=str(BIG)
