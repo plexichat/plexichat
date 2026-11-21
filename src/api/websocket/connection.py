@@ -32,6 +32,67 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 MAX_SERIALIZE_CACHE_ENTRIES = 16
 
 
+#: Frame types whose ``d`` carries the message body as an OPTIONAL field on top
+#: of a base-authorized payload. Delivery of these frames is gated by a base
+#: message intent (GUILD_MESSAGES / DIRECT_MESSAGES -- see the MESSAGE_ACK /
+#: MESSAGE_BOOKMARK_* gate in ``intents._compute_filter_decision``), but the
+#: embedded body is the separate privileged MESSAGE_CONTENT payload. Without a
+#: second, per-frame gate a connection holding ONLY the base intent still
+#: receives the private text. This mirrors the GUILD_MEMBERS_CHUNK presence
+#: gate in ``handlers/guild.py``.
+_PRIVILEGED_CONTENT_FIELDS_BY_EVENT = {
+    "MESSAGE_BOOKMARK_ADD": ("message_content",),
+    "MESSAGE_BOOKMARK_REMOVE": ("message_content",),
+}
+
+
+def _scrub_privileged_frame_fields(data: Any, intents: Any) -> Any:
+    """Blank privileged fields embedded in an otherwise authorized frame.
+
+    Applied in ``Connection.send_json`` -- the last hop before the wire -- so
+    every delivery path (live fan-out, single-connection dispatch, raw frames
+    and RESUME replay) is covered without trusting any one emitter. Only the
+    embedded field is blanked; the base event itself was legitimately
+    authorized by its base intent, so clients still learn that a bookmark was
+    added/removed. An absent/invalid intent mask fails closed, and an
+    unparseable scope is treated as guild (MESSAGE_CONTENT), never as a
+    friendlier DM gate.
+    """
+    if not isinstance(data, dict):
+        return data
+    fields = _PRIVILEGED_CONTENT_FIELDS_BY_EVENT.get(data.get("t"))
+    if not fields:
+        return data
+    payload = data.get("d")
+    if not isinstance(payload, dict) or not any(key in payload for key in fields):
+        return data
+
+    def _as_id(value: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    server_id = _as_id(payload.get("server_id"))
+    if server_id is None:
+        server_id = _as_id(payload.get("guild_id"))
+    channel_id = _as_id(payload.get("channel_id"))
+    is_dm = server_id is None and channel_id is not None
+
+    from .intents import should_include_message_content, validate_intents
+
+    if validate_intents(intents) and should_include_message_content(intents, is_dm):
+        return data
+    scrubbed = dict(payload)
+    for key in fields:
+        scrubbed[key] = None
+    out = dict(data)
+    out["d"] = scrubbed
+    return out
+
+
 class ConnectionState(Enum):
     """Connection lifecycle states."""
 
@@ -171,6 +232,8 @@ class Connection:
         """
         if self.state in (ConnectionState.DISCONNECTING, ConnectionState.DISCONNECTED):
             return False
+
+        data = _scrub_privileged_frame_fields(data, self.intents)
 
         batcher = self._outbound_batcher
         if batcher is not None:
