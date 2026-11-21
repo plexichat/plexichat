@@ -101,11 +101,30 @@ def _direct_write_lines(function):
     return lines
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes reachable through execution (not definition).
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a nested callable that uses
+    mkstemp/fdopen/replace does not run it. Counting dead nested primitives as
+    protection lets a writer silence this invariant with dead evidence (the
+    same vacuity fixed across the SEC100/200/300 route guards).
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
 def _check_function(function):
     uses_mkstemp = False
     uses_replace = False
     uses_fdopen = False
-    for node in ast.walk(function):
+    for node in _own_body_nodes(function):
         if not isinstance(node, ast.Call):
             continue
         uses_mkstemp = uses_mkstemp or _is_mkstemp(node)
@@ -167,6 +186,48 @@ def _write(path, data):
     assert any("direct write" in r for r in _check_function(worse_fn))
 
     assert _check_function(_find_function(ast.parse(good), "_write")) == []
+
+
+def test_dead_nested_atomic_primitives_do_not_protect_writer():
+    """mkstemp/fdopen/replace in a never-invoked nested callable is dead evidence.
+
+    Regression: ``_check_function`` used ``ast.walk(function)``, which descends
+    into nested functions and lambdas. Merely *defining* a helper/lambda that
+    builds a temp file and atomically replaced it did not run it, so a writer
+    reintroducing a direct truncate write could silence this invariant with
+    dead evidence. Live in-body primitives (including behind statement-level
+    nesting) must still satisfy the invariant.
+    """
+    dead_nested = """
+def _write(path, data):
+    def never_called():
+        fd, tmp = tempfile.mkstemp()
+        with os.fdopen(fd, "w") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    with open(path, "w") as fh:
+        fh.write(data)
+"""
+    dead_lambda = """
+def _write(path, data):
+    _ = lambda: tempfile.mkstemp()
+    with open(path, "w") as fh:
+        fh.write(data)
+"""
+    live_nested = """
+def _write(path, data):
+    for _ in (1,):
+        fd, tmp = tempfile.mkstemp()
+        with os.fdopen(fd, "w") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+"""
+    for source in (dead_nested, dead_lambda):
+        reasons = _check_function(_find_function(ast.parse(source), "_write"))
+        assert any("mkstemp" in r for r in reasons), (
+            "dead nested mkstemp must not protect the writer"
+        )
+    assert _check_function(_find_function(ast.parse(live_nested), "_write")) == []
 
 
 def test_every_hardened_surface_is_found_and_scan_is_not_vacuous():

@@ -72,12 +72,31 @@ def _find_function(tree, name):
     return None
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes reachable through execution (not definition).
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a nested callable that runs a
+    constant-time comparison does not run it. Counting a dead nested comparator
+    as protection lets a verifier silence this invariant with dead evidence
+    (the same vacuity fixed across the SEC100/200/300 route guards).
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
 def _constant_time_calls(function):
     """Return comparator calls (as source strings) inside ``function``."""
     if function is None:
         return []
     calls = []
-    for node in ast.walk(function):
+    for node in _own_body_nodes(function):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -160,6 +179,40 @@ def test_plaintext_backup_code_regression_shape_is_detected():
         for n in compares
     )
     assert any(isinstance(n.ops[0], ast.In) for n in compares)
+
+
+def test_dead_nested_constant_time_comparison_does_not_protect_verifier():
+    """A comparator inside a never-invoked nested callable is dead evidence.
+
+    Regression: ``_constant_time_calls`` used ``ast.walk(function)``, which
+    descends into nested functions and lambdas. Merely *defining* a helper or
+    lambda that calls a comparator did not run it, so a verifier reintroducing a
+    short-circuit ``==`` could silence this invariant with dead evidence. A live
+    in-body comparator (including behind statement-level nesting) must count.
+    """
+    dead_nested = """
+def verify(presented, stored):
+    def never_called():
+        return hmac.compare_digest(presented, stored)
+    return presented == stored
+"""
+    dead_lambda = """
+def verify(presented, stored):
+    _ = lambda: constant_time_compare(presented, stored)
+    return presented == stored
+"""
+    live_nested = """
+def verify(presented, stored):
+    for _ in (1,):
+        return hmac.compare_digest(presented, stored)
+"""
+    for source in (dead_nested, dead_lambda):
+        fn = _find_function(ast.parse(source), "verify")
+        assert _constant_time_calls(fn) == [], (
+            "dead nested comparator must not protect the verifier"
+        )
+    fn = _find_function(ast.parse(live_nested), "verify")
+    assert _constant_time_calls(fn), "live in-body comparator must still count"
 
 
 def test_ct_verifier_scan_is_not_vacuous():

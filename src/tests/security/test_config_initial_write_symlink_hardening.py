@@ -80,8 +80,27 @@ def _root_name(node):
     return node.id if isinstance(node, ast.Name) else None
 
 
+def _own_body_nodes(root: ast.AST):
+    """Yield ``root`` and nodes reachable through execution (not definition).
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a nested callable that calls
+    mkstemp/fdopen/os.replace does not run it. Counting a dead nested primitive
+    as protection lets a writer silence this invariant with dead evidence (the
+    same vacuity fixed across the SEC100/200/300 route guards).
+    """
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+
+
 def _uses(function, attr, root=None):
-    for node in ast.walk(function):
+    for node in _own_body_nodes(function):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -111,6 +130,37 @@ def _direct_write_lines(function):
         ):
             lines.append(node.lineno)
     return lines
+
+
+def test_dead_nested_atomic_primitive_does_not_satisfy_uses():
+    """An atomic primitive in a never-invoked nested callable is dead evidence.
+
+    Regression: ``_uses`` used ``ast.walk(function)``, which descends into nested
+    functions and lambdas. Merely *defining* a helper/lambda that calls
+    os.replace did not run it, so a writer stripped of its live atomic primitive
+    could silence this invariant with dead evidence. A live in-body primitive
+    (including behind statement-level nesting) must still count.
+    """
+    dead_nested = """
+def w(p):
+    def never_called():
+        os.replace(tmp, p)
+"""
+    dead_lambda = """
+def w(p):
+    _ = lambda: os.replace(tmp, p)
+"""
+    live_nested = """
+def w(p):
+    for _ in (1,):
+        os.replace(tmp, p)
+"""
+    for source in (dead_nested, dead_lambda):
+        fn = _find_function(ast.parse(source), "w")
+        assert not _uses(fn, "replace", root="os"), (
+            "dead nested os.replace must not protect the writer"
+        )
+    assert _uses(_find_function(ast.parse(live_nested), "w"), "replace", root="os")
 
 
 def test_initial_writer_uses_atomic_primitives_and_detector_is_not_vacuous():
