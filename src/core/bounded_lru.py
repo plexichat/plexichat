@@ -11,12 +11,19 @@ registry:
 * ``ttl_seconds`` bounds staleness -- expired entries are never served and are
   dropped on access, so a revoked/rotated decision cannot live past the TTL.
 
+Expired values are reclaimed with a min-heap keyed by expiry, so a write does
+not have to walk every entry to find them. The heap is compacted when it grows
+past twice the entry cap, keeping its memory bounded and the amortised cost of
+a write O(log n) instead of O(n) -- important because a bounded cache at its
+steady state breaches the entry cap on *every* insert.
+
 ``clear()`` is a full invalidation hook: callers that change the underlying
 source of truth (a license hot-swap, a config reload, ...) must call it so no
 stale verdict survives. Eviction is always safe for a pure-computation cache:
 a missing entry is recomputed from the authoritative source, never assumed.
 """
 
+import heapq
 import threading
 import time
 from collections import OrderedDict
@@ -64,6 +71,12 @@ class BoundedLRU:
         self._size_of = size_of or value_size
         self._data: "OrderedDict[Any, tuple[float, Any, int]]" = OrderedDict()
         self._bytes = 0
+        # Min-heap of (expires_at, sequence, key). A stale heap entry is one
+        # whose key was re-set (different expiry) or removed; ``_drop_expired``
+        # ignores it by checking the live entry's expiry. Sequence breaks ties
+        # without comparing (possibly unorderable) keys.
+        self._expiry_heap: "list[tuple[float, int, Any]]" = []
+        self._seq = 0
         self._lock = threading.RLock()
         self._hits = 0
         self._misses = 0
@@ -102,6 +115,35 @@ class BoundedLRU:
             self._hits += 1
             return value
 
+    def _drop_expired(self, now: float) -> None:
+        """Reclaim entries whose TTL elapsed, using the min-heap index.
+
+        Caller must hold ``self._lock``. Only entries that are actually expired
+        are visited (amortised O(log n) each), unlike the old full ``items()``
+        snapshot scan which was O(n) on every write at capacity. Stale heap
+        entries are discarded; they never evict a live value.
+        """
+        heap = self._expiry_heap
+        while heap and heap[0][0] <= now:
+            exp, _seq, key = heapq.heappop(heap)
+            item = self._data.get(key)
+            if item is not None and item[0] == exp:
+                self._data.pop(key, None)
+                self._bytes -= item[2]
+                self._expirations += 1
+
+    def _compact_heap(self) -> None:
+        """Rebuild the heap from live entries; cap stale-entry accumulation.
+
+        Caller must hold ``self._lock``. Amortised to one O(n) rebuild per
+        ``_max_entries`` writes, so steady-state writes stay O(log n).
+        """
+        self._expiry_heap = [
+            (item[0], i, key) for i, (key, item) in enumerate(self._data.items())
+        ]
+        heapq.heapify(self._expiry_heap)
+        self._seq = len(self._expiry_heap)
+
     def set(self, key: Any, value: Any) -> None:
         """Store ``value``, evicting expired then least-recently-used entries.
 
@@ -118,19 +160,20 @@ class BoundedLRU:
                 self._bytes -= old[2]
             self._data[key] = (expires_at, value, size)
             self._bytes += size
+            heapq.heappush(self._expiry_heap, (expires_at, self._seq, key))
+            self._seq += 1
 
-            # Sweeping expired keys is O(n) and allocates a snapshot of every
-            # entry. Only pay that cost when a bound is actually breached: with
-            # spare capacity a stale-but-unread key is harmless -- ``get``
-            # drops it on access and never serves it, so fail-closed TTL
-            # semantics are unchanged. Under pressure we still reclaim expired
-            # keys before evicting live LRU entries.
+            # Keep stale heap entries (from re-sets, LRU evictions and
+            # ``get``-time expiry) from growing without bound.
+            if len(self._expiry_heap) > 2 * self._max_entries:
+                self._compact_heap()
+
+            # Reclaim expired keys before evicting live LRU entries. Only pay
+            # this cost when a bound is breached: with spare capacity a
+            # stale-but-unread key is harmless -- ``get`` drops it on access
+            # and never serves it, so fail-closed TTL semantics are unchanged.
             if len(self._data) > self._max_entries or self._bytes > self._max_bytes:
-                for expired_key, (exp, _v, sz) in list(self._data.items()):
-                    if exp <= now:
-                        self._data.pop(expired_key, None)
-                        self._bytes -= sz
-                        self._expirations += 1
+                self._drop_expired(now)
 
             while self._data and (
                 len(self._data) > self._max_entries or self._bytes > self._max_bytes
@@ -151,6 +194,7 @@ class BoundedLRU:
         with self._lock:
             self._data.clear()
             self._bytes = 0
+            self._expiry_heap.clear()
 
     def __len__(self) -> int:
         with self._lock:
