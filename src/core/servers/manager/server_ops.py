@@ -535,10 +535,19 @@ class ServerOpsMixin(ServerProtocol):
             raise ServerAccessDeniedError("Only the owner can delete the server")
 
         now = self._get_timestamp()
-        self._db.execute(
-            "UPDATE srv_servers SET deleted = 1, deleted_at = ? WHERE id = ?",
-            (now, server_id),
+        # Ownership can be transferred between the read above and this write.
+        # Bind the soft-delete to the authoritative owner predicate so a former
+        # owner cannot delete a server that now belongs to someone else, and
+        # fail closed when the guarded update matches no row.
+        cursor = self._db.execute(
+            "UPDATE srv_servers SET deleted = 1, deleted_at = ? "
+            "WHERE id = ? AND owner_id = ?",
+            (now, server_id, int(user_id)),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise ServerAccessDeniedError(
+                "Server ownership changed concurrently; refusing to delete"
+            )
 
         if valkey_available():
             cache_delete(f"server:{server_id}")
