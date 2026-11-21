@@ -50,6 +50,25 @@ __all__ = [
     "GatewayDispatcher",
 ]
 
+# --- Inbound flood guard registration -------------------------------------
+# ``INBOUND_RATE_LIMITS`` in ``.handlers`` is the only per-connection inbound
+# frame-rate ceiling. VOICE_SPEAKING was left out on the assumption that the
+# signaling idle sweeper bounds it; it does not, because every speaking frame
+# calls ``signaling.record_activity`` which REFRESHES the idle clock. Each
+# frame then pays an O(channel-members) threadpool DB visibility walk plus two
+# recipient fan-outs, so one authenticated socket can loop it without bound.
+# Register a generous sliding window at package init so every OpcodeHandler
+# enforces it; setdefault keeps the dispatch table authoritative and lets a
+# tighter configured value win.
+def _register_inbound_flood_limits() -> None:
+    from .handlers import INBOUND_RATE_LIMITS
+
+    INBOUND_RATE_LIMITS.setdefault(int(GatewayOpcode.VOICE_SPEAKING), (200, 10.0))
+
+
+_register_inbound_flood_limits()
+
+
 # Valkey pub/sub channel name — must match the constant in
 # ``src.core.events.manager``.
 _CROSS_WORKER_CHANNEL = "events:cross_worker"
