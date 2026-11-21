@@ -711,6 +711,44 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
     admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
+        # Locking sets account_locked = 1 and logs out every session, i.e. it
+        # disables the account. When the target is an admin this is an
+        # admin-targeting mutation and must honour the same role-position
+        # hierarchy as update/delete/toggle-status, ban/unban and
+        # force-password-change. The scope alone is not enough: a low-position
+        # holder of admin.security.sessions could otherwise disable a superior
+        # admin (or its own account). Mirror force-purge: refuse upward/self
+        # locks and re-assert the hierarchy as the write executes.
+        import src.api as api
+
+        from .users.admin_users import (
+            _assert_hierarchy_at_write,
+            _can_manage_admin_at,
+            _load_admin_hierarchy,
+        )
+
+        db = api.get_db()
+        if db is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
+        hierarchy = _load_admin_hierarchy(db, int(admin_id), uid)
+        if hierarchy["target_exists"] and not _can_manage_admin_at(
+            int(admin_id), uid, hierarchy["current_pos"], hierarchy["target_pos"]
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Cannot lock admins at or above your own position",
+                    }
+                },
+            )
+        if hierarchy["target_exists"]:
+            _assert_hierarchy_at_write(db, int(admin_id), uid)
+
         from src.core import admin
 
         admin.lock_user(uid, body.duration_seconds)
