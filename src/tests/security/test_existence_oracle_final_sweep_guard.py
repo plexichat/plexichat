@@ -27,6 +27,8 @@ the uniform message cannot be "fixed" by disabling the real operation.
 from __future__ import annotations
 
 import asyncio
+import inspect
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -34,6 +36,7 @@ import pytest
 from fastapi import HTTPException
 
 import src.api as api
+from src.api.routes.admin import tickets as tickets_mod
 from src.api.routes.auth import email_verification as email_mod
 from src.api.routes.auth import password as password_mod
 from src.api.routes.suite import stash as stash_pkg
@@ -290,17 +293,96 @@ def test_real_share_link_and_ticket_paths_still_work():
     assert redeemed.item_id == "123"
 
 
+# --- admin ticket lookup ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_ticket_lookup_never_reveals_the_ticket_state():
+    """A missing ticket must return the same body regardless of lookup reason."""
+    with (
+        patch.object(tickets_mod, "check_host_restriction"),
+        patch.object(tickets_mod, "require_admin_permission"),
+        patch("src.core.admin.get_ticket", return_value=None),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await tickets_mod.get_ticket(ticket_id=123, request=object())
+    err = exc.value
+    assert err.status_code == 404
+    assert err.detail == {"error": {"code": 404, "message": "Ticket not found"}}
+
+
+@pytest.mark.asyncio
+async def test_real_admin_ticket_lookup_still_succeeds():
+    """The uniform refusal must not disable a ticket that does exist."""
+    ticket = SimpleNamespace(
+        id=123,
+        user_id=7,
+        username="user",
+        content="help",
+        category="bug",
+        rating=5,
+        status="open",
+        created_at=1,
+        resolved_at=None,
+        resolved_by=None,
+    )
+    with (
+        patch.object(tickets_mod, "check_host_restriction"),
+        patch.object(tickets_mod, "require_admin_permission"),
+        patch("src.core.admin.get_ticket", return_value=ticket),
+    ):
+        result = await tickets_mod.get_ticket(ticket_id=123, request=object())
+    assert result.id == "123"
+
+
 # --- static enumeration guard ----------------------------------------------
 
-# Source-level ratchet: every enumerated handler must keep routing failures
-# through a *static* message. A reason-derived message (f-string / str(exc) in
-# a "message" value) would reintroduce the oracle, so the guard flags it.
+# Source-level ratchet. A reason-derived client message (an internal token /
+# lookup state interpolated into a ``"message"`` value or into ``detail``)
+# reintroduces the existence oracle, so the guard flags it. Detection lives in
+# one function shared by the guard *and* its self-test, so the self-test can
+# prove non-vacuity by running the real detector against reason-derived input.
+
+# Deliberately broad: cover both quote styles and the common ways a reason can
+# reach the client. The old guard only matched double-quoted ``"message": f`` /
+# ``"message": str(`` in an enumerated handler's own source, which missed single
+# quotes, ``.format()``, concatenation, a string ``detail``, the shared stash
+# error mapper (where the body is actually built), and any new endpoint.
+_DYNAMIC_MESSAGE_PATTERNS = (
+    re.compile(r"""['"]message['"]\s*:\s*f['"]"""),  # f-string in a message value
+    re.compile(r"""['"]message['"]\s*:\s*str\s*\("""),  # str(...) in a message value
+    re.compile(r"""['"]message['"]\s*:\s*[^\n,]*\.format\s*\("""),  # .format()
+    re.compile(r"""['"]message['"]\s*:\s*[^\n,]*\+\s*\w+"""),  # concatenation
+    re.compile(r"""\bdetail\s*=\s*f['"]"""),  # interpolated string detail
+    re.compile(r"""\bdetail\s*=\s*str\s*\("""),  # str(...) detail
+)
+
+
+def _reason_derived_message_lines(source: str) -> list[str]:
+    """Source lines that build a client-visible message from a runtime value."""
+    return [
+        line.strip()
+        for line in source.splitlines()
+        if any(pattern.search(line) for pattern in _DYNAMIC_MESSAGE_PATTERNS)
+    ]
+
+
+# Handlers explicitly classified as existence-oracle-sensitive. This now
+# includes admin ticket lookup, which the module docstring has always claimed
+# but the old enumeration silently omitted.
 _ENDPOINT_SOURCES = {
     "password-reset/confirm": password_mod.confirm_password_reset,
     "verify-email": email_mod.verify_email,
     "share-links/resolve": share_mod.resolve_share_link,
     "download-ticket/redeem": grants_mod.redeem_download_ticket,
+    "admin ticket lookup": tickets_mod.get_ticket,
 }
+
+# Stash routes funnel *every* failure through this shared mapper, so it is the
+# real message-construction site for share-links/resolve and
+# download-ticket/redeem. Without this entry a mapper alias that derives its
+# body from ``str(exc)`` would bypass a handler-only ratchet.
+_MAPPER_SOURCES = {"stash error mapper": helpers_mod._error}
 
 # password-reset/confirm is allowed exactly ONE dynamic message: the 400 from
 # ``validate_credential_input`` at the HTTP boundary, which reflects caller
@@ -308,17 +390,22 @@ _ENDPOINT_SOURCES = {
 # No other enumerated handler may interpolate any value into a client message.
 _ALLOWED_DYNAMIC_MESSAGES = {"password-reset/confirm": 1}
 
+# Whole-module scan: a NEW endpoint added to one of these modules cannot escape
+# the ratchet merely by not being added to _ENDPOINT_SOURCES. The expected
+# dynamic-line count is the sum of the explicit allowances for that module.
+_SENSITIVE_MODULES = {
+    "auth/password": (password_mod, 1),
+    "auth/email_verification": (email_mod, 0),
+    "stash/share_links": (share_mod, 0),
+    "stash/grants": (grants_mod, 0),
+    "admin/tickets": (tickets_mod, 0),
+    "stash/helpers": (helpers_mod, 0),
+}
+
 
 def test_no_enumerated_handler_derives_a_client_message_from_internal_state():
-    import inspect
-    import re
-
-    dynamic = re.compile(r'"message"\s*:\s*(?:f["\']|str\()')
     for name, handler in _ENDPOINT_SOURCES.items():
-        source = inspect.getsource(handler)
-        offenders = [
-            line.strip() for line in source.splitlines() if dynamic.search(line)
-        ]
+        offenders = _reason_derived_message_lines(inspect.getsource(handler))
         allowed = _ALLOWED_DYNAMIC_MESSAGES.get(name, 0)
         assert len(offenders) == allowed, (
             f"{name} client-message interpolation count changed "
@@ -326,10 +413,46 @@ def test_no_enumerated_handler_derives_a_client_message_from_internal_state():
         )
 
 
-def test_reason_derived_message_would_be_caught_by_the_guard():
-    """Self-test: prove the static ratchet is not vacuous."""
-    import re
+def test_shared_stash_error_mapper_stays_static():
+    """The mapper that builds every stash failure body must not leak a reason."""
+    for name, mapper in _MAPPER_SOURCES.items():
+        offenders = _reason_derived_message_lines(inspect.getsource(mapper))
+        assert offenders == [], f"{name} derives a client message: {offenders}"
 
-    dynamic = re.compile(r'"message"\s*:\s*(?:f["\']|str\()')
-    evil = 'detail={"error": {"code": 400, "message": str(exc)}}'
-    assert dynamic.search(evil)
+
+def test_no_unclassified_endpoint_in_a_sensitive_module_derives_a_message():
+    """A new reason-derived refusal is caught even if it is not enumerated."""
+    for name, (module, allowed) in _SENSITIVE_MODULES.items():
+        offenders = _reason_derived_message_lines(inspect.getsource(module))
+        assert len(offenders) == allowed, (
+            f"{name} gained/unexpectedly lost reason-derived client-message "
+            f"construction (expected {allowed}, got {len(offenders)}): {offenders}. "
+            "If this is a new sensitive endpoint, classify it in "
+            "_ENDPOINT_SOURCES (allow a dynamic line only if it reflects caller "
+            "input, never an internal token/lookup reason)."
+        )
+
+
+def test_reason_derived_message_detector_is_not_vacuous():
+    """Self-test: run the *actual* detector against reason-derived sources.
+
+    This proves the guard would flag a reason-derived refusal in every form it
+    claims to cover -- including single quotes, ``.format()``, concatenation, a
+    string ``detail``, and a brand-new endpoint not in _ENDPOINT_SOURCES.
+    """
+    reason_derived = (
+        'detail={"error": {"code": 404, "message": str(exc)}}',
+        "detail={'error': {'code': 404, 'message': f'{reason}'}}",
+        'detail={"error": {"code": 400, "message": "{}".format(reason)}}',
+        'detail={"error": {"code": 400, "message": "bad " + reason}}',
+        'raise HTTPException(status_code=404, detail=f"Ticket {reason}")',
+        "raise HTTPException(status_code=403, detail=str(exc))",
+    )
+    for sample in reason_derived:
+        assert _reason_derived_message_lines(sample), (
+            f"detector failed to flag reason-derived message: {sample}"
+        )
+    # A static message must NOT be flagged, so the detector is not vacuous by
+    # simply matching everything.
+    static = 'detail={"error": {"code": 404, "message": "Ticket not found"}}'
+    assert _reason_derived_message_lines(static) == []
