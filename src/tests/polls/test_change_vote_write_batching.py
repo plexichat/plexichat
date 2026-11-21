@@ -84,6 +84,7 @@ class _Manager(VotingMixin):
     def get_poll(self, poll_id, user_id):
         return SimpleNamespace(
             id=poll_id,
+            message_id=poll_id + 1,
             is_ended=False,
             ends_at=None,
             allow_multiple_choice=True,
