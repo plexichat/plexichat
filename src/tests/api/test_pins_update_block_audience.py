@@ -163,6 +163,12 @@ async def test_unpin_route_filters_blocked_pair(env, captured, monkeypatch):
     assert set(audience) == {blocked.id, neutral.id}
 
     # 2. Two-way block: the blocked viewer no longer receives the event.
+    # Re-pin first (step 1 consumed the pin) with no blocks in place, then
+    # install the block so only the unpin event is under test here.
+    _set_relationships(monkeypatch, {})
+    await pin_message(
+        str(env["channel"].id), str(msg.id), current_user=_token_info(owner.id, "owner")
+    )
     captured["emitter_kwargs"].clear()
     captured["pin_audiences"].clear()
     _set_relationships(monkeypatch, {owner.id: [blocked.id], blocked.id: [owner.id]})
