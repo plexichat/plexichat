@@ -189,6 +189,25 @@ class BoundedLRU:
                 self._bytes -= sz
                 self._evictions += 1
 
+    def invalidate_where(self, predicate: Callable[[Any], bool]) -> int:
+        """Drop only the entries whose key satisfies ``predicate``.
+
+        A mutation touching a single entity in a shared key space can use this
+        instead of :meth:`clear` to keep unrelated hot entries warm. A dropped
+        entry is recomputed from the authoritative source on the next miss,
+        exactly as after ``clear``. Stale heap references for removed keys are
+        ignored by ``_drop_expired`` and reclaimed by ``_compact_heap``.
+
+        Returns the number of entries removed.
+        """
+        removed = 0
+        with self._lock:
+            for key in [k for k in self._data if predicate(k)]:
+                _expires_at, _value, size = self._data.pop(key)
+                self._bytes -= size
+                removed += 1
+        return removed
+
     def clear(self) -> None:
         """Full invalidation: drop every entry (counters are preserved)."""
         with self._lock:

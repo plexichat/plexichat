@@ -638,9 +638,10 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
             "DELETE FROM soundboard_permissions WHERE sound_id = ?", (sound_id,)
         )
         self._db.execute("DELETE FROM soundboard_sounds WHERE id = ?", (sound_id,))
-        # The sound's allow/deny list is gone; drop any memoized verdicts so a
-        # later call recomputes from the authoritative (now empty) rows.
-        self._sound_use_cache.clear()
+        # Only this sound's allow/deny list is gone; evict just its memoized
+        # verdicts so a later call recomputes from the authoritative (now
+        # empty) rows without discarding hot verdicts for other sounds.
+        self._invalidate_sound_use_cache(sound_id)
 
         logger.debug(f"Deleted sound {sound_id}")
         return True
@@ -701,13 +702,24 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
                 (perm_id, sound_id, role_id, 1 if can_use else 0),
             )
 
-        # A grant/deny just changed for this sound; invalidate every memoized
-        # verdict so the next play/probe sees the new allow-list immediately.
-        self._sound_use_cache.clear()
+        # A grant/deny just changed for this sound; invalidate only this
+        # sound's memoized verdicts so the next play/probe sees the new
+        # allow-list immediately while other sounds stay warm.
+        self._invalidate_sound_use_cache(sound_id)
 
         return SoundPermissions(
             id=perm_id, sound_id=sound_id, role_id=role_id, can_use=can_use
         )
+
+    def _invalidate_sound_use_cache(self, sound_id: int) -> None:
+        """Evict memoized verdicts for one sound, keeping other sounds warm.
+
+        Cache keys are ``(user_id, sound_id, server_id)``, so a permission or
+        deletion affecting a single sound only needs to drop the entries whose
+        second key component matches. A full ``clear()`` here would needlessly
+        re-query the allow-lists of every unrelated sound on the next play.
+        """
+        self._sound_use_cache.invalidate_where(lambda key: key[1] == sound_id)
 
     def _can_use_sound(self, user_id: int, sound_id: int, server_id: int) -> bool:
         """Check if user can use a sound based on role permissions.
