@@ -29,6 +29,22 @@ from src.core.database.cache.serialization import register_reconstructable_type
 register_reconstructable_type(TokenInfo)
 
 
+# The trusted-device flag used by the session-extension path lives on an
+# ``auth_devices`` row reachable from the session's own ``device_id``.  Reading
+# it as a scalar subquery here folds what used to be a second round trip
+# (``_device_is_trusted_by_id``) into the single session/user SELECT, so an
+# extended session no longer pays two DB reads per verification.  The
+# ``user_id`` predicate keeps the lookup bound to the session's owner, exactly
+# as the old helper was.
+_SESSION_VERIFY_SQL = (
+    "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, "
+    "u.force_username_change, u.deletion_status, "
+    "(SELECT d.trusted FROM auth_devices d "
+    " WHERE d.id = s.device_id AND d.user_id = s.user_id) AS device_trusted "
+    "FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?"
+)
+
+
 class VerificationMixin(AuthManagerProtocol):
     def verify_token(
         self,
@@ -129,10 +145,11 @@ class VerificationMixin(AuthManagerProtocol):
         # interpreted as a session token if this verifier is called directly.
         if parsed.get("token_type") != "session":
             raise TokenInvalidError("Token type mismatch")
-        row = self._db.fetch_one(
-            "SELECT s.*, u.username, u.permissions, u.account_type, u.account_locked, u.force_username_change, u.deletion_status FROM auth_sessions s JOIN auth_users u ON s.user_id = u.id WHERE s.id = ?",
-            (parsed["id"],),
-        )
+        # The session/user SELECT now also resolves the trusted-device flag, so
+        # keep the schema (trusted column) current before issuing it. The verdict
+        # is memoized per db, so this is a no-op after the first call.
+        self._ensure_trusted_device_columns()
+        row = self._db.fetch_one(_SESSION_VERIFY_SQL, (parsed["id"],))
         if (
             not row
             or row["revoked"]
@@ -200,10 +217,7 @@ class VerificationMixin(AuthManagerProtocol):
                 # duration with their own threshold. Fallback chain:
                 # trusted_extend_threshold_hours -> trusted_expire_hours ->
                 # the untrusted defaults.
-                trusted = bool(
-                    row.get("device_id")
-                    and self._device_is_trusted_by_id(row["user_id"], row["device_id"])
-                )
+                trusted = bool(row.get("device_id") and row.get("device_trusted"))
                 if trusted:
                     if (
                         sessions_config.get("trusted_extend_threshold_hours")
