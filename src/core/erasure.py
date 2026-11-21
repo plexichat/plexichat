@@ -294,6 +294,75 @@ def _is_live_server_channel_conversation(db: Any, conversation_id: int) -> bool:
     return row is not None
 
 
+# SQLite (and several hosted engines) cap the number of host parameters in a
+# single statement. Keep every batched probe well below the classic 999 limit.
+_PROBE_CHUNK = 400
+
+
+def _probe_chunks(conversation_ids: List[int]):
+    for start in range(0, len(conversation_ids), _PROBE_CHUNK):
+        yield conversation_ids[start : start + _PROBE_CHUNK]
+
+
+def _shared_conversation_ids(db: Any, conversation_ids: List[int], user_id: int) -> set:
+    """Conversations that still have a participant other than ``user_id``.
+
+    Batch replacement for the per-conversation ``has_other_participants``
+    probe. Call this BEFORE the erasing user's own participant rows are
+    deleted, so the predicate sees the same rows the old per-id query did.
+    """
+    shared = set()
+    for chunk in _probe_chunks(conversation_ids):
+        placeholders = ",".join("?" * len(chunk))
+        try:
+            rows = db.fetch_all(
+                "SELECT DISTINCT conversation_id FROM msg_participants "
+                f"WHERE conversation_id IN ({placeholders}) AND user_id != ?",
+                tuple(chunk) + (int(user_id),),
+            )
+        except Exception as exc:
+            # Core table; an unexpected failure must not make us mistake a
+            # shared DM for an empty one. Fall back to the per-id probe.
+            logger.debug("Erase: batched participant probe failed: %s", exc)
+            for cid in chunk:
+                if has_other_participants(db, cid, user_id):
+                    shared.add(cid)
+            continue
+        for row in rows or []:
+            value = row["conversation_id"] if isinstance(row, dict) else row[0]
+            if value is not None:
+                shared.add(int(value))
+    return shared
+
+
+def _live_channel_conversation_ids(db: Any, conversation_ids: List[int]) -> set:
+    """Conversations still owned by a live (non-deleted) server channel.
+
+    Batch replacement for the per-conversation
+    ``_is_live_server_channel_conversation`` probe. A missing ``srv_channels``
+    table is treated as "no live channel", matching the old per-id probe.
+    """
+    live = set()
+    for chunk in _probe_chunks(conversation_ids):
+        placeholders = ",".join("?" * len(chunk))
+        try:
+            rows = db.fetch_all(
+                "SELECT DISTINCT conversation_id FROM srv_channels "
+                f"WHERE conversation_id IN ({placeholders}) AND deleted = 0",
+                tuple(chunk),
+            )
+        except Exception as exc:
+            # Optional table on partial/older schemas: the per-id probe
+            # returned False for every conversation in this case.
+            logger.debug("Erase: batched live-channel probe unavailable: %s", exc)
+            return live
+        for row in rows or []:
+            value = row["conversation_id"] if isinstance(row, dict) else row[0]
+            if value is not None:
+                live.add(int(value))
+    return live
+
+
 def purge_user_conversations(db: Any, user_id: int) -> List[int]:
     """Detach a user from conversations, deleting the ones left empty.
 
@@ -311,6 +380,12 @@ def purge_user_conversations(db: Any, user_id: int) -> List[int]:
             db, "SELECT conversation_id FROM msg_participants WHERE user_id = ?", (uid,)
         )
     ]
+    # Resolve both "may this conversation be spared?" predicates up front,
+    # while the user's own participant rows are still present, in bounded
+    # chunks instead of one COUNT + one SELECT per conversation (an N+1 that
+    # made a DM-heavy account purge pay thousands of round trips).
+    shared_ids = _shared_conversation_ids(db, conversation_ids, uid)
+    live_channel_ids = _live_channel_conversation_ids(db, conversation_ids)
     owned_threads = _owned_thread_ids(db, uid)
     # Thread containers have no ``msg_participants`` rows -- access runs through
     # ``thread_members`` -- so they never appear in ``conversation_ids`` and
@@ -328,11 +403,7 @@ def purge_user_conversations(db: Any, user_id: int) -> List[int]:
         delete_conversation(db, cid)
         removed.append(cid)
     for cid in conversation_ids:
-        if (
-            cid in removed
-            or has_other_participants(db, cid, uid)
-            or _is_live_server_channel_conversation(db, cid)
-        ):
+        if cid in removed or cid in shared_ids or cid in live_channel_ids:
             continue
         delete_conversation(db, cid)
         removed.append(cid)
