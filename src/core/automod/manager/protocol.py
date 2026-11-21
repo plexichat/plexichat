@@ -26,22 +26,31 @@ class AutoModProtocol:
     ) -> List[Rule]:
         return cast(AutoModProtocol, super())._get_server_rules(server_id, enabled_only)
 
+    def _get_user_role_ids(
+        self, server_id: SnowflakeID, user_id: SnowflakeID
+    ) -> List[SnowflakeID]:
+        return cast(AutoModProtocol, super())._get_user_role_ids(server_id, user_id)
+
     def _is_exempt(
         self,
         server_id: SnowflakeID,
         user_id: SnowflakeID,
         channel_id: SnowflakeID,
+        user_role_ids: Optional[List[SnowflakeID]] = None,
     ) -> bool:
-        return cast(AutoModProtocol, super())._is_exempt(server_id, user_id, channel_id)
+        return cast(AutoModProtocol, super())._is_exempt(
+            server_id, user_id, channel_id, user_role_ids
+        )
 
     def _is_exempt_from_rule(
         self,
         rule: Rule,
         user_id: SnowflakeID,
         channel_id: SnowflakeID,
+        user_role_ids: Optional[List[SnowflakeID]] = None,
     ) -> bool:
         return cast(AutoModProtocol, super())._is_exempt_from_rule(
-            rule, user_id, channel_id
+            rule, user_id, channel_id, user_role_ids
         )
 
     def _increment_rate_tracking(

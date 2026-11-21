@@ -52,7 +52,14 @@ class EvaluationMixin(AutoModProtocol):
                 f"Message from user {user_id} failed validation: {validation_result.error_message}"
             )
 
-        if self._is_exempt(server_id, user_id, channel_id):
+        # Resolve the user's role set once for this message. Both the global
+        # exemption check and every per-rule exemption check need it; fetching
+        # it inside each of them re-ran the same JOIN M+1 times per message.
+        # This value is local to the call (no cross-user cache, no stale roles,
+        # multi-node safe) and is passed down to every exemption decision.
+        user_role_ids = self._get_user_role_ids(server_id, user_id)
+
+        if self._is_exempt(server_id, user_id, channel_id, user_role_ids):
             logger.debug(f"User {user_id} is exempt from AutoMod in server {server_id}")
             return CheckResult(passed=True, violations=[], actions_to_take=[])
 
@@ -74,7 +81,7 @@ class EvaluationMixin(AutoModProtocol):
         context.setdefault("automod_manager", self)
 
         for rule in rules:
-            if self._is_exempt_from_rule(rule, user_id, channel_id):
+            if self._is_exempt_from_rule(rule, user_id, channel_id, user_role_ids):
                 logger.debug(f"User {user_id} is exempt from rule '{rule.name}'")
                 continue
 

@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import List, Optional
 
 from src.core.base import SnowflakeID
 from ..models import Rule, Exemption
@@ -10,8 +10,31 @@ from .protocol import AutoModProtocol
 
 
 class ExemptionMixin(AutoModProtocol):
+    def _get_user_role_ids(
+        self, server_id: SnowflakeID, user_id: SnowflakeID
+    ) -> List[SnowflakeID]:
+        """Return the role ids ``user_id`` holds in ``server_id``.
+
+        This is the single read of the (server, user) role set. ``check_message``
+        calls it once per message and threads the result through every exemption
+        check. The automod evaluation hot path used to re-run this identical
+        ``JOIN`` once per rule (an N+1 read): for M rules that was M+1 identical
+        round trips carrying exactly the same rows.
+        """
+        user_roles = self._db.fetch_all(
+            """SELECT role_id FROM srv_member_roles 
+               JOIN srv_members ON srv_member_roles.member_id = srv_members.id
+               WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
+            (server_id, user_id),
+        )
+        return [r["role_id"] for r in user_roles]
+
     def _is_exempt(
-        self, server_id: SnowflakeID, user_id: SnowflakeID, channel_id: SnowflakeID
+        self,
+        server_id: SnowflakeID,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
+        user_role_ids: Optional[List[SnowflakeID]] = None,
     ) -> bool:
         server_row = self._db.fetch_one(
             "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
@@ -28,13 +51,14 @@ class ExemptionMixin(AutoModProtocol):
         if channel_exempt:
             return True
 
-        user_roles = self._db.fetch_all(
-            """SELECT role_id FROM srv_member_roles 
-               JOIN srv_members ON srv_member_roles.member_id = srv_members.id
-               WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
-            (server_id, user_id),
+        # Reuse the role ids resolved once for this check when supplied. When
+        # called directly (e.g. check_user) fall back to a fresh read so the
+        # legacy call signature keeps its exact behaviour.
+        role_ids = (
+            user_role_ids
+            if user_role_ids is not None
+            else self._get_user_role_ids(server_id, user_id)
         )
-        role_ids = [r["role_id"] for r in user_roles]
 
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
@@ -63,24 +87,30 @@ class ExemptionMixin(AutoModProtocol):
         return False
 
     def _is_exempt_from_rule(
-        self, rule: Rule, user_id: SnowflakeID, channel_id: SnowflakeID
+        self,
+        rule: Rule,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
+        user_role_ids: Optional[List[SnowflakeID]] = None,
     ) -> bool:
         if channel_id in rule.exempt_channels:
             return True
 
-        user_roles = self._db.fetch_all(
-            """SELECT role_id FROM srv_member_roles 
-               JOIN srv_members ON srv_member_roles.member_id = srv_members.id
-               WHERE srv_members.server_id = ? AND srv_members.user_id = ?""",
-            (rule.server_id, user_id),
+        # ``check_message`` resolves the role set once for the whole message
+        # and passes it to every rule. Only direct callers omit it, in which
+        # case a fresh read preserves the legacy behaviour.
+        role_ids = (
+            user_role_ids
+            if user_role_ids is not None
+            else self._get_user_role_ids(rule.server_id, user_id)
         )
-        user_role_ids = {r["role_id"] for r in user_roles}
+        held_roles = set(role_ids)
 
-        if user_role_ids & set(rule.exempt_roles):
+        if held_roles & set(rule.exempt_roles):
             return True
 
         if rule.applied_roles:
-            if not (user_role_ids & set(rule.applied_roles)):
+            if not (held_roles & set(rule.applied_roles)):
                 return True
 
         channel_exempt = self._db.fetch_one(
@@ -91,12 +121,12 @@ class ExemptionMixin(AutoModProtocol):
         if channel_exempt:
             return True
 
-        if user_role_ids:
-            placeholders = ",".join("?" * len(user_role_ids))
+        if held_roles:
+            placeholders = ",".join("?" * len(held_roles))
             role_exempt = self._db.fetch_one(
                 f"""SELECT id FROM automod_exemptions
                     WHERE server_id = ? AND target_type = 'role' AND target_id IN ({placeholders}) AND rule_id = ?""",
-                (rule.server_id, *user_role_ids, rule.id),
+                (rule.server_id, *held_roles, rule.id),
             )
             if role_exempt:
                 return True
