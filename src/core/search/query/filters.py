@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import utils.config as config
 from src.core.database.collections import CappedDict
+from src.core.security.hardening import HardeningViolation, parse_id
 from ..models import ParsedQuery, QueryFilter, FilterType, MessageSearchResult
 
 
@@ -211,12 +212,14 @@ class FilterProcessor:
         if identifier in self._channel_cache:
             return self._channel_cache[identifier]
 
+        # Same canonical id boundary as _resolve_user.
         try:
-            channel_id = int(identifier)
+            channel_id = parse_id(identifier, "channel_id")
+        except HardeningViolation:
+            pass
+        else:
             self._channel_cache[identifier] = channel_id
             return channel_id
-        except ValueError:
-            pass
 
         if self._db:
             row = self._db.fetch_one(
