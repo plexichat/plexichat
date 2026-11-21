@@ -27,9 +27,13 @@ def _require_target_send_access(servers, user_id: int, target_conversation_id: i
     no backing server channel is a genuine DM/group and needs no further gate.
     """
     if not servers:
-        # No servers store => the target can only be a DM/group conversation,
-        # already covered by the service's participation gate.
-        return
+        # The backing-channel lookup cannot be evaluated without the servers
+        # module. A private-channel alias can exist in the DB independently of
+        # that module, so skipping this gate would let any participant forward
+        # into a channel whose messages.send grant was never checked. Deny
+        # instead; a wired store whose reverse lookup finds no backing channel
+        # still allows genuine DMs below.
+        raise PermissionError("Cannot verify channel send access")
     lookup = getattr(servers, "get_channel_by_conversation", None)
     if not callable(lookup):
         raise PermissionError("Cannot verify channel send access")

@@ -38,7 +38,13 @@ def _require_attachment_send_access(servers, user_id: int, addressed_id: int) ->
     permission data denies.
     """
     if not servers:
-        return  # no servers store => addressed id can only be a DM/group
+        # The backing-channel lookup cannot be evaluated without the servers
+        # module. A private-channel alias can exist in the DB independently of
+        # that module, so skipping this gate would let any participant upload
+        # an attachment into a channel whose messages.send / timeout / view
+        # grants were never checked. Deny instead; a wired store whose reverse
+        # lookup finds no backing channel still allows genuine DMs below.
+        raise PermissionError("Cannot verify channel send access")
     lookup = getattr(servers, "get_channel_by_conversation", None)
     if not callable(lookup):
         raise PermissionError("Cannot verify channel send access")
