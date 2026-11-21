@@ -61,16 +61,8 @@ def test_revocation_evicts_channel_api_response_cache(
     second = asyncio.run(handler._get_channel(cid, token))
     assert second is not None
 
-    from src.core.servers.channel_access_cache import get_channel_access_cache
-
-    ver_before = get_channel_access_cache().version(server.id, member.id)
-    print("VER BEFORE", ver_before)
-    print("KEYS BEFORE KICK", mem_cache_matching_keys("channel_api:*"))
-
     # Core-level membership revocation: no API-layer access-cache helper runs.
     assert servers.kick_member(owner.id, server.id, member.id) is True
-    print("VER AFTER", get_channel_access_cache().version(server.id, member.id))
-    print("KEYS AFTER KICK", mem_cache_matching_keys("channel_api:*"))
 
     # The RBAC epoch bump must also retire the per-channel response cache.
     assert mem_cache_matching_keys("channel_api:*") == [], (
