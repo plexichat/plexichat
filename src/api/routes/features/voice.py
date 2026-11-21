@@ -19,6 +19,7 @@ from src.core.security.hardening import (
     reject_control_characters,
 )
 from .common import (
+    call_or_raise,
     parse_id as legacy_parse_id,
     raise_bad_request,
     raise_forbidden,
@@ -44,6 +45,55 @@ def _voice_snowflake(value, field: str):
         return parse_id(value, field)
     except HardeningViolation as exc:
         raise_bad_request(str(exc))
+
+
+def _require_voice_send_access(servers, user_id: int, conversation_id: int) -> None:
+    """Fail closed when the voice target is a channel the caller cannot post to.
+
+    Voice publishes straight through ``messaging.send_message``, which does not
+    apply the REST send route's ``messages.send``, timeout or channel-view
+    gates. Conversation participation is seeded for every server member on
+    join, so checking it alone lets a member who may only view a read-only
+    channel post a voice message into it. A conversation with no backing server
+    channel is a genuine DM/group and is already covered by the participation
+    gate in ``VoiceMessageService``. Any unresolved permission data denies.
+    """
+    if not servers:
+        return  # no servers store => conversation can only be a DM/group
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(lookup):
+        raise PermissionError("Cannot verify channel send access")
+    try:
+        info = lookup(conversation_id)
+    except Exception:
+        raise PermissionError("Cannot verify channel send access")
+    if info is None:
+        return  # DM/group conversation: participation already gated it
+    channel_id = info.get("id") if isinstance(info, dict) else None
+    server_id = info.get("server_id") if isinstance(info, dict) else None
+    if channel_id is None or server_id is None:
+        raise PermissionError("Cannot verify channel send access")
+
+    # get_channel enforces membership + channels.view for this exact caller.
+    get_channel = getattr(servers, "get_channel", None)
+    timed_out = getattr(servers, "is_timed_out", None)
+    has_permission = getattr(servers, "has_permission", None)
+    if get_channel is None or timed_out is None or has_permission is None:
+        raise PermissionError("Cannot verify channel send access")
+    if not (callable(get_channel) and callable(timed_out) and callable(has_permission)):
+        raise PermissionError("Cannot verify channel send access")
+    try:
+        if get_channel(channel_id, user_id) is None:
+            raise PermissionError("Cannot post to this channel")
+        if timed_out(user_id, server_id):
+            raise PermissionError("Timed out in this server")
+        allowed = bool(has_permission(user_id, server_id, "messages.send", channel_id))
+    except PermissionError:
+        raise
+    except Exception:
+        raise PermissionError("Cannot verify channel send access")
+    if not allowed:
+        raise PermissionError("Missing messages.send permission")
 
 
 def _validate_waveform(value) -> None:
@@ -267,6 +317,16 @@ async def send_voice_message(
     messaging = api.get_messaging()
     participant_svc = resolve_participant_service(messaging)
 
+    # Voice publishes through messaging.send_message, bypassing the REST send
+    # route's messages.send/timeout/view gates. Enforce them here, fail closed,
+    # before any voice message is persisted or published.
+    call_or_raise(
+        _require_voice_send_access,
+        api.get_servers(),
+        current_user.user_id,
+        conv_id,
+    )
+
     from src.core.messaging.services.voice import VoiceMessageService
 
     svc = VoiceMessageService(db)
@@ -418,6 +478,16 @@ async def upload_voice_message(
     db = api.get_db()
     messaging = api.get_messaging()
     participant_svc = resolve_participant_service(messaging)
+
+    # Voice publishes through messaging.send_message, bypassing the REST send
+    # route's messages.send/timeout/view gates. Enforce them here, fail closed,
+    # before any voice message is persisted or published.
+    call_or_raise(
+        _require_voice_send_access,
+        api.get_servers(),
+        current_user.user_id,
+        conv_id,
+    )
 
     from src.core.messaging.services.voice import VoiceMessageService
 
