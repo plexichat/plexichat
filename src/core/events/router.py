@@ -118,6 +118,13 @@ DM_EVENT_INTENT_MAP = {
     EventType.MESSAGE_DELETE_BULK: GatewayIntent.DIRECT_MESSAGES,
     EventType.MESSAGE_REACTION_ADD: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
+    # DM twin of the guild map's REMOVE_ALL entry: ``clear_reactions`` emits
+    # this with no guild_id, so a DM wipe is DM-scoped. Without this entry the
+    # router's default-allow for unmapped DM events delivered it to connections
+    # that never requested DIRECT_MESSAGE_REACTIONS (only the guild fallback
+    # gate checked GUILD_MESSAGE_REACTIONS), and withheld it from clients that
+    # did request the DM reaction intent.
+    EventType.MESSAGE_REACTION_REMOVE_ALL: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE_EMOJI: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.TYPING_START: GatewayIntent.DIRECT_MESSAGE_TYPING,
     # DM twin of the guild mapping above: a DM typing stop must be gated by
