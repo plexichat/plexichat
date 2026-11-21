@@ -18,6 +18,10 @@ import time
 
 import pytest
 
+
+from types import SimpleNamespace
+
+import src.core.config.snapshot as snapshot_module
 import utils.config as config
 from src.core import features
 from src.core.security.hardening import HardeningViolation
@@ -38,6 +42,15 @@ def test_repeated_resolution_identical_and_single_compute(monkeypatch):
     snapshot = features._tier_limits_snapshot
     real_loader = snapshot._loader
     builds = []
+
+    # The snapshot expires against a wall clock, so on a loaded shard the 200
+    # lookups below can straddle the staleness ceiling and rebuild -- the cache
+    # doing its job, not a defect. Freeze the clock this module reads (and only
+    # this reference, not the stdlib module) so the test measures the cache.
+    frozen = time.monotonic()
+    monkeypatch.setattr(
+        snapshot_module, "time", SimpleNamespace(monotonic=lambda: frozen)
+    )
 
     def counting_loader():
         builds.append(1)
