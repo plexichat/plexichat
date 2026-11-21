@@ -45,14 +45,28 @@ class ModerationMixin(VoiceProtocol):
                 permission,
             )
 
-        server_row = self._db.fetch_one(
-            "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
-            (server_id,),
+        # The owner id is the root of the hierarchy decision and changes only
+        # on an explicit transfer. Read it through the bounded, db-scoped,
+        # epoch-keyed L0 so a burst of moderation actions against one server
+        # pays for a single authoritative read; a miss/error recomputes below,
+        # and an ownership transfer bumps the epoch so the old id is retired.
+        from src.core.servers.manager.server_owner_cache import (
+            _MISS as _OWNER_MISS,
+            get_cached_server_owner,
+            prime_server_owner,
         )
-        if not server_row:
-            raise PermissionDeniedError("Server not found", permission)
 
-        owner_id = server_row["owner_id"]
+        owner_id = get_cached_server_owner(self._db, server_id)
+        if owner_id is _OWNER_MISS:
+            server_row = self._db.fetch_one(
+                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+                (server_id,),
+            )
+            if not server_row:
+                raise PermissionDeniedError("Server not found", permission)
+            owner_id = server_row["owner_id"]
+            prime_server_owner(self._db, server_id, owner_id)
+
         is_owner = int(owner_id) == int(moderator_id)
         target_is_owner = int(owner_id) == int(target_user_id)
         if target_is_owner:
