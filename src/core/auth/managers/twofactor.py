@@ -321,7 +321,6 @@ class TwoFactorMixin(AuthManagerProtocol):
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> AuthResult:
-        print("DBG manager complete_2fa", repr(ip_address), repr(user_agent), flush=True)
         parsed = parse_token(challenge_token)
         if not parsed or parsed["token_type"] != "2fa":
             raise TokenInvalidError("Invalid challenge")
