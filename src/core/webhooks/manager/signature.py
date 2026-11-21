@@ -286,12 +286,19 @@ class SignatureMixin(WebhookManagerTrait):
             # above is supposed to forbid. Drop the captured headers on every
             # still-claimable row so delivery re-signs with the NEW key
             # (WebhookDeliverer._effective_signing_headers re-signs whenever
-            # the stored timestamp is missing or stale). Rows already claimed
-            # as 'delivering' are in flight and cannot be recalled here.
+            # the stored timestamp is missing or stale).
+            #
+            # 'delivering' rows must be included too. Clearing their metadata
+            # cannot recall a POST a live worker already started -- that is
+            # unavoidable -- but a row whose worker died is re-claimed to
+            # 'pending' by WebhookRetryQueue.cleanup_expired(). If its headers
+            # survived the rotation, that later attempt would be signed with
+            # the retired key, re-opening the grace window indefinitely. Drop
+            # the headers here so any re-claim re-signs with the NEW key.
             self._db.execute(
                 """UPDATE webhook_retry_queue
                    SET metadata = NULL
-                   WHERE webhook_id = ? AND status IN ('pending', 'retrying')""",
+                   WHERE webhook_id = ? AND status IN ('pending', 'retrying', 'delivering')""",
                 (webhook_id,),
             )
         logger.info(f"Rotated signing key for webhook {webhook_id}")
