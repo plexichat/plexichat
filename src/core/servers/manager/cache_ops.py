@@ -40,15 +40,38 @@ class CacheOpsMixin(ServerProtocol):
         else:
             invalidate_pattern(f"{self._roster_cache_prefix}:*:{int(server_id)}:*")
 
+    def _permission_cache_key(self, prefix: str, key: Any) -> Any:
+        """Map a permission key to the canonical form readers look up.
+
+        ``RoleHandler.get_permissions_batch`` warms the permission cache with a
+        ``(user_id, server_id, channel_id)`` tuple, while the single-channel
+        ``get_permissions`` reader looks up the string key
+        ``perms:{user}:{server}:{channel}``.  Composing them verbatim made the
+        batch warm entries unreachable: the next channel-scoped permission
+        check re-resolved owner, roles and overrides from the database, and the
+        warmed entries also escaped the ``srv_permission:perms:{user}:{server}:*``
+        invalidation pattern.  Normalize the tuple to the canonical key so a
+        batched resolve is reusable by the per-channel checks that follow it
+        and is covered by the existing invalidation.  Other cache tiers and
+        key shapes are composed exactly as before.
+        """
+        if (
+            prefix == self._permission_cache_prefix
+            and isinstance(key, tuple)
+            and len(key) == 3
+        ):
+            return f"perms:{int(key[0])}:{int(key[1])}:{int(key[2])}"
+        return key
+
     def _cache_get(self, prefix: str, key: Any, default: Any = None) -> Any:
-        cache_key = f"{prefix}{key}"
+        cache_key = f"{prefix}{self._permission_cache_key(prefix, key)}"
         from src.core.database import cache_get
 
         value = cache_get(cache_key)
         return value if value is not None else default
 
     def _cache_set(self, prefix: str, key: Any, value: Any) -> None:
-        cache_key = f"{prefix}{key}"
+        cache_key = f"{prefix}{self._permission_cache_key(prefix, key)}"
         from src.core.database import cache_set
 
         cache_set(cache_key, value, ttl=self._cache_ttl)
@@ -59,7 +82,7 @@ class CacheOpsMixin(ServerProtocol):
         if key is None:
             invalidate_pattern(f"{prefix}*")
         else:
-            cache_key = f"{prefix}{key}"
+            cache_key = f"{prefix}{self._permission_cache_key(prefix, key)}"
             cache_delete(cache_key)
 
     def _invalidate_permission_caches(

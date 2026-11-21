@@ -160,16 +160,6 @@ def _exclude_blocked_recipients(actor_id: int, recipients: List[int]) -> List[in
     relationships = api.get_relationships()
     if not relationships:
         return recipients
-    # An uninitialized relationships module has no block data at all (the
-    # optional module is simply not wired in this deployment). Match the DM
-    # helper: leave the audience unchanged so typing still works, rather than
-    # treating "no source" as a failed lookup. Once wired, a lookup failure
-    # below fails closed.
-    if (
-        getattr(relationships, "_setup_complete", None) is False
-        and getattr(relationships, "_manager", None) is None
-    ):
-        return recipients
     try:
         blocked_ids = {int(x) for x in relationships.get_all_blocked_ids(actor_id)}
     except Exception as e:
