@@ -48,6 +48,12 @@ _COLUMNS = (
 # Repository-level default page size applied when a caller omits ``limit``
 # (L7): prevents unbounded full-table materialization by internal callers.
 _DEFAULT_LIST_LIMIT = 200
+# Hard ceiling for an *explicit* limit. SQLite reads a negative ``LIMIT`` as
+# unlimited and a very large positive one as "up to N", so neither value may
+# reach ``LIMIT ? OFFSET ?`` unchecked. This mirrors the manager's page cap and
+# keeps the repository safe for direct callers that bypass the manager.
+_MAX_LIST_LIMIT = 2000
+_MAX_LIST_OFFSET = 10_000_000
 
 
 # Allow-list of columns that may be used in ORDER BY. `duration` is a synthetic
@@ -433,16 +439,31 @@ def list_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> List[Artifac
     # L7: an omitted limit used to return the ENTIRE table (only the HTTP
     # route clamped). Cap the repository default so internal callers can never
     # accidentally materialize unbounded result sets; callers that need a
-    # larger page pass an explicit limit.
+    # larger page pass an explicit limit (up to ``_MAX_LIST_LIMIT``).
+    #
+    # Clamp the explicit value too: the manager's ``list_with_filters`` already
+    # does this, but ``list_artifacts`` is a public core API and callers can (and
+    # do, e.g. suite feeds) reach it directly. SQLite treats ``LIMIT -1`` as
+    # *unlimited*, so a negative limit from a computed/config value would dump
+    # the whole artifact table here despite the documented repository invariant.
     if limit is None:
         limit = _DEFAULT_LIST_LIMIT
+    else:
+        try:
+            limit = max(0, min(int(limit), _MAX_LIST_LIMIT))
+        except (TypeError, ValueError):
+            limit = 0
+    try:
+        offset = max(0, min(int(offset), _MAX_LIST_OFFSET))
+    except (TypeError, ValueError):
+        offset = 0
 
     query = (
         f"SELECT a.* FROM artifacts a{joins}{where} ORDER BY {sort_column} {sort_order}"
     )
     if limit is not None:
         query += " LIMIT ? OFFSET ?"
-        params.extend((int(limit), int(offset)))
+        params.extend((limit, offset))
 
     rows = db.fetch_all(query, tuple(params))
     return [row_to_artifact(row) for row in rows]
