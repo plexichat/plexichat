@@ -33,6 +33,8 @@ from ..tokens import create_2fa_challenge_token, parse_token, verify_token_hash
 from .. import totp as totp_module
 from src.core.database import invalidate_pattern
 
+from ..gateway_revocation import close_user_gateway_connections
+
 
 from .protocol import AuthManagerProtocol
 
@@ -607,6 +609,12 @@ class TwoFactorMixin(AuthManagerProtocol):
         self._invalidate_trusted_devices(user_id)
         # A just-revoked session must not keep answering from the verify cache.
         invalidate_pattern("token_verify:*")
+        # Pre-2FA sessions may still own live gateway sockets that remain
+        # authenticated server-side. Close them as part of the credential
+        # transition. The confirming session's socket is closed too because
+        # the connection does not record the auth-session id; forcing a fresh
+        # authenticated handshake here is the fail-closed choice.
+        close_user_gateway_connections(user_id, "Two-factor enabled")
         self._db.execute(
             "UPDATE auth_users SET totp_enabled = 1 WHERE id = ?", (user_id,)
         )
