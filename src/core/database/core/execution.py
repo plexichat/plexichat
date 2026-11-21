@@ -26,6 +26,63 @@ _DDL_STATEMENT_PREFIXES = ("CREATE", "ALTER")
 # the code segments so string-literal data is never rewritten.
 _SQL_LITERAL_SPLIT_RE = re.compile(r"('(?:[^']|'')*')")
 
+# Statement types that are guaranteed not to mutate table data. Everything
+# else is treated as a write by the query-result-cache invalidation check:
+# fail closed. In particular ``WITH`` is deliberately absent -- a leading CTE
+# can wrap INSERT/UPDATE/DELETE (``WITH ... UPDATE ...``), and those writes
+# would otherwise leave cached SELECTs over the mutated table stale (a cached
+# authorization verdict surviving a role demotion, for example). Over-
+# invalidating the short-lived query cache for the rare ``WITH ... SELECT``
+# reader is harmless; serving a pre-write snapshot is not.
+_QUERY_CACHE_READ_PREFIXES = (
+    "SELECT",
+    "PRAGMA",
+    "VALUES",
+    "EXPLAIN",
+    "SHOW",
+    "DESCRIBE",
+    "DESC",
+)
+
+
+def _strip_leading_sql_comments(sql: str) -> str:
+    """Return ``sql`` with its leading whitespace and SQL comments removed.
+
+    The preparation pipeline accepts ``--`` line comments, ``/* ... */``
+    block comments, and (on SQLite) ``#`` line comments. A write hidden behind
+    any of them still executes, so the invalidation check must see past them.
+    Only the leading run is stripped; comments inside the statement are left
+    exactly as they were.
+    """
+    rest = sql.lstrip()
+    while True:
+        if rest.startswith("--") or rest.startswith("#"):
+            newline = rest.find("\n")
+            if newline < 0:
+                return ""
+            rest = rest[newline + 1 :].lstrip()
+        elif rest.startswith("/*"):
+            end = rest.find("*/", 2)
+            if end < 0:
+                return ""
+            rest = rest[end + 2 :].lstrip()
+        else:
+            return rest
+
+
+def _query_mutates_data(query: str) -> bool:
+    """True when ``query`` may mutate table data and must clear the query cache.
+
+    Fails closed: only known read-only statement prefixes are exempt. This
+    catches writes the old ``startswith(("INSERT", "UPDATE", ...))`` check
+    missed -- CTE writes, ``MERGE``, ``TRUNCATE``, and DML preceded by comments
+    that the driver strips before execution but the prefix check could not.
+    """
+    effective = _strip_leading_sql_comments(query)
+    if not effective:
+        return False
+    return not effective.upper().startswith(_QUERY_CACHE_READ_PREFIXES)
+
 
 def _convert_ddl_fragment(fragment: str) -> str:
     """Apply the PostgreSQL type rewrites to one literal-free SQL fragment."""
@@ -289,22 +346,11 @@ class DatabaseExecutionMixin:
         if self.transaction_depth > 0:
             self._validate_transaction_state()
 
-        upper_query = query.strip().upper()
-        if any(
-            upper_query.startswith(word)
-            for word in [
-                "INSERT",
-                "UPDATE",
-                "DELETE",
-                "REPLACE",
-                "DROP",
-                "CREATE",
-                "ALTER",
-            ]
-        ):
+        if _query_mutates_data(query):
             with self._query_cache_lock:
                 self._query_cache.clear()
 
+        upper_query = query.strip().upper()
         # Statement preparation (comment stripping, placeholder conversion,
         # PG type rewrites) is pure and depends only on the SQL text. Cache the
         # result so repeated hot queries pay for it once, not per request.
@@ -432,26 +478,14 @@ class DatabaseExecutionMixin:
             self._validate_transaction_state()
 
         # A batched write is still a write. execute() clears the query-result
-        # cache for INSERT/UPDATE/... so a later SELECT cannot be served a
-        # pre-write snapshot; executemany must do the same. Without this, a
-        # sweep that updates rows via execute_many leaves every cached SELECT
-        # over those rows stale until its short TTL expires -- e.g. the poll
-        # expiry sweep would re-select the same "still open" rows forever.
+        # cache for every data-mutating statement so a later SELECT cannot be
+        # served a pre-write snapshot; executemany must do the same. Without
+        # this, a sweep that updates rows via execute_many leaves every cached
+        # SELECT over those rows stale until its short TTL expires -- e.g. the
+        # poll expiry sweep would re-select the same "still open" rows forever.
         # One clear per batch is strictly cheaper than the N clears the old
         # per-row execute() loop paid.
-        upper_query = query.strip().upper()
-        if any(
-            upper_query.startswith(word)
-            for word in [
-                "INSERT",
-                "UPDATE",
-                "DELETE",
-                "REPLACE",
-                "DROP",
-                "CREATE",
-                "ALTER",
-            ]
-        ):
+        if _query_mutates_data(query):
             with self._query_cache_lock:
                 self._query_cache.clear()
 
