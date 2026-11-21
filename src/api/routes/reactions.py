@@ -282,6 +282,36 @@ async def add_reaction(
         # write or event emission (never trust the URL channel id).
         real_cid = _validate_message_in_channel(reactions, mid, cid)
 
+        # Fail closed: writing a reaction requires the ability to VIEW the
+        # channel. The core manager gates ``messages.add_reactions`` but treats
+        # view access (``messages.read``) as a separate bit, so a server member
+        # denied view by a channel override could otherwise react to a message
+        # in a channel they cannot see (the reaction fan-out already hides such
+        # members from events). Resolve the channel membership-agnostically and
+        # check the live permission; DMs have no server channel row and are left
+        # to the manager's own participant gate.
+        servers_mod = api.get_servers()
+        if servers_mod and hasattr(servers_mod, "get_channel_by_conversation"):
+            conv_id = reactions.get_conversation_id_from_message(mid)
+            srv_channel = (
+                servers_mod.get_channel_by_conversation(conv_id) if conv_id else None
+            )
+            if srv_channel and not servers_mod.has_permission(
+                current_user.user_id,
+                srv_channel["server_id"],
+                "messages.read",
+                srv_channel["id"],
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Cannot react to this message",
+                        }
+                    },
+                )
+
         # Check for server timeout
         servers_mod = api.get_servers()
         if servers_mod:
