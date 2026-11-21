@@ -269,38 +269,49 @@ class MessageIndexingMixin(SearchManagerBase):
                     )
 
         now = self._get_timestamp()
-        for indexed, meta in zip(batch, batch_meta):
-            self._db.upsert(
+        # One batched upsert for the whole page instead of one upsert (and one
+        # commit) per message. The identifier list, conflict key and update
+        # columns are unchanged -- only the write is coalesced into a single
+        # execute_many, which also invalidates the query-result cache once for
+        # the batch.
+        bookkeeping_columns = [
+            "message_id",
+            "conversation_id",
+            "server_id",
+            "channel_id",
+            "author_id",
+            "indexed_at",
+            "updated_at",
+            "source_updated_at",
+        ]
+        update_columns = [
+            "conversation_id",
+            "server_id",
+            "channel_id",
+            "author_id",
+            "updated_at",
+            "source_updated_at",
+        ]
+        rows = [
+            (
+                indexed.message_id,
+                indexed.conversation_id,
+                indexed.server_id,
+                indexed.channel_id,
+                indexed.author_id,
+                now,
+                now,
+                meta["source_updated_at"],
+            )
+            for indexed, meta in zip(batch, batch_meta)
+        ]
+        if rows:
+            self._db.upsert_many(
                 "search_message_index",
-                [
-                    "message_id",
-                    "conversation_id",
-                    "server_id",
-                    "channel_id",
-                    "author_id",
-                    "indexed_at",
-                    "updated_at",
-                    "source_updated_at",
-                ],
-                (
-                    indexed.message_id,
-                    indexed.conversation_id,
-                    indexed.server_id,
-                    indexed.channel_id,
-                    indexed.author_id,
-                    now,
-                    now,
-                    meta["source_updated_at"],
-                ),
+                bookkeeping_columns,
+                rows,
                 ["message_id"],
-                [
-                    "conversation_id",
-                    "server_id",
-                    "channel_id",
-                    "author_id",
-                    "updated_at",
-                    "source_updated_at",
-                ],
+                update_columns,
             )
 
     def _decrypt_message_content(

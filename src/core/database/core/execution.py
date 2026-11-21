@@ -116,6 +116,13 @@ class _DatabaseExecutionProtocol(Protocol):
         self, query: str, params: Optional[Tuple] = None, auto_commit: bool = True
     ) -> DbCursor: ...
 
+    def execute_many(
+        self,
+        query: str,
+        params_list: List[Tuple],
+        auto_commit: bool = True,
+    ) -> DbCursor: ...
+
     def fetch_one(
         self, query: str, params: Optional[Tuple] = None
     ) -> Optional[Dict[str, Any]]: ...
@@ -824,3 +831,48 @@ class DatabaseExecutionMixin:
         )
         cursor = self.execute(query, values)
         cursor.close()
+
+    def upsert_many(
+        self: _DatabaseExecutionProtocol,
+        table: str,
+        columns: List[str],
+        values_list: List[Tuple],
+        conflict_columns: List[str],
+        update_columns: Optional[List[str]] = None,
+        auto_commit: bool = True,
+    ) -> None:
+        """Batched upsert: one statement/commit for all rows, not one per row.
+
+        Mirrors :meth:`upsert`'s identifier sanitization and engine-specific
+        SQL, but writes every row through a single ``execute_many`` call. A
+        full reindex used to call ``upsert`` once per message (one write
+        statement and one commit each); batching collapses a page of N rows to
+        one round trip while preserving the same ON CONFLICT semantics.
+
+        ``execute_many`` also clears the query-result cache once for the whole
+        batch, so a later SELECT cannot be served a pre-write snapshot (cache
+        coherence after a batched write). Fail-closed: a constraint failure in
+        any row propagates out of the batch instead of being silently skipped.
+        """
+        if not values_list:
+            return
+
+        safe_table = dialect.sanitize_identifier(table, self.type)
+        safe_cols = [dialect.sanitize_identifier(c, self.type) for c in columns]
+        safe_conflict = [
+            dialect.sanitize_identifier(c, self.type) for c in conflict_columns
+        ]
+
+        if update_columns is None:
+            update_columns = [c for c in columns if c not in conflict_columns]
+        safe_updates = [
+            dialect.sanitize_identifier(c, self.type) for c in update_columns
+        ]
+
+        if not safe_updates:
+            query = self.engine.get_insert_or_ignore_query(safe_table, safe_cols)
+        else:
+            query = self.engine.get_upsert_query(
+                safe_table, safe_cols, safe_conflict, safe_updates
+            )
+        self.execute_many(query, values_list, auto_commit=auto_commit)
