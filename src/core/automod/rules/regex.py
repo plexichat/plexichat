@@ -115,6 +115,32 @@ def _is_unbounded_quantifier(pattern_str: str, i: int) -> bool:
 # number of ambiguous splits constant-bounded and stay allowed.
 MAX_SAFE_NESTED_REPEAT = 8
 
+# A single bounded repeat of 8 is safe (2**8 = 256 ambiguous splits), but the
+# ambiguity MULTIPLIES across nesting levels: ``((a{1,2}){8}){8}`` has
+# 2**(8*8) = 2**64 ways to split a run of ``a`` characters and stalls the
+# backtracking engine on ~64 characters. Each per-group bound stays <= 8, so
+# the check above cannot see it. Cap the accumulated product of bounded
+# variable repeats across all nesting levels as well. 16 keeps ordinary
+# single-level patterns (IPv4's ``(\d{1,3}\.){3}`` = 3*3 = 9) allowed while
+# rejecting nested shapes (2*8*8 = 128 > 16).
+MAX_NESTED_REPEAT_PRODUCT = 16
+
+
+def _quantifier_choices(bounds: Optional[tuple]) -> int:
+    """How many repetition counts a quantifier permits (ambiguity factor).
+
+    A fixed ``{n}`` has one choice and adds no ambiguity; ``{1,3}`` has three
+    and lets the engine split the same input several ways. Unbounded forms are
+    handled by the dedicated unbounded-nesting checks, so a nominal factor of
+    two is enough here.
+    """
+    if bounds is None:
+        return 1
+    low, high = bounds
+    if high == _UNBOUNDED:
+        return 2
+    return max(1, high - low + 1)
+
 
 def _has_backreference_redos_risk(pattern_str: str) -> bool:
     """Detect catastrophic backtracking introduced by a backreference.
@@ -259,7 +285,11 @@ def _has_redos_risk(pattern_str: str) -> bool:
       - large BOUNDED repetition over a variable-count or alternating atom,
         e.g. ``(a{1,2}){100}`` or ``(a?){50}`` — finite bounds are not a
         guarantee of safety when the inner atom can match a variable number
-        of the same characters.
+        of the same characters;
+      - several bounded variable repeats NESTED so their ambiguity factors
+        multiply past ``MAX_NESTED_REPEAT_PRODUCT``, e.g.
+        ``((a{1,2}){8}){8}`` — each individual bound is small but the combined
+        split count is exponential.
 
     BOUNDED repetition of a FIXED atom is safe and accepted: ``(a|b){2}``
     and the IPv4 shape ``(\\d{1,3}\\.){3}\\d{1,3}`` do not blow up because the
@@ -272,8 +302,13 @@ def _has_redos_risk(pattern_str: str) -> bool:
     if _has_backreference_redos_risk(pattern_str):
         return True
 
-    # Stack frames: [quantified, unbounded, variable_count, saw_alternation]
-    stack: List[List[bool]] = [[False, False, False, False]]
+    # Stack frames:
+    #   [quantified, unbounded, variable_count, saw_alternation,
+    #    nested_repeat_product]
+    # The last field accumulates the product of bounded variable-repeat
+    # factors from this frame and its closed children so nested finite repeats
+    # cannot hide exponential ambiguity from the per-group bound check.
+    stack: List[List[Any]] = [[False, False, False, False, 1]]
     i = 0
     n = len(pattern_str)
 
@@ -299,7 +334,7 @@ def _has_redos_risk(pattern_str: str) -> bool:
             continue
 
         if ch == "(":
-            stack.append([False, False, False, False])
+            stack.append([False, False, False, False, 1])
             i += 1
             continue
 
@@ -310,6 +345,7 @@ def _has_redos_risk(pattern_str: str) -> bool:
                     inner_unbounded,
                     inner_variable,
                     inner_alternation,
+                    inner_product,
                 ) = stack.pop()
                 q_len = _match_quantifier(pattern_str, i + 1) or 0
                 if q_len:
@@ -332,6 +368,19 @@ def _has_redos_risk(pattern_str: str) -> bool:
                         and (inner_variable or inner_alternation)
                     ):
                         return True
+                    # The per-group bound above misses nested finite repeats:
+                    # ((a{1,2}){8}){8} keeps every bound <= 8 yet has 2**64
+                    # splits. Accumulate the product of bounded variable
+                    # repeats across nesting levels and cap that as well.
+                    nested_product = inner_product
+                    if (
+                        not outer_unbounded
+                        and (inner_variable or inner_alternation)
+                        and high > 1
+                    ):
+                        nested_product *= high
+                        if nested_product > MAX_NESTED_REPEAT_PRODUCT:
+                            return True
                     # The group plus its quantifier is a quantified atom from
                     # the parent's point of view. Propagate ambiguity upward
                     # (OR, not assignment) so deeper nesting is still caught.
@@ -339,6 +388,7 @@ def _has_redos_risk(pattern_str: str) -> bool:
                     stack[-1][1] = stack[-1][1] or outer_unbounded or inner_unbounded
                     stack[-1][2] = stack[-1][2] or inner_variable or (low != high)
                     stack[-1][3] = stack[-1][3] or inner_alternation
+                    stack[-1][4] = max(stack[-1][4], nested_product)
                 else:
                     # No outer quantifier: still carry the inner ambiguity up
                     # so an enclosing quantified group cannot hide it.
@@ -346,11 +396,13 @@ def _has_redos_risk(pattern_str: str) -> bool:
                     stack[-1][1] = stack[-1][1] or inner_unbounded
                     stack[-1][2] = stack[-1][2] or inner_variable
                     stack[-1][3] = stack[-1][3] or inner_alternation
+                    stack[-1][4] = max(stack[-1][4], inner_product)
                 i += 1 + q_len
                 continue
 
         if ch == "|":
             stack[-1][3] = True
+            stack[-1][4] = max(stack[-1][4], 2)
             i += 1
             continue
 
@@ -361,6 +413,7 @@ def _has_redos_risk(pattern_str: str) -> bool:
             stack[-1][0] = True
             stack[-1][1] = high == _UNBOUNDED
             stack[-1][2] = low != high
+            stack[-1][4] = max(stack[-1][4], _quantifier_choices(bounds))
             i += q_len
             continue
 
