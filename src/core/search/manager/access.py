@@ -294,10 +294,39 @@ class AccessControlMixin(SearchManagerBase):
         return verified
 
     def _get_server_member_ids(self, server_id: int) -> set:
+        """Resolve a server's member ids as the user-search visibility scope.
+
+        Server-scoped user search (including typeahead) resolves this set on
+        *every* keystroke: it is the result-visibility scope folded into the
+        short-TTL result cache key, which is intentionally computed before the
+        cache lookup. That used to issue a fresh ``SELECT user_id FROM
+        srv_members WHERE server_id = ?`` full projection per search, so a
+        burst over a large server replayed the whole roster read each time.
+
+        Reuse the bounded, short-TTL, write-invalidated member-id cache that
+        gateway/presence/voice fan-out already uses for this exact query. It is
+        keyed only by ``(server_id, exclude_user_id)`` -- never by the searching
+        credential -- and holds the identical authoritative projection, so it
+        cannot carry one user's authorization into another's search. Every
+        join/kick/ban/leave clears it through the shared membership funnel, so
+        result scoping stays in lockstep with roster writes.
+        """
+        from src.core.servers.manager.member_id_cache import (
+            _MISS as _MEMBER_IDS_MISS,
+            get_cached_member_user_ids,
+            prime_member_user_ids,
+        )
+
+        cached = get_cached_member_user_ids(server_id)
+        if cached is not _MEMBER_IDS_MISS:
+            return set(cached)
+
         rows = self._db.fetch_all(
             "SELECT user_id FROM srv_members WHERE server_id = ?", (server_id,)
         )
-        return {row["user_id"] for row in rows}
+        user_ids = [row["user_id"] for row in rows]
+        prime_member_user_ids(server_id, None, user_ids)
+        return set(user_ids)
 
     def _get_user_server_ids(self, user_id: int) -> set:
         from src.core.database import cache_get, cache_set, valkey_available
