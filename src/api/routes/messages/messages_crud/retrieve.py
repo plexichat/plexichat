@@ -48,7 +48,13 @@ def _require_channel_view(cid: int, user_id: int, servers_mod) -> None:
     exists but cannot be resolved is indistinguishable from a missing message.
     """
     if not servers_mod:
-        return  # No servers store => cid can only be a DM/group conversation.
+        # The backing-channel/alias lookup cannot be evaluated without the
+        # servers module. A private-channel alias can exist in the DB
+        # independently of that module, so skipping this gate would let a
+        # member denied channels.view fetch a private message by id -- including
+        # its attachments and viewer-bound signed URLs. Deny instead; a wired
+        # store with no backing channel still allows a genuine DM below.
+        raise _not_found()
 
     get_channel = getattr(servers_mod, "get_channel", None)
     channel_exists = getattr(servers_mod, "channel_exists", None)

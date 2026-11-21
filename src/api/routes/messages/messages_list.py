@@ -61,7 +61,13 @@ def _require_channel_messages_view(
     membership-agnostically before any private page can be served.
     """
     if not servers_mod:
-        return
+        # The backing-channel/alias lookup cannot be evaluated without the
+        # servers module. A private-channel alias can exist in the DB
+        # independently of that module, so skipping this gate would let a
+        # member denied channels.view page through private-channel messages.
+        # Deny instead; a wired store with no backing channel still allows a
+        # genuine DM below.
+        raise _channel_messages_not_found()
     get_channel = getattr(servers_mod, "get_channel", None)
     channel_exists = getattr(servers_mod, "channel_exists", None)
     reverse = getattr(servers_mod, "get_channel_by_conversation", None)
@@ -497,9 +503,16 @@ async def _verify_pinned_channel_access(
 
     servers_mod = api.get_servers()
     if not servers_mod:
-        # No server module: the cached loader treats the id as a DM and the
-        # messaging backend gates participation; nothing to re-check here.
-        return
+        # The reverse lookup cannot be evaluated without the servers module.
+        # A private-channel alias can exist in the DB independently of that
+        # module, so skipping this cached-body gate would keep serving a warm
+        # private pin list to a viewer whose channel access was revoked. Deny
+        # instead; a wired store with no backing channel still allows a genuine
+        # DM to the messaging participation check in the cached loader.
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Channel not found"}},
+        )
 
     try:
         channel = await run_in_threadpool(

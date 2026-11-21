@@ -64,9 +64,6 @@ def _require_read_receipt_channel_view(cid: int, user_id: int, servers_mod) -> N
     channel. Fails closed on any broken lookup; a genuine DM/group has no
     backing channel and is left to the messaging layer's participation gate.
     """
-    if not servers_mod:
-        return  # no servers store => cid can only be a DM/group conversation
-
     def _deny() -> None:
         # Same 404 as a missing channel, so a restricted channel is not
         # disclosed and the alias cannot be used as an existence oracle.
@@ -74,6 +71,15 @@ def _require_read_receipt_channel_view(cid: int, user_id: int, servers_mod) -> N
             status_code=404,
             detail={"error": {"code": 404, "message": "Channel not found"}},
         )
+
+    if not servers_mod:
+        # The backing-channel/alias lookup cannot be evaluated without the
+        # servers module. A private-channel alias can exist in the DB
+        # independently of that module, so skipping this gate would let a
+        # member denied channels.view reach the participation-only
+        # unread/read-state lookup. Deny instead; a wired store with no backing
+        # channel still allows a genuine DM below.
+        _deny()
 
     get_channel = getattr(servers_mod, "get_channel", None)
     channel_exists = getattr(servers_mod, "channel_exists", None)
