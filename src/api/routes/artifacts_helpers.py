@@ -628,6 +628,55 @@ def _get_manager():
 # === Inline message emission ===
 
 
+def _can_emit_artifact_message(conversation_id, author_id) -> bool:
+    """Fail closed when the artifact would post into a channel the author cannot.
+
+    ``_emit_artifact_message`` persists a message straight through
+    ``messaging.send_message``, whose only gate is conversation participation.
+    For a server channel participation is seeded for every member on join and
+    is NOT a send grant. Artifact creation is gated by ``artifact.create``,
+    which is granted to @everyone by default and says nothing about posting in
+    the specific backing channel. Without this guard a member who can view a
+    read-only channel -- or who is timed out in the server -- can create an
+    artifact and have a message carrying their chosen title posted into a
+    channel where the REST send route would reject them. Any permission data
+    that cannot be resolved denies the emission.
+    """
+    if conversation_id is None:
+        return True  # no conversation to post into (event-only emission)
+    servers = api.get_servers()
+    if servers is None:
+        return True  # no servers store => conversation can only be a DM/group
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(lookup):
+        return False
+    try:
+        info = lookup(conversation_id)
+    except Exception:
+        return False
+    if info is None:
+        return True  # genuine DM/group: participation is the only boundary
+    channel_id = info.get("id") if isinstance(info, dict) else None
+    server_id = info.get("server_id") if isinstance(info, dict) else None
+    if channel_id is None or server_id is None:
+        return False
+
+    get_channel = getattr(servers, "get_channel", None)
+    timed_out = getattr(servers, "is_timed_out", None)
+    has_permission = getattr(servers, "has_permission", None)
+    if not (callable(get_channel) and callable(timed_out) and callable(has_permission)):
+        return False
+    try:
+        # get_channel enforces membership + channels.view for this exact caller.
+        if get_channel(channel_id, author_id) is None:
+            return False
+        if timed_out(author_id, server_id):
+            return False
+        return bool(has_permission(author_id, server_id, "messages.send", channel_id))
+    except Exception:
+        return False
+
+
 def _emit_artifact_message(
     artifact: ArtifactResponse,
     author: Dict[str, Any],
@@ -655,6 +704,16 @@ def _emit_artifact_message(
         server_id = artifact.server_id
         channel_id = artifact.channel_id
         conversation_id = artifact.conversation_id
+
+        # The inline message is a real persisted message posted through the
+        # messaging layer, which does not apply the REST send route's
+        # messages.send/timeout/channel-view gates. Enforce them here, fail
+        # closed, before any message is persisted or broadcast.
+        if not _can_emit_artifact_message(conversation_id, int(artifact.author_id)):
+            logger.debug(
+                "Skipping artifact message: author cannot post to the backing channel"
+            )
+            return
 
         content = (
             f"{config.get('artifacts', {}).get('inline_icon', '📎')} {artifact.title}"
