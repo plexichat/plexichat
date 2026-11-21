@@ -20,6 +20,11 @@ from ._shared import (
     _WORKBOOK_SESSIONS,
 )
 
+# SQLite's default maximum is 999 host parameters. Keep every batched IN list
+# well below it (and bounded for the PostgreSQL engine too) so a wide viewport
+# never has to be split into an unbounded number of round trips.
+_SEGMENT_COLUMN_CHUNK = 500
+
 
 class SumManagerViewport(SumManagerProtocol):
     def _read_viewport_solo(
@@ -486,32 +491,61 @@ class SumManagerViewport(SumManagerProtocol):
                 "SELECT row_index, column_index, value_type, value_json, formula, style_json, revision FROM sum_cells WHERE sheet_id = ? AND row_index >= ? AND row_index < ? AND column_index >= ? AND column_index < ? ORDER BY row_index, column_index",
                 (str(sheet_id), row_start, row_end, column_start, column_end),
             ).fetchall()
-            # Check for segment-backed columns and merge with sparse cells
+            # Check for segment-backed columns and merge with sparse cells.
+            # This used to issue one SELECT per column in the viewport range --
+            # a classic N+1 on a hot poll path (a 100-column view paid 100
+            # round trips). Fetch every requested column in bounded IN chunks
+            # instead. ``sheet_id`` stays in the predicate and only column ids
+            # from this authorized sheet's requested range are bucketed, so a
+            # batch can never pull in another sheet's (or user's) segments.
             segment_map: Dict[int, Dict[int, Dict[str, Any]]] = {}
-            for col_idx in range(column_start, column_end):
+            column_ids = [str(col) for col in range(column_start, column_end)]
+            for chunk_start in range(0, len(column_ids), _SEGMENT_COLUMN_CHUNK):
+                chunk = column_ids[chunk_start : chunk_start + _SEGMENT_COLUMN_CHUNK]
+                placeholders = ", ".join("?" for _ in chunk)
+                requested = {int(col) for col in chunk}
+                params: List[Any] = [str(sheet_id), row_start, row_end]
+                params.extend(chunk)
                 try:
                     seg_rows = connection.execute(
-                        "SELECT segment_id, compressed_values FROM sum_column_segments "
-                        "WHERE sheet_id = ? AND column_id = ? AND row_end > ? AND row_start < ?",
-                        (str(sheet_id), str(col_idx), row_start, row_end),
+                        "SELECT column_id, segment_id, compressed_values "
+                        "FROM sum_column_segments "
+                        f"WHERE sheet_id = ? AND row_end > ? AND row_start < ? "
+                        f"AND column_id IN ({placeholders})",
+                        tuple(params),
                     ).fetchall()
-                    if seg_rows:
-                        col_cells = {}
-                        for seg_row in seg_rows:
-                            decoded = SegmentEncoder.decode_segment(
-                                seg_row["compressed_values"]
-                            )
-                            for cell in decoded.get("cells", []) or []:
-                                if not isinstance(cell, dict):
-                                    continue
-                                r = int(cell.get("row_index", cell.get("row", 0)))
-                                if row_start <= r < row_end:
-                                    col_cells[r] = cell
-                        segment_map[col_idx] = col_cells
                 except Exception as segment_error:
                     import utils.logger as logger
 
-                    logger.debug(f"sum viewport segment decode failed: {segment_error}")
+                    logger.debug(
+                        f"sum viewport segment lookup failed: {segment_error}"
+                    )
+                    continue
+                for seg_row in seg_rows:
+                    try:
+                        col_idx = int(seg_row["column_id"])
+                    except (TypeError, ValueError):
+                        continue
+                    if col_idx not in requested:
+                        continue
+                    try:
+                        decoded = SegmentEncoder.decode_segment(
+                            seg_row["compressed_values"]
+                        )
+                    except Exception as segment_error:
+                        import utils.logger as logger
+
+                        logger.debug(
+                            f"sum viewport segment decode failed: {segment_error}"
+                        )
+                        continue
+                    col_cells = segment_map.setdefault(col_idx, {})
+                    for cell in decoded.get("cells", []) or []:
+                        if not isinstance(cell, dict):
+                            continue
+                        r = int(cell.get("row_index", cell.get("row", 0)))
+                        if row_start <= r < row_end:
+                            col_cells[r] = cell
             # Merge: segment cells fill gaps, sparse cells take precedence.
             # Merged rows are plain dicts keyed like the sqlite rows
             # (subscriptable via ``row["column"]``); the merged list is
