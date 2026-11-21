@@ -367,8 +367,17 @@ async def upload_voice_message(
 
     import time
 
+    # The media module is the only thing that may mint an attachment URL. If it
+    # is unavailable, fail closed instead of embedding the bytes in a ``data:``
+    # URL: the JSON variant explicitly rejects that scheme (active-content sink
+    # and unbounded length), and base64-encoding up to 10MB of audio here used
+    # to produce a ~13MB ``url`` string stored on the message and echoed on
+    # every read, bypassing the JSON path's MAX_URL_LENGTH boundary entirely.
+    media = api.get_media()
+    if not media:
+        raise_internal("Media storage unavailable")
+
     try:
-        media = api.get_media()
         ext_map = {
             "audio/webm": "webm",
             "audio/ogg": "ogg",
@@ -381,35 +390,27 @@ async def upload_voice_message(
         ext = ext_map.get(audio.content_type, "webm")
         filename = f"voice_{current_user.user_id}_{int(time.time() * 1000)}.{ext}"
 
-        if media:
-            result = media.upload_file(
-                file_data=content,
-                filename=filename,
-                content_type=audio.content_type,
-                user_id=current_user.user_id,
-            )
-            attachment_data = {
-                "filename": result.get("filename")
-                if isinstance(result, dict)
-                else result.filename,
-                "content_type": result.get("content_type")
-                if isinstance(result, dict)
-                else result.content_type,
-                "size": result.get("size") if isinstance(result, dict) else result.size,
-                "url": result.get("url") if isinstance(result, dict) else result.url,
-                "metadata": result.get("metadata")
-                if isinstance(result, dict)
-                else result.metadata,
-            }
-            storage_url = attachment_data["url"] if attachment_data["url"] else ""
-            file_size = (
-                attachment_data["size"] if attachment_data["size"] else len(content)
-            )
-        else:
-            import base64
-
-            storage_url = f"data:{audio.content_type};base64,{base64.b64encode(content).decode('ascii')}"
-            file_size = len(content)
+        result = media.upload_file(
+            file_data=content,
+            filename=filename,
+            content_type=audio.content_type,
+            user_id=current_user.user_id,
+        )
+        attachment_data = {
+            "filename": result.get("filename")
+            if isinstance(result, dict)
+            else result.filename,
+            "content_type": result.get("content_type")
+            if isinstance(result, dict)
+            else result.content_type,
+            "size": result.get("size") if isinstance(result, dict) else result.size,
+            "url": result.get("url") if isinstance(result, dict) else result.url,
+            "metadata": result.get("metadata")
+            if isinstance(result, dict)
+            else result.metadata,
+        }
+        storage_url = attachment_data["url"] if attachment_data["url"] else ""
+        file_size = attachment_data["size"] if attachment_data["size"] else len(content)
     except Exception as e:
         logger.error(f"Failed to store voice message audio: {e}")
         raise_internal("Failed to store audio file")
