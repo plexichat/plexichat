@@ -396,10 +396,12 @@ class MessageStatusService(BaseService):
         each call ran its own participant lookup, MAX(id), settings/channel
         probes, message SELECT and executemany — up to ~100x the work.
 
-        AFTER: participation, last-read positions and per-channel MAX(id) are
-        each resolved with one chunked query, all status rows are written by
-        one chunked executemany, and all participant positions by one more.
-        Per-channel read-receipt settings and cache invalidation are preserved.
+        AFTER: participation, last-read positions, per-channel MAX(id) and the
+        per-channel read-receipt flag are each resolved with one chunked query,
+        all status rows are written by one chunked executemany, and all
+        participant positions by one more. Per-channel read-receipt settings
+        (including the disabled-receipt skip) and cache invalidation are
+        preserved -- only the round trips are bounded.
         """
         by_conv: Dict[Any, Optional[SnowflakeID]] = {}
         for conversation_id, up_to in updates:
@@ -452,20 +454,22 @@ class MessageStatusService(BaseService):
 
         now = self._get_timestamp()
         user_settings = self._user_settings_svc.get_message_settings(user_id)
-        servers_mod = self._get_servers_module()
+
+        # The per-channel read-receipt flag used to be read by calling
+        # servers.get_channel() once per conversation. That helper re-checks
+        # membership and channels.view on every call, so an N-channel bulk ack
+        # paid N redundant probes for one boolean. Resolve every flag with a
+        # single bounded query instead; missing rows (DMs, channels the caller
+        # cannot see) default to True exactly like the old fallback. Access is
+        # already gated above by the fail-closed participation check.
+        receipts_by_conv = self._repo.get_read_receipts_enabled(list(targets))
 
         ranges = []
         for conv, (target, last_value) in targets.items():
-            receipts_enabled = True
-            if servers_mod:
-                try:
-                    channel = servers_mod.get_channel(conv, user_id)
-                    if channel:
-                        receipts_enabled = getattr(
-                            channel, "read_receipts_enabled", True
-                        )
-                except Exception:
-                    receipts_enabled = True
+            try:
+                receipts_enabled = receipts_by_conv.get(int(conv), True)
+            except (TypeError, ValueError):
+                receipts_enabled = True
             if user_settings.read_receipts_enabled and receipts_enabled:
                 ranges.append((conv, target, last_value))
 
