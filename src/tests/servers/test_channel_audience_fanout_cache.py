@@ -21,10 +21,12 @@ tests pin four properties:
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
 
+import src.core.bounded_lru as bounded_lru_module
 from src.api.routes.messages.messages_crud.broadcast import _resolve_recipients
 from src.core.servers.manager import channel_audience_cache as cachemod
 from src.core.servers.manager.channel_audience_cache import (
@@ -74,7 +76,22 @@ class _Servers:
 # --- measured reduction ------------------------------------------------------
 
 
-def test_burst_reuses_member_list():
+def _freeze_roster_clock(monkeypatch):
+    """Pin the clock the bounded LRU reads for its TTL.
+
+    The roster TTL is 10s, and on a loaded shard these bursts can take longer
+    than that: the cache would expire mid-burst -- doing exactly its job, not
+    showing a defect -- and the call counts would measure the shard's speed.
+    Freeze only the reference inside the LRU module, not the stdlib module.
+    """
+    frozen = time.monotonic()
+    monkeypatch.setattr(
+        bounded_lru_module, "time", SimpleNamespace(monotonic=lambda: frozen)
+    )
+
+
+def test_burst_reuses_member_list(monkeypatch):
+    _freeze_roster_clock(monkeypatch)
     servers = _Servers([1, 2, 3], viewers={2, 3})
 
     for _ in range(50):
@@ -92,8 +109,9 @@ def test_burst_reuses_member_list():
     assert stats["misses"] == 1
 
 
-def test_perf_before_and_after_call_counts():
+def test_perf_before_and_after_call_counts(monkeypatch):
     """A 100-message burst on a 500-member channel: 100 queries -> 1."""
+    _freeze_roster_clock(monkeypatch)
     events, members = 100, 500
 
     class _NoCache:

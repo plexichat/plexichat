@@ -59,11 +59,15 @@ def test_repeated_resolution_identical_and_single_compute(monkeypatch):
     monkeypatch.setattr(snapshot, "_loader", counting_loader)
 
     expected = features._compute_tier_limits("standard")
+    # Counters are cumulative for the process, so measure this test's build as
+    # a delta: a neighbouring test in the shard may already have built the
+    # table once and an absolute count would depend on collection order.
+    baseline = snapshot.stats()["rebuilds"]
     results = [features.get_tier_limits("standard") for _ in range(200)]
 
     assert all(r == expected and r is results[0] for r in results)
     assert len(builds) == 1
-    assert snapshot.stats()["rebuilds"] == 1
+    assert snapshot.stats()["rebuilds"] == baseline + 1
     assert 0 < features._TIER_LIMITS_CACHE_TTL_SECONDS <= 10
 
 

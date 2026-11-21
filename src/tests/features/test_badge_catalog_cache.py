@@ -44,11 +44,15 @@ def test_identical_output_and_single_compute(monkeypatch):
 
     monkeypatch.setattr(snapshot, "_loader", counting_loader)
 
+    # The snapshot's counters are cumulative for the process: an earlier test
+    # in the same shard may already have built the catalogue once, so measure
+    # this test's build as a delta instead of an absolute count.
+    baseline = snapshot.stats()["rebuilds"]
     results = [models.Badge.get_badge_info("staff") for _ in range(200)]
 
     assert all(result == results[0] for result in results)
     assert len(builds) == 1, "static catalogue must be computed once"
-    assert snapshot.stats()["rebuilds"] == 1
+    assert snapshot.stats()["rebuilds"] == baseline + 1
 
 
 def test_returned_badge_is_a_copy_not_the_cached_template():
