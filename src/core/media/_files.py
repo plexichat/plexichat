@@ -682,6 +682,106 @@ class _FilesMixin:
 
     # ── access control ─────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _conversation_channel_view_granted(
+        conv_id: int, user_id: int, manager: Any
+    ) -> bool:
+        """True only when ``user_id`` may actually view ``conv_id``'s channel.
+
+        ``is_participant`` treats membership in a server as participation in
+        every one of its channel conversations, independent of the per-channel
+        ``channels.view`` permission. Granting a private media file to every
+        such "participant" is an IDOR: a member denied view on a private channel
+        could otherwise download its attachments directly from the media route
+        (the message read/delete paths already enforce a live view gate; this
+        is the separate core-media file-access path).
+
+        A genuine DM/group conversation has no backing channel and is left to
+        the messaging layer's participation check. For server-backed channels
+        the live ``get_channel`` accessor -- which enforces both membership and
+        ``channels.view`` -- is authoritative. Anything that cannot be resolved
+        fails closed.
+        """
+        channel_id: Optional[int] = None
+
+        # Server-channel conversations carry ``channel_id`` in their metadata
+        # (the same source ``is_participant`` consults). Prefer it: it needs no
+        # servers-module lookup and keeps DM access working even when that
+        # module is not wired.
+        get_conversation = getattr(manager, "get_conversation", None)
+        if callable(get_conversation):
+            try:
+                conv = get_conversation(conv_id, user_id)
+            except Exception:
+                conv = None
+            metadata = getattr(conv, "metadata", None) if conv is not None else None
+            if isinstance(metadata, dict) and metadata.get("channel_id") is not None:
+                try:
+                    channel_id = int(metadata["channel_id"])
+                except (TypeError, ValueError):
+                    return False
+            elif conv is not None:
+                # A real conversation with no channel metadata is a DM/group.
+                return True
+
+        servers: Any = None
+        if channel_id is None:
+            # Legacy rows (or shims without get_conversation) have no metadata:
+            # fall back to the membership-agnostic backing-channel probes.
+            try:
+                import src.api as api_module
+
+                servers = api_module.get_servers()
+            except Exception:
+                servers = None
+            if not servers:
+                # Cannot prove it is NOT a private channel -> fail closed.
+                return False
+            reverse = getattr(servers, "get_channel_by_conversation", None)
+            if callable(reverse):
+                try:
+                    backing = reverse(conv_id)
+                except Exception:
+                    return False
+                raw = (
+                    backing.get("id")
+                    if isinstance(backing, dict)
+                    else getattr(backing, "id", None)
+                )
+                if raw is not None:
+                    try:
+                        channel_id = int(raw)
+                    except (TypeError, ValueError):
+                        return False
+            if channel_id is None:
+                exists = getattr(servers, "channel_exists", None)
+                if callable(exists):
+                    try:
+                        if exists(conv_id):
+                            channel_id = int(conv_id)
+                    except Exception:
+                        return False
+            if channel_id is None:
+                # No backing channel: genuine DM/group, participation suffices.
+                return True
+
+        if servers is None:
+            try:
+                import src.api as api_module
+
+                servers = api_module.get_servers()
+            except Exception:
+                servers = None
+        if not servers:
+            return False
+        get_channel = getattr(servers, "get_channel", None)
+        if not callable(get_channel):
+            return False
+        try:
+            return get_channel(channel_id, user_id) is not None
+        except Exception:
+            return False
+
     def check_file_access(self, filename: str, user_id: int) -> bool:
         """Check if a user has permission to access a media file.
 
@@ -815,7 +915,11 @@ class _FilesMixin:
                         if hasattr(self._messaging, "is_participant")
                         else self._messaging.get_manager()
                     )
-                    if manager.is_participant(conv_id, user_id):
+                    if manager.is_participant(conv_id, user_id) and (
+                        self._conversation_channel_view_granted(
+                            conv_id, user_id, manager
+                        )
+                    ):
                         return True
                 except Exception as e:
                     logger.debug(
