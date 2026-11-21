@@ -17,6 +17,7 @@ without a timeout and the vetted transport before the scan is trusted.
 
 import ast
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -129,10 +130,8 @@ def _network_calls(tree):
         yield node.lineno, node, vetted, has_timeout, literal_url
 
 
-def _scan_source(source):
-    """Return ``(has_url_literal, calls, violations)`` for one module's source."""
-    tree = ast.parse(source)
-    has_url_literal = any(_is_url_literal(node) for node in ast.walk(tree))
+def _scan_tree_node(tree):
+    """Return ``(calls, violations)`` for an already-parsed module tree."""
     calls = []
     violations = []
     for lineno, call, vetted, has_timeout, literal_url in _network_calls(tree):
@@ -141,20 +140,34 @@ def _scan_source(source):
         if not vetted and not has_timeout:
             summary = ast.unparse(call)[:90]
             violations.append(f"line {lineno}: {summary}")
+    return calls, violations
+
+
+def _scan_source(source):
+    """Return ``(has_url_literal, calls, violations)`` for one module's source."""
+    tree = ast.parse(source)
+    has_url_literal = any(_is_url_literal(node) for node in ast.walk(tree))
+    calls, violations = _scan_tree_node(tree)
     return has_url_literal, calls, violations
 
 
 def _scan_tree():
-    """Scan every URL-bearing, non-test module under ``src/``."""
+    """Scan every URL-bearing, non-test module under ``src/``.
+
+    Each source file is read and parsed exactly once: the single tree drives
+    both the URL-literal gate and the network-call analysis. The previous
+    version re-read (``path.read_text``) and re-parsed (``_scan_source``) every
+    file a second time, doubling work across the whole tree for no benefit.
+    """
     scanned = []
     for path in _python_files(SRC):
         tree = _parse(path)
         if tree is None:
             continue
-        source = path.read_text(encoding="utf-8")
-        if not any(_is_url_literal(node) for node in ast.walk(tree)):
+        has_url_literal = any(_is_url_literal(node) for node in ast.walk(tree))
+        if not has_url_literal:
             continue
-        has_url_literal, calls, violations = _scan_source(source)
+        calls, violations = _scan_tree_node(tree)
         scanned.append(
             (str(path.relative_to(ROOT)), has_url_literal, calls, violations)
         )
@@ -212,3 +225,56 @@ def test_every_url_bearing_module_uses_vetted_transport_or_timeout():
 
 def test_every_scanned_module_really_has_a_url_literal():
     assert all(has_url for _, has_url, _, _ in _SCAN)
+
+
+def test_scan_tree_reads_and_parses_each_file_once(monkeypatch):
+    """Perf regression: every file is read and AST-parsed exactly once.
+
+    The scanner used to read + parse each file twice (once for the URL-literal
+    gate, then ``path.read_text`` + ``_scan_source`` for the network-call scan).
+    Counting reads/parses pins the fix deterministically -- no wall-clock timing
+    and no flaky timing threshold.
+    """
+    this = sys.modules[__name__]
+
+    # One real URL-bearing module (full scan path) plus a few non-URL modules
+    # (skip path). Using real files under SRC keeps ``relative_to(ROOT)`` valid.
+    url_rels = [rel for rel, has_url, _, _ in _SCAN if has_url]
+    assert url_rels, "no URL-bearing module in the baseline scan"
+    url_probe = ROOT / url_rels[0]
+    all_rels = {str(p.relative_to(ROOT)) for p in _python_files(SRC)}
+    other_probes = [ROOT / rel for rel in sorted(all_rels - set(url_rels))[:3]]
+    probe = [url_probe] + other_probes
+    assert len(probe) >= 2
+
+    parse_calls = []
+    real_parse = this._parse
+
+    def counting_parse(path):
+        parse_calls.append(path)
+        return real_parse(path)
+
+    read_calls = []
+    real_read_text = Path.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        read_calls.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(this, "_python_files", lambda base: iter(probe))
+    monkeypatch.setattr(this, "_parse", counting_parse)
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    scanned = this._scan_tree()
+
+    assert len(parse_calls) == len(probe), (
+        f"each file must be parsed once: {len(parse_calls)} parses for "
+        f"{len(probe)} files"
+    )
+    assert len(read_calls) == len(probe), (
+        f"each file must be read once: {len(read_calls)} reads for "
+        f"{len(probe)} files"
+    )
+    # Coverage preserved: the URL-bearing probe is still scanned and the
+    # non-URL probes are still skipped.
+    assert [rel for rel, _, _, _ in scanned] == [url_rels[0]]
