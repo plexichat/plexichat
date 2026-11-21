@@ -30,6 +30,58 @@ from .protocol import NotificationProtocol
 # variable ceiling and keeps the notification write transaction short-lived.
 _UNREAD_BULK_CHUNK_SIZE = 500
 
+# Bound the ``role_id IN (...)`` hydration below so a message packing many
+# role mentions still issues statements under the backend bind-variable cap.
+_ROLE_MEMBER_CHUNK = 500
+
+
+def get_role_members_bulk(db, role_ids) -> Dict[SnowflakeID, List[SnowflakeID]]:
+    """Resolve ``role_id -> member user ids`` with bounded ``IN`` queries.
+
+    This is the set-based twin of :func:`get_role_members`: it uses the exact
+    same tables and join (``srv_member_roles`` joined to ``srv_members`` on
+    ``member_id``) and the same lack of extra predicates, so a member is
+    returned for a role here if and only if ``get_role_members(db, role)``
+    would have returned them. The only difference is that all distinct role
+    ids are resolved together instead of one SELECT per role (an N+1 on any
+    message that mentions several roles).
+
+    Security: the ``role_id IN (...)`` set is built exclusively from the ids
+    the caller already decided to hydrate, so a member of an *unmentioned*
+    role can never enter the result. Ids that are not integers are skipped —
+    such a value could not match an integer role id in the per-row query
+    either. No viewer/organisation column exists on this join, so batching
+    widens nothing: the predicate is role-id equality in both forms.
+    """
+    unique: List[int] = []
+    seen = set()
+    for rid in role_ids:
+        try:
+            key = int(rid)
+        except (TypeError, ValueError):
+            continue
+        if key not in seen:
+            seen.add(key)
+            unique.append(key)
+
+    by_role: Dict[SnowflakeID, List[SnowflakeID]] = {}
+    for start in range(0, len(unique), _ROLE_MEMBER_CHUNK):
+        chunk = unique[start : start + _ROLE_MEMBER_CHUNK]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = db.fetch_all(
+            f"""SELECT mr.role_id, m.user_id FROM srv_member_roles mr
+                JOIN srv_members m ON mr.member_id = m.id
+                WHERE mr.role_id IN ({placeholders})""",
+            tuple(chunk),
+        )
+        for row in rows or []:
+            try:
+                role_id = int(row["role_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            by_role.setdefault(role_id, []).append(row["user_id"])
+    return by_role
+
 
 def _encrypt_content_preview(preview: Optional[str], notif_id: int) -> Optional[str]:
     if not preview:
@@ -91,6 +143,29 @@ class NotificationCreatorMixin(NotificationProtocol):
 
         blocked_users = get_blocked_user_ids(self._relationships, self._db, author_id)
 
+        # ROLE-member hydration N+1: a message mentioning several roles used to
+        # issue one ``SELECT ... srv_member_roles JOIN srv_members WHERE
+        # role_id = ?`` per role. Resolve every distinct valid role id with a
+        # single bounded ``IN`` query + in-memory map first, then reuse it in
+        # the fan-out below. The map preserves each role's member list, so the
+        # per-recipient decisions (author/blocked/type de-dup) are unchanged.
+        role_ids = [
+            m.target_id
+            for m in validated
+            if m.valid
+            and m.mention_type == MentionType.ROLE
+            and m.target_id is not None
+        ]
+        role_members_by_id = None  # None => per-role fallback (exact old path)
+        if role_ids:
+            try:
+                role_members_by_id = get_role_members_bulk(self._db, role_ids)
+            except Exception as e:
+                # A legacy/stub DB without the set-based query keeps the
+                # original per-role behaviour rather than losing the ping.
+                logger.debug(f"bulk role-member hydration failed: {e}")
+                role_members_by_id = None
+
         for mention in validated:
             if not mention.valid:
                 continue
@@ -104,7 +179,15 @@ class NotificationCreatorMixin(NotificationProtocol):
             elif mention.mention_type == MentionType.ROLE:
                 if mention.target_id is None:
                     continue
-                role_members = get_role_members(self._db, mention.target_id)
+                if role_members_by_id is None:
+                    role_members = get_role_members(self._db, mention.target_id)
+                else:
+                    try:
+                        role_members = role_members_by_id.get(
+                            int(mention.target_id), []
+                        )
+                    except (TypeError, ValueError):
+                        role_members = []
                 for member_id in role_members:
                     if member_id != author_id and member_id not in blocked_users:
                         if member_id not in mention_types:
