@@ -4,6 +4,7 @@ from src.core.security.hardening import parse_id
 from fastapi import Depends, HTTPException
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.common import ErrorResponse
 from src.api.schemas.sum import (
     SumCsvExportResponse,
@@ -32,6 +33,10 @@ async def download_file(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumWorkbookFileResponse:
     """Download the current ``.plexisum`` workbook file (authorization rechecked)."""
+    # A bot token's ``user_id`` is its human owner, and the manager below
+    # authorizes this read by comparing that value to sum_workbooks.owner_id.
+    # Without this gate a bot credential is handed the owner's private file.
+    require_user_token(current_user)
     try:
         result = _manager().download_file(
             current_user.user_id, parse_id(workbook_id, "workbook_id")
@@ -111,6 +116,9 @@ async def export_csv(
     sheet_id: str,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumCsvExportResponse:
+    # See download_file: the manager authorizes on ``current_user.user_id``,
+    # which for a bot is the owner. Reject bot credentials up front.
+    require_user_token(current_user)
     try:
         return SumCsvExportResponse.model_validate(
             _manager().export_csv(
