@@ -843,17 +843,26 @@ class _FilesMixin:
             return True
 
         icon_rows = self._db.fetch_all(
-            "SELECT s.icon_url FROM srv_servers s JOIN srv_members m "
+            "SELECT s.icon_url, s.owner_id FROM srv_servers s JOIN srv_members m "
             "ON s.id = m.server_id "
             "WHERE s.icon_url LIKE '%' || ? AND m.user_id = ? AND s.deleted = 0",
             (search_filename, user_id),
         )
-        if any(
-            _is_local_media_reference(
-                row["icon_url"] if isinstance(row, dict) else row[0], search_filename
-            )
-            for row in (icon_rows or [])
-        ):
-            return True
+        for row in icon_rows or ():
+            icon_url = row["icon_url"] if isinstance(row, dict) else row[0]
+            owner_id = row["owner_id"] if isinstance(row, dict) else row[1]
+            # icon_url is client-controllable on server create/update and the
+            # core validator accepts ANY same-origin path. A bare filename
+            # match therefore let a server owner point their icon at somebody
+            # else's private attachment and grant every member a download on
+            # the strength of server membership alone. Only treat a local
+            # reference as public when the referenced file was uploaded by the
+            # server owner; every other owner fails closed.
+            if (
+                _is_local_media_reference(icon_url, search_filename)
+                and owner_id is not None
+                and int(owner_id) == uploader_id
+            ):
+                return True
 
         return False
