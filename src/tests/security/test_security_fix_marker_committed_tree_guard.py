@@ -388,6 +388,19 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="2bcfd736-dm-block-filter-strict-audience",
+        path="src/core/events/gateway_emit.py",
+        marker="if type(value) is not int:",
+        why=(
+            "2bcfd736: the DM block filter builds its POSITIVE participant "
+            "audience from genuine ints only; tolerant _as_id() coercion stays "
+            "only for block-set comparison keys so string-stored legacy block "
+            "ids still block. A stale staged copy restores int() laundering "
+            "BEFORE _final(), admitting a principal that never proved "
+            "participation and bypassing the _final strict guard"
+        ),
+    ),
+    CommittedFixMarker(
         key="98469c69-event-envelope-audience-id-type-confusion",
         path="src/core/events/manager.py",
         marker='"u": [uid for uid in recipients if type(uid) is int],',
@@ -505,6 +518,7 @@ PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
         "bc7d08d9-dispatch-recipient-id-type-confusion",
         "98469c69-event-channel-audience-id-type-confusion",
         "98469c69-event-envelope-audience-id-type-confusion",
+        "2bcfd736-dm-block-filter-strict-audience",
         "8cdcddb0-twofactor-no-debug-print",
         "b71b0d64-targeted-session-socket-close-method",
         "33cf9e7d-refresh-replay-session-socket-close",
@@ -693,7 +707,7 @@ def test_private_index_pinned_keys_are_registered() -> None:
         "private-index key set references keys missing from COMMITTED_FIX_MARKERS: "
         f"{sorted(PRIVATE_INDEX_PINNED_KEYS - set(keys))}"
     )
-    assert len(PRIVATE_INDEX_PINNED_KEYS) == 11
+    assert len(PRIVATE_INDEX_PINNED_KEYS) == 12
     for key in PRIVATE_INDEX_PINNED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path.startswith("src/"), f"bad path for {key!r}"
