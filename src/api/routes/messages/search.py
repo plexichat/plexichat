@@ -24,60 +24,44 @@ from .helpers import (
 router = APIRouter(tags=["Messages"])
 
 
-@router.get(
-    "/channels/{channel_id}/messages/search",
-    response_model=List[MessageResponse],
-    summary="Search messages",
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid channel ID"},
-        401: {"model": ErrorResponse, "description": "Not authenticated"},
-        404: {"model": ErrorResponse, "description": "Channel not found"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-    },
-)
+def _not_found() -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail={"error": {"code": 404, "message": "Channel not found"}},
+    )
+
+
 # Partition search-result cache entries by credential: generate_cache_key()
 # reduces TokenInfo to TokenInfo:<user_id>, which a bot shares with its owner.
 # Without this, a bot's search hits can be served to the owner (or vice versa).
+#
+# Only the *data* work lives behind this decorator. The authorization gate stays
+# in the route handler and runs on EVERY request, including cache hits: the
+# decorator returns before this function is entered on a warm entry, so a viewer
+# whose channel/conversation access was revoked must never reach a still-warm
+# result body. This mirrors the gate-before-cache layout used by the presence
+# and reaction read paths.
 @cached(
     ttl=60,
     prefix="search_messages_api",
     key_builder=authenticated_cache_key("search_messages_api"),
 )
-async def search_messages(
-    channel_id: str,
-    # A search term is fed to the messaging engine's (blind-index) query
-    # builder; an unbounded string lets a caller force an arbitrarily large
-    # index scan / allocation. Real search terms are short, so cap at the
-    # boundary rather than trusting the engine to bound its own input.
-    content: str = Query(..., max_length=200, description="Search query"),
-    limit: int = Query(default=25, ge=1, le=100),
-    current_user: TokenInfo = Depends(get_current_user),
+async def _search_messages_cached(
+    conv_id: int,
+    content: str,
+    limit: int,
+    current_user: TokenInfo,
 ) -> List[MessageResponse]:
-    """Search messages in a channel by content."""
+    """Data-only cold path for a channel message search.
+
+    Callers must have already applied the live participant gate. The core
+    search enforces it again on this cold path as defence in depth, but that
+    check cannot protect a cache hit -- hence the route-level gate.
+    """
     messaging = api.get_messaging()
     auth = api.get_auth()
-    servers_mod = api.get_servers()
 
     try:
-        try:
-            cid = parse_id(channel_id, "channel_id")
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid channel ID"}},
-            )
-
-        # Resolve channel_id to conversation_id for server channels
-        conv_id = cid
-        if servers_mod:
-            channel = servers_mod.get_channel(cid, current_user.user_id)
-            if (
-                channel
-                and hasattr(channel, "conversation_id")
-                and channel.conversation_id
-            ):
-                conv_id = channel.conversation_id
-
         messages = []
 
         # Use messaging module's search (handles encryption via blind index)
@@ -164,6 +148,88 @@ async def search_messages(
             )
 
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to search messages in conversation {conv_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.get(
+    "/channels/{channel_id}/messages/search",
+    response_model=List[MessageResponse],
+    summary="Search messages",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid channel ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        404: {"model": ErrorResponse, "description": "Channel not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def search_messages(
+    channel_id: str,
+    # A search term is fed to the messaging engine's (blind-index) query
+    # builder; an unbounded string lets a caller force an arbitrarily large
+    # index scan / allocation. Real search terms are short, so cap at the
+    # boundary rather than trusting the engine to bound its own input.
+    content: str = Query(..., max_length=200, description="Search query"),
+    limit: int = Query(default=25, ge=1, le=100),
+    current_user: TokenInfo = Depends(get_current_user),
+) -> List[MessageResponse]:
+    """Search messages in a channel by content."""
+    servers_mod = api.get_servers()
+    messaging = api.get_messaging()
+
+    try:
+        try:
+            cid = parse_id(channel_id, "channel_id")
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+            )
+
+        # Resolve channel_id to conversation_id for server channels
+        conv_id = cid
+        if servers_mod:
+            channel = servers_mod.get_channel(cid, current_user.user_id)
+            if (
+                channel
+                and hasattr(channel, "conversation_id")
+                and channel.conversation_id
+            ):
+                conv_id = channel.conversation_id
+
+        # LIVE GATE before the cached read. The participant check used to live
+        # only inside the @cached handler (and inside core.search_messages), so
+        # a viewer kicked from the channel/server kept receiving their old hits
+        # for the whole 60s cache TTL. Run the same membership check on every
+        # request, including cache hits, and fail closed if it cannot be
+        # established. When there is no messaging module there is no data to
+        # leak: the data-only helper returns an empty page as before.
+        if messaging is not None:
+            try:
+                allowed = bool(messaging.is_participant(conv_id, current_user.user_id))
+            except Exception as gate_error:
+                logger.debug(
+                    f"message search participant check failed for conv {conv_id}: "
+                    f"{gate_error}"
+                )
+                allowed = False
+            if not allowed:
+                raise _not_found()
+
+        return await _search_messages_cached(
+            conv_id=conv_id,
+            content=content,
+            limit=limit,
+            current_user=current_user,
+        )
     except HTTPException:
         raise
     except Exception as e:
