@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.servers import AuditLogEntryResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse
 from src.core.security.hardening import parse_id
@@ -29,6 +30,12 @@ async def get_audit_log(
     limit: int = Query(50, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[AuditLogEntryResponse]:
+    # A bot token carries its owner's user_id (its own id lives in account_id).
+    # The core audit read treats that id as the acting moderator and checks
+    # ``server.view_audit_log`` against it, so without this gate a narrow-scope
+    # bot could read the moderation/audit history of any server its owner
+    # manages -- the same owner-identity confusion guarded on the ban list.
+    require_user_token(current_user)
     servers_mod = api.get_servers()
     auth_mod = api.get_auth()
 
