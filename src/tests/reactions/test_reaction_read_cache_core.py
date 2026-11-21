@@ -237,6 +237,7 @@ def test_delete_custom_emoji_invalidates(
            VALUES (?, 1, 'cacheemoji', 0, '/e.png', 0, ?, 1, 1000)""",
         (emoji_id, owner.id),
     )
+    monkeypatch.setattr(reaction_manager._servers, "get_member", lambda *a: object())
     reaction_manager.add_reaction(second.id, msg.id, f"<:cacheemoji:{emoji_id}>")
     assert (
         reaction_manager.get_reaction_count_by_emoji(
@@ -250,7 +251,6 @@ def test_delete_custom_emoji_invalidates(
     monkeypatch.setattr(
         reaction_manager, "_require_manage_server", lambda *a, **k: None
     )
-    monkeypatch.setattr(reaction_manager._servers, "get_member", lambda *a: object())
     assert reaction_manager.delete_custom_emoji(owner.id, emoji_id) is True
 
     assert (
