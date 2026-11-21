@@ -123,6 +123,20 @@ def invalidate_explicit_hosts_cache() -> None:
     _explicit_hosts_cache["checked_at"] = 0.0
 
 
+def _copy_explicit_hosts(value):
+    """Detach the cached allowlist so callers cannot mutate the shared gate.
+
+    ``_explicit_hosts_cache`` is a process-wide memo keyed only by config-file
+    metadata. Its ``value`` is a mutable list of allowed hosts that feeds the
+    admin host-restriction gate on every admin request. Handing the cached list
+    out by reference would let any caller's in-place edit (e.g. appending a
+    permissive CIDR) silently rewrite the allowlist every later request from
+    every user sees for the rest of the staleness window. Return a fresh list
+    on every read so the cached value is never reachable by a caller.
+    """
+    return list(value) if isinstance(value, list) else value
+
+
 def _explicit_admin_allowed_hosts():
     """Return the operator allowlist from the raw config file, or None.
 
@@ -142,14 +156,14 @@ def _explicit_admin_allowed_hosts():
             < _EXPLICIT_HOSTS_STAT_MAX_AGE_SECONDS
         )
         if within_ceiling:
-            return _explicit_hosts_cache["value"]
+            return _copy_explicit_hosts(_explicit_hosts_cache["value"])
         stat = os.stat(path)
         cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
         if _explicit_hosts_cache["key"] == cache_key:
             # Nothing changed on disk: keep the parsed value, just refresh the
             # check clock so the hot path skips the stat again for a window.
             _explicit_hosts_cache["checked_at"] = now
-            return _explicit_hosts_cache["value"]
+            return _copy_explicit_hosts(_explicit_hosts_cache["value"])
         with open(path, "rb") as fh:
             raw = fh.read()
         if str(path).lower().endswith(".json"):
@@ -168,9 +182,12 @@ def _explicit_admin_allowed_hosts():
                 if isinstance(hr, dict) and isinstance(hr.get("allowed_hosts"), list):
                     value = list(hr["allowed_hosts"])
         _explicit_hosts_cache["key"] = cache_key
-        _explicit_hosts_cache["value"] = value
+        # Store a detached copy as well: the value parsed from the config file
+        # is fresh here, but keeping the memo sealed on write means no future
+        # caller can reach the stored list through the loader either.
+        _explicit_hosts_cache["value"] = _copy_explicit_hosts(value)
         _explicit_hosts_cache["checked_at"] = now
-        return value
+        return _copy_explicit_hosts(value)
     except Exception:
         return None
 
