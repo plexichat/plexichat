@@ -2,6 +2,8 @@
 
 from fastapi import Depends, HTTPException, Query
 
+from src.core.security.hardening import parse_id
+
 from src.api.middleware.authentication import TokenInfo, get_current_user
 from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.api.schemas.sum import (
@@ -65,10 +67,16 @@ async def read_viewport(
                 raise HTTPException(status_code=400, detail="Invalid filters JSON")
             if not isinstance(parsed_filters, list):
                 raise HTTPException(status_code=400, detail="filters must be a list")
+        # Every other PlexiSum route module parses string IDs with the shared
+        # ASCII-only, snowflake-bounded gate. Bare ``int()`` here is a parser
+        # differential: it silently accepts Unicode digit homoglyphs
+        # (``"٤٢"``/``"４２"`` -> 42), PEP 515 separators (``"1_0"`` -> 10),
+        # signs and 128-bit values, letting a caller address another user's
+        # workbook/sheet through an ID the rest of the API rejects.
         result = _manager().read_viewport(
             current_user.user_id,
-            int(workbook_id),
-            int(sheet_id),
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(sheet_id, "sheet_id"),
             row_start,
             row_end,
             column_start,
@@ -103,8 +111,8 @@ async def apply_operation(
     try:
         result = _manager().apply_operation(
             current_user.user_id,
-            int(workbook_id),
-            int(sheet_id),
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(sheet_id, "sheet_id"),
             body.operation_id,
             body.operation_type,
             body.base_revision,
@@ -139,8 +147,8 @@ async def sort_range(
     try:
         result = _manager().sort_range(
             current_user.user_id,
-            int(workbook_id),
-            int(sheet_id),
+            parse_id(workbook_id, "workbook_id"),
+            parse_id(sheet_id, "sheet_id"),
             body.column,
             body.start_row,
             body.end_row,
@@ -173,11 +181,12 @@ async def replay_operations(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumReplayResponse:
     try:
+        workbook_pk = parse_id(workbook_id, "workbook_id")
         operations = _manager().replay_operations(
-            current_user.user_id, int(workbook_id), after_revision, limit
+            current_user.user_id, workbook_pk, after_revision, limit
         )
         return SumReplayResponse(
-            workbook_id=SnowflakeID(workbook_id),
+            workbook_id=SnowflakeID(workbook_pk),
             after_revision=after_revision,
             operations=[SumReplayOperation.model_validate(op) for op in operations],
         )
