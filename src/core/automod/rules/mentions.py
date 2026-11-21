@@ -52,30 +52,42 @@ class MentionSpamRule(BaseRule):
         context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
         """Check for mention spam."""
-        # Match on a canonical view of the text. Invisible format/control
-        # characters (zero-width space/joiner, soft hyphen, bidi override, BOM,
-        # ...) spliced *inside* a token were silently skipped by the patterns
-        # below: ``<@123\u200b456>`` and ``@e\u200bveryone`` look like real
-        # mentions to a reader but produced zero matches, so mass-mention and
-        # @everyone abuse sailed through this rule. Every sibling text rule
-        # (repeated, emoji, keyword, spam, links) already folds these away;
-        # this rule was the remaining normalization gap. NFKC folding also
-        # maps compatibility forms (fullwidth digits) onto the ASCII shapes
-        # the mention patterns understand. Length is bounded because NFKC can
-        # expand a single codepoint into many.
-        content = fold_invisible_for_matching(content)
+        # Count on TWO views and take the maximum per bucket.
+        #
+        # The canonical view strips invisible format/control characters that
+        # were spliced *inside* a token: ``<@123\u200b456>`` and
+        # ``@e\u200bveryone`` look like real mentions to a reader but produce
+        # zero matches on the raw text, so mass-mention and @everyone abuse can
+        # otherwise sail through this rule. NFKC folding also maps
+        # compatibility forms (fullwidth digits) onto the ASCII shapes the
+        # patterns understand.
+        #
+        # The RAW view is equally necessary. Canonicalization truncates at
+        # MAX_CANONICAL_LENGTH, and NFKC can expand ONE codepoint into many
+        # (U+FDFA becomes 18 characters). A short, schema-legal message can
+        # expand past the cap, so every mention after the expansion point is
+        # cut out of the canonical view -- yet the notification fan-out parses
+        # those mentions from the RAW content and still pings their targets.
+        # Counting only the canonical view therefore lets a user bypass the
+        # mass-mention limits. Both views are linear and already bounded
+        # (message length / canonical cap), so this adds no unbounded work.
+        folded = fold_invisible_for_matching(content)
+        raw = content if isinstance(content, str) else ("" if content is None else str(content))
 
-        user_mentions = self.USER_MENTION_PATTERN.findall(content)
-        role_mentions = self.ROLE_MENTION_PATTERN.findall(content)
-        everyone_mentions = self.EVERYONE_PATTERN.findall(content)
+        def _counts(text: str):
+            users = self.USER_MENTION_PATTERN.findall(text)
+            roles = self.ROLE_MENTION_PATTERN.findall(text)
+            everyone = self.EVERYONE_PATTERN.findall(text)
+            if self._count_unique_only:
+                users = set(users)
+                roles = set(roles)
+            return len(users), len(roles), len(everyone)
 
-        if self._count_unique_only:
-            user_mentions = list(set(user_mentions))
-            role_mentions = list(set(role_mentions))
-
-        user_count = len(user_mentions)
-        role_count = len(role_mentions)
-        everyone_count = len(everyone_mentions)
+        raw_counts = _counts(raw)
+        folded_counts = _counts(folded)
+        user_count = max(raw_counts[0], folded_counts[0])
+        role_count = max(raw_counts[1], folded_counts[1])
+        everyone_count = max(raw_counts[2], folded_counts[2])
         # @everyone/@here always count toward the total-mention limit;
         # block_everyone is a separate policy that forbids them outright.
         total_count = user_count + role_count + everyone_count
