@@ -166,6 +166,19 @@ def _dynamic_exception_message(expr: ast.AST, names: set[str]) -> bool:
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Add, ast.Mod)):
         if _references_exception(expr, names):
             return True
+    # The expression itself can carry the taint without being a str/repr/format
+    # call: a container of exception text indexed to form the message
+    # (``errs = [str(e)]`` -> ``errs[0]``, ``ctx = {"e": e}`` -> ``ctx["e"]``),
+    # or a direct call to a helper that returns ``str(exc)``. Taint is already
+    # on the container/argument name via ``_sensitive_names``; fail closed here
+    # so neither shape reaches a client body unflagged.
+    if isinstance(expr, ast.Subscript) and _references_exception(expr, names):
+        return True
+    if isinstance(expr, ast.Call) and (
+        any(_references_exception(arg, names) for arg in expr.args)
+        or any(_references_exception(kw.value, names) for kw in expr.keywords)
+    ):
+        return True
     return False
 
 
@@ -734,6 +747,91 @@ def handler(status):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": f"Approval is {status}"}},
+        )
+'''
+    assert _scan_source(static, "synthetic.py") == []
+
+
+def test_detector_traces_container_subscript_and_helper_call_message():
+    """Taint stored in a container or passed to a helper still reaches the body.
+
+    The fixpoint marks ``errs``/``ctx``/``msg`` as tainted, but the *message*
+    expression itself can be a bare subscript (``errs[0]`` / ``ctx["e"]``) or a
+    direct call to a helper that returns ``str(exc)``. Those shapes must fail
+    closed too, whether or not the raise sits inside an ``except`` block.
+    """
+    errs = '''
+def handler():
+    try:
+        do_work()
+    except OSError as e:
+        errs = [str(e)]
+    raise HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": errs[0]}},
+    )
+'''
+    flagged = _scan_source(errs, "synthetic.py")
+    assert len(flagged) == 1 and flagged[0].expression == "errs[0]"
+    assert _undocumented(flagged)
+
+    ctx = '''
+def handler():
+    try:
+        do_work()
+    except OSError as e:
+        ctx = {"e": str(e)}
+    raise HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": ctx["e"]}},
+    )
+'''
+    flagged = _scan_source(ctx, "synthetic.py")
+    assert len(flagged) == 1 and flagged[0].expression == 'ctx["e"]'
+    assert _undocumented(flagged)
+
+    helper_direct = '''
+def _helper(exc: ValueError):
+    return str(exc)
+
+def handler():
+    try:
+        do_work()
+    except ValueError as e:
+        pass
+    raise HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": _helper(e)}},
+    )
+'''
+    flagged = _scan_source(helper_direct, "synthetic.py")
+    assert len(flagged) == 1 and flagged[0].expression == "_helper(e)"
+    assert _undocumented(flagged)
+
+    # Shared mapper: the helper is called with the exception param, no except
+    # block at all. Taint must propagate regardless of lexical context.
+    mapper_direct = '''
+def _helper(exc: ValueError):
+    return str(exc)
+
+def _format_error(exc: ValueError) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": _helper(exc)}},
+    )
+'''
+    flagged = _scan_source(mapper_direct, "synthetic.py")
+    assert len(flagged) == 1 and flagged[0].expression == "_helper(exc)"
+    assert _undocumented(flagged)
+
+    # Non-vacuity of the exclusion: a subscript of a genuinely static param is
+    # still correctly ignored -- only exception-derived names are flagged.
+    static = '''
+def handler(codes, status):
+    if bad(status):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": codes[0]}},
         )
 '''
     assert _scan_source(static, "synthetic.py") == []
