@@ -7,6 +7,7 @@ from ...base import SnowflakeID
 from ..exceptions import PermissionDeniedError, PollNotFoundError
 from ..models import PollResultsVisibility, PollVote
 from .base import PollManagerBase
+from .reading import _can_view_poll_message  # shared live channel-access gate
 
 
 class RosterMixin(PollManagerBase):
@@ -26,8 +27,19 @@ class RosterMixin(PollManagerBase):
 
         Raises :class:`PollNotFoundError` if the poll itself does not exist.
         """
-        poll = self.get_poll(poll_id, user_id)
-        if not poll:
+        # The roster decision needs only the poll's own metadata (creator,
+        # visibility, end-time).  Hydrating a full Poll via ``get_poll`` used
+        # to fetch the option list *and* run the voter-headcount aggregate,
+        # both of which were discarded on every request.  Fetch the single
+        # poll row directly instead, but keep the exact same live
+        # channel-access gate (``_can_view_poll_message``) that ``get_poll``
+        # runs on every call, so a viewer who lost access is still denied.
+        row = self._db.fetch_one("SELECT * FROM poll_polls WHERE id = ?", (poll_id,))
+        if not row:
+            raise PollNotFoundError("Poll not found")
+
+        messaging = self._require_messaging()
+        if not _can_view_poll_message(messaging, row["message_id"], user_id):
             raise PollNotFoundError("Poll not found")
 
         # Per-request permission boundary: the discrete voter roster
@@ -38,7 +50,7 @@ class RosterMixin(PollManagerBase):
         # any caller with the ``admin.polls.view_voters`` permission
         # granted through the auth module.
         try:
-            is_creator = int(poll.created_by) == int(user_id)
+            is_creator = int(row["created_by"]) == int(user_id)
         except (TypeError, ValueError):
             is_creator = False
         if not is_creator and not self._has_admin_poll_voters_perm(user_id):
@@ -46,13 +58,15 @@ class RosterMixin(PollManagerBase):
                 "Only the poll creator (or a moderator) can view the voter roster"
             )
 
-        if poll.results_visibility == PollResultsVisibility.AFTER_VOTE:
+        visibility = PollResultsVisibility(row["results_visibility"])
+        if visibility == PollResultsVisibility.AFTER_VOTE:
             return []
 
-        if poll.results_visibility == PollResultsVisibility.AFTER_END:
-            if not poll.is_ended and not (
-                poll.ends_at and self._get_timestamp() >= poll.ends_at
-            ):
+        if visibility == PollResultsVisibility.AFTER_END:
+            is_ended = row["ended_at"] is not None
+            if not is_ended and row["ends_at"]:
+                is_ended = self._get_timestamp() >= row["ends_at"]
+            if not is_ended:
                 return []
 
         rows = self._db.fetch_all(
