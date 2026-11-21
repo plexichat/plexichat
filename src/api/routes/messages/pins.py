@@ -266,7 +266,10 @@ async def pin_message(
                     except Exception as channel_error:
                         logger.debug(f"pin server id lookup failed: {channel_error}")
                 emit_channel_pins_update(
-                    channel_id=cid, guild_id=server_id, pinned_message_ids=None
+                    channel_id=cid,
+                    guild_id=server_id,
+                    pinned_message_ids=None,
+                    actor_id=current_user.user_id,
                 )
             except Exception as ge:
                 logger.debug(f"emit_channel_pins_update failed: {ge}")
@@ -418,7 +421,10 @@ async def unpin_message(
                     except Exception as channel_error:
                         logger.debug(f"pin server id lookup failed: {channel_error}")
                 emit_channel_pins_update(
-                    channel_id=cid, guild_id=server_id, pinned_message_ids=None
+                    channel_id=cid,
+                    guild_id=server_id,
+                    pinned_message_ids=None,
+                    actor_id=current_user.user_id,
                 )
             except Exception as ge:
                 logger.debug(f"emit_channel_pins_update failed: {ge}")
