@@ -73,7 +73,7 @@ def env(monkeypatch):
     from src.api.routes import reactions as reactions_routes
 
     fake = _FakeReactions()
-    monkeypatch.setattr(reactions_routes.api, "get_reactions", lambda: fake)
+    monkeypatch.setattr(reactions_routes.api, "get_reactions", lambda: fake, raising=False)
 
     app = FastAPI()
     app.include_router(reactions_routes.router)
