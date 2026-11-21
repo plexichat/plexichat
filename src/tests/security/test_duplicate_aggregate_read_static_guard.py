@@ -35,12 +35,19 @@ Known limitation (kept narrow on purpose): extraction handles literal SQL
 constants with simple ``COUNT/SUM/AVG/MIN/MAX(expr)`` aggregates whose argument
 contains no nested parentheses. F-string-built SQL and nested aggregate
 arguments are not parsed as full reads; the documented fold functions use
-literal SQL with flat aggregate arguments, so those are covered. A whole-tree
-scan is deliberately avoided: legitimate "count before / count after a DELETE"
-checks (e.g. ``core/erasure.py`` and ``application_crud.py``) share a table and
-WHERE predicate with no aggregate difference, so a broad rule would cry wolf.
-The guard therefore checks the two audited fold functions (plus their threading)
-where this campaign actually removed a read.
+literal SQL with flat aggregate arguments, so those are covered.
+
+Coverage is two-layered. The scoped checks below protect the two audited fold
+functions and their threading (where this campaign actually removed a read). A
+whole-source-tree backstop additionally scans every production module and FAILS
+on any duplicate aggregate read it cannot classify, so a later fold introduced
+in a new function/file cannot silently reintroduce an extra round trip. The
+only classified exceptions are legitimate "count before / count after a
+mutation" checks (``core/erasure.py`` and ``application_crud.py``), listed in
+``_KNOWN_LEGITIMATE_COUNTS``; test fixtures are out of scope because they
+legitimately count before/after mutations. The backstop's self-test injects a
+fresh duplicate at a brand-new site and proves it is flagged, so the guard is
+not vacuous for unclassified folds.
 """
 
 import ast
@@ -207,6 +214,15 @@ def _source(rel_path: str) -> str:
     return (SRC / rel_path).read_text(encoding="utf-8")
 
 
+def _source_modules() -> list[str]:
+    """Relative paths of production (non-test) Python modules under ``src/``."""
+    return sorted(
+        path.relative_to(SRC).as_posix()
+        for path in SRC.rglob("*.py")
+        if "tests" not in path.relative_to(SRC).parts
+    )
+
+
 def _function_source(rel_path: str, name: str) -> str:
     source = _source(rel_path)
     node = next(
@@ -271,6 +287,57 @@ FOLD_FUNCTIONS = (
         ),
     ),
 )
+
+
+# --- Whole-tree backstop ---------------------------------------------------
+
+# Legitimate repeated COUNT(*) reads, explicitly classified so the backstop can
+# fail on anything it cannot classify. Each entry is a count-before / count-after
+# mutation check (a DELETE, or a fast-fail before a guarded INSERT), never the
+# render-time duplicate aggregate these folds removed:
+#   * create_application -- fast-fail quota count and the authoritative guarded-
+#     INSERT count both filter app_applications by owner.
+#   * purge_user_notifications -- notif_notifications counted before and after
+#     the DELETE to report how many rows were purged.
+# Entry = (rel_path, owning function, shared read key). Both reads must also be
+# plain COUNT(*) so a future concrete-metric duplicate in these functions is
+# still flagged rather than silently allowlisted.
+_KNOWN_LEGITIMATE_COUNTS = {
+    (
+        "core/applications/manager/application_crud.py",
+        "create_application",
+        (frozenset({"app_applications"}), ("owner_id = ?",), ()),
+    ),
+    (
+        "core/erasure.py",
+        "purge_user_notifications",
+        (frozenset({"notif_notifications"}), (), ()),
+    ),
+}
+
+
+def _is_plain_count(read: AggregateRead) -> bool:
+    """True when a read only uses COUNT(*) (no concrete aggregate metric)."""
+    return not (read.subjects - {"*"})
+
+
+def _unclassified_duplicates(rel_path: str, source: str) -> list[DuplicateRead]:
+    """Duplicate reads in ``source`` not explained by the allowlist.
+
+    Shared by the whole-tree backstop and its self-test so the self-test proves
+    non-vacuity with the real detector/classifier, not a mock.
+    """
+    unclassified: list[DuplicateRead] = []
+    for pairs in scan_source(source).values():
+        for pair in pairs:
+            if (
+                _is_plain_count(pair.first)
+                and _is_plain_count(pair.second)
+                and (rel_path, pair.owner, pair.first.key) in _KNOWN_LEGITIMATE_COUNTS
+            ):
+                continue
+            unclassified.append(pair)
+    return unclassified
 
 
 # --- Guards ---------------------------------------------------------------
@@ -386,3 +453,90 @@ def test_detector_allows_documented_different_grouping():
     )
     single = "SELECT COUNT(*) FROM auth_api_access_token_events WHERE token_id = ?"
     assert scan_source(_synthetic_function(batched, single)) == {}
+
+
+# --- Whole-tree backstop guards -------------------------------------------
+
+
+def test_no_unclassified_duplicate_aggregate_reads_in_source_tree():
+    """A duplicate read anywhere in production source is flagged, not just in
+    the two audited folds.
+
+    The scoped checks above protect the original folds and their threading;
+    this backstop covers every production module so a later fold added in a new
+    function/file cannot silently reintroduce an extra aggregate round trip.
+    The only exempt pairs are the explicitly classified count-before/after a
+    mutation checks in _KNOWN_LEGITIMATE_COUNTS.
+    """
+    offenders = []
+    for rel in _source_modules():
+        for dup in _unclassified_duplicates(rel, _source(rel)):
+            offenders.append(
+                f"{rel}:{dup.owner}: {dup.first.sql!r} vs {dup.second.sql!r} "
+                f"(key={dup.first.key})"
+            )
+    assert not offenders, (
+        "unclassified duplicate aggregate reads in production source:\n"
+        + "\n".join(offenders)
+        + "\nIf a pair is a genuine count-before/after-mutation check, classify "
+        "it in _KNOWN_LEGITIMATE_COUNTS; never silence a fresh fold."
+    )
+
+
+def test_whole_tree_backstop_flags_a_fresh_duplicate_site():
+    """Self-test: the backstop is non-vacuous at a brand-new fold site.
+
+    The detector/classifier above are shared with the backstop, so injecting a
+    fresh duplicate-read function into a real production module's source proves
+    the backstop flags a site that is in neither FOLD_FUNCTIONS nor the
+    allowlist -- the exact case a fixed per-function list would silently miss.
+    """
+    fresh_sql = "SELECT COUNT(*) FROM auth_api_access_token_events WHERE token_id = ?"
+    injected = (
+        _source(TOKEN_REL)
+        + "\ndef brand_new_fold_site(self, token_id):\n"
+        + f"    a = self._db.fetch_one({fresh_sql!r}, (token_id,))\n"
+        + f"    b = self._db.fetch_one({fresh_sql!r}, (token_id,))\n"
+        + "    return a, b\n"
+    )
+    found = _unclassified_duplicates(TOKEN_REL, injected)
+    assert any(dup.owner == "brand_new_fold_site" for dup in found), (
+        "backstop failed to flag a newly-introduced duplicate read outside the "
+        "scoped fold list and the allowlist"
+    )
+    # A genuinely different metric at a new site must NOT be flagged, so the
+    # backstop is not vacuous by simply matching every repeated table read.
+    different_metric = (
+        _source(TOKEN_REL)
+        + "\ndef new_but_fine(self, token_id):\n"
+        + "    a = self._db.fetch_one("
+        + repr("SELECT COUNT(*) FROM auth_api_access_token_events WHERE token_id = ?")
+        + ", (token_id,))\n"
+        + "    b = self._db.fetch_one("
+        + repr(
+            "SELECT MAX(used_at) FROM auth_api_access_token_events WHERE token_id = ?"
+        )
+        + ", (token_id,))\n"
+        + "    return a, b\n"
+    )
+    assert not [
+        dup
+        for dup in _unclassified_duplicates(TOKEN_REL, different_metric)
+        if dup.owner == "new_but_fine"
+    ]
+
+
+def test_classified_count_sites_are_real_and_rest():
+    """Each allowlist entry is a genuine plain-COUNT duplicate (not a stale
+    exemption hiding a live duplicate or excusing a concrete-metric one)."""
+    for rel, owner, key in _KNOWN_LEGITIMATE_COUNTS:
+        matches = [
+            dup
+            for dup in scan_source(_source(rel)).get(owner, [])
+            if dup.first.key == key
+        ]
+        assert matches, f"stale classification: {rel}:{owner} no longer has {key}"
+        assert all(
+            _is_plain_count(dup.first) and _is_plain_count(dup.second)
+            for dup in matches
+        )
