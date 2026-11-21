@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
+from src.core.security.hardening.text import CONTROL_CHARACTERS
+from src.core.security.hardening.text import CONTROL_CHARACTERS
 
 _db: Any = None
 _setup_complete = False
@@ -57,10 +59,15 @@ def _validated_content(content: Any) -> str:
     if not content or len(content) > MAX_FEEDBACK_CONTENT_LENGTH:
         raise ValueError("invalid feedback content length")
     for ch in content:
-        code = ord(ch)
-        if (code < 0x20 or code == 0x7F) and ch not in _ALLOWED_CONTROLS:
+        if ch in _ALLOWED_CONTROLS:
+            continue
+        # Use the project-wide gate so the storage boundary rejects the same
+        # C1 (NEL), line/paragraph separator and bidi/format code points as the
+        # HTTP route and report path. The hand-listed set below covers the
+        # zero-width characters the shared regex deliberately omits.
+        if CONTROL_CHARACTERS.search(ch):
             raise ValueError("feedback content contains control characters")
-        if code in _INVISIBLE_CODEPOINTS:
+        if ord(ch) in _INVISIBLE_CODEPOINTS:
             raise ValueError("feedback content contains invisible characters")
     return content
 

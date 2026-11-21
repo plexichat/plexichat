@@ -16,6 +16,7 @@ from src.api.schemas.feedback import (
 )
 from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import ratelimit
+from src.core.security.hardening.text import CONTROL_CHARACTERS
 
 
 router = APIRouter(prefix="/feedback", tags=["Feedback"])
@@ -52,6 +53,9 @@ MAX_FEEDBACK_CONTENT_LENGTH = 2000
 # their free text; apply the same discipline here (defence in depth) and also
 # strip the invisible/bidi code points used to spoof rendered text. Ordinary
 # line breaks and tabs stay allowed so multi-line feedback remains usable.
+# The broad control/bidi set is delegated to the shared ``CONTROL_CHARACTERS``
+# gate so allowing \n/\t here cannot reopen a C1 (NEL), U+2028/U+2029 or
+# bidi-format gap that the report path already closes.
 _FEEDBACK_ALLOWED_CONTROLS = frozenset("\n\t")
 _FEEDBACK_INVISIBLE_CODEPOINTS = frozenset(
     {
@@ -78,15 +82,19 @@ def _safe_feedback_content(content) -> str:
     """Return feedback text free of log-breaking and UI-spoofing characters.
 
     Raises ``ValueError`` on the first disallowed code point so the caller can
-    map it to the endpoint's uniform 400 response.
+    map it to the endpoint's uniform 400 response. The loop keeps the
+    hand-listed zero-width characters (deliberately absent from the shared
+    regex) but delegates the wide control/bidi band to the same gate the report
+    path uses, so the \n/\t allowance here cannot bypass it.
     """
     if not isinstance(content, str):
         raise ValueError("feedback content must be a string")
     for ch in content:
-        code = ord(ch)
-        if (code < 0x20 or code == 0x7F) and ch not in _FEEDBACK_ALLOWED_CONTROLS:
+        if ch in _FEEDBACK_ALLOWED_CONTROLS:
+            continue
+        if CONTROL_CHARACTERS.search(ch):
             raise ValueError("feedback content contains control characters")
-        if code in _FEEDBACK_INVISIBLE_CODEPOINTS:
+        if ord(ch) in _FEEDBACK_INVISIBLE_CODEPOINTS:
             raise ValueError("feedback content contains invisible characters")
     return content
 
