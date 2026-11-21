@@ -52,12 +52,29 @@ def _methods(cls):
     }
 
 
+def _own_body_nodes(node):
+    """Nodes in ``node``'s own execution body, skipping nested callables.
+
+    Descend through statement-level nesting but stop at nested functions and
+    lambdas: a ``self._ensure_validated()`` call in a helper that is never
+    invoked is dead evidence and must not mark a getter as revalidated.
+    """
+    stack = [node]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            yield child
+            stack.append(child)
+
+
 def _called_attr(function, name) -> bool:
     return any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == name
-        for node in ast.walk(function)
+        for node in _own_body_nodes(function)
     )
 
 
@@ -111,6 +128,26 @@ def test_stale_guard_detector_distinguishes_old_and_new_getters():
     assert not _called_attr(old_fn, "_ensure_validated")
     assert not _has_stale_validate_guard(new_fn)
     assert _called_attr(new_fn, "_ensure_validated")
+
+
+def test_dead_nested_revalidation_does_not_protect_getter():
+    """A revalidation call only in a never-invoked helper is not a live check."""
+    source = textwrap.dedent(
+        """
+        class M:
+            def is_valid(self):
+                def never_called():
+                    self._ensure_validated()
+                return self._validation_result.is_valid
+
+            def has_feature(self, feature):
+                self._ensure_validated()
+                return self._validation_result.has(feature)
+        """
+    )
+    methods = _methods(_find_class(ast.parse(source), "M"))
+    assert not _called_attr(methods["is_valid"], "_ensure_validated")
+    assert _called_attr(methods["has_feature"], "_ensure_validated")
 
 
 def test_licence_manager_scan_is_not_vacuous():

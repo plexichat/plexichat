@@ -39,19 +39,36 @@ _APPROVAL_GATES = {"require_approved_request", "require_destructive_confirmation
 _READ_ONLY_SCOPES = {"admin.read"}
 
 
+def _own_body_calls(node: ast.AST) -> list[ast.Call]:
+    """Calls on ``node``'s own execution path, skipping nested callables.
+
+    Descend through statement-level nesting (``if``/``for``/``with``/``try``)
+    but do not descend into a nested function or lambda: *defining* a helper
+    that calls a gate does not run it. Crediting such a dead call as protection
+    lets an unguarded destructive handler silence this invariant with evidence
+    that never executes (the same vacuity fixed in the sibling route guards).
+    """
+    hits: list[ast.Call] = []
+    stack = [node]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Call):
+                hits.append(child)
+            stack.append(child)
+    return hits
+
+
 def _call_names(node: ast.AST) -> set[str]:
-    return {
-        ast.unparse(call.func) for call in ast.walk(node) if isinstance(call, ast.Call)
-    }
+    return {ast.unparse(call.func) for call in _own_body_calls(node)}
 
 
 def _permission_scopes(node: ast.AST) -> list[str]:
     scopes: list[str] = []
-    for call in ast.walk(node):
-        if (
-            isinstance(call, ast.Call)
-            and ast.unparse(call.func) == "require_admin_permission"
-        ):
+    for call in _own_body_calls(node):
+        if ast.unparse(call.func) == "require_admin_permission":
             for arg in call.args:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     scopes.append(arg.value)
@@ -97,6 +114,43 @@ def test_destructive_handler_inventory_is_nonvacuous():
     names = " ".join(n for n, _ in _DESTRUCTIVE)
     for token in ("rollback", "reindex", "apply_migration", "delete_artifact"):
         assert token in names, (token, names)
+
+
+@pytest.mark.security
+@pytest.mark.unit
+def test_dead_nested_gate_does_not_protect_destructive_handler():
+    """A gate only inside a never-called nested callable is not protection.
+
+    Regression: the old detector used ``ast.walk(node)``, which descends into
+    nested functions and lambdas. A destructive handler whose only
+    ``require_admin_permission``/``maintenance`` call lived in an uninvoked
+    helper passed both invariant checks with dead evidence.
+    """
+    source = """
+@router.post("/dead")
+async def dead(request: Request):
+    require_approved_request(request, "ticket")
+    def never_called():
+        require_admin_permission(request, "maintenance")
+    return delete_thing()
+
+@router.post("/live")
+async def live(request: Request):
+    require_approved_request(request, "ticket")
+    require_admin_permission(request, "maintenance")
+    return delete_thing()
+"""
+    tree = ast.parse(source)
+    fns = {
+        n.name: n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    dead, live = fns["dead"], fns["live"]
+    assert "require_admin_permission" not in _call_names(dead)
+    assert "maintenance" not in _permission_scopes(dead)
+    assert "require_admin_permission" in _call_names(live)
+    assert "maintenance" in _permission_scopes(live)
 
 
 @pytest.mark.security

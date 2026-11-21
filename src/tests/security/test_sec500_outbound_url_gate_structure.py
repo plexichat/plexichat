@@ -51,10 +51,28 @@ def _find_function(tree, name):
     return None
 
 
+def _own_body_nodes(function):
+    """Nodes in ``function``'s own execution body, skipping nested callables.
+
+    Merely defining a nested function or lambda that performs a structural
+    check does not run it. Crediting those dead checks as present lets a gate
+    whose body does nothing silence this ratchet with evidence that never
+    executes (the same vacuity fixed in the sibling route guards).
+    """
+    stack = [function]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            yield child
+            stack.append(child)
+
+
 def _call_attrs(function):
     return {
         node.func.attr
-        for node in ast.walk(function)
+        for node in _own_body_nodes(function)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
 
@@ -62,23 +80,27 @@ def _call_attrs(function):
 def _call_names(function):
     return {
         node.func.id
-        for node in ast.walk(function)
+        for node in _own_body_nodes(function)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
 
 
 def _loaded_names(function):
-    return {node.id for node in ast.walk(function) if isinstance(node, ast.Name)}
+    return {node.id for node in _own_body_nodes(function) if isinstance(node, ast.Name)}
 
 
 def _attribute_names(function):
-    return {node.attr for node in ast.walk(function) if isinstance(node, ast.Attribute)}
+    return {
+        node.attr
+        for node in _own_body_nodes(function)
+        if isinstance(node, ast.Attribute)
+    }
 
 
 def _string_literals(function):
     return {
         node.value
-        for node in ast.walk(function)
+        for node in _own_body_nodes(function)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
 
@@ -243,6 +265,32 @@ def test_gate_detector_flags_each_removed_structural_check():
     assert _backslash_check_missing(
         _find_function(bad_backslash, "_authority_has_backslash")
     )
+
+
+def test_gate_detector_rejects_dead_nested_checks():
+    """Structural checks in a never-called nested helper are not a live gate."""
+    dead = ast.parse(
+        textwrap.dedent(
+            """
+            def parse_outbound_url(value, field="url"):
+                def never_called():
+                    candidate = reject_control_characters(value, field).strip()
+                    parsed = urlparse(candidate)
+                    scheme = parsed.scheme.lower()
+                    if scheme not in ALLOWED_SCHEMES:
+                        raise OutboundUrlRejected(field)
+                    if parsed.username or parsed.password:
+                        raise OutboundUrlRejected(field)
+                    if _authority_has_backslash(candidate):
+                        raise OutboundUrlRejected(field)
+                    host, address = URLValidator().validate_url_for_request(candidate)
+                    return OutboundUrl(candidate, host, address)
+                return urlparse(value)
+            """
+        )
+    )
+    fn = _find_function(dead, "parse_outbound_url")
+    assert _gate_checks_missing(fn), "dead nested checks must not satisfy the gate"
 
 
 def test_adoption_detector_distinguishes_gate_from_raw_validator():
