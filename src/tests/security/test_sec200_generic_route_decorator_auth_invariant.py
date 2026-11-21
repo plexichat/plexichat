@@ -96,6 +96,37 @@ def _looks_like_auth(name: str) -> bool:
     return any(token in lowered for token in AUTH_TOKENS)
 
 
+def _own_body_guard_calls(fn: ast.AST):
+    """Guard-like calls that actually execute on this function's path.
+
+    Descend through statement-level nesting (if/for/with/try/...) but skip
+    nested function and lambda bodies: *defining* a nested callable that calls
+    a guard does not run it. Counting such a call as protection lets an
+    unauthenticated mutating route silence this invariant with dead evidence
+    (the same vacuity fixed in the cached-route completeness guard).
+    """
+    hits = []
+    stack = [fn]
+    while stack:
+        parent = stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Call):
+                func = child.func
+                name = (
+                    func.id
+                    if isinstance(func, ast.Name)
+                    else func.attr
+                    if isinstance(func, ast.Attribute)
+                    else ""
+                )
+                if GUARD_CALL_RE.search(name):
+                    hits.append(child)
+            stack.append(child)
+    return hits
+
+
 def _is_protected(fn: ast.AST) -> bool:
     args = fn.args
     defaults = list(args.defaults) + [d for d in args.kw_defaults if d is not None]
@@ -108,19 +139,10 @@ def _is_protected(fn: ast.AST) -> bool:
                 if kw.arg == "dependencies":
                     if any(_looks_like_auth(n) for n in _dependency_names(kw.value)):
                         return True
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Call):
-            func = node.func
-            name = (
-                func.id
-                if isinstance(func, ast.Name)
-                else func.attr
-                if isinstance(func, ast.Attribute)
-                else ""
-            )
-            if GUARD_CALL_RE.search(name):
-                return True
-    return False
+    # Only a guard that executes when the route runs counts. A guard call in a
+    # nested callable is dead until that callable is invoked, so it must not
+    # mark the route as protected.
+    return bool(_own_body_guard_calls(fn))
 
 
 def _decorator_mutating_methods(decorator):
@@ -206,6 +228,46 @@ async def good(request: Request, current_user=Depends(get_current_user)):
     )
     assert found[("src/api/routes/synthetic.py", "delete", "/good")] is True, (
         "detector failed to recognise Depends(get_current_user) on a generic route"
+    )
+
+
+def test_dead_nested_guard_does_not_protect_generic_route():
+    """A guard inside a never-called nested callable must NOT gate the route.
+
+    Regression: the in-handler guard scan used ``ast.walk(fn)``, which descends
+    into nested functions and lambdas. Merely *defining* a helper/lambda that
+    calls a guard did not execute it, so an unauthenticated generic mutation
+    could silence this invariant with dead evidence. A live in-handler guard
+    must still count.
+    """
+    source = """
+@router.api_route("/dead-nested", methods=["POST"])
+async def dead_nested(request: Request):
+    def never_called():
+        check_admin_permission(request)
+    return None
+
+@router.api_route("/dead-lambda", methods=["POST"])
+async def dead_lambda(request: Request):
+    _ = lambda: verify_token(request)
+    return None
+
+@router.api_route("/live", methods=["POST"])
+async def live(request: Request):
+    check_admin_permission(request)
+    return None
+"""
+    found = dict(
+        _generic_routes_in_tree(ast.parse(source), "src/api/routes/synthetic.py")
+    )
+    assert found[("src/api/routes/synthetic.py", "post", "/dead-nested")] is False, (
+        "dead guard in a nested function must not protect the route"
+    )
+    assert found[("src/api/routes/synthetic.py", "post", "/dead-lambda")] is False, (
+        "dead guard in a lambda must not protect the route"
+    )
+    assert found[("src/api/routes/synthetic.py", "post", "/live")] is True, (
+        "a live in-handler guard must still protect the route"
     )
 
 
