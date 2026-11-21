@@ -38,10 +38,11 @@ The cache holds *decisions*, never permission sets, and is shared process-wide
 
 from __future__ import annotations
 
+import heapq
 import threading
 import time
 from collections import OrderedDict
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 #: Distinct (user, channel, permission) triples touched by one request are few;
 #: 2048 entries is ample for a busy process while keeping the LRU tightly bound.
@@ -77,6 +78,15 @@ class ChannelAccessCache:
         self._clock = clock or time.monotonic
         self._entries: "OrderedDict[_Key, bool]" = OrderedDict()
         self._expires: Dict[_Key, float] = {}
+        # Min-heap of (expiry, sequence, key) ordering decisions by deadline.
+        # Reclaiming expired entries touches only those whose deadline actually
+        # passed (O(k log n) for k expired), instead of scanning every resident
+        # decision on every write. ``sequence`` breaks expiry ties so keys are
+        # never compared with one another. Stale tuples left by a re-put or an
+        # LRU eviction are discarded when their recorded deadline no longer
+        # matches the live entry's (see ``_prune_locked``).
+        self._expiry_heap: List[Tuple[float, int, _Key]] = []
+        self._seq = 0
         # Epochs start at 0 and only ever increase.
         self._server_epochs: Dict[int, int] = {}
         self._user_epochs: Dict[Tuple[int, int], int] = {}
@@ -164,17 +174,29 @@ class ChannelAccessCache:
         with self._lock:
             self._entries[key] = stored
             self._expires[key] = expiry
+            heapq.heappush(self._expiry_heap, (expiry, self._seq, key))
+            self._seq += 1
             self._entries.move_to_end(key)
             self._prune_locked()
             self._puts += 1
 
     def _prune_locked(self) -> None:
         now = self._clock()
-        for key in list(self._entries):
-            expiry = self._expires.get(key, 0.0)
-            if expiry <= now:
+        # The heap is ordered by deadline, so this loop runs once per entry
+        # that actually expired since the last write rather than once for
+        # every live entry. A stale tuple (from a re-put or an LRU eviction of
+        # the same key) is ignored when its deadline no longer matches the
+        # live entry's, so it can never evict a fresh decision. Expiry checks
+        # in ``get`` remain the authoritative fail-closed guard: an entry
+        # whose heap tuple has not been popped yet is still treated as a miss
+        # the moment its deadline passes.
+        heap = self._expiry_heap
+        while heap and heap[0][0] <= now:
+            expiry, _seq, key = heapq.heappop(heap)
+            if self._expires.get(key) == expiry:
                 self._entries.pop(key, None)
                 self._expires.pop(key, None)
+        # Hard size ceiling; amortized O(1) per write.
         while len(self._entries) > self._max_entries:
             evicted, _ = self._entries.popitem(last=False)
             self._expires.pop(evicted, None)
@@ -188,6 +210,7 @@ class ChannelAccessCache:
         with self._lock:
             self._entries.clear()
             self._expires.clear()
+            self._expiry_heap.clear()
             self._hits = 0
             self._misses = 0
             self._puts = 0
