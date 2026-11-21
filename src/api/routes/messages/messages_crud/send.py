@@ -222,12 +222,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             if server_id:
                 # Channel slowmode is enforced here as well as in the core
                 # servers send path, which the REST route bypasses entirely.
-                self._enforce_channel_slowmode(
-                    cid,
-                    current_user.user_id,
-                    servers_mod,
-                    channel=_channel_ctx.get("channel"),
-                )
+                self._enforce_channel_slowmode(cid, current_user.user_id, servers_mod)
                 try:
                     automod_context = self._build_automod_context(
                         cid,
