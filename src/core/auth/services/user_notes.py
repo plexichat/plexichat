@@ -12,6 +12,12 @@ import utils.logger as logger
 class UserNotesService:
     """Service for user notes operations."""
 
+    # Non-reversible placeholder used when encryption-at-rest is enabled but
+    # the cryptographic operation fails. It carries none of the note's content,
+    # so a database backup or a reader of the column cannot recover the private
+    # text exactly when the keyring is misconfigured.
+    _ENCRYPTION_FAILURE_MARKER = "[unavailable]"
+
     def __init__(self, db: Any, encryption_enabled: bool = True) -> None:
         """Initialize user notes service."""
         from ..repositories.user_notes import UserNotesRepository
@@ -19,6 +25,27 @@ class UserNotesService:
         self._db = db
         self._repo = UserNotesRepository(db)
         self._encryption_enabled = encryption_enabled
+
+    def _encrypted_or_marker(self, note: str) -> str:
+        """Return ciphertext for ``note``, or a content-free failure marker.
+
+        When encryption is disabled, storing plaintext is an explicit policy
+        choice and is preserved. When it is enabled, a failed encryption must
+        NEVER fall back to plaintext: the previous ``note_encrypted or note``
+        fallback wrote the note verbatim to the database whenever
+        ``encrypt_data`` raised, defeating encryption-at-rest for private notes
+        (which can hold sensitive moderation text) exactly when the keyring is
+        unavailable.
+        """
+        if not self._encryption_enabled:
+            return note
+        try:
+            encrypted = encrypt_data(note)
+            if encrypted:
+                return encrypted
+        except Exception as e:
+            logger.warning(f"Failed to encrypt user note: {e}")
+        return self._ENCRYPTION_FAILURE_MARKER
 
     def create_note(
         self,
@@ -53,14 +80,9 @@ class UserNotesService:
         if self._repo.exists(user_id, target_user_id):
             return self.update_note(user_id, target_user_id, note)
 
-        # Encrypt the note
-        note_encrypted = None
-        if self._encryption_enabled:
-            try:
-                note_encrypted = encrypt_data(note)
-            except Exception as e:
-                logger.warning(f"Failed to encrypt user note: {e}")
-                # Fall back to plaintext if encryption fails
+        # Encrypt the note. Fail CLOSED: never persist the plaintext when
+        # encryption is required but the cryptographic operation fails.
+        note_encrypted = self._encrypted_or_marker(note)
 
         now = timestamp_ms()
         note_id = self._generate_id()
@@ -69,7 +91,7 @@ class UserNotesService:
             note_id=note_id,
             user_id=user_id,
             target_user_id=target_user_id,
-            note_encrypted=note_encrypted or note,
+            note_encrypted=note_encrypted,
             created_at=now,
             updated_at=now,
         )
@@ -110,16 +132,10 @@ class UserNotesService:
         if not existing:
             return self.create_note(user_id, target_user_id, note)
 
-        # Encrypt the note
-        note_encrypted = None
-        if self._encryption_enabled:
-            try:
-                note_encrypted = encrypt_data(note)
-            except Exception as e:
-                logger.warning(f"Failed to encrypt user note: {e}")
-
+        # Encrypt the note with the same fail-closed boundary as create: a
+        # failed encrypt_data() must never write the note verbatim.
         now = timestamp_ms()
-        self._repo.update(existing["id"], note_encrypted or note, now)
+        self._repo.update(existing["id"], self._encrypted_or_marker(note), now)
 
         logger.debug(f"User {user_id} updated note about user {target_user_id}")
         note_data = self.get_note(user_id, target_user_id)
@@ -135,8 +151,13 @@ class UserNotesService:
             try:
                 note_content = decrypt_data(row["note_encrypted"])
             except Exception as e:
+                # Fail CLOSED: never hand the raw stored value back as the
+                # note. It may be a legacy plaintext row or a redaction marker
+                # written when encryption failed, so returning it would undo
+                # the encryption-at-rest contract at exactly the moment the
+                # keyring cannot be read.
                 logger.warning(f"Failed to decrypt user note: {e}")
-                # Fall back to encrypted text if decryption fails
+                note_content = self._ENCRYPTION_FAILURE_MARKER
 
         return {
             "id": row["id"],
@@ -184,9 +205,7 @@ class UserNotesService:
         """
         kwargs = {} if chunk_size is None else {"chunk_size": chunk_size}
         rows = self._repo.get_many(user_id, target_user_ids, **kwargs)
-        return {
-            target_id: self._note_from_row(row) for target_id, row in rows.items()
-        }
+        return {target_id: self._note_from_row(row) for target_id, row in rows.items()}
 
     def get_all_notes(self, user_id: SnowflakeID) -> List[Dict[str, Any]]:
         """

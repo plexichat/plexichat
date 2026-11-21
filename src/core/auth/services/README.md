@@ -45,7 +45,7 @@ service.delete_note(user_id=111, target_user_id=222)
 
 ## Features
 
-- **Encryption at rest** — notes are encrypted with `encrypt_data()` before storage and decrypted on read. If encryption fails, the service logs a warning and falls back to plaintext (`src/core/auth/services/user_notes.py:60`)
+- **Encryption at rest** — notes are encrypted with `encrypt_data()` before storage and decrypted on read. If encryption (or decryption) fails, the service fails closed: it stores/returns a non-reversible `[unavailable]` marker and never falls back to plaintext (`src/core/auth/services/user_notes.py`)
 - **Upsert behavior** — `create_note()` silently calls `update_note()` if a note already exists for the user pair (`src/core/auth/services/user_notes.py:53`)
 - **Self-note prevention** — users cannot create notes about themselves (`src/core/auth/services/user_notes.py:49`)
 - **Length validation** — notes cannot exceed 10,000 characters (`src/core/auth/services/user_notes.py:47`)
