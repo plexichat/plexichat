@@ -13,6 +13,54 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import utils.logger as logger
+from src.core.auth.replay import BoundedReplayGuard
+
+
+# An OTP challenge is a single-attempt credential: validation must consume it.
+# The payload itself only lives in the cache tier, where GET + DELETE is a
+# check-then-delete TOCTOU — two concurrent verifications both read a live
+# challenge before either removes it, and because the per-code CAS in
+# ``OTPMixin.verify_otp`` only rejects reuse of the *same* code, two different
+# still-valid TOTP codes (valid_window=1 admits three) both mint a session from
+# one challenge. A separate atomic claim closes that gap: Valkey SET NX spans
+# workers, and the bounded local guard covers single-worker/offline mode.
+_OTP_CHALLENGE_CLAIM_PREFIX = "admin_otp_claim:"
+# Matches ``_create_otp_challenge``'s default (and only) 5-minute lifetime. The
+# per-claim TTL is further clamped to the challenge's remaining lifetime below.
+_OTP_CHALLENGE_CLAIM_TTL_SECONDS = 300
+_OTP_CHALLENGE_CLAIM_GUARD = BoundedReplayGuard(
+    max_entries=4096, ttl_seconds=_OTP_CHALLENGE_CLAIM_TTL_SECONDS
+)
+
+
+def _claim_otp_challenge_once(fingerprint: str, ttl_seconds: int) -> bool:
+    """Atomically claim one challenge; True only for the first caller.
+
+    Returns False on a replay (another worker/consumer already claimed it).
+    The claim is a bounded, self-expiring marker, so it cannot grow without
+    limit and never outlives the challenge it guards.
+    """
+    key = f"{_OTP_CHALLENGE_CLAIM_PREFIX}{fingerprint}"
+    try:
+        from src.core.database.valkey_client import (
+            ValkeyOperationError,
+            get_client,
+            is_available,
+        )
+
+        client = get_client()
+        if client is not None and is_available():
+            set_nx = getattr(client, "set_nx", None)
+            if callable(set_nx):
+                try:
+                    return bool(set_nx(key, "1", ttl=ttl_seconds))
+                except ValkeyOperationError:
+                    # Shared backend failed - fall through to the bounded
+                    # process-local guard rather than accepting the replay.
+                    pass
+    except Exception:
+        pass
+    return _OTP_CHALLENGE_CLAIM_GUARD.consume(key)
 
 
 def _hash_admin_token(token: str) -> str:
@@ -89,6 +137,24 @@ def _validate_otp_challenge(
         logger.debug(
             f"OTP validation failed: Payload mismatch (Expected ID {admin_id}, got {payload['admin_id']}; Setup Expected {is_setup}, got {payload['is_setup']})"
         )
+        return False
+
+    # SECURITY: single-use. Everything above is a cache read (a fast-fail); the
+    # authoritative single-winner decision is this atomic claim. Without it two
+    # concurrent verifications both pass the read before either calls
+    # ``_consume_otp_challenge`` (a plain DELETE), so the challenge is replayable.
+    # Clamp the claim TTL to the challenge's remaining lifetime so the marker
+    # never outlives the credential it guards and is always bounded.
+    try:
+        remaining = max(
+            1, min(_OTP_CHALLENGE_CLAIM_TTL_SECONDS, int(payload["expires_at"]) - now)
+        )
+    except (TypeError, ValueError, KeyError):
+        remaining = _OTP_CHALLENGE_CLAIM_TTL_SECONDS
+    if not _claim_otp_challenge_once(
+        _otp_challenge_fingerprint(challenge_token), remaining
+    ):
+        logger.debug("OTP validation failed: challenge already consumed")
         return False
 
     return True
