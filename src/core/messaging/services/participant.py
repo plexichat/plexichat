@@ -278,9 +278,16 @@ class ParticipantService(BaseService):
             direct = set()
             for row in rows:
                 try:
-                    direct.add(int(row["conversation_id"]))
-                except (KeyError, TypeError, ValueError):
+                    conv_id = row["conversation_id"]
+                except (KeyError, TypeError):
                     continue
+                # SECURITY: only a genuine integer id from the live
+                # participant row proves participation. Coercing a
+                # malformed-but-coercible value with int() ("05"->5, 5.9->5,
+                # True->1) would admit a conversation the row does not attest
+                # to. Fail closed (type() also rejects bool).
+                if type(conv_id) is int:
+                    direct.add(conv_id)
 
             remaining: List[int] = []
             for cid in chunk:

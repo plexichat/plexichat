@@ -78,7 +78,15 @@ class PermissionOpsMixin(ServerProtocol):
         for row in base_rows:
             sid = int(row["server_id"])
             member_ids[sid] = row["member_id"]
-            is_owner[sid] = int(row["owner_id"]) == int(user_id)
+            # SECURITY: a projected srv_servers.owner_id vouches for the
+            # caller's ownership only while it is a genuine integer id.
+            # Coercing a malformed-but-coercible value with int() ("05"->5,
+            # 5.9->5, True->1) would mark a non-owner as owner and grant the
+            # full owner permission set. Fail closed (type() rejects bool).
+            is_owner[sid] = (
+                type(row["owner_id"]) is int
+                and row["owner_id"] == int(user_id)
+            )
 
         # One query: every assigned, non-deleted role for those memberships.
         member_ph = ",".join("?" for _ in member_ids)
