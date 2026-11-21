@@ -164,6 +164,32 @@ class NotificationCreatorMixin(NotificationProtocol):
         if channel_id:
             all_overrides = self.get_channel_overrides_bulk(user_ids_list, channel_id)
 
+        # The only presence field this fan-out consumes is the recipient's
+        # focused-channel id (to suppress a ping when they are already looking
+        # at the channel). Hydrate the whole audience with ONE bulk read instead
+        # of one ``get_presence`` call per recipient: ``get_presences`` resolves
+        # cache hits with an MGET and cache misses with chunked ``IN (...)``
+        # queries, so a role/everyone mention no longer pays 2-3 round trips
+        # per user. For a DM (no channel) focus is never consulted, so skip the
+        # lookup entirely.
+        presences_by_user: dict = {}
+        if self._presence and channel_id and user_ids_list:
+            try:
+                presences_by_user = {
+                    int(getattr(p, "user_id", uid)): p
+                    for uid, p in zip(
+                        user_ids_list,
+                        self._presence.get_presences(user_ids_list),
+                    )
+                    if p is not None
+                }
+            except Exception as e:
+                # Fail open (deliver the ping): a broken presence store must
+                # neither crash the send path nor suppress notifications based
+                # on stale/garbage focus data. Never fall back to per-user
+                # reads here — that would restore the N+1 on the failure path.
+                logger.debug(f"Bulk focus hydration failed: {e}")
+
         final_users_to_notify = []
         for user_id in user_ids_list:
             mention_type = mention_types.get(user_id)
@@ -181,6 +207,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                 mention_type,
                 settings,
                 override,
+                presences_by_user=presences_by_user,
             ):
                 final_users_to_notify.append(user_id)
 
@@ -272,17 +299,24 @@ class NotificationCreatorMixin(NotificationProtocol):
         mention_type: MentionType,
         settings: Optional["NotificationSettings"],
         override: Optional["ChannelNotificationOverride"],
+        presences_by_user: Optional[dict] = None,
     ) -> bool:
-        # Check if user is currently focused on this channel
-        if self._presence:
+        # Check if user is currently focused on this channel. ``presences_by_user``
+        # is the fan-out's single bulk hydration; direct callers (e.g. automod
+        # alerts) leave it unset and keep the legacy single-user lookup.
+        if self._presence and channel_id:
             try:
-                presence = self._presence.get_presence(user_id)
-                focused_id = getattr(presence, "current_channel_id", None)
-                if focused_id and channel_id and int(focused_id) == int(channel_id):
-                    logger.debug(
-                        f"Suppressing notification for user {user_id} - already focused on channel {channel_id}"
-                    )
-                    return False
+                if presences_by_user is not None:
+                    presence = presences_by_user.get(int(user_id))
+                else:
+                    presence = self._presence.get_presence(user_id)
+                if presence is not None:
+                    focused_id = getattr(presence, "current_channel_id", None)
+                    if focused_id and int(focused_id) == int(channel_id):
+                        logger.debug(
+                            f"Suppressing notification for user {user_id} - already focused on channel {channel_id}"
+                        )
+                        return False
             except Exception as e:
                 logger.debug(
                     f"Failed to check user focus during notification logic: {e}"
