@@ -83,12 +83,24 @@ def current_session_credential() -> Optional[str]:
     return _session_credential.get()
 
 
-def _payloads_for(value, db, admin_id) -> Optional[Tuple[Any, ...]]:
-    """Apply the shared identity guard to a cached payload tuple.
+def remember_session_roles(db, admin_id: int, permission_payloads) -> None:
+    """Store the role payloads resolved alongside a successful session lookup."""
+    _session_roles.set(
+        (id(db), admin_id, tuple(permission_payloads), _bound_request_context())
+    )
+    # A fresh validation supersedes any parsed form derived from older raw
+    # payloads; the next permission check will decode the new blobs once.
+    _session_parsed_roles.set(None)
 
-    Both the raw and the parsed role caches use this so a value recorded for a
-    different admin, database or request can never be observed.
+
+def cached_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
+    """Return the cached role payloads for ``admin_id`` on ``db``, if any.
+
+    Returns ``None`` when no session was validated in this request or when the
+    cached value belongs to a different admin/database; callers then fall back
+    to the ordinary role lookup.
     """
+    value = _session_roles.get()
     if value is None:
         return None
     db_identity, cached_admin_id, payloads, bound_context = value
@@ -111,26 +123,6 @@ def _payloads_for(value, db, admin_id) -> Optional[Tuple[Any, ...]]:
     return None
 
 
-def remember_session_roles(db, admin_id: int, permission_payloads) -> None:
-    """Store the role payloads resolved alongside a successful session lookup."""
-    _session_roles.set(
-        (id(db), admin_id, tuple(permission_payloads), _bound_request_context())
-    )
-    # A fresh validation supersedes any parsed form derived from older raw
-    # payloads; the next permission check will decode the new blobs once.
-    _session_parsed_roles.set(None)
-
-
-def cached_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
-    """Return the cached role payloads for ``admin_id`` on ``db``, if any.
-
-    Returns ``None`` when no session was validated in this request or when the
-    cached value belongs to a different admin/database; callers then fall back
-    to the ordinary role lookup.
-    """
-    return _payloads_for(_session_roles.get(), db, admin_id)
-
-
 def remember_parsed_session_roles(db, admin_id: int, parsed_payloads) -> None:
     """Store the parsed (dict) role payloads for the current request."""
     _session_parsed_roles.set(
@@ -143,8 +135,24 @@ def cached_parsed_session_roles(db, admin_id: int) -> Optional[Tuple[Any, ...]]:
 
     The returned dicts are request-private and treated as immutable by the
     permission gate; ``None`` means the caller must parse the raw payloads.
+    The identity gate mirrors ``cached_session_roles`` verbatim.
     """
-    return _payloads_for(_session_parsed_roles.get(), db, admin_id)
+    value = _session_parsed_roles.get()
+    if value is None:
+        return None
+    db_identity, cached_admin_id, payloads, bound_context = value
+    if bound_context is not None and bound_context is not _bound_request_context():
+        return None
+    if db_identity != id(db):
+        return None
+    if cached_admin_id == admin_id:
+        return payloads
+    try:
+        if int(cached_admin_id) == int(admin_id):
+            return payloads
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def clear_session_roles() -> None:
