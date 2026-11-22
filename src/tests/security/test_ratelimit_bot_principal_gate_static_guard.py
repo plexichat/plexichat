@@ -120,6 +120,18 @@ DOCUMENTED_AUTHORITATIVE: dict[tuple[str, str], tuple[str, str]] = {
         "without descending to a user-owned bucket.",
     ),
     (
+        "api/routes/suite/stash/grants.py",
+        "_enforce_download_ticket_redeem_guess_limit",
+    ): (
+        "canonical client IP + validated user fingerprint",
+        "Download-ticket redemption is authorized by a bearer ticket, not by "
+        "an owner-scoped resource. The per-source bucket is a SHA-256 "
+        "fingerprint of the canonical client IP and the authenticated user id "
+        "(never the guessed ticket), and the instance-wide floor uses a fixed "
+        "SHA-256 scope fingerprint. Both hold across workers and fail closed, "
+        "so there is no current_user.user_id bucket to gate on this path.",
+    ),
+    (
         "api/routes/telemetry.py",
         "submit_response_times",
     ): (
