@@ -122,52 +122,52 @@ _WS_TICKET_UA_BINDING_COMPARE = (
 )
 
 # cdeda33b (N700 rank re-check + N642 grantability re-check): assign_role
-# re-reads the authoritative role row under the 142 -> 143 advisory locks and
-# re-runs BOTH the grantability and rank/hierarchy decisions before the insert.
-# Each block pins the soft-delete predicate, the explicit fail-closed raise on a
-# missing row, and the re-decision call itself, so a stale copy that drops either
-# re-check under the lock is caught by name.
+# re-reads the authoritative role row under the 142 -> 143 advisory locks
+# and re-runs BOTH the grantability and rank/hierarchy decisions before the
+# insert. Each block pins the soft-delete predicate, the explicit fail-closed
+# raise on a missing row, and the re-decision call itself, so a stale copy
+# that drops either re-check under the lock is caught by name.
 _ROLE_ASSIGNMENT_GRANTABILITY_RECHECK = (
-    '            fresh_row = self.db.fetch_one('
-    '                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",'
-    '                (role_id,),'
-    '            )'
-    '            if not fresh_row:'
-    '                raise RoleNotFoundError("Role not found")'
-    '            fresh_permissions = fresh_row["permissions"]'
-    '            if isinstance(fresh_permissions, str):'
-    '                try:'
-    '                    fresh_permissions = json.loads(fresh_permissions)'
-    '                except (TypeError, ValueError):'
-    '                    raise InvalidPermissionKeyError('
-    '                        "Role permissions are unreadable"'
-    '                    )'
-    '            if not isinstance(fresh_permissions, dict):'
-    '                raise InvalidPermissionKeyError("Role permissions are unreadable")'
-    '            validate_permission_dict(fresh_permissions)'
-    '            check_permissions_grantable('
-    '                self.get_permissions(user_id, server_id), fresh_permissions'
+    '            fresh_row = self.db.fetch_one(\n'
+    '                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",\n'
+    '                (role_id,),\n'
+    '            )\n'
+    '            if not fresh_row:\n'
+    '                raise RoleNotFoundError("Role not found")\n'
+    '            fresh_permissions = fresh_row["permissions"]\n'
+    '            if isinstance(fresh_permissions, str):\n'
+    '                try:\n'
+    '                    fresh_permissions = json.loads(fresh_permissions)\n'
+    '                except (TypeError, ValueError):\n'
+    '                    raise InvalidPermissionKeyError(\n'
+    '                        "Role permissions are unreadable"\n'
+    '                    )\n'
+    '            if not isinstance(fresh_permissions, dict):\n'
+    '                raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
+    '            validate_permission_dict(fresh_permissions)\n'
+    '            check_permissions_grantable(\n'
+    '                self.get_permissions(user_id, server_id), fresh_permissions\n'
     '            )'
 )
 
 _ROLE_ASSIGNMENT_RANK_RECHECK = (
-    '            fresh_position = self.db.fetch_one('
-    '                "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",'
-    '                (role_id,),'
-    '            )'
-    '            if not fresh_position:'
-    '                raise RoleNotFoundError("Role not found")'
-    '            current_user_roles = self.manager._get_member_role_rows('
-    '                server_id, user_id'
-    '            )'
-    '            if not can_manage_role('
-    '                current_user_roles,'
-    '                {"position": fresh_position["position"]},'
-    '                is_owner,'
-    '            ):'
-    '                raise RoleHierarchyError('
-    '                    "Cannot assign a role at or above your highest role"'
-    '                )'
+    '            fresh_position = self.db.fetch_one(\n'
+    '                "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",\n'
+    '                (role_id,),\n'
+    '            )\n'
+    '            if not fresh_position:\n'
+    '                raise RoleNotFoundError("Role not found")\n'
+    '            current_user_roles = self.manager._get_member_role_rows(\n'
+    '                server_id, user_id\n'
+    '            )\n'
+    '            if not can_manage_role(\n'
+    '                current_user_roles,\n'
+    '                {"position": fresh_position["position"]},\n'
+    '                is_owner,\n'
+    '            ):\n'
+    '                raise RoleHierarchyError(\n'
+    '                    "Cannot assign a role at or above your highest role"\n'
+    '                )\n'
     '            self._guard_member_target(user_id, server_id, member_user_id)'
 )
 
