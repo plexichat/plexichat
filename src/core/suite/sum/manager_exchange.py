@@ -103,6 +103,19 @@ class SumManagerExchange(SumManagerProtocol):
                                 target_cell.data_type = "s"
             buffer = io_module.BytesIO()
             wb.save(buffer)
+            # Fail closed on the encode side: ``import_xlsx`` decodes a workbook
+            # file under hard caps (``MAX_XLSX_IMPORT_BYTES`` plus the
+            # central-directory limits in ``_reject_zip_bomb``). A workbook that
+            # is perfectly legal on disk can still render to an XLSX larger
+            # than those caps -- e.g. 2000 bounded high-entropy text cells
+            # produce a ~23 MB file while the raw SQLite blob stays well under
+            # the 64 MB container ceiling. Exporting it "succeeds" but the file
+            # can never be re-imported, which breaks export/import round trips
+            # (copy, backup/restore, migration) with a size-cap failure long
+            # after the write was acknowledged. Apply the exact decode-side
+            # caps here so an export can never produce a blob the reader
+            # refuses.
+            self._reject_unimportable_export(buffer.getvalue())
             content = base64_module.b64encode(buffer.getvalue()).decode("ascii")
         except ImportError:
             raise SumValidationError(
@@ -312,6 +325,19 @@ class SumManagerExchange(SumManagerProtocol):
             and total // compressed_total > MAX_XLSX_EXPANSION_RATIO
         ):
             raise SumValidationError("XLSX archive expansion ratio is too high")
+
+    @classmethod
+    def _reject_unimportable_export(cls, raw: bytes) -> None:
+        """Refuse an XLSX export that ``import_xlsx`` would reject on decode.
+
+        Keeps the write side symmetric with the read side: every file produced
+        by ``export_xlsx`` must be re-importable under the same byte ceiling and
+        archive limits the importer enforces, so a successful export can never
+        leave the caller with a workbook file that no read path can open.
+        """
+        if len(raw) > MAX_XLSX_IMPORT_BYTES:
+            raise SumValidationError("Exported XLSX exceeds the import size limit")
+        cls._reject_zip_bomb(raw)
 
     @staticmethod
     def _cells_to_csv(cells: List[Dict[str, Any]]) -> str:
