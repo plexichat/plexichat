@@ -41,6 +41,30 @@ _TOKEN_COUNTER = itertools.count(1)
 _ENTRIES: dict[tuple[Any, ...], tuple[float, bytes]] = {}
 _MAX_ENTRIES = 256
 
+# Per-key single-flight state. On a cold miss one caller becomes the leader and
+# renders while every concurrent caller for the *same key* waits on one shared
+# outcome (value or exception) instead of each repeating the expensive render.
+# The registry is bounded: past ``_MAX_INFLIGHT`` distinct keys a caller renders
+# independently rather than growing waiter state without limit. ``_GENERATION``
+# is bumped on invalidation so a render that started before a mutation cannot
+# write its now-stale result back afterwards.
+_MAX_INFLIGHT = 64
+
+
+class _InFlight:
+    """One shared outcome for a set of concurrent cold callers of one key."""
+
+    __slots__ = ("event", "value", "error")
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.value: Any = None
+        self.error: BaseException | None = None
+
+
+_INFLIGHT: dict[tuple[Any, ...], _InFlight] = {}
+_GENERATION = 0
+
 DEFAULT_TTL_SECONDS = 1.0
 
 # The role catalog is the most expensive admin permission read: rendering it
@@ -87,24 +111,73 @@ def get_or_render(
     render: Callable[[], bytes],
     ttl: float = DEFAULT_TTL_SECONDS,
 ) -> bytes:
-    """Return cached rendered JSON bytes, computing and caching them on a miss."""
+    """Return cached rendered JSON bytes, computing and caching them on a miss.
+
+    Concurrent cold callers for the same key are coalesced onto one render: the
+    leader renders outside the lock while the rest wait on a shared outcome.
+    The key already carries the database scope and the caller's params (e.g.
+    the admin id), so coalescing can never cross a viewer/scope boundary. A
+    failed render is shared as an error but never cached, so the next call
+    retries -- a cold failure never becomes a served value.
+    """
     key = _make_key(namespace, params)
     now = time.monotonic()
+    leader = False
+    flight: _InFlight | None = None
     with _LOCK:
         entry = _ENTRIES.get(key)
         if entry is not None and entry[0] > now:
             return entry[1]
 
-    body = render()
+        flight = _INFLIGHT.get(key)
+        if flight is not None:
+            leader = False  # join the in-flight leader for this exact key
+        elif len(_INFLIGHT) >= _MAX_INFLIGHT:
+            # Bounded fallback: render independently rather than letting a
+            # flood of distinct keys grow the waiter registry without limit.
+            leader, flight = True, None
+        else:
+            flight = _InFlight()
+            _INFLIGHT[key] = flight
+            leader = True
+        gen = _GENERATION
+
+    if not leader:
+        # Always released by the leader on success or failure.
+        assert flight is not None
+        flight.event.wait()
+        if flight.error is not None:
+            raise flight.error
+        return flight.value
+
+    try:
+        body = render()
+    except BaseException as exc:
+        if flight is not None:
+            with _LOCK:
+                flight.error = exc
+                if _INFLIGHT.get(key) is flight:
+                    _INFLIGHT.pop(key, None)
+            flight.event.set()
+        raise
 
     with _LOCK:
-        if len(_ENTRIES) >= _MAX_ENTRIES:
-            for stale in [k for k, (exp, _) in _ENTRIES.items() if exp <= now]:
-                _ENTRIES.pop(stale, None)
-            while len(_ENTRIES) >= _MAX_ENTRIES:
-                oldest = min(_ENTRIES, key=lambda k: _ENTRIES[k][0])
-                _ENTRIES.pop(oldest, None)
-        _ENTRIES[key] = (now + ttl, body)
+        # A mutation during the render may have invalidated this key; do not
+        # resurrect a stale body or let a fresh caller join this old flight.
+        if gen == _GENERATION:
+            if len(_ENTRIES) >= _MAX_ENTRIES:
+                for stale in [k for k, (exp, _) in _ENTRIES.items() if exp <= now]:
+                    _ENTRIES.pop(stale, None)
+                while len(_ENTRIES) >= _MAX_ENTRIES:
+                    oldest = min(_ENTRIES, key=lambda k: _ENTRIES[k][0])
+                    _ENTRIES.pop(oldest, None)
+            _ENTRIES[key] = (now + ttl, body)
+        if flight is not None:
+            flight.value = body
+            if _INFLIGHT.get(key) is flight:
+                _INFLIGHT.pop(key, None)
+    if flight is not None:
+        flight.event.set()
     return body
 
 
@@ -130,8 +203,18 @@ def warm_role_catalog(render: Callable[[], bytes]) -> bytes:
 
 
 def invalidate(namespace: str | None = None) -> None:
-    """Drop cached entries, optionally only those in ``namespace``."""
+    """Drop cached entries, optionally only those in ``namespace``.
+
+    Also bump the generation and forget in-flight lookups for that namespace so
+    a render that started before the mutation can neither be joined by a new
+    caller nor write its stale result back. Leaders and waiters keep their own
+    references and are still released when the render completes.
+    """
+    global _GENERATION
     with _LOCK:
+        _GENERATION += 1
+        for key in [k for k in _INFLIGHT if namespace is None or k[0] == namespace]:
+            _INFLIGHT.pop(key, None)
         if namespace is None:
             _ENTRIES.clear()
             return
