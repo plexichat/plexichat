@@ -129,7 +129,12 @@ def _validate_interaction_data(data: Any) -> None:
                 )
 
     try:
-        serialized = json.dumps(data, separators=(",", ":"))
+        # SECURITY: measure the exact string that create_interaction persists
+        # (``json.dumps(data)`` with its default, space-padded separators), not
+        # a compact variant.  Using compact separators here would let a payload
+        # whose compact form is just under the cap serialize well over it once
+        # the space-padded form is actually stored/encrypted.
+        serialized = json.dumps(data)
     except (TypeError, ValueError, RecursionError) as exc:
         raise InteractionValidationError(
             "Interaction data is not serializable", [str(exc)]

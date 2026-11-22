@@ -12,6 +12,7 @@ These tests drive the real handler with a stubbed crypto backend and a fake DB
 and pin the fail-closed bounds while confirming a normal payload still passes.
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -120,3 +121,25 @@ def test_legitimate_interaction_data_still_accepted():
     assert interaction.data is not None
     assert interaction.data.name == "roll"
     assert interaction.data.options == data["options"]
+
+
+def test_persisted_serialization_size_is_bounded_not_compact_form():
+    """Validation must measure the exact string that is persisted/encrypted.
+
+    ``create_interaction`` stores ``json.dumps(data)`` with its default,
+    space-padded separators.  A 2048-node payload can stay within every
+    per-field limit while its *compact* form is just under the cap yet the
+    default form actually persisted is well over it.  Validation uses the same
+    serialization as persistence so the cap binds the stored blob.
+    """
+    handler, db = _handler()
+    data = {"k" + str(i): ("x" * 21) for i in range(2047)}
+    for i in range(560):
+        data["k" + str(i)] = "x" * 22
+
+    assert len(json.dumps(data, separators=(",", ":"))) <= 64 * 1024
+    assert len(json.dumps(data)) > 64 * 1024
+
+    with pytest.raises(InteractionValidationError):
+        _create(handler, data)
+    db.execute.assert_not_called()
