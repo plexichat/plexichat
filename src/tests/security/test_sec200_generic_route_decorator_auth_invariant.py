@@ -56,14 +56,31 @@ AUTH_TOKENS = (
     "identity",
 )
 
+# Matched against the WHOLE called name via ``fullmatch`` below. An unanchored
+# substring search let ``PasskeyAuthenticateOptionsResponse(...)`` (a Pydantic
+# response-model constructor) and ``authenticated_cache_key(...)`` (a cache-key
+# builder) masquerade as auth gates, so an unguarded generic mutation whose only
+# auth-word call was such a symbol passed this invariant. Keep it anchored,
+# mirroring the SEC100/SEC200 decorator and dynamic sweeps.
 GUARD_CALL_RE = re.compile(
     r"(?:get_current_user|get_admin_user|get_admin_access|"
     r"require_admin_permission|require_admin|require_permission|require_auth|"
-    r"check_admin_permission|check_permission|has_permission|verify_token|"
-    r"authenticate|verify_signature|_require_\w+|"
+    r"check_admin_permission|check_permission|has_permission|"
+    r"verify_token|_?authenticate|verify_signature|"
+    r"_require_[a-z0-9_]+|"
     r"request\.state\.\w*(?:user|admin|auth|token|scope))",
     re.IGNORECASE,
 )
+
+
+def _is_guard_call_name(name: str) -> bool:
+    """Whether a called name actually denotes an auth gate.
+
+    Full-name matching is deliberate: a response-model constructor such as
+    ``PasskeyAuthenticateOptionsResponse`` contains the substring
+    ``Authenticate`` but performs no authorization.
+    """
+    return bool(name and GUARD_CALL_RE.fullmatch(name))
 
 # Mutating generic-decorator registrations intentionally reachable without a
 # session token. (relative source file, method, raw path) -> justification.
@@ -121,7 +138,7 @@ def _own_body_guard_calls(fn: ast.AST):
                     if isinstance(func, ast.Attribute)
                     else ""
                 )
-                if GUARD_CALL_RE.search(name):
+                if _is_guard_call_name(name):
                     hits.append(child)
             stack.append(child)
     return hits
@@ -318,4 +335,62 @@ def test_public_generic_allowlist_has_no_stale_entries():
         "Public generic-route entries no longer describe an unprotected "
         "handler; remove them from PUBLIC_GENERIC_MUTATING_ROUTES:\n  "
         + "\n  ".join(f"{rel}: {m.upper()} {p}" for rel, m, p in stale)
+    )
+
+
+def test_guard_name_matcher_rejects_response_model_lookalikes():
+    """Non-vacuity: an auth word inside a symbol name is not a guard call.
+
+    Mirrors the anchored matcher in the SEC100/SEC200 decorator and dynamic
+    sweeps. ``PasskeyAuthenticateOptionsResponse(...)`` is a response model and
+    ``authenticated_cache_key(...)`` a cache-key builder; an unanchored search
+    accepted both as authentication, letting unguarded routes pass vacuously.
+    """
+    for lookalike in (
+        "PasskeyAuthenticateOptionsResponse",
+        "authenticated_cache_key",
+        "is_authenticated_self_test",
+        "require_https_url",
+        "require_channel_snowflake",
+    ):
+        assert not _is_guard_call_name(lookalike), lookalike
+    for guard in (
+        "get_current_user",
+        "get_admin_user",
+        "_authenticate",
+        "verify_token",
+        "require_admin_permission",
+        "_require_channel_access",
+        "check_permission",
+        "has_permission",
+    ):
+        assert _is_guard_call_name(guard), guard
+
+
+def test_response_model_lookalike_does_not_protect_generic_route():
+    """End-to-end: a generic-decorator mutation whose only auth-word call is a model.
+
+    The in-handler guard scan used an unanchored substring search, so
+    ``PasskeyAuthenticateOptionsResponse(...)`` marked an otherwise unguarded
+    ``@router.api_route`` mutation as protected. The canonical matcher must
+    flag it; a real in-handler guard must still protect the route.
+    """
+    source = """
+@router.api_route("/options/authenticate", methods=["POST"])
+async def options(request: Request):
+    return PasskeyAuthenticateOptionsResponse(challenge_id="x", options={})
+
+@router.api_route("/guarded", methods=["POST"])
+async def guarded(request: Request):
+    check_admin_permission(request)
+    return None
+"""
+    found = dict(
+        _generic_routes_in_tree(ast.parse(source), "src/api/routes/synthetic.py")
+    )
+    key = ("src/api/routes/synthetic.py", "post", "/options/authenticate")
+    assert key in found, "detector missed the generic mutation"
+    assert found[key] is False, "response-model constructor masked missing auth"
+    assert found[("src/api/routes/synthetic.py", "post", "/guarded")] is True, (
+        "a real in-handler guard must still protect the route"
     )

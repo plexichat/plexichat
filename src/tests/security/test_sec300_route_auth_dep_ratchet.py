@@ -49,15 +49,32 @@ AUTH_TOKENS = (
 )
 
 # In-handler guards: an explicit permission check is as real a gate as a
-# dependency, and admin routes use this shape extensively.
+# dependency, and admin routes use this shape extensively. Matched against the
+# WHOLE called name via ``fullmatch`` below. An unanchored substring search let
+# ``PasskeyAuthenticateOptionsResponse(...)`` (a Pydantic response-model
+# constructor) and ``authenticated_cache_key(...)`` (a cache-key builder)
+# masquerade as auth gates, so an unguarded mutating handler whose only auth-word
+# call was such a symbol passed this invariant. Keep the vocabulary anchored,
+# mirroring the SEC100/SEC200 decorator, dynamic and aliased sweeps.
 GUARD_RE = re.compile(
-    r"(?:require\w*|get_current\w*|get_admin\w*|check_admin\w*|"
-    r"check_permission\w*|has_permission\w*|verify_token\w*|"
-    r"validate_token\w*|authenticate\w*|verify_signature\w*|"
-    r"ensure_auth\w*|assert_auth\w*|"
+    r"(?:get_current_user|get_admin_user|get_admin_access|"
+    r"require_admin_permission|require_admin|require_permission|require_auth|"
+    r"check_admin_permission|check_permission|has_permission|"
+    r"verify_token|_?authenticate|verify_signature|"
+    r"_require_[a-z0-9_]+|"
     r"request\.state\.\w*(?:user|admin|auth|token|scope))",
     re.IGNORECASE,
 )
+
+
+def _is_guard_call_name(name: str) -> bool:
+    """Whether a called name actually denotes an auth gate.
+
+    Full-name matching is deliberate: a response-model constructor such as
+    ``PasskeyAuthenticateOptionsResponse`` contains the substring
+    ``Authenticate`` but performs no authorization.
+    """
+    return bool(name and GUARD_RE.fullmatch(name))
 
 # Mutating routes intentionally reachable without a session token. Each entry
 # is (relative source file, HTTP method, raw decorator path) -> justification;
@@ -74,10 +91,40 @@ PUBLIC_MUTATING_ROUTES = {
         "/verify-otp",
     ): "second-factor step of a pending admin login",
     (
+        "src/api/routes/admin/auth.py",
+        "post",
+        "/login",
+    ): "admin password exchange; mints the admin token",
+    (
+        "src/api/routes/admin/auth.py",
+        "post",
+        "/auth/change-password",
+    ): "authenticated by the caller's current password",
+    (
+        "src/api/routes/admin/auth.py",
+        "post",
+        "/auth/2fa/begin-setup",
+    ): "pending admin session sets up its own 2FA",
+    (
+        "src/api/routes/admin/auth.py",
+        "post",
+        "/auth/2fa/disable",
+    ): "pending admin session disables its own 2FA",
+    (
+        "src/api/routes/admin/auth.py",
+        "post",
+        "/auth/2fa/regenerate-backup-codes",
+    ): "pending admin session regenerates its own codes",
+    (
         "src/api/routes/applications.py",
         "post",
         "/interactions/{interaction_token}/callback",
     ): "interaction token in path authenticates the callback",
+    (
+        "src/api/routes/auth/oauth.py",
+        "post",
+        "/oauth/{provider}/callback",
+    ): "OAuth provider callback exchanges the provider code for a session",
     (
         "src/api/routes/auth/email_verification.py",
         "post",
@@ -98,6 +145,11 @@ PUBLIC_MUTATING_ROUTES = {
         "post",
         "/passkeys/authenticate",
     ): "passkey assertion is the credential",
+    (
+        "src/api/routes/auth/passkeys.py",
+        "post",
+        "/passkeys/options/authenticate",
+    ): "pre-auth challenge issuance keyed by username; rate-limited, no session",
     (
         "src/api/routes/auth/password.py",
         "post",
@@ -205,13 +257,13 @@ def _own_body_guard_calls(fn: ast.AST):
         for child in ast.iter_child_nodes(parent):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 continue
-            if isinstance(child, ast.Call) and GUARD_RE.search(_call_name(child)):
+            if isinstance(child, ast.Call) and _is_guard_call_name(_call_name(child)):
                 hits.append(child)
             if (
                 isinstance(child, ast.Attribute)
                 and isinstance(child.value, ast.Name)
                 and child.value.id == "request"
-                and GUARD_RE.search(child.attr)
+                and _is_guard_call_name(child.attr)
             ):
                 hits.append(child)
             stack.append(child)
@@ -369,3 +421,58 @@ def test_public_allowlist_is_live_and_concrete():
         assert "*" not in path
         assert rel.startswith("src/api/routes/")
         assert PUBLIC_MUTATING_ROUTES[(rel, method, path)].strip()
+
+
+def test_guard_name_matcher_rejects_response_model_lookalikes():
+    """Non-vacuity: an auth word inside a symbol name is not a guard call.
+
+    Mirrors the anchored matcher in the SEC100/SEC200 route guards.
+    ``PasskeyAuthenticateOptionsResponse(...)`` is a response model and
+    ``authenticated_cache_key(...)`` a cache-key builder; an unanchored search
+    accepted both as authentication, letting unguarded routes pass vacuously.
+    """
+    for lookalike in (
+        "PasskeyAuthenticateOptionsResponse",
+        "authenticated_cache_key",
+        "is_authenticated_self_test",
+        "require_https_url",
+        "require_channel_snowflake",
+    ):
+        assert not _is_guard_call_name(lookalike), lookalike
+    for guard in (
+        "get_current_user",
+        "get_admin_user",
+        "_authenticate",
+        "verify_token",
+        "require_admin_permission",
+        "_require_channel_access",
+        "check_permission",
+        "has_permission",
+    ):
+        assert _is_guard_call_name(guard), guard
+
+
+def test_response_model_only_handler_is_flagged_unguarded():
+    """End-to-end: a handler whose sole auth-word call is a response model.
+
+    ``PasskeyAuthenticateOptionsResponse(...)`` used to satisfy the broad
+    in-handler ``GUARD_RE.search`` via its ``authenticate`` substring, so an
+    unguarded mutating route passed this invariant vacuously. The anchored
+    matcher must flag it; a real guard call must still protect the route.
+    """
+    source = """
+@router.post("/options/authenticate")
+async def options(request: Request):
+    return PasskeyAuthenticateOptionsResponse(challenge_id="x", options={})
+
+@router.post("/guarded")
+async def guarded(request: Request):
+    require_admin_permission(request, "x")
+    return None
+"""
+    routes = dict(_routes_in_tree(ast.parse(source), "src/api/routes/synthetic.py"))
+    key = ("src/api/routes/synthetic.py", "post", "/options/authenticate")
+    assert routes[key] is False, "response-model constructor masked missing auth"
+    assert routes[("src/api/routes/synthetic.py", "post", "/guarded")] is True, (
+        "a real in-handler guard must still protect the route"
+    )
