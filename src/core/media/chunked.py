@@ -64,7 +64,7 @@ SELECT ?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?, ?, ?
 WHERE (
     SELECT COUNT(*) FROM media_upload_sessions
     WHERE user_id = ? AND expires_at > ?
-      AND status NOT IN ('completed', 'expired', 'redeeming')
+      AND status NOT IN ('completed', 'expired')
 ) < ?
 """
 
@@ -302,7 +302,7 @@ class ChunkedUploadManager:
         # Cap concurrent active sessions per user to stop temp-file hoarding.
         active = self._db.fetch_one(
             """SELECT COUNT(*) AS cnt FROM media_upload_sessions
-               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired', 'redeeming')""",
+               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired')""",
             (user_id, int(time.time() * 1000)),
         )
         max_active_sessions = int(self._config.get("max_active_sessions_per_user", 5))
@@ -1158,7 +1158,7 @@ class ChunkedUploadManager:
                       total_chunks, uploaded_chunks, uploaded_bytes, status,
                       created_at, updated_at, expires_at, temp_path, checksum
                FROM media_upload_sessions
-               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired', 'redeeming')
+               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired')
                ORDER BY created_at DESC LIMIT ?""",
             (user_id, now, safe_limit),
         )
