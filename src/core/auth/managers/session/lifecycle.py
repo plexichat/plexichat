@@ -176,27 +176,6 @@ class LifecycleMixin(AuthManagerProtocol):
             token=token,
         )
 
-    @cached(
-        ttl=10,
-        prefix="token_verify",
-        # Never embed the raw bearer token in the cache key: hash it so that
-        # anyone with cache visibility cannot recover live session tokens.
-        key_builder=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            safe_token_cache_key(token)
-        ),
-        skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            is_malformed_token_input(token)
-            or (
-                # Single-use WS tickets must NEVER be served from cache: a replay
-                # within the TTL would bypass the atomic consumption below.
-                isinstance(token, str) and token.startswith("wst.")
-            )
-            or bool(
-                self._config.get("security", {}).get("token_binding", False)
-                or self._config.get("security", {}).get("token_verify_rate_limit")
-            )
-        ),
-    )
     def verify_token(
         self,
         token: str,
@@ -219,6 +198,40 @@ class LifecycleMixin(AuthManagerProtocol):
             if not allowed:
                 raise TokenInvalidError("Token verification rate limit exceeded")
 
+        result = self._verify_token(token, ip_address, user_agent)
+        # N712 parity: re-check the cached verdict's expiry on every call.
+        expires_at = getattr(result, "expires_at", None)
+        if expires_at is not None and is_expired(expires_at):
+            raise TokenExpiredError("Expired")
+        return result
+
+    @cached(
+        ttl=10,
+        prefix="token_verify",
+        # Never embed the raw bearer token in the cache key: hash it so that
+        # anyone with cache visibility cannot recover live session tokens.
+        key_builder=lambda self, token, ip_address=None, user_agent=None: (
+            safe_token_cache_key(token)
+        ),
+        skip_cache_if=lambda self, token, ip_address=None, user_agent=None: (
+            is_malformed_token_input(token)
+            or (
+                # Single-use WS tickets must NEVER be served from cache: a replay
+                # within the TTL would bypass the atomic consumption below.
+                isinstance(token, str) and token.startswith("wst.")
+            )
+            or bool(
+                self._config.get("security", {}).get("token_binding", False)
+                or self._config.get("security", {}).get("token_verify_rate_limit")
+            )
+        ),
+    )
+    def _verify_token(
+        self,
+        token: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> TokenInfo:
         parsed = parse_token(token)
         if not parsed:
             raise TokenInvalidError("Invalid token")

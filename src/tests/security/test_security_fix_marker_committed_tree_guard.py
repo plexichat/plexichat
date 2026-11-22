@@ -191,6 +191,20 @@ _REFRESH_SESSION_CONTEXT_BINDING = (
 )
 
 
+# N712 (verify-token mirror parity): the shadowed LifecycleMixin mirror of
+# VerificationMixin.verify_token re-checks the cached verdict's expiry on every
+# call, so a credential that expires inside the short verify TTL is denied on a
+# warm cache hit when token_binding and the verify rate limit are both off. Pin
+# the distinctive comment+recheck block so a stale staged copy that drops it
+# is caught by name.
+_VERIFY_TOKEN_MIRROR_EXPIRY_RECHECK = (
+    "        # N712 parity: re-check the cached verdict's expiry on every call.\n"
+    "        expires_at = getattr(result, \"expires_at\", None)\n"
+    "        if expires_at is not None and is_expired(expires_at):\n"
+    "            raise TokenExpiredError(\"Expired\")"
+)
+
+
 # --- OAuth invariant anchors (e85eab23 / N654 / N689) ---
 # The state cookie clear must mirror issuance in every protective attribute,
 # and the redirect_uri allow-list must stay a literal exact-string match.
@@ -517,6 +531,19 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "the same constant-time ua_index compare as TicketMixin; a stale "
             "staged copy drops it and lets the mirror accept a stolen ticket "
             "with an arbitrary User-Agent"
+        ),
+    ),
+    CommittedFixMarker(
+        key="n712-verify-token-mirror-expiry-parity",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=_VERIFY_TOKEN_MIRROR_EXPIRY_RECHECK,
+        why=(
+            "N712 follow-up: the shadowed LifecycleMixin mirror of "
+            "verify_token re-checks the cached verdict's expiry so a token "
+            "that expires inside the verify TTL cannot authenticate from a "
+            "warm cache hit when token_binding and rate limiting are off; a "
+            "stale staged copy drops the re-check and reopens the MRO/direct-"
+            "caller expiry bypass"
         ),
     ),
     # --- Targeted gateway socket closure on session revocation ---
