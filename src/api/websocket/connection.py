@@ -2,9 +2,10 @@
 Connection state management - Tracks individual WebSocket connections.
 """
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import time
 import asyncio
 import zlib
@@ -30,6 +31,17 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 #: and only need to be serialized once. The cache is a bounded FIFO and is
 #: keyed by object identity (with an identity check on lookup) to stay correct.
 MAX_SERIALIZE_CACHE_ENTRIES = 16
+
+#: Fan-out payloads without a sequence number (raw opcode frames such as
+#: VOICE_SPEAKING and SERVER_STATUS) are built once and shared by every
+#: recipient. Each connection owns its own identity cache, so a shared frame
+#: would still pay ``json.dumps`` once per connection. This bounded,
+#: process-wide FIFO holds the encoded bytes of those shared frames; the entry
+#: keeps a strong reference to the frame so ``id()`` cannot be recycled, and the
+#: identity check on lookup makes the hit exact. Frames carrying ``s`` are
+#: per-connection envelopes and are deliberately never shared here.
+MAX_SHARED_SERIALIZE_ENTRIES = 128
+_shared_serialize_cache: "OrderedDict[int, Tuple[Any, bytes]]" = OrderedDict()
 
 
 #: Frame types whose ``d`` carries the message body as an OPTIONAL field on top
@@ -270,7 +282,22 @@ class Connection:
         if cached is not None and cached[0] is frame:
             return cached[1]
 
-        encoded = json.dumps(frame).encode("utf-8")
+        # Fan-out frames have no per-connection sequence number and are shared
+        # as one immutable object across every recipient. Reuse the encoding
+        # computed for the first recipient instead of serializing per socket.
+        shareable = isinstance(frame, dict) and "s" not in frame
+        encoded = None
+        if shareable:
+            shared = _shared_serialize_cache.get(key)
+            if shared is not None and shared[0] is frame:
+                encoded = shared[1]
+                _shared_serialize_cache.move_to_end(key)
+        if encoded is None:
+            encoded = json.dumps(frame).encode("utf-8")
+            if shareable:
+                if len(_shared_serialize_cache) >= MAX_SHARED_SERIALIZE_ENTRIES:
+                    _shared_serialize_cache.popitem(last=False)
+                _shared_serialize_cache[key] = (frame, encoded)
         if len(self._serialize_cache) >= MAX_SERIALIZE_CACHE_ENTRIES:
             # dict preserves insertion order: drop the oldest entry.
             self._serialize_cache.pop(next(iter(self._serialize_cache)))

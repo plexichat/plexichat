@@ -642,6 +642,15 @@ class GatewayDispatcher:
         tasks = []
         # One structural freeze for the whole fan-out (see dispatch_event).
         data_key = None
+        # A non-DISPATCH opcode frame (voice speaking is the hot path) carries
+        # no per-connection field: no sequence number, no event type. Build ONE
+        # rendered envelope and share it across the whole fan-out, exactly as
+        # broadcast_server_status does. The old path sent every recipient
+        # through dispatch_raw, which built a fresh but byte-identical dict per
+        # connection; each connection's identity-keyed serialization cache then
+        # missed and json.dumps ran once per recipient. DISPATCH frames keep
+        # their per-connection envelope -- their ``s`` sequence differs.
+        shared_payload: Optional[Dict[str, Any]] = None
         for connection in connections:
             if not getattr(
                 connection, "is_selftest", False
@@ -653,10 +662,22 @@ class GatewayDispatcher:
                     f"(user={connection.user_id}); dropped raw opcode {int(opcode)}"
                 )
                 continue
-            if data_key is None:
-                key_data = (data or {}) if opcode == GatewayOpcode.DISPATCH else data
-                data_key = freeze_payload(key_data)
-            tasks.append(self.dispatch_raw(connection, opcode, data, data_key=data_key))
+            if opcode == GatewayOpcode.DISPATCH:
+                if data_key is None:
+                    data_key = freeze_payload(data or {})
+                tasks.append(
+                    self.dispatch_raw(connection, opcode, data, data_key=data_key)
+                )
+                continue
+            if shared_payload is None:
+                data_key = freeze_payload(data)
+                shared_payload = {
+                    "op": int(opcode),
+                    "d": self._render_cache.render(
+                        data, stringify_snowflake_ids, key=data_key
+                    ),
+                }
+            tasks.append(self._send_to_connection(connection, shared_payload))
 
         if not tasks:
             return 0
