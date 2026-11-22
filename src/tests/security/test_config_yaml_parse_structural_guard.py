@@ -22,10 +22,13 @@ a pure AST ratchet (no app import / config / DB) over COMMITTED HEAD blobs:
    call ``bounded``, ``raw`` or ``composer``.  The ``raw`` set must be empty
    and the ``bounded`` set must be exactly the three known read sites.
 2. ``_assert_caps_present`` binds the three literal caps and the bounded
-   helper to the committed ``core.py`` source (removal / drift fails closed).
+   helper to the committed ``core.py`` source (removal / drift fails closed);
+   ``_assert_alias_rejection_present`` binds the AliasEvent rejection inside
+   ``_BoundedSafeLoader.compose_node`` (alias chains bypass the depth cap).
 3. Synthetic self-tests prove the detectors are not vacuous: a synthetic
    ``yaml.safe_load(open("config.yaml"))`` is flagged; bounded calls and
-   ``yaml.dump`` writes are accepted; cap removal is flagged.
+   ``yaml.dump`` writes are accepted; cap removal and alias-guard removal are
+   flagged.
 4. ``test_scan_is_not_vacuous`` proves the committed-tree reader and sweep
    really operate on HEAD and find the three real bounded sites.
 
@@ -297,6 +300,43 @@ def _assert_caps_present(source: str, *, label: str = CORE_PATH) -> None:
     )
 
 
+def _alias_rejection_present(source: str) -> bool:
+    """True if ``_BoundedSafeLoader.compose_node`` refuses YAML alias nodes.
+
+    A chain of aliases keeps the parser's nesting depth at ~2 and the node
+    count low, so all three caps pass while construction still blows the
+    stack with a ``RecursionError`` that escapes the fail-closed handler.
+    Config files have no need for anchors, so the loader must reject aliases
+    outright.  Require both an ``AliasEvent`` reference and a ``raise`` in
+    that method, so a dead reference with no rejection does not count.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.ClassDef) and node.name == "_BoundedSafeLoader"):
+            continue
+        for item in node.body:
+            if not (
+                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == "compose_node"
+            ):
+                continue
+            body = tuple(ast.walk(item))
+            has_alias_event = any(
+                isinstance(n, ast.Attribute) and n.attr == "AliasEvent" for n in body
+            )
+            has_raise = any(isinstance(n, ast.Raise) for n in body)
+            if has_alias_event and has_raise:
+                return True
+    return False
+
+
+def _assert_alias_rejection_present(source: str, *, label: str = CORE_PATH) -> None:
+    """Assert the alias-based recursion bypass is still closed in ``source``."""
+    assert _alias_rejection_present(source), (
+        f"{label}: _BoundedSafeLoader.compose_node no longer rejects YAML "
+        "AliasEvent nodes (alias chains bypass the depth cap)"
+    )
+
+
 @lru_cache(maxsize=None)
 def _sweep(commit: str) -> tuple[YamlCall, ...]:
     """Classify YAML calls across every production module in HEAD."""
@@ -367,8 +407,14 @@ _SYNTHETIC_CORE = (
     "MAX_CONFIG_DEPTH = 64\n"
     "MAX_CONFIG_NODES = 50_000\n"
     "\n"
-    "class _BoundedSafeLoader(yaml.SafeLoader):\n"
+    "class ConfigParseError(yaml.YAMLError):\n"
     "    pass\n"
+    "\n"
+    "class _BoundedSafeLoader(yaml.SafeLoader):\n"
+    "    def compose_node(self, parent, index):\n"
+    "        if self.check_event(yaml.events.AliasEvent):\n"
+    "            raise ConfigParseError('aliases not allowed')\n"
+    "        return super().compose_node(parent, index)\n"
     "\n"
     "def safe_load_bounded(source):\n"
     "    return {}\n"
@@ -402,6 +448,29 @@ def test_self_test_cap_removal_and_drift_are_flagged():
         _assert_caps_present(no_loader, label="synthetic")
 
 
+def test_self_test_alias_guard_removal_is_flagged():
+    """Deleting the alias rejection (or just its raise) must fail closed."""
+    _assert_alias_rejection_present(_SYNTHETIC_CORE, label="synthetic")  # baseline passes
+
+    # Remove the whole rejection block: still valid Python, but no guard.
+    alias_block = (
+        "        if self.check_event(yaml.events.AliasEvent):\n"
+        "            raise ConfigParseError('aliases not allowed')\n"
+    )
+    no_alias = _SYNTHETIC_CORE.replace(alias_block, "")
+    with pytest.raises(AssertionError, match="AliasEvent"):
+        _assert_alias_rejection_present(no_alias, label="synthetic")
+
+    # Keep the AliasEvent reference but drop the raise: a dead check is not a
+    # rejection. Replace the raise with `pass` so the snippet stays parseable.
+    no_raise = _SYNTHETIC_CORE.replace(
+        "            raise ConfigParseError('aliases not allowed')\n",
+        "            pass\n",
+    )
+    with pytest.raises(AssertionError, match="AliasEvent"):
+        _assert_alias_rejection_present(no_raise, label="synthetic")
+
+
 # ---------------------------------------------------------------------------
 # Real committed tree
 # ---------------------------------------------------------------------------
@@ -413,9 +482,11 @@ def test_scan_is_not_vacuous(commit_sha):
     for required in EXPECTED_READ_SITES:
         assert required in files, f"{required} unexpectedly excluded from scan"
 
-    # The reader returns real committed content: caps + helper must be in HEAD.
+    # The reader returns real committed content: caps + helper + alias guard
+    # must be in HEAD.
     source = _make_blob_reader(commit_sha)(CORE_PATH)
     _assert_caps_present(source)
+    _assert_alias_rejection_present(source)
     assert "class _BoundedSafeLoader(yaml.SafeLoader)" in source
     assert "loader.get_single_data()" in source
 
@@ -427,6 +498,10 @@ def test_scan_is_not_vacuous(commit_sha):
 
 def test_three_caps_still_present_in_committed_core(commit_sha):
     _assert_caps_present(_make_blob_reader(commit_sha)(CORE_PATH))
+
+
+def test_alias_rejection_still_present_in_committed_loader(commit_sha):
+    _assert_alias_rejection_present(_make_blob_reader(commit_sha)(CORE_PATH))
 
 
 def test_all_three_read_sites_call_safe_load_bounded(commit_sha):
