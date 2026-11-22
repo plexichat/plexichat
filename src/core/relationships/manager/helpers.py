@@ -176,19 +176,32 @@ class RelationshipHelpersMixin(BaseManager):
         if cache is not None:
             cache.clear()
 
-        # The gateway presence-audience resolution cache (EventRouter) is a
-        # separate L0 from the DB-tier ``presence_targets:*`` keys evicted
-        # below. It memoizes each subject's PRESENCE_UPDATE recipients -- their
-        # friends + shared-server members minus blocked users -- for a short
-        # TTL. A block/unblock or friend change alters that audience for both
-        # parties, so without an eager evict a just-blocked user keeps
-        # receiving the blocker's real (and custom) presence until the TTL
-        # lapses. Evict it here with the other relationship-derived caches.
-        # Lazy import keeps the relationship tier decoupled from the gateway
-        # at module load (and relationship writes are rare).
-        from src.core.events.router import clear_presence_audience_cache
+        # The gateway audience-resolution caches (EventRouter + gateway_emit)
+        # are separate L0 layers from the DB-tier ``presence_targets:*`` keys
+        # evicted below. They memoize fully resolved, block-filtered audiences:
+        #
+        # * EventRouter._presence_audience_cache -> PRESENCE_UPDATE recipients;
+        # * EventRouter._dm_participant_cache     -> DM message event recipients;
+        # * gateway_emit._channel_recipient_cache -> typing / read-receipt /
+        #   reaction / poll / bulk-delete recipients.
+        #
+        # Each is keyed by scope + actor + source identity (+ RBAC epoch), NOT
+        # by a block version, so a block/unblock or friend change leaves the
+        # warm audience stale for the whole 1s TTL. The cached list is already
+        # the product of the two-way block filter: replaying it after a block
+        # keeps delivering the actor's content to the just-blocked user (and,
+        # on unblock, keeps withholding it). Evict all three here with the
+        # other relationship-derived caches. Lazy import keeps the relationship
+        # tier decoupled from the gateway at module load (writes are rare).
+        from src.core.events.router import (
+            clear_dm_participant_cache,
+            clear_presence_audience_cache,
+        )
+        from src.core.events.gateway_emit import clear_channel_recipient_cache
 
         clear_presence_audience_cache()
+        clear_dm_participant_cache()
+        clear_channel_recipient_cache()
 
         seen_ids = set()
         for user_id in user_ids:
