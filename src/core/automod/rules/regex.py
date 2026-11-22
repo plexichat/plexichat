@@ -546,12 +546,226 @@ def _has_flat_quantifier_chain_redos_risk(pattern_str: str) -> bool:
                 chain_atom = None
                 adjacent_quantified = False
             else:
-                adjacent_quantified = (
-                    chain_atom is not None and _atoms_overlap(chain_atom, descriptor)
+                adjacent_quantified = chain_atom is not None and _atoms_overlap(
+                    chain_atom, descriptor
                 )
             last_atom = descriptor
         i += consumed
 
+    return False
+
+
+def _matching_paren(pattern_str: str, i: int) -> Optional[int]:
+    """Index of the ``)`` matching the ``(`` at ``i``, or None if unbalanced."""
+    depth = 0
+    n = len(pattern_str)
+    j = i
+    while j < n:
+        ch = pattern_str[j]
+        if ch == "\\":
+            j += 2
+            continue
+        if ch == "[":
+            j += 1
+            if j < n and pattern_str[j] == "^":
+                j += 1
+            if j < n and pattern_str[j] == "]":
+                j += 1
+            while j < n and pattern_str[j] != "]":
+                if pattern_str[j] == "\\":
+                    j += 1
+                j += 1
+            j += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return None
+
+
+def _alternation_branches(body: str) -> List[str]:
+    """Split a group body on top-level ``|`` (ignoring nested groups/classes)."""
+    branches: List[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":
+            j = i + 1
+            if j < n and body[j] == "^":
+                j += 1
+            if j < n and body[j] == "]":
+                j += 1
+            while j < n and body[j] != "]":
+                if body[j] == "\\":
+                    j += 1
+                j += 1
+            i = j + 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "|" and depth == 0:
+            branches.append(body[start:i])
+            start = i + 1
+        i += 1
+    branches.append(body[start:])
+    return branches
+
+
+def _alternation_ambiguous_atom(body: str) -> Optional[tuple]:
+    """Return a leading atom descriptor when ``body`` is an ambiguous alternation.
+
+    An alternation is ambiguous when two of its branches can consume the same
+    input -- e.g. ``aaaa|aaaaa`` or ``ab|ac`` share a leading ``a``. Repeated
+    sequentially, each such group doubles the number of ways the engine can
+    split a run of that character before failing on a trailing literal.
+    """
+    # Strip a leading extension prefix: (?:...), (?=...), (?!...), (?P<name>...).
+    if body.startswith("?"):
+        if body.startswith("?P<"):
+            close = body.find(">")
+            body = body[close + 1 :] if close != -1 else body[3:]
+        else:
+            k = 1
+            while k < len(body) and body[k] in ":=<>!":
+                k += 1
+            body = body[k:]
+    branches = _alternation_branches(body)
+    if len(branches) < 2:
+        return None
+    firsts: List[tuple] = []
+    for branch in branches:
+        if not branch:
+            continue
+        desc, _consumed = _flat_atom_descriptor(branch, 0)
+        if desc is None:
+            return None
+        firsts.append(desc)
+    for x in range(len(firsts)):
+        for y in range(x + 1, len(firsts)):
+            if _atoms_overlap(firsts[x], firsts[y]):
+                return firsts[x]
+    return None
+
+
+def _scan_ambiguous_units(pattern_str: str) -> List[tuple]:
+    """Return ``(atom_descriptor, ambiguous)`` units; parentheses are transparent.
+
+    A unit is "ambiguous" when it can match a variable number of overlapping
+    characters: an unbounded quantifier, a bounded variable quantifier whose
+    upper bound exceeds one, or a group with a common-prefix alternation.
+    ``?`` (0..1) and fixed bounded quantifiers are deliberately NOT ambiguous
+    on their own; ``a?a?a?a?`` has only 2**4 splits and stays accepted.
+    """
+    units: List[tuple] = []
+    i = 0
+    n = len(pattern_str)
+
+    def _quantifier_at(pos: int) -> tuple:
+        """Return ``(length, is_ambiguous)`` for a quantifier at ``pos``."""
+        q_len = _match_quantifier(pattern_str, pos) or 0
+        if not q_len:
+            return 0, False
+        bounds = _quantifier_bounds(pattern_str, pos)
+        if bounds is None:
+            return q_len, False
+        low, high = bounds
+        # Exclude '?' (high == 1) and fixed {n} (low == high): neither creates
+        # exponential split ambiguity on its own.
+        return q_len, low != high and high > 1
+
+    while i < n:
+        ch = pattern_str[i]
+
+        if ch == "(":
+            close = _matching_paren(pattern_str, i)
+            if close is None:
+                i += 1
+                continue
+            body = pattern_str[i + 1 : close]
+            amb = _alternation_ambiguous_atom(body)
+            q_after, q_after_amb = _quantifier_at(close + 1)
+            if amb is not None:
+                units.append((amb, True))
+            else:
+                sub = _scan_ambiguous_units(body)
+                if q_after_amb and sub:
+                    desc, _ = sub[-1]
+                    sub[-1] = (desc, True)
+                units.extend(sub)
+            i = close + 1 + q_after
+            continue
+
+        if ch == ")":
+            i += 1
+            continue
+
+        if ch in "|^$":
+            units.append((None, False))
+            i += 1
+            continue
+
+        # A stray quantifier (no preceding atom in this scan) breaks the chain.
+        q_here = _match_quantifier(pattern_str, i)
+        if q_here:
+            units.append((None, False))
+            i += q_here
+            continue
+
+        desc, consumed = _flat_atom_descriptor(pattern_str, i)
+        if desc is None:
+            units.append((None, False))
+            i += consumed
+            continue
+        q_len, ambiguous = _quantifier_at(i + consumed)
+        units.append((desc, ambiguous))
+        i += consumed + q_len
+    return units
+
+
+def _has_sequential_ambiguous_repeat_redos_risk(pattern_str: str) -> bool:
+    """Detect adjacent variable-length ambiguous atoms (siblings, not nested).
+
+    ``_has_flat_quantifier_chain_redos_risk`` only chains UNBOUNDED quantifiers,
+    and the group-nesting analysis combines sibling ambiguity with ``max``
+    rather than multiplying it. Both miss two shapes that pass every other
+    check yet stall the backtracking engine on a short input:
+
+      * sibling bounded variable quantifiers: ``a{4,5}a{4,5}...b`` -- the
+        engine can split a run of ``a`` characters into 4-or-5 sized chunks in
+        exponentially many ways;
+      * repeated common-prefix alternation groups: ``(aaaa|aaaaa)...b`` -- each
+        group can match either branch, again giving exponentially many splits.
+
+    Three adjacent overlapping ambiguous units is the same threshold used for
+    unbounded wildcard chains. Literal separators (``\\.`` in IPv4, ``-`` in a
+    phone matcher) sit between units and break the chain, so those stay safe.
+    """
+    chain = 0
+    chain_atom: Optional[tuple] = None
+    for desc, ambiguous in _scan_ambiguous_units(pattern_str):
+        if ambiguous and desc is not None:
+            if chain_atom is not None and _atoms_overlap(chain_atom, desc):
+                chain += 1
+            else:
+                chain = 1
+            chain_atom = desc
+            if chain >= MAX_SEQUENTIAL_WILDCARDS:
+                return True
+        else:
+            chain = 0
+            chain_atom = None
     return False
 
 
@@ -584,13 +798,18 @@ def _has_redos_risk(pattern_str: str) -> bool:
     wildcards (``.*a.*a.*b``) are caught by
     :func:`_has_sequential_wildcard_redos_risk`; flat chains built from narrow
     atoms (``a*a*a*b``, ``\d*\d*\d*x``, ``(a*)(a*)(a*)b``) are caught by
-    :func:`_has_flat_quantifier_chain_redos_risk`.
+    :func:`_has_flat_quantifier_chain_redos_risk`. Adjacent bounded variable
+    repeats and common-prefix alternation groups (``a{4,5}a{4,5}...``,
+    ``(aaaa|aaaaa)...``) are caught by
+    :func:`_has_sequential_ambiguous_repeat_redos_risk`.
     """
     if _has_backreference_redos_risk(pattern_str):
         return True
     if _has_sequential_wildcard_redos_risk(pattern_str):
         return True
     if _has_flat_quantifier_chain_redos_risk(pattern_str):
+        return True
+    if _has_sequential_ambiguous_repeat_redos_risk(pattern_str):
         return True
 
     # Stack frames:
@@ -715,11 +934,14 @@ def _has_redos_risk(pattern_str: str) -> bool:
 
 _REJECTION_MESSAGE = (
     "rejected: not supported by RE2 (requires the backtracking fallback "
-    "engine) and static analysis flagged nested/unbounded repetition or a "
-    "quantified backreference to a variable-length group (ReDoS risk). "
+    "engine) and static analysis flagged nested/unbounded repetition, a "
+    "quantified backreference to a variable-length group, or a chain of "
+    "adjacent variable-length repeats / common-prefix alternations "
+    "(ReDoS risk). "
     "Simplify the pattern - e.g. avoid quantifying a group that already "
-    "contains a quantifier or an alternation, and do not repeat a "
-    "backreference whose capture can vary in length."
+    "contains a quantifier or an alternation, do not repeat a "
+    "backreference whose capture can vary in length, and separate adjacent "
+    "variable repeats with mandatory literals."
 )
 
 

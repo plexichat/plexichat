@@ -659,8 +659,9 @@ def test_scan_is_not_vacuous(commit_sha):
 # Each ReDoS vetting fix that the guard relies on must be pinned in the
 # committed blob, with a helper marker distinctive to that fix and proof that
 # it is actually CALLED by the public entry point (not dead code). Reverting
-# either commit -- or deleting just its call -- must fail the parametrized pin
-# below.
+# any of these fixes -- or deleting just its call -- must fail the parametrized
+# pin below. The first field is a label identifying the fix (the historical
+# pins use their introducing commit SHA); it is not verified against history.
 REDOS_PINNED_FIXES = (
     (
         "782335ac",
@@ -671,6 +672,16 @@ REDOS_PINNED_FIXES = (
         "fc2fa880",
         "_has_flat_quantifier_chain_redos_risk",
         ("_flat_atom_descriptor", "_atoms_overlap"),
+    ),
+    (
+        "backreference-vet",
+        "_has_backreference_redos_risk",
+        ("_BACKREFERENCE_RE", "variable_groups"),
+    ),
+    (
+        "seq-ambiguous-repeat",
+        "_has_sequential_ambiguous_repeat_redos_risk",
+        ("_scan_ambiguous_units", "_alternation_ambiguous_atom"),
     ),
 )
 
@@ -690,7 +701,7 @@ def _assert_pinned_redos_fix(blob: str, func: str, markers: tuple[str, ...]) -> 
 
 @pytest.mark.parametrize(("fix_commit", "func", "markers"), REDOS_PINNED_FIXES)
 def test_head_pins_redos_vetting_fixes(commit_sha, fix_commit, func, markers):
-    """Both 782335ac and fc2fa880 must be in the blobs we scan, and live."""
+    """Every pinned ReDoS vetting fix must be in the blobs we scan, and live."""
     blob = _read_blobs(commit_sha, ("src/core/automod/rules/regex.py",))[
         "src/core/automod/rules/regex.py"
     ]
@@ -702,13 +713,21 @@ def test_self_test_redos_pin_detects_a_reverted_fix():
     synthetic = "\n".join(
         (
             "MAX_SEQUENTIAL_WILDCARDS = 3",
+            "_BACKREFERENCE_RE = None",
+            "variable_groups = {}",
             "def _flat_atom_descriptor(pattern_str, i): return None",
             "def _atoms_overlap(a, b): return False",
+            "def _scan_ambiguous_units(pattern_str): return []",
+            "def _alternation_ambiguous_atom(body): return None",
+            "def _has_backreference_redos_risk(pattern_str): return False",
             "def _has_sequential_wildcard_redos_risk(pattern_str): return False",
             "def _has_flat_quantifier_chain_redos_risk(pattern_str): return False",
+            "def _has_sequential_ambiguous_repeat_redos_risk(pattern_str): return False",
             "def _has_redos_risk(pattern_str):",
+            "    if _has_backreference_redos_risk(pattern_str): return True",
             "    if _has_sequential_wildcard_redos_risk(pattern_str): return True",
             "    if _has_flat_quantifier_chain_redos_risk(pattern_str): return True",
+            "    if _has_sequential_ambiguous_repeat_redos_risk(pattern_str): return True",
             "    return False",
             "",
         )
