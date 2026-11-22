@@ -86,14 +86,14 @@ Routers: `tickets`, `users`.
 
 ### User features, tiers, and badges
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `<admin-base>/badges` | List the badges an operator can grant |
-| `GET` | `<admin-base>/tiers` | List the configured rate-limit tiers and their limits |
-| `GET` | `<admin-base>/users/{user_id}/features` | Get a user's tier, badges, and feature flags |
-| `PUT` | `<admin-base>/users/{user_id}/features` | Update a user's tier, badges, and feature flags |
+| Method | Path | Description | Required scope |
+|---|---|---|---|
+| `GET` | `<admin-base>/badges` | List the badges an operator can grant | `config.read` |
+| `GET` | `<admin-base>/tiers` | List the configured rate-limit tiers and their limits | `config.read` |
+| `GET` | `<admin-base>/users/{user_id}/features` | Get a user's tier, badges, and feature flags | `users.read` |
+| `PUT` | `<admin-base>/users/{user_id}/features` | Update a user's tier, badges, and feature flags | `users.tier` |
 
-Router: `src/api/routes/features/tier_features.py`. These four routes are mounted under the admin prefix but authenticate through `get_admin_access`, which accepts **either** a dedicated admin session bearer **or** a normal user token whose permissions include `administrator`, `admin.*`, or `*`. The rest of the admin surface accepts only the admin session token.
+Router: `src/api/routes/features/tier_features.py`. These four routes are mounted under the admin prefix and authenticate through `get_admin_access`, which accepts **either** a dedicated admin session bearer **or** a normal user token whose permissions include `administrator`, `admin.*`, or `*`. The rest of the admin surface accepts only the admin session token. Admin membership alone is **not** sufficient on these four routes: each route also checks the concrete scope listed above (`check_admin_permission`), so a scoped admin lacking it receives `403`.
 
 ### Admin account management
 
