@@ -529,6 +529,35 @@ _N757_LIVE_GATE_DM_DENIAL = (
 )
 
 
+# e2c08e70 (N819): every inbound gateway frame paid byte/UTF-8/json/structural
+# work before opcode dispatch, but per-opcode throttles bounded work only per
+# opcode -- soft-rejected opcodes had no ceiling and throttled ones could be
+# rotated to sum their budgets. The fix adds one bounded, sliding-window,
+# opcode-independent ceiling that EVERY frame must pass before dispatch, plus
+# an unconditional admission call in OpcodeHandler.handle. Pin the constants,
+# the sliding bounded bucket, and the unconditional call independently so a
+# stale staged copy of either blob is caught by name.
+_N819_FRAME_CEILING = "MAX_INBOUND_FRAMES_PER_CONNECTION = 1000"
+_N819_FRAME_WINDOW = "INBOUND_FRAME_WINDOW_S = 10.0"
+_N819_GLOBAL_BUCKET_KEY = "GLOBAL_FRAME_BUCKET_KEY = -1"
+_N819_SLIDING_BUCKET_BLOCK = (
+    "        global_bucket = buckets.setdefault(GLOBAL_FRAME_BUCKET_KEY, [])\n"
+    "        while global_bucket and now - global_bucket[0] > INBOUND_FRAME_WINDOW_S:\n"
+    "            global_bucket.pop(0)\n"
+    "        if len(global_bucket) >= MAX_INBOUND_FRAMES_PER_CONNECTION:\n"
+    "            return False\n"
+    "        global_bucket.append(now)"
+)
+_N819_UNCONDITIONAL_ADMISSION = (
+    "        if not self._allow_inbound(connection, op):\n"
+    "            logger.debug(\n"
+    '                f"Connection {connection.connection_id}: "\n'
+    '                f"rate-limited inbound opcode {op}"\n'
+    "            )\n"
+    "            return None, None, None"
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -1910,6 +1939,65 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "referencing an undeclared, non-delegable scope"
         ),
     ),
+    # e2c08e70 (N819): the aggregate frame ceiling constants and the two
+    # behaviour anchors (bounded sliding bucket + unconditional pre-dispatch
+    # admission) must stay in the committed blobs.
+    CommittedFixMarker(
+        key="e2c08e70-n819-max-inbound-frames-constant",
+        path="src/api/websocket/boundaries.py",
+        marker=_N819_FRAME_CEILING,
+        why=(
+            "e2c08e70 (N819): the positive, finite cap on inbound frames per "
+            "connection; a stale staged copy of boundaries.py that drops it "
+            "leaves per-opcode throttles as the only ceiling and reopens an "
+            "unbounded CPU/log amplifier via soft-rejected or rotated opcodes"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e2c08e70-n819-inbound-frame-window-constant",
+        path="src/api/websocket/boundaries.py",
+        marker=_N819_FRAME_WINDOW,
+        why=(
+            "e2c08e70 (N819): the sliding-window length makes the aggregate "
+            "bucket decay; a stale staged copy that drops it turns the ceiling "
+            "into a permanent lifetime cap or an unbounded bucket"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e2c08e70-n819-global-bucket-key-constant",
+        path="src/api/websocket/boundaries.py",
+        marker=_N819_GLOBAL_BUCKET_KEY,
+        why=(
+            "e2c08e70 (N819): the reserved negative bucket key cannot collide "
+            "with non-negative opcodes; a stale staged copy that drops it "
+            "prevents the opcode-independent aggregate bucket from being "
+            "addressed at all"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e2c08e70-n819-bounded-sliding-bucket",
+        path="src/api/websocket/handlers/__init__.py",
+        marker=_N819_SLIDING_BUCKET_BLOCK,
+        why=(
+            "e2c08e70 (N819): _allow_inbound must expire stale timestamps "
+            "(sliding), refuse at the cap (bounded), and fail closed; a stale "
+            "staged copy that drops pop(0), the cap check, or the early return "
+            "reopens an unbounded or fail-open aggregate budget"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e2c08e70-n819-unconditional-pre-dispatch-admission",
+        path="src/api/websocket/handlers/__init__.py",
+        marker=_N819_UNCONDITIONAL_ADMISSION,
+        why=(
+            "e2c08e70 (N819): OpcodeHandler.handle must call _allow_inbound for "
+            "EVERY opcode before any handler dispatch (not just opcodes listed "
+            "in INBOUND_RATE_LIMITS); the drop must happen before even the "
+            "soft-reject path. A stale staged copy that reintroduces a "
+            "conditional `op in INBOUND_RATE_LIMITS` guard lets unthrottled "
+            "opcodes bypass the aggregate ceiling"
+        ),
+    ),
 )
 
 
@@ -3280,3 +3368,79 @@ def test_n757_live_dispatch_pins_live_at_head_and_non_vacuous(
         assert not present, f"synthetic N757 revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+# e2c08e70 (N819) aggregate inbound frame ceiling pins. Held as an explicit set
+# so none of the five anchors can vanish from the registry silently. The generic
+# parametrized tests cover presence at HEAD and synthetic-revert falsifiability;
+# the live-HEAD tie below additionally proves the bounded/sliding semantics and
+# that admission is unconditional (exactly one call site, no opcode-table guard).
+N819_AGGREGATE_FRAME_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "e2c08e70-n819-max-inbound-frames-constant",
+        "e2c08e70-n819-inbound-frame-window-constant",
+        "e2c08e70-n819-global-bucket-key-constant",
+        "e2c08e70-n819-bounded-sliding-bucket",
+        "e2c08e70-n819-unconditional-pre-dispatch-admission",
+    }
+)
+
+
+def test_n819_aggregate_frame_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The N819 aggregate frame ceiling pins are registered, live and falsifiable.
+
+    Constants resolve in boundaries.py; the sliding bounded bucket and the
+    unconditional pre-dispatch admission resolve in handlers/__init__.py. A
+    synthetic stale blob with the fix erased is rejected by the same evaluator.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert N819_AGGREGATE_FRAME_PIN_KEYS <= set(keys), (
+        "N819 aggregate-frame key set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(N819_AGGREGATE_FRAME_PIN_KEYS - set(keys))}"
+    )
+    assert len(N819_AGGREGATE_FRAME_PIN_KEYS) == 5
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    for key in sorted(N819_AGGREGATE_FRAME_PIN_KEYS):
+        record = by_key[key]
+        assert record.path in (
+            "src/api/websocket/boundaries.py",
+            "src/api/websocket/handlers/__init__.py",
+        ), f"{key} points at unexpected path {record.path!r}"
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# aggregate frame ceiling erased\n"
+
+        present, detail = _evaluate(record, stale_blob)
+        assert not present, f"synthetic N819 revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+    # Bounded + sliding semantics are explicit in the pinned bucket block.
+    bucket = by_key["e2c08e70-n819-bounded-sliding-bucket"].marker
+    assert "global_bucket.pop(0)" in bucket  # sliding: expire old timestamps
+    assert "INBOUND_FRAME_WINDOW_S" in bucket
+    assert "len(global_bucket) >= MAX_INBOUND_FRAMES_PER_CONNECTION" in bucket
+    assert "return False" in bucket  # bounded + fail closed
+
+    # Unconditional admission: exactly one call site in the committed blob, and
+    # no opcode-table membership guard around it.
+    admission = by_key["e2c08e70-n819-unconditional-pre-dispatch-admission"].marker
+    assert "_allow_inbound(connection, op)" in admission
+    assert "INBOUND_RATE_LIMITS" not in admission
+    handlers_blob = reader("src/api/websocket/handlers/__init__.py")
+    assert handlers_blob.count("_allow_inbound(connection, op)") == 1, (
+        "expected exactly one unconditional _allow_inbound call site in "
+        "OpcodeHandler.handle"
+    )
+    handle_body = handlers_blob[handlers_blob.index("    async def handle(") :]
+    call_pos = handle_body.index("_allow_inbound(connection, op)")
+    for guard in ("if op in INBOUND_RATE_LIMITS", "if int(op) in INBOUND_RATE_LIMITS"):
+        assert guard not in handle_body[:call_pos], (
+            f"conditional opcode-table guard {guard!r} reintroduced before "
+            "the aggregate admission call"
+        )
