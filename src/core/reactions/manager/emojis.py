@@ -417,8 +417,20 @@ class EmojiOpsMixin(ReactionProtocol):
                 self._invalidate_emoji_catalog(
                     server_id=emoji.server_id, emoji_id=emoji_id
                 )
-            except Exception:
+            except EmojiNameExistsError:
                 self._db.rollback()
+                raise
+            except Exception as e:
+                self._db.rollback()
+                # The SELECT pre-check above is advisory. Under concurrency two
+                # renames can both see the name as free, and the loser's UPDATE
+                # violates UNIQUE(server_id, name). Translate it to the same
+                # domain error create_custom_emoji() uses so a lost race is a
+                # clean name-collision failure instead of a raw DB exception.
+                if "UNIQUE" in str(e) or "unique" in str(e).lower():
+                    raise EmojiNameExistsError(
+                        f"Emoji with name '{name}' already exists in this server"
+                    ) from e
                 raise
 
         logger.debug(f"Custom emoji {emoji_id} updated")
