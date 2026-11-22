@@ -18,6 +18,75 @@ from .base import PollManagerBase, _is_unique_violation
 from .post_gate import require_poll_post_access
 
 
+def _affected_rows(cursor) -> Optional[int]:
+    """Best-effort rowcount for a guarded write, or None when unavailable.
+
+    Drivers differ: SQLite/pg8000 report an int, some wrappers return None or
+    -1. Callers must treat a definite 0 as "guard failed" and fall back to a
+    re-read when the count is unknown (never assume the write matched).
+    """
+    try:
+        rowcount = cursor.rowcount
+    except Exception:
+        return None
+    if rowcount is None or rowcount == -1:
+        return None
+    try:
+        return int(rowcount)
+    except (TypeError, ValueError):
+        return None
+
+
+def _guard_open_poll_in_txn(manager, poll_id: SnowflakeID) -> SnowflakeID:
+    """Fail closed unless the poll is still open at write time.
+
+    The ``is_ended`` / deadline checks in ``vote`` / ``change_vote`` /
+    ``remove_vote`` run against a poll read *before* the write transaction is
+    opened. A creator close or the periodic expiry sweep can land in that
+    gap, so those checks alone are a check-then-write TOCTOU that lets a vote
+    or vote change be recorded on an already-closed poll (mutating a settled
+    result and its counts).
+
+    This guarded no-op UPDATE runs *inside* the active transaction, after
+    every pre-write check. It re-reads the authoritative ``ended_at`` /
+    ``ends_at`` from ``poll_polls`` and takes a write lock on the poll row for
+    the rest of the transaction, so no close can commit between this check
+    and the vote/voter writes. A definite zero-row match (poll closed or
+    gone) raises :class:`PollEndedError`; drivers that cannot report rowcount
+    fall back to a direct authoritative re-read. Both paths abort the
+    surrounding transaction by raising.
+
+    Kept module-level (rather than a mixin method) so test stubs that compose
+    the mixin methods directly -- without inheriting ``PollManagerBase`` --
+    still exercise the exact production guard.
+
+    Returns the authoritative timestamp captured inside the transaction for
+    the write's ``voted_at`` values.
+    """
+    now = manager._get_timestamp()
+    cursor = manager._db.execute(
+        "UPDATE poll_polls SET ended_at = ended_at "
+        "WHERE id = ? AND ended_at IS NULL "
+        "AND (ends_at IS NULL OR ends_at > ?)",
+        (poll_id, now),
+        auto_commit=False,
+    )
+    affected = _affected_rows(cursor)
+    if affected == 0:
+        raise PollEndedError("Poll has ended")
+    if affected is None:
+        row = manager._db.fetch_one(
+            "SELECT ended_at, ends_at FROM poll_polls WHERE id = ?", (poll_id,)
+        )
+        if (
+            not row
+            or row["ended_at"] is not None
+            or (row["ends_at"] and now >= row["ends_at"])
+        ):
+            raise PollEndedError("Poll has ended")
+    return now
+
+
 class VotingMixin(PollManagerBase):
     """Cast and revise votes and compute visibility-aware results."""
 
@@ -87,10 +156,13 @@ class VotingMixin(PollManagerBase):
                 "call change_vote() to revise the selection"
             )
 
-        now = self._get_timestamp()
-
         try:
             self._db.begin_transaction()
+
+            # Authoritative, in-transaction open-state check (closes the
+            # pre-write TOCTOU with a concurrent close / expiry sweep) and the
+            # timestamp used for every vote row written below.
+            now = _guard_open_poll_in_txn(self, poll_id)
 
             self._db.execute(
                 """INSERT INTO poll_voters (poll_id, user_id, voted_at)
@@ -118,6 +190,9 @@ class VotingMixin(PollManagerBase):
                 auto_commit=False,
             )
             self._db.commit()
+        except PollEndedError:
+            self._db.rollback()
+            raise
         except Exception as exc:
             self._db.rollback()
             # A UNIQUE violation on ``poll_voters`` (poll_id, user_id) means
@@ -182,10 +257,13 @@ class VotingMixin(PollManagerBase):
                 "One or more selected options are invalid for this poll"
             )
 
-        now = self._get_timestamp()
-
         try:
             self._db.begin_transaction()
+
+            # Re-check the authoritative open state after every pre-write
+            # check: a close/expiry landing in that gap must abort this
+            # replacement instead of rewriting a settled result.
+            now = _guard_open_poll_in_txn(self, poll_id)
 
             # Replace the user's previous per-option selections.
             self._db.execute(
@@ -224,6 +302,9 @@ class VotingMixin(PollManagerBase):
                 auto_commit=False,
             )
             self._db.commit()
+        except PollEndedError:
+            self._db.rollback()
+            raise
         except Exception as exc:
             self._db.rollback()
             if _is_unique_violation(exc):
@@ -389,6 +470,9 @@ class VotingMixin(PollManagerBase):
         voters_deleted: Optional[int] = None
         try:
             self._db.begin_transaction()
+            # A poll that closed after the pre-check above must not have its
+            # recorded outcome altered by this removal either.
+            _guard_open_poll_in_txn(self, poll_id)
             cursor = self._db.execute(
                 "DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?",
                 (poll_id, user_id),
