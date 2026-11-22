@@ -96,9 +96,9 @@ def test_repeated_thumbnail_request_skips_the_image_decode(monkeypatch):
     decodes = []
     original = processor._validate_image_dimensions
 
-    def counting_validate(img):
+    def counting_validate(img, compressed_bytes=0):
         decodes.append(img)
-        return original(img)
+        return original(img, compressed_bytes)
 
     monkeypatch.setattr(processor, "_validate_image_dimensions", counting_validate)
 
