@@ -102,6 +102,7 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             invalidate_friend_ids(self, blocked_id)
         self._invalidate_all_relationships_cache(blocker_id, blocked_id)
         self._invalidate_profile_read_caches(blocker_id, blocked_id)
+        self._invalidate_reaction_view_caches()
 
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
         result = self.get_block(block_id)
@@ -133,6 +134,7 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             invalidate_all_blocked_ids(self, blocked_id)
         self._invalidate_all_relationships_cache(blocker_id, blocked_id)
         self._invalidate_profile_read_caches(blocker_id, blocked_id)
+        self._invalidate_reaction_view_caches()
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
         return True
@@ -159,6 +161,31 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
                 invalidate_profile_read_cache(int(user_id))
         except Exception as e:
             logger.debug(f"Profile read cache invalidation after block failed: {e}")
+
+    @staticmethod
+    def _invalidate_reaction_view_caches() -> None:
+        """Drop cached reaction-bearing bodies after a block/unblock.
+
+        Reaction pills (emoji, count and the per-viewer ``me`` flag) are
+        resolved through the viewer's TWO-WAY block filter, so a block write
+        changes what every viewer may see. Those pills are memoized in the HTTP
+        ``reaction_read_api`` body cache AND in the cached channel-message-list
+        bodies (``messages_api`` plus the in-process render LRU). A core-only
+        invalidation (the reaction manager's block hook) leaves those viewer
+        bodies warm: a reader who blocks a reactor keeps seeing that reactor's
+        pill and count until the TTL lapses. Drop every reaction-bearing body so
+        the next read re-runs the block filter (fail closed).
+
+        Best-effort: a cache outage must never fail an otherwise committed
+        relationship change. Lazy import keeps the core tier decoupled from the
+        API layer at module load.
+        """
+        try:
+            from src.api.routes.reactions import _invalidate_reaction_read_cache
+
+            _invalidate_reaction_read_cache()
+        except Exception as e:
+            logger.debug(f"Reaction view cache invalidation after block failed: {e}")
 
     def get_block(self, block_id: SnowflakeID) -> Optional[BlockedUser]:
         """Get a block record by ID."""
