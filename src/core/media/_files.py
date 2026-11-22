@@ -13,7 +13,21 @@ from .exceptions import MediaError, PermissionDeniedError
 from ._file_meta_cache import FileMeta, FileMetaCache
 from src.utils.encryption import decrypt_data
 
+# This module logs through a plain ``logging.getLogger(__name__)`` logger, not
+# ``AppLogger``, so it never receives the on-disk ``SanitizingFilter``. The
+# ``filename`` logged by ``check_file_access`` comes from a media URL/path, and
+# upload sanitisation only drops C0/DEL, leaving U+0085 (NEL), U+2028/U+2029 and
+# bidi controls intact. Those are line breaks / invisible direction changes for
+# log shippers, terminals and the admin log viewer, so one crafted filename can
+# forge extra entries in the captured disk/SIEM log (CWE-117). Install the same
+# sink-level guard ``AppLogger`` uses so every line from this module -- including
+# messages built from exception text -- is neutralised. The guard escapes
+# control characters visibly rather than dropping them, keeping audit content
+# readable.
+from src.utils.common_utils.utils.logger.core import SanitizingFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(SanitizingFilter())
 
 # Retry window for transient SQLite write-lock contention (see
 # ``_retry_on_db_lock``). Background upload tasks and synchronous deletes can

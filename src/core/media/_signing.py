@@ -13,7 +13,20 @@ from .models import StorageBackend, SignedUrl
 from .exceptions import MediaError, SignatureInvalidError, SignatureExpiredError
 from .security import UrlSigner
 
+# This module logs through a plain ``logging.getLogger(__name__)`` logger, not
+# ``AppLogger``, so it never receives the on-disk ``SanitizingFilter``. The
+# ``file.filename`` logged on the S3-signing fallback path is caller-supplied
+# and upload sanitisation only drops C0/DEL, leaving U+0085 (NEL), U+2028/U+2029
+# and bidi controls intact. Those are line breaks / invisible direction changes
+# for log shippers and the admin log viewer, so one crafted filename can forge
+# extra entries in the captured disk/SIEM log (CWE-117). Install the same
+# sink-level guard ``AppLogger`` uses so every line from this module is
+# neutralised; the guard escapes control characters visibly rather than dropping
+# them, keeping audit content readable.
+from src.utils.common_utils.utils.logger.core import SanitizingFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(SanitizingFilter())
 
 # Keys that must never be used to sign URLs - they are publicly known.
 _INSECURE_SIGNING_KEYS = {
