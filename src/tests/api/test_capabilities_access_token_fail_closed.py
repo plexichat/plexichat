@@ -15,6 +15,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -33,6 +34,7 @@ def _load_route_module():
     if module_name in sys.modules:
         return sys.modules[module_name]
 
+    stubs = {}
     for name, attrs in {
         "src.api.schemas.config": {
             "ServerCapabilitiesResponse": _Response,
@@ -46,13 +48,19 @@ def _load_route_module():
         stub = types.ModuleType(name)
         for key, value in attrs.items():
             setattr(stub, key, value)
-        sys.modules[name] = stub
+        stubs[name] = stub
 
     path = Path(__file__).parents[2] / "api" / "routes" / "config.py"
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    # Keep the stand-ins scoped to this one import. Leaving them in
+    # sys.modules shadows the real schemas for every module collected
+    # afterwards (e.g. ``from src.api.schemas.common import SnowflakeID``),
+    # and a bare ModuleType stub has no __file__ so the failure surfaces as
+    # "cannot import name ... (unknown location)".
+    with patch.dict(sys.modules, stubs):
+        spec.loader.exec_module(module)
     return module
 
 

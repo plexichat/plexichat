@@ -49,7 +49,7 @@ def _key_builder(func):
     [
         (messages_list.get_channel_messages, "messages_api"),
         (messages_list.get_pinned_messages, "channel_pins_api"),
-        (search.search_messages, "search_messages_api"),
+        (search._search_messages_cached, "search_messages_api"),
     ],
 )
 def test_private_message_cache_partitions_bot_credential_from_owner(func, prefix):
