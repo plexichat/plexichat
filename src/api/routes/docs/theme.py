@@ -15,6 +15,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
             --surface: #ffffff;
             --text: #18181b;
             --text-muted: #3f3f46;
+            --method-badge-ink: var(--text);
             --accent: #6366f1;
             --accent-hover: #4f46e5;
             --border: #e4e4e7;
@@ -45,6 +46,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
             --surface: #111827;
             --text: #f9fafb;
             --text-muted: #9ca3af;
+            --method-badge-ink: var(--code-bg);
             --accent: #818cf8;
             --accent-hover: #6366f1;
             --border: #1f2937;
@@ -105,28 +107,6 @@ def build_brand_styles(conf: DocsConfig) -> str:
         textarea:focus-visible {
             outline: 2px solid var(--accent);
             outline-offset: 2px;
-        }
-
-        /* Keyboard skip link: the docs sidebar carries 100+ links before the
-           main content, so keyboard users need a way to bypass it on every
-           page load. Off-screen until focused, then pinned top-left above the
-           layout. Mirrors the app shell's .skip-link pattern. */
-        .skip-link {
-            position: fixed;
-            top: var(--spacing-md);
-            left: var(--spacing-md);
-            z-index: 10000;
-            padding: 8px 14px;
-            border-radius: var(--radius-md);
-            background: var(--surface);
-            color: var(--text);
-            border: 1px solid var(--accent);
-            transform: translateY(-200%);
-        }
-
-        .skip-link:focus,
-        .skip-link:focus-visible {
-            transform: translateY(0);
         }
 
         .docs-layout {
@@ -650,6 +630,19 @@ def build_brand_styles(conf: DocsConfig) -> str:
             border-left: 3px solid #ef4444;
         }
 
+        /* Swagger UI's CDN stylesheet paints method badges with white ink on
+           light GET/POST/DELETE fills (2.0-3.6:1, below WCAG AA) and only flips
+           to dark ink under `html.dark-mode`. This site toggles
+           `[data-theme="dark"]` instead, so that fallback never applies and
+           the badges stay low-contrast in every theme. Re-ink them with a
+           theme-aware token: --method-badge-ink resolves to the near-black
+           body ink in light mode and to --code-bg in dark mode, both reusing
+           existing colors. */
+        .plexi-swagger-page .swagger-ui .opblock .opblock-summary-method {
+            color: var(--method-badge-ink);
+            text-shadow: none;
+        }
+
         .plexi-swagger-page .swagger-ui .opblock-body {
             background: var(--surface);
         }
@@ -811,6 +804,13 @@ def build_brand_styles(conf: DocsConfig) -> str:
         @media (max-width: 768px) {
             .shell-title {
                 font-size: 1.5rem;
+            }
+            /* Prose inline code holds unbreakable endpoint paths and fully
+               qualified config keys. Without wrapping, one token sets the
+               line's min-content width and the whole page scrolls sideways
+               at phone widths. Fenced code already scrolls inside <pre>. */
+            code {
+                overflow-wrap: break-word;
             }
             .docs-content {
                 padding: 0 var(--spacing-md);
