@@ -7,6 +7,7 @@ Handles server invite links and external link whitelist/blacklist.
 import re
 import unicodedata
 from typing import Dict, Any, Optional, Set, List
+from urllib.parse import unquote
 
 import utils.logger as logger
 
@@ -305,17 +306,52 @@ class InviteLinkRule(BaseRule):
         return len(issues) == 0, issues
 
 
+def _canonicalize_host(value: str) -> str:
+    """Fold a host to the single shape both policy lists and observed hosts use.
+
+    A URL's authority is decoded by the consumer before DNS resolution:
+    percent-encoded bytes are decoded (`evil%2eexample` -> `evil.example`,
+    `%65vil.example` -> `evil.example`) and internationalised names are
+    converted to their ASCII/punycode form (`xn--...`, or a Unicode label
+    such as an IDN homoglyph). The moderation layer must decide on that SAME
+    name. Applying the canonicalization to both list entries and extracted
+    hosts closes two parser differentials that otherwise fail open:
+
+    * an admin's punycode entry (``xn--...``) never matched a Unicode host,
+      and a Unicode entry never matched a punycode host; and
+    * a URL with a percent-encoded host (``evil%2eexample``,
+      ``%65vil.example``) was reported as "not a link at all" and bypassed
+      both blacklist and whitelist modes even though the browser resolved
+      the decoded name.
+
+    A trailing DNS-root dot is stripped for DNS equivalence. Decoding is
+    repeated because an encoded `%25` chain can expose another percent escape,
+    and bounded to avoid pathological nesting.
+    """
+    value = value.strip()
+    for _ in range(3):
+        decoded = unquote(value)
+        if decoded == value:
+            break
+        value = decoded
+    try:
+        value = value.encode("idna").decode("ascii")
+    except Exception:
+        pass
+    # Strip ALL trailing root markers, not just one: ``evil.example..`` is
+    # DNS-equivalent to ``evil.example`` and must match the same list entry.
+    return value.lower().rstrip(".")
+
+
 def _normalize_listed_domain(entry: str) -> str:
     """Normalize a whitelist/blacklist entry to the observed-host shape.
 
-    Observed hosts are lowercased with the trailing DNS-root dot stripped
-    (see ``ExternalLinkRule._extract_host``), so entries must be stored the
-    same way: an admin-supplied ``"Evil.COM. "`` -- the FQDN form DNS tooling
-    commonly emits -- would otherwise never match ``"evil.com"``, silently
-    disabling a blacklist entry (a bypass) or wrongly blocking a whitelisted
-    domain (a false positive).
+    Entries go through the same canonicalization as extracted hosts (percent
+    decoding, IDNA/punycode, lowercasing, trailing DNS-root dot removal), so
+    an admin-supplied ``"Evil.COM. "`` or ``"xn--..."`` matches exactly what
+    ``ExternalLinkRule._extract_host`` observes.
     """
-    return entry.strip().lower().removesuffix(".")
+    return _canonicalize_host(entry)
 
 
 class ExternalLinkRule(BaseRule):
@@ -511,15 +547,25 @@ class ExternalLinkRule(BaseRule):
                 candidate = candidate[2:]
                 has_scheme = True
 
-            host = candidate.split("/", 1)[0]
-            host = host.split("?", 1)[0].split("#", 1)[0]
-            # Drop userinfo and port.
-            host = host.rsplit("@", 1)[-1].split(":", 1)[0]
-            host = host.lower()
-            # A trailing dot is the DNS root marker ("evil.com." resolves
-            # exactly as "evil.com"); strip it so the FQDN form cannot
-            # bypass the filter while the bare form is blocked.
-            host = host.removesuffix(".")
+            authority = candidate.split("/", 1)[0]
+            authority = authority.split("?", 1)[0].split("#", 1)[0]
+
+            # Canonicalize the authority the way the consumer does BEFORE
+            # deciding it is "not a link". Percent-encoded bytes in a host
+            # (``evil%2eexample`` -> ``evil.example``, ``%65vil.example``)
+            # and internationalised/punycode labels are decoded into the name
+            # the browser actually resolves; a raw ``%2F``/``%5C`` decodes to
+            # a separator that must not be smuggled into the host. Split the
+            # authority first (so userinfo/port are dropped), then decode the
+            # host fragment; if decoding introduces a separator the token is
+            # malformed as an authority and is rejected (fail closed).
+            host = authority.rsplit("@", 1)[-1].split(":", 1)[0]
+            host = _canonicalize_host(host)
+            if any(
+                sep in host
+                for sep in ("/", "\\", "?", "#", "@", ":", "[", "]", " ", "\t", "\r", "\n")
+            ):
+                return None
             if not host:
                 return None
 
@@ -535,11 +581,13 @@ class ExternalLinkRule(BaseRule):
                 if not ipv4.match(host):
                     return None
 
-            # Require an alphabetic TLD of length >= 2 so single-letter
-            # dotted fragments ("e.g") are not treated as hosts; raw IPv4
-            # hosts are exempt (already validated above).
+            # Require an alphabetic (or punycode ``xn--``) TLD of length >= 2
+            # so single-letter dotted fragments ("e.g") are not treated as
+            # hosts. A punycode TLD such as ``.xn--p1ai`` is a real ccTLD and
+            # must be accepted, or a denylisted/foreign IDN host would slip
+            # past both modes. Raw IPv4 hosts are exempt (validated above).
             tld = host.rsplit(".", 1)[-1]
-            if len(tld) < 2 or not tld.isalpha():
+            if len(tld) < 2 or not (tld.isalpha() or tld.startswith("xn--")):
                 if not re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$").match(host):
                     return None
 
