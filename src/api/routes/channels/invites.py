@@ -103,7 +103,9 @@ def get_invite_metadata_cache() -> _InviteMetadataCache:
 # redemption a client with a stolen session could scan the code space at the
 # generic transport rate. These counters are spent through the SHARED, atomic
 # rate-limit backend so the budget holds across ``--scale backend=N`` workers;
-# ``check_rate_limit`` fails closed on a limiter fault.
+# ``check_rate_limit`` fails closed on a limiter fault for the
+# ``invites:redeem-guess:`` namespace regardless of the global
+# ``rate_limiting.fail_open_on_backend_error`` override.
 
 #: Bounded, honest defaults. Operators may tune them under ``[invites]``:
 #: ``redeem_guess_max`` / ``redeem_guess_window_seconds`` (per source) and

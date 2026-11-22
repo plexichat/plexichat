@@ -40,6 +40,14 @@ return current
 """
 
 
+# Key namespaces that back security-critical (bearer-credential) budgets. A
+# limiter backend fault must deny for these even when an operator enabled the
+# global ``rate_limiting.fail_open_on_backend_error`` escape hatch for ordinary
+# product limiters. Without this, that single config line would silently reopen
+# online brute force of invite codes with no code change to the invite route.
+_FAIL_CLOSED_KEY_PREFIXES = ("invites:redeem-guess:",)
+
+
 def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, int]:
     """Check if a rate limit has been exceeded.
 
@@ -50,6 +58,10 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
 
     Returns:
         Tuple of (allowed: bool, remaining: int).
+
+    On a limiter backend fault, keys under ``_FAIL_CLOSED_KEY_PREFIXES`` always
+    deny; other keys honour the operator-wide ``fail_open_on_backend_error``
+    override (legacy behaviour).
     """
     # A negative window makes the timestamp filter `ts > now - window`
     # select nothing (disabling the limiter), and an enormous limit does the
@@ -109,20 +121,26 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
     except ValkeyOperationError as e:
         logger.warning(f"Rate limit check failed for {key}: {e}")
         # A limiter backend error must not silently reopen an abuse corridor.
-        # Preserve the existing fail-closed default; development deployments
-        # can explicitly opt into fail-open through the central config.
-        try:
-            import utils.config as _config
+        # Security-critical namespaces NEVER fail open: an operator enabling the
+        # global override for ordinary limits cannot reopen invite-code brute
+        # force with a config-only change. Only legacy, non-critical keys even
+        # consult that override.
+        fail_open = not key.startswith(_FAIL_CLOSED_KEY_PREFIXES)
+        if fail_open:
+            try:
+                import utils.config as _config
 
-            if bool(
-                _config.get("rate_limiting", {}).get(
-                    "fail_open_on_backend_error", False
+                fail_open = bool(
+                    _config.get("rate_limiting", {}).get(
+                        "fail_open_on_backend_error", False
+                    )
                 )
-            ):
-                return True, limit
-        except Exception as feature_error:
-            # No feature override means no limit; the reason is still recorded.
-            logger.debug(f"rate-limit feature lookup failed: {feature_error}")
+            except Exception as feature_error:
+                # No feature override means no limit; the reason is recorded.
+                logger.debug(f"rate-limit feature lookup failed: {feature_error}")
+                fail_open = False
+        if fail_open:
+            return True, limit
         return False, 0
 
 
