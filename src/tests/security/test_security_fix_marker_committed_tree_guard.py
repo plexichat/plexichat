@@ -739,6 +739,24 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "copy restores the homoglyph replay and mints a second admin session"
         ),
     ),
+    # N658 (2e98203a): a replay key on only the presented code leaves the other
+    # 2*window+1 adjacent codes that pyotp's valid_window accepts still live, so
+    # two different still-valid codes could each authorize a separate step-up
+    # inside one validity window. Claiming every accepted step atomically closes
+    # that adjacent-code replay gap; a stale staged copy of totp.py drops the
+    # window claim and silently reopens it.
+    CommittedFixMarker(
+        key="n658-totp-valid-window-replay",
+        path="src/core/auth/totp.py",
+        marker="_claim_totp_window",
+        why=(
+            "N658: verify_totp_code now claims every code accepted by "
+            "valid_window (2*window+1 adjacent steps) so a second, different "
+            "still-valid code cannot authorize another step-up inside one "
+            "validity window; a stale staged copy of totp.py drops the window "
+            "claim and reopens adjacent-code replay"
+        ),
+    ),
     # --- Stale-staged MM audit: committed fixes dropped by staged (index) copies ---
     # These three files are MM in a peer's working tree. Their staged blobs are
     # pre-fix while HEAD carries the fix; their working-tree copies re-add it.
