@@ -51,3 +51,38 @@ def test_failed_auth_does_not_log_raw_secret_path(test_client, caplog) -> None:
         "failed-auth log should show the redacted route template rather than "
         "the resolved path: " + "\n".join(auth_lines)
     )
+
+
+def test_rejected_bearer_does_not_log_raw_secret_path(test_client, caplog) -> None:
+    """A rejected bearer token must not leak the path via the auth middleware.
+
+    AuthenticationMiddleware runs BEFORE routing, so ``get_current_user``'s
+    fix alone is not enough: the middleware's own failed-auth DEBUG log sees the
+    resolved path with no ``scope["route"]`` metadata. ``_safe_log_path`` must
+    fail closed by masking the push-token segment directly.
+    """
+    url = f"/api/v1/features/push/tokens/{CANARY}"
+
+    with caplog.at_level(logging.DEBUG, logger="AppLogger"):
+        response = test_client.delete(
+            url, headers={"Authorization": "Bearer defnotavalidtoken123"}
+        )
+
+    # Non-vacuity: a rejected bearer must actually drive the middleware's
+    # failed-auth log branch, else the assertion below proves nothing.
+    assert response.status_code == 401, response.text
+    lines = [record.getMessage() for record in caplog.records]
+    auth_lines = [line for line in lines if "Authentication failed for path" in line]
+    assert auth_lines, (
+        "expected a middleware failed-auth log line so the assertion is "
+        "non-vacuous; got: " + "\n".join(lines)
+    )
+
+    assert CANARY not in "\n".join(lines), (
+        "push token leaked into the middleware failed-auth log: "
+        + "\n".join(auth_lines)
+    )
+    assert "{token_value}" in "\n".join(auth_lines), (
+        "middleware failed-auth log should mask the push-token segment: "
+        + "\n".join(auth_lines)
+    )

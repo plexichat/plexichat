@@ -69,6 +69,12 @@ class AuthenticationMiddleware:
             # Create request from scope ONLY to avoid consuming the 'receive' stream
             request = Request(scope)
             path = scope.get("path", "")
+            # SECURITY: AuthenticationMiddleware runs before routing, so
+            # scope["route"] is absent here. _safe_log_path still fails closed
+            # for credential-bearing paths (webhook token, invite code, push
+            # token) by masking the secret segment. Use this for ALL path
+            # logs below; never interpolate the raw resolved ``path``.
+            log_path = _safe_log_path(scope, path)
 
             # Use centralized self-test validation which enforces:
             # 1. Request originates from localhost (127.0.0.1 or ::1)
@@ -120,11 +126,11 @@ class AuthenticationMiddleware:
                             except Exception as e:
                                 if isinstance(e, AuthError):
                                     logger.warning(
-                                        f"Auth: Internal token verification AuthError for path {path}: {e}"
+                                        f"Auth: Internal token verification AuthError for path {log_path}: {e}"
                                     )
                                 else:
                                     logger.error(
-                                        f"Auth: Internal system error during token verification for path {path}: {e}",
+                                        f"Auth: Internal system error during token verification for path {log_path}: {e}",
                                         exc_info=True,
                                     )
 
@@ -137,6 +143,12 @@ class AuthenticationMiddleware:
         if scope["type"] == "http":
             request = Request(scope)
             path = scope.get("path", "")
+            # SECURITY: AuthenticationMiddleware runs before routing, so
+            # scope["route"] is absent here. _safe_log_path still fails closed
+            # for credential-bearing paths (webhook token, invite code, push
+            # token) by masking the secret segment. Use this for ALL path
+            # logs below; never interpolate the raw resolved ``path``.
+            log_path = _safe_log_path(scope, path)
 
             # Derived routing policy (prefix, public endpoints, docs path) is
             # static until configuration changes. Build it once and cache it
@@ -349,11 +361,11 @@ class AuthenticationMiddleware:
                             if token_info:
                                 set_request_user(scope, token_info)
                                 logger.debug(
-                                    f"Auth: Successfully authenticated user {token_info.user_id} for path {path}"
+                                    f"Auth: Successfully authenticated user {token_info.user_id} for path {log_path}"
                                 )
                             else:
                                 logger.warning(
-                                    f"Auth: verify_token returned None for path {path}"
+                                    f"Auth: verify_token returned None for path {log_path}"
                                 )
                                 scope["state"]["auth_error"] = "Invalid token"
                         except Exception as e:
@@ -361,26 +373,26 @@ class AuthenticationMiddleware:
                             if isinstance(e, AuthError):
                                 # This is a legitimate authentication failure (invalid/expired token)
                                 logger.debug(
-                                    f"Authentication failed for path {path}: {e}"
+                                    f"Authentication failed for path {log_path}: {e}"
                                 )
                                 scope["state"]["auth_error"] = str(e)
                             else:
                                 # This is likely a database or system error
                                 # We should log it as an error and potentially return a 500 instead of 401
                                 logger.error(
-                                    f"System error during authentication for path {path}: {e}",
+                                    f"System error during authentication for path {log_path}: {e}",
                                     exc_info=True,
                                 )
                                 scope["state"]["system_error"] = str(e)
                     else:
-                        logger.error(f"Auth: Auth module NOT AVAILABLE for path {path}")
+                        logger.error(f"Auth: Auth module NOT AVAILABLE for path {log_path}")
                         scope["state"]["system_error"] = "Auth module not available"
                 else:
                     from utils.logger import mask_string
 
                     masked_header = mask_string(auth_header)
                     logger.debug(
-                        f"Auth: Failed to extract token from header '{masked_header}' for path {path}"
+                        f"Auth: Failed to extract token from header '{masked_header}' for path {log_path}"
                     )
                     scope["state"]["auth_error"] = "Invalid Authorization header"
             # Cookie fallback: runs when no Authorization header was sent OR
@@ -443,7 +455,7 @@ class AuthenticationMiddleware:
                     if mutating and not csrf_ok:
                         scope["state"]["auth_error"] = "CSRF validation failed"
                         logger.warning(
-                            f"Auth: Cookie-authenticated mutating request missing X-Plexichat-Request header at {path}"
+                            f"Auth: Cookie-authenticated mutating request missing X-Plexichat-Request header at {log_path}"
                         )
                     else:
                         auth = api.get_auth()
@@ -482,16 +494,16 @@ class AuthenticationMiddleware:
                                     # longer shadows the valid cookie session (F1).
                                     scope["state"].pop("auth_error", None)
                                     logger.debug(
-                                        f"Auth: Cookie-authenticated user {token_info.user_id} for path {path} (bearer fallback)"
+                                        f"Auth: Cookie-authenticated user {token_info.user_id} for path {log_path} (bearer fallback)"
                                         if _bearer_failed
-                                        else f"Auth: Cookie-authenticated user {token_info.user_id} for path {path}"
+                                        else f"Auth: Cookie-authenticated user {token_info.user_id} for path {log_path}"
                                     )
                             except AuthError as e:
-                                logger.debug(f"Cookie auth failed for {path}: {e}")
+                                logger.debug(f"Cookie auth failed for {log_path}: {e}")
                                 scope["state"]["auth_error"] = str(e)
                             except Exception as e:
                                 logger.error(
-                                    f"System error during cookie authentication for path {path}: {e}",
+                                    f"System error during cookie authentication for path {log_path}: {e}",
                                     exc_info=True,
                                 )
                                 scope["state"]["system_error"] = str(e)
@@ -720,10 +732,14 @@ async def get_current_user(request: Request) -> TokenInfo:
 
     # Enforce account status (Locked or Forced Username Change)
     path = request.url.path
+    # These are dependencies (post-routing), so scope["route"] carries the
+    # matched template and _safe_log_path returns it. Never log the raw
+    # resolved path: it can embed a credential (e.g. a push token).
+    log_path = _safe_log_path(request.scope, path)
 
     # Account Lock check (returns 403)
     if user.account_locked:
-        logger.warning(f"403 account_locked=True for user {user.user_id} at {path}")
+        logger.warning(f"403 account_locked=True for user {user.user_id} at {log_path}")
         raise HTTPException(
             status_code=403,
             detail={
@@ -737,7 +753,7 @@ async def get_current_user(request: Request) -> TokenInfo:
 
     # Account Deletion check (Hard Freeze)
     if getattr(user, "deletion_status", "active") == "frozen":
-        logger.warning(f"403 deletion_status=frozen for user {user.user_id} at {path}")
+        logger.warning(f"403 deletion_status=frozen for user {user.user_id} at {log_path}")
         raise HTTPException(
             status_code=403,
             detail={
@@ -752,7 +768,7 @@ async def get_current_user(request: Request) -> TokenInfo:
     # Forced Username Change check
     if user.force_username_change:
         logger.warning(
-            f"403 force_username_change=True for user {user.user_id} at {path}"
+            f"403 force_username_change=True for user {user.user_id} at {log_path}"
         )
         # Allow GET @me (to see current status) and PATCH @me (to fix the username)
         # Also allow logout

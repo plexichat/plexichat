@@ -134,6 +134,13 @@ def _safe_log_path(scope: Scope, raw_path: str) -> str:
     # access log on every join-link visit. The code is a bearer credential.
     if len(parts) >= 3 and parts[-2] == "invite":
         return "/".join(parts[:-1]) + "/{code}"
+    # ``/features/push/tokens/{token_value}`` carries a live push token in the
+    # final segment. AuthenticationMiddleware logs failed-auth paths BEFORE the
+    # router runs, so no ``scope["route"]`` metadata is available there; mask
+    # the segment directly so a rejected request cannot write the credential to
+    # the log sink (same fail-closed class as the webhook/invite rules above).
+    if len(parts) >= 4 and parts[-3] == "push" and parts[-2] == "tokens":
+        return "/".join(parts[:-1]) + "/{token_value}"
     return raw_path
 
 
