@@ -294,6 +294,10 @@ class StashManagerCollections(StashManagerProtocol):
                 "Share links can only grant read permissions: "
                 + ", ".join(sorted(disallowed))
             )
+        # Fail closed: creating a link delegates its permissions to whoever
+        # holds the token. A share-only grantee must not be able to mint a
+        # download link for an item whose bytes they cannot themselves fetch.
+        self._ensure_delegable_permissions(row, user_id, clean)
         now = int(time.time() * 1000)
         if expires_at is not None and int(expires_at) <= now:
             raise StashValidationError("Share link expiry must be in the future")

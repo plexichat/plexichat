@@ -48,6 +48,11 @@ class ItemGrantMixin(StashManagerProtocol):
                     "Personal items cannot delegate privileged permissions: "
                     + ", ".join(sorted(disallowed))
                 )
+        # Fail closed: ``share`` authority alone is not a licence to mint any
+        # permission. A share-only grantee on a server-scoped item must not be
+        # able to delegate ``delete``/``manage_versions`` (which they do not
+        # hold) to themselves or a third party.
+        self._ensure_delegable_permissions(row, user_id, clean)
         subject = self._db.fetch_one(
             "SELECT id FROM auth_users WHERE id = ?", (int(subject_id),)
         )

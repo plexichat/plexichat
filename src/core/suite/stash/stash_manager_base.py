@@ -562,6 +562,25 @@ class StashManagerBase(StashManagerProtocol):
                 return
         raise StashPermissionError("Not authorized to access this Stash item")
 
+    def _ensure_delegable_permissions(
+        self, item: Dict[str, Any], user_id: int, permissions: List[str]
+    ) -> None:
+        """Fail closed: a grantor may only delegate permissions they hold.
+
+        ``_authorize(..., "share")`` admits any share-capable grantee on a
+        server-scoped item to the grant / share-link creation paths. Without
+        this boundary a grantee holding only ``share`` could mint ``delete`` or
+        ``manage_versions`` grants (or a ``download`` share link) for themselves
+        or others -- a permission the owner never gave them. Re-run the same
+        item authorization for every permission being delegated: an owner or
+        server manager passes all of them, while a grantee only passes for the
+        permissions actually present in their own grant. Any failed check
+        aborts the whole operation, so a partially-authorized grant is never
+        created.
+        """
+        for permission in permissions:
+            self._authorize(item, user_id, permission, mutation=True)
+
     def _can_expose_storage(self, row: Dict[str, Any], user_id: int) -> bool:
         """Return whether storage/version references may be returned."""
         row_owner_id = row["owner_id"]

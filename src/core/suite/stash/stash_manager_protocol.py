@@ -77,6 +77,9 @@ class StashManagerProtocol:
     def _decode_text(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
+    def _ensure_delegable_permissions(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
     def _grant_permission(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
