@@ -88,6 +88,12 @@ def test_repeated_resolution_hits_db_once():
         members={(1, 10): _member(11)},
     )
 
+    # The LRU is process-global and its hit counter is deliberately cumulative
+    # across clears (BoundedLRU.clear preserves counters), so earlier tests in
+    # a single-process (-n 0) run may already have recorded hits. Measure the
+    # delta attributable to this burst rather than an absolute value.
+    hits_before = mrc.member_role_rows_cache_stats()["hits"]
+
     for _ in range(50):
         assert manager._get_member_role_rows(1, 10) == [
             {"id": 1, "name": "mod", "position": 5}
@@ -97,7 +103,8 @@ def test_repeated_resolution_hits_db_once():
     # exactly one for the whole burst.
     assert len(db.calls) == 1
     assert db.calls == [11]
-    assert mrc.member_role_rows_cache_stats()["hits"] == 49
+    # 50 resolutions, one miss -> exactly 49 served from the cache.
+    assert mrc.member_role_rows_cache_stats()["hits"] - hits_before == 49
 
 
 def test_rows_are_server_and_user_scoped_and_negative_cached():
@@ -137,9 +144,7 @@ def test_rows_are_server_and_user_scoped_and_negative_cached():
 def test_rows_are_copied_in_and_out():
     """A caller mutating its rows cannot poison a later authz decision."""
     source = [{"id": 1, "name": "mod", "position": 5}]
-    manager, db = _manager(
-        rows={11: source}, members={(1, 10): _member(11)}
-    )
+    manager, db = _manager(rows={11: source}, members={(1, 10): _member(11)})
 
     first = manager._get_member_role_rows(1, 10)
     first[0]["name"] = "tampered"
@@ -192,9 +197,7 @@ def test_server_epoch_bump_revokes_every_member_in_scope():
 
 
 def test_full_invalidation_drops_cached_rows():
-    manager, db = _manager(
-        rows={11: [{"id": 1}]}, members={(1, 10): _member(11)}
-    )
+    manager, db = _manager(rows={11: [{"id": 1}]}, members={(1, 10): _member(11)})
     assert manager._get_member_role_rows(1, 10) == [{"id": 1}]
     assert len(db.calls) == 1
 
