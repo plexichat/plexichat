@@ -705,6 +705,22 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="ced42c1a-assign-role-owner-recheck",
+        path="src/core/servers/handlers/roles/assignments.py",
+        marker=(
+            '            fresh_owner_id = fresh_owner["owner_id"]\n'
+            '            if type(fresh_owner_id) is not int:'
+        ),
+        why=(
+            "ced42c1a is a genuine security fix landed via the private index: "
+            "assign_role re-derives ownership from the authoritative srv_servers "
+            "row under the advisory locks, failing closed on a missing or "
+            "malformed owner row so a stale is_owner verdict cannot let a "
+            "former owner attach a role above their rank. Pinned by the "
+            "distinctive fresh_owner_id strict-int check it introduced."
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
