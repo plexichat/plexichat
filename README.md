@@ -101,7 +101,7 @@ Set `tls.enabled: true` and provide `tls.cert_path` and `tls.key_path`, or let t
 
 ### OAuth 2.0 with PKCE
 
-Plexichat supports OAuth with PKCE. Only `S256` is accepted (`src/api/routes/auth/oauth.py:202`):
+Plexichat supports OAuth with PKCE. Only `S256` is accepted (`src/api/routes/auth/oauth.py:564`):
 
 1. Call `GET /api/v1/auth/oauth/{provider}/login?redirect_uri=...&code_challenge=...&code_challenge_method=S256`.
 2. You must include a `code_challenge` (43–128 characters, `A-Za-z0-9-._~`). Requests without it return `400`.
