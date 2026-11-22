@@ -350,6 +350,60 @@ _LICENSE_STALE_VALIDATION_RESET = (
 )
 
 
+# --- Gateway RESUME replay scope pins (120208f2 / 4fc26f05) ---
+# 120208f2 stamps the authoritative (server_id, channel_id) scope onto a COPY
+# of each private frame in SessionManager.record_event. 4fc26f05 closes the
+# remaining gap where producers (reaction fan-out, read receipts) omit Event
+# routing fields and carry the channel id only in ``d``: _event_replay_scope
+# derives the scope from those fields, and _replay_scope_authorized re-checks
+# BOTH authoritative views. Pin all three anchors so a stale staged copy of
+# either file cannot silently restore the unscoped-private-frame replay leak.
+_REPLAY_SCOPE_STAMP_BLOCK = (
+    "            recorded = dict(event)\n"
+    "            if authz_scope is not None:\n"
+    "                recorded[REPLAY_SCOPE_KEY] = [\n"
+    "                    _replay_scope_id(authz_scope[0]),\n"
+    "                    _replay_scope_id(authz_scope[1]),\n"
+    "                ]"
+)
+
+_REPLAY_SCOPE_FROM_D_BLOCK = (
+    "    server_id = event.server_id\n"
+    "    channel_id = event.channel_id\n"
+    '    if channel_id is None and isinstance(event.data, dict):\n'
+    '        server_id = _coerce_envelope_scope_id(event.data.get("server_id"))\n'
+    "        if server_id is None:\n"
+    '            server_id = _coerce_envelope_scope_id(event.data.get("guild_id"))\n'
+    '        channel_id = _coerce_envelope_scope_id(event.data.get("channel_id"))\n'
+    "        if channel_id is None:\n"
+    '            channel_id = _coerce_envelope_scope_id(event.data.get("conversation_id"))'
+)
+
+_REPLAY_SCOPE_DUAL_VIEW_RECHECK_BLOCK = (
+    "        # Re-check BOTH authoritative views so a removed DM participant *and*\n"
+    "        # a revoked channel viewer are both withheld. Fail closed when neither\n"
+    "        # source is wired or every lookup fails.\n"
+    "        messaging = api.get_messaging()\n"
+    "        is_participant = (\n"
+    '            getattr(messaging, "is_participant", None) if messaging else None\n'
+    "        )\n"
+    "        if not callable(get_channel) and not callable(is_participant):\n"
+    "            return False\n"
+    "        if callable(is_participant):\n"
+    "            try:\n"
+    "                if is_participant(channel_id, user_id):\n"
+    "                    return True\n"
+    "            except Exception as e:\n"
+    '                logger.debug(f"Replay DM re-auth failed for user {user_id}: {e}")\n'
+    "        if callable(get_channel):\n"
+    "            try:\n"
+    "                if get_channel(channel_id, user_id):\n"
+    "                    return True\n"
+    "            except Exception as e:\n"
+    '                logger.debug(f"Replay channel re-auth failed for user {user_id}: {e}")'
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -1408,6 +1462,57 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "drops the reset reopens that full-entitlement bypass"
         ),
     ),
+
+    # 120208f2: the replay scope is stamped onto a copy of each private frame
+    # at dispatch time. Without the stamp the RESUME path has nothing to
+    # re-check, so every queued private event replays unconditionally.
+    CommittedFixMarker(
+        key="120208f2-replay-scope-stamped-on-record-event",
+        path="src/api/websocket/session.py",
+        marker=_REPLAY_SCOPE_STAMP_BLOCK,
+        why=(
+            "120208f2: SessionManager.record_event stamps the authoritative "
+            "(server_id, channel_id) scope onto a copy of each private frame "
+            "under REPLAY_SCOPE_KEY; without it RESUME has no scope to re-check "
+            "and replays queued private frames to viewers who lost access. A "
+            "stale staged copy of session.py drops the stamp and reopens the "
+            "cross-user replay leak"
+        ),
+    ),
+    # 4fc26f05: derive the authz scope from the id fields in ``d`` for producers
+    # that omit Event routing fields (reaction fan-out, read receipts, and any
+    # new producer). A stale copy that only reads Event.server_id/channel_id
+    # records those frames unscoped and replays them without any re-check.
+    CommittedFixMarker(
+        key="4fc26f05-replay-scope-derived-from-payload-d",
+        path="src/api/websocket/dispatcher.py",
+        marker=_REPLAY_SCOPE_FROM_D_BLOCK,
+        why=(
+            "N698: _event_replay_scope falls back to server_id/guild_id/"
+            "channel_id/conversation_id in ``d`` when the producer omitted the "
+            "Event routing fields; without it payload-only private frames are "
+            "recorded unscoped and replayed unconditionally after the viewer "
+            "loses access. A stale staged copy of dispatcher.py drops the "
+            "fallback and reopens the unscoped-private-frame replay leak"
+        ),
+    ),
+    # 4fc26f05 also made the unscoped (DM/alias) branch re-check BOTH views,
+    # because a channel id can arrive from ``d`` without a server id; a stale
+    # copy that checks only DM participation (or only channel view) lets a
+    # revoked viewer or removed participant receive queued private frames.
+    CommittedFixMarker(
+        key="4fc26f05-replay-scope-dual-view-recheck",
+        path="src/api/websocket/dispatcher.py",
+        marker=_REPLAY_SCOPE_DUAL_VIEW_RECHECK_BLOCK,
+        why=(
+            "N698: _replay_scope_authorized re-checks both is_participant and "
+            "get_channel for scopes derived from ``d`` and fails closed when "
+            "neither authoritative view is available, so a stale staged copy "
+            "that keeps only one view (or returns early) replays private "
+            "frames to a viewer whose DM participation or channel view was "
+            "revoked while the socket was gone"
+        ),
+    ),
 )
 
 
@@ -2288,3 +2393,59 @@ def test_license_fix_pins_live_at_head_and_non_vacuous(
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
+
+# Gateway RESUME replay pins (120208f2 / 4fc26f05). Kept explicit so dropping
+# any of the three anchors from the registry without updating this set fails
+# here as well as in the parametrized synthetic-removal test.
+REPLAY_SCOPE_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "120208f2-replay-scope-stamped-on-record-event",
+        "4fc26f05-replay-scope-derived-from-payload-d",
+        "4fc26f05-replay-scope-dual-view-recheck",
+    }
+)
+
+
+def test_replay_scope_pins_live_at_head_and_non_vacuous(commit_sha: str) -> None:
+    """The replay stamping / d-derived scope / dual-view pins are real.
+
+    Each key resolves to the expected committed blob carrying its distinctive
+    anchor, and a synthetic stale blob with the fix erased is rejected by the
+    exact same evaluator (never a vacuous pass). Per-entry parametrized
+    synthetic-removal coverage is already provided by
+    ``test_synthetic_reverted_blob_is_flagged``.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert REPLAY_SCOPE_PIN_KEYS <= set(keys), (
+        "replay-scope pin set references keys missing from COMMITTED_FIX_MARKERS: "
+        f"{sorted(REPLAY_SCOPE_PIN_KEYS - set(keys))}"
+    )
+    assert len(REPLAY_SCOPE_PIN_KEYS) == 3
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "120208f2-replay-scope-stamped-on-record-event": (
+            "src/api/websocket/session.py"
+        ),
+        "4fc26f05-replay-scope-derived-from-payload-d": (
+            "src/api/websocket/dispatcher.py"
+        ),
+        "4fc26f05-replay-scope-dual-view-recheck": (
+            "src/api/websocket/dispatcher.py"
+        ),
+    }
+    for key in sorted(REPLAY_SCOPE_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_replay_scope_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# replay scope gate erased\n"
+
+        present, detail = _evaluate(record, stale_replay_scope_blob)
+        assert not present, f"synthetic replay-scope revert of {key} not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
