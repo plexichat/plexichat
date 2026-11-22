@@ -194,6 +194,15 @@ class MessagesCRUDBase:
         if not allowed:
             raise _deny()
 
+        # The alias path never runs the REST route's ``if server_id:`` block,
+        # so its only slowmode check would have been there. Apply the same
+        # gate to the real backing channel instead. Fail closed: view/send
+        # grants alone must not let a member ignore a slow channel simply by
+        # addressing it through its linked conversation id.
+        self._enforce_channel_slowmode(
+            int(channel_id), user_id, servers_mod, fail_closed=True
+        )
+
     async def _send_message_with_fallback(
         self,
         channel_id: int,
@@ -657,15 +666,21 @@ class MessagesCRUDBase:
         return [code for code in candidates if code in known]
 
     def _enforce_channel_slowmode(
-        self, channel_id: int, user_id: int, servers_mod: Any
+        self, channel_id: int, user_id: int, servers_mod: Any, fail_closed: bool = False
     ) -> None:
         """Reject sends that violate the channel's slowmode interval.
 
         The REST send path publishes straight through the messaging layer,
         so it never passed the servers manager's own slowmode gate.  This
         reuses that gate (same interval, same moderator exemptions) and
-        fails open on infrastructure errors so a limiter outage cannot
-        blackhole messages.
+        by default fails open on infrastructure errors so a limiter outage
+        cannot blackhole messages.
+
+        ``fail_closed`` is for paths that skip the normal per-channel send
+        gate entirely (a server channel addressed by its linked
+        conversation-id alias). Those paths have no second slowmode check to
+        fall back to, so an unavailable/broken gate must deny the send instead
+        of silently dropping the limit.
         """
         checker = getattr(servers_mod, "check_channel_slowmode", None)
         if not servers_mod or checker is None:
@@ -675,14 +690,25 @@ class MessagesCRUDBase:
                 "Channel slowmode gate unavailable on the servers module; "
                 f"sends to {channel_id} are not limited"
             )
+            if fail_closed:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
+                )
             return
 
         try:
             retry_after = checker(user_id, channel_id)
         except Exception as e:
+            outcome = "failing closed" if fail_closed else "failing open"
             logger.warning(
-                f"Channel slowmode check failed for {channel_id} (failing open): {e}"
+                f"Channel slowmode check failed for {channel_id} ({outcome}): {e}"
             )
+            if fail_closed:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Access denied"}},
+                )
             return
 
         if not retry_after:
