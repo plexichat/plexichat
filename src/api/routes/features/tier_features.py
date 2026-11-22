@@ -234,6 +234,30 @@ async def get_user_features(
     """
     _check_admin(current_user)
 
+    # Reading another account's tier/badges/feature flags is user data, not a
+    # generic admin capability. ``get_admin_access`` synthesises ``admin.*``
+    # for *any* valid admin session and ``_check_admin`` only tests that
+    # wildcard, so a narrowly-scoped admin (e.g. tickets-only support) could
+    # otherwise enumerate any account's features. The sibling admin route
+    # ``GET /admin/users/{id}`` gates the same data on ``users.read``; require
+    # the same scope here and fail closed when the DB or permission subsystem
+    # cannot resolve the caller's role grants.
+    import src.api as api
+
+    from src.core.admin.permissions import check_admin_permission
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(current_user.user_id, "users.read", db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
     features = _get_features_module()
     if not features:
         logger.error("Features module not available")
