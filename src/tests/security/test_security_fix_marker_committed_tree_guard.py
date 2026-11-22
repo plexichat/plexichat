@@ -768,6 +768,15 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="c3efb6b2-private-index-audit-pin",
+        path="src/tests/security/test_unwired_servers_add_reaction_committed_tree_guard.py",
+        marker='pytestmark = [pytest.mark.unit, pytest.mark.security]',
+        why=(
+            'Private-index commit c3efb6b2 pinned by a distinctive line it introduced. '
+            'Falsifiable by the guard synthetic-revert test.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
