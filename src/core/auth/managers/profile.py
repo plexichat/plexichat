@@ -187,6 +187,27 @@ class ProfileMixin(AuthManagerProtocol):
                 # reset and 2FA enable: retire remembered devices as part of
                 # the same credential transition.
                 self._invalidate_trusted_devices(user_id)
+                # OAuth identities are linked to a local account by matching
+                # the asserted provider email (see OAuthMixin.oauth_login and
+                # the Microsoft UPN check in the OAuth callback, which calls
+                # out that this is a takeover primitive). A link planted while
+                # the old address was on file is therefore a durable login
+                # credential for whoever controlled that inbox -- exactly the
+                # access this address change is supposed to evict. Retire every
+                # external identity link in the same transition: the table has
+                # no revoked flag, so remove the rows outright and require an
+                # explicit re-link from an authenticated session under the new
+                # address. Fail closed -- a stale link must never outlive the
+                # recovery address that authorised its creation.
+                self._db.execute(
+                    "DELETE FROM auth_external_accounts WHERE user_id = ?",
+                    (user_id,),
+                )
+                # No OAuth-link verdict is cached, but the cached user view
+                # carries ``email_verified`` (the gate every login path,
+                # including OAuth, checks). That view is dropped by the
+                # ``user_data``/``token_verify`` invalidations below, so a warm
+                # cache cannot resurrect the pre-transition identity either.
         if permissions is not None:
             from ..permissions import PERMISSIONS, BOT_RESTRICTED_PERMISSIONS
 
