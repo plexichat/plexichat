@@ -71,7 +71,7 @@ High-speed caching, session storage, and cross-worker event dispatch.
 
 Stores media files.
 
-*   **Image:** `rustfs/rustfs:1.0.0-rc.3`
+*   **Image:** `rustfs/rustfs:1.0.0`
 *   **Services:** S3 API on port 9000 and web console on port 9001.
 *   **Data:** Uploaded files and thumbnails. Volume `rustfs_data` at `/data`.
 *   **Configuration:** `RUSTFS_ADDRESS` (default `0.0.0.0:9000`), `RUSTFS_CONSOLE_ADDRESS` (`0.0.0.0:9001`), `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` (mapped from `S3_ACCESS_KEY` / `S3_SECRET_KEY`, both required), `RUSTFS_VOLUMES` (`/data/rustfs`), and `RUSTFS_CORS_ALLOWED_ORIGINS` (empty by default, keep private).
@@ -104,7 +104,7 @@ Scans uploaded files for malware.
 *   **Image:** `clamav/clamav:1.5.4`
 *   **Services:** `clamd` on TCP 3310 and `freshclam` for signature updates. Limits: `StreamMaxLength`, `MaxScanSize`, and `MaxFileSize` are 600 MB, `MaxScanTime` is 300,000 ms.
 *   **Volume:** `clamav_db` at `/var/lib/clamav` (persists signatures).
-*   **Sidecar:** `clamav-unofficial-sigs` (`ghcr.io/extremeshok/clamav-unofficial-sigs:latest`, mode `updater`, every 2 hours) shares `clamav_db`.
+*   **Sidecar:** `clamav-unofficial-sigs` (`ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0`, mode `updater`, every 2 hours) shares `clamav_db`.
 *   **Network:** Default bridge network. Backend connects at `clamav:3310` (`SCANNER_HOST` / `SCANNER_PORT`).
 *   **Health check:** `echo PING | nc -w 2 localhost 3310 | grep PONG` every 30 seconds, timeout 10 seconds, 5 retries, start period 120 seconds.
 *   **Dependencies:** None.
@@ -113,7 +113,7 @@ Scans uploaded files for malware.
 
 Core application logic.
 
-*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}` built from `plexichat/Dockerfile` (`python:3.14.8-slim-trixie`, non-root user `plexichat` UID 10001).
+*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:?BACKEND_VERSION must be set to a pinned release tag/digest}` built from `plexichat/Dockerfile` (`python:3.14.8-slim-trixie`, non-root user `plexichat` UID 10001).
 *   **Services:** REST API at `/api/v1/*`, WebSocket gateway at `/gateway`, liveness probe at `GET /api/v1/ready`, deep health at `GET /api/v1/health` and `GET /health`, documentation at `/docs` and `/redoc`, admin UI at `/admin`.
 *   **Environment:** `PLEXICHAT_CONFIG=/app/config/docker-config.yaml`, `PLEXICHAT_PUBLIC_SERVER_URL`, `NO_STRICT_CONFIG=false`, `SCANNER_ENABLED=true`, `SCANNER_HOST=clamav`, `SCANNER_PORT=3310`, `SEARCH_BACKEND=sqlite_fts5` (default).
 *   **Volumes:** `./config:/app/config` (writable: the server persists env overrides and the generated `media.signing_key` there on every start) and `plexichat_home:/home/plexichat/.plexichat`.
@@ -130,7 +130,7 @@ Core application logic.
 
 Frontend and reverse proxy.
 
-*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat-client}/nginx:${CLIENT_VERSION:-latest}` built from `plexichat-client/Dockerfile` (`nginx:stable-alpine` with `curl`, Vite build staged from `node:20-alpine`).
+*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat-client}/nginx:${CLIENT_VERSION:?CLIENT_VERSION must be set to a pinned release tag/digest}` built from `plexichat-client/Dockerfile` (`nginx:stable-alpine` with `curl`, Vite build staged from `node:20-alpine`).
 *   **Services:** Serves the Vite-built static app, reverse-proxies `/api/`, `/docs`, `/openapi.json`, `/redoc`, `/admin`, and `/gateway` to the backend upstream (`backend:8000` with `ip_hash`), terminates TLS, and redirects HTTP to HTTPS.
 *   **Upstream behavior:** `client_max_body_size 10m` matches the backend body limit so uploads are not rejected at the proxy.
 *   **Dependencies:** `backend` (`service_started`) and `cert-init` (`service_completed_successfully`).
@@ -143,7 +143,7 @@ Frontend and reverse proxy.
 
 Automated encrypted and deduplicated backups.
 
-*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backup:${BACKEND_VERSION:-latest}` built from `plexichat/docker/backup/Dockerfile` (`alpine:3.24` with `postgresql-client`, `restic`, `supercronic 0.2.33`, `bash`, `tzdata`, `curl`, `gzip`).
+*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backup:${BACKEND_VERSION:?BACKEND_VERSION must be set to a pinned release tag/digest}` built from `plexichat/docker/backup/Dockerfile` (`alpine:3.24` with `postgresql-client`, `restic`, `supercronic 0.2.33`, `bash`, `tzdata`, `curl`, `gzip`).
 *   **Schedule:** Supercronic runs `BACKUP_SCHEDULE` (default `0 2 * * *`, 2 AM) and applies retention (`BACKUP_KEEP_DAILY=7`, `BACKUP_KEEP_WEEKLY=4`, `BACKUP_KEEP_MONTHLY=6`, `BACKUP_KEEP_YEARLY=0`).
 *   **Repository:** `backup_repo` at `/repo` plus optional `BACKUP_SECONDARY_REPO` for off-site replication. Requires `BACKUP_RESTIC_PASSWORD` (compose fails fast if unset).
 *   **Source volumes (read-only):** `postgres_data:/var/lib/postgresql/data`, `plexichat_home:/plexichat-home`, `rustfs_data:/rustfs-data`.
