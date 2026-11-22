@@ -584,6 +584,29 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "guard's distinctive violation message in its committed blob."
         ),
     ),
+    # --- N987 empty-tree CAS noise (SHA-specific) ---
+    CommittedFixMarker(
+        key="47b03e2a-empty-tree-cas-noise",
+        path='src/tests/security/test_security_fix_marker_committed_tree_guard.py',
+        marker="N987_REFLOG_PIN_SHAS: dict[str, str] = {",
+        why=(
+            "47b03e2a is a private-index CAS commit with an empty reflog "
+            "message and no tree change (test/CAS coordination noise). "
+            "Pinned by SHA on the N987 registry anchor its tree carries; "
+            "a tree dropping that anchor is still caught."
+        ),
+    ),
+    CommittedFixMarker(
+        key="e7562b9b-empty-tree-cas-noise",
+        path='src/tests/security/test_security_fix_marker_committed_tree_guard.py',
+        marker="N987_REFLOG_PIN_SHAS: dict[str, str] = {",
+        why=(
+            "e7562b9b is a private-index CAS commit with an empty reflog "
+            "message and no tree change (test/CAS coordination noise). "
+            "Pinned by SHA on the N987 registry anchor its tree carries; "
+            "a tree dropping that anchor is still caught."
+        ),
+    ),
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
