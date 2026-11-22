@@ -2758,7 +2758,7 @@ PRIVATE_INDEX_NON_SECURITY_SHAS: frozenset[str] = frozenset(
         # only accepts src/ paths, so it cannot carry a marker; name it here
         # explicitly, never a blanket exemption. The reflog unknown-fix test
         # still flags any other unpinned SHA.
-        "47b03e2a", "e7562b9b", "35430e0f", "1186b52b", "8667bb47",
+        "47b03e2a", "e7562b9b", "35430e0f", "1186b52b", "bc4de0eb", "8667bb47",
     }
 )
 
