@@ -26,6 +26,13 @@ from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 # so both moderation layers agree on what "the same text" means.
 _INVISIBLE_CATEGORIES = frozenset({"Cf", "Cc"})
 
+# A literal IPv4 host shape, compiled once at import. ``_extract_host`` reaches
+# this check on every message (and on every token that is not a name-shaped
+# host), so compiling it inline on that hot path was pure repeated work. A
+# compiled pattern is immutable and its ``match`` is thread-safe; no per-user
+# state is involved.
+_IPV4_HOST_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
 # ``validate_config`` caps allowlists at 200 entries, but stored rule configs
 # are rebuilt into rule objects on every worker start WITHOUT revalidation.
 # Apply the same ceiling at construction so a stale or hand-edited row cannot
@@ -577,8 +584,7 @@ class ExternalLinkRule(BaseRule):
                 # scheme marked the token as a URL (covers raw IPs etc.).
                 if not has_scheme:
                     return None
-                ipv4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-                if not ipv4.match(host):
+                if not _IPV4_HOST_RE.match(host):
                     return None
 
             # Require an alphabetic (or punycode ``xn--``) TLD of length >= 2
@@ -588,7 +594,7 @@ class ExternalLinkRule(BaseRule):
             # past both modes. Raw IPv4 hosts are exempt (validated above).
             tld = host.rsplit(".", 1)[-1]
             if len(tld) < 2 or not (tld.isalpha() or tld.startswith("xn--")):
-                if not re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$").match(host):
+                if not _IPV4_HOST_RE.match(host):
                     return None
 
             return host
