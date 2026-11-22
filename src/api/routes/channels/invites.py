@@ -4,8 +4,12 @@ from collections import OrderedDict
 from threading import RLock
 from typing import Dict, Optional, Tuple
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from starlette.concurrency import run_in_threadpool
+
+from src.core.database import check_rate_limit
+from src.core.auth.ip_canonical import canonicalize_ip_address
+from src.utils.net import get_client_ip
 
 import src.api as api
 import src.core.events as events_mod
@@ -89,6 +93,125 @@ _INVITE_META_CACHE = _InviteMetadataCache()
 def get_invite_metadata_cache() -> _InviteMetadataCache:
     """Expose the process-wide invite metadata cache (tests/ops)."""
     return _INVITE_META_CACHE
+
+
+# --- Invite-code redemption guess budget ---------------------------------
+# An invite code is a bearer credential. redeeming it is the credential-check
+# half of the invite system, so online guessing must be bounded just like
+# password / TOTP / share-link verification. Invite *creation* already has a
+# per-user rate limit (``_enforce_invite_quota``); without the matching guard on
+# redemption a client with a stolen session could scan the code space at the
+# generic transport rate. These counters are spent through the SHARED, atomic
+# rate-limit backend so the budget holds across ``--scale backend=N`` workers;
+# ``check_rate_limit`` fails closed on a limiter fault.
+
+#: Bounded, honest defaults. Operators may tune them under ``[invites]``:
+#: ``redeem_guess_max`` / ``redeem_guess_window_seconds`` (per source) and
+#: ``redeem_guess_global_max`` (whole instance; 0 disables the global floor).
+#: The global ceiling is deliberately generous so normal join traffic is never
+#: refused; it exists to cap a botnet that rotates source IPs past the per-IP
+#: budget. The per-source budget is the authoritative guessing guard.
+_REDEEM_GUESS_MAX = 10
+_REDEEM_GUESS_WINDOW_SECONDS = 60
+_REDEEM_GUESS_GLOBAL_MAX = 600
+
+
+def _redeem_guess_config() -> dict:
+    try:
+        import utils.config as config
+
+        return config.get("invites", {}) or {}
+    except Exception:
+        return {}
+
+
+def _positive_int(value, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _nonnegative_int(value, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def _invite_redeem_guess_key(user_id, ip_address: Optional[str]) -> str:
+    """Authoritative per-source guess key: canonical IP first, user second.
+
+    The IP is resolved from the trusted-proxy-aware extractor and canonicalised
+    so every textual spelling of one host (IPv4-mapped IPv6, zone ids,
+    compressed forms) shares ONE bucket. The user id is a secondary component
+    so two accounts from the same host still share the host-level floor. The
+    guessed code is deliberately NOT part of the key: including it would give
+    every candidate its own fresh budget (no protection) and write the secret
+    into the rate-limit store. Unknown/missing IPs fall back to a single shared
+    bucket rather than becoming an unlimited path.
+    """
+    canonical = canonicalize_ip_address(ip_address) or "unknown"
+    return f"invites:redeem-guess:ip:{canonical}:user:{user_id}"
+
+
+def _enforce_invite_redeem_guess_limit(user_id, request: Optional[Request]) -> None:
+    """Spend one redemption guess; refuse uniformly once a budget is spent.
+
+    Call this BEFORE ``use_invite`` on every attempt so wrong guesses count too.
+    A denial is a static 429 that never carries code-state information: the
+    limiter runs before any code lookup, so a throttled answer is identical
+    whether the code was real-but-dead or never existed. Any limiter fault is
+    treated as an exhausted budget (fail closed, never an unlimited path).
+    """
+    cfg = _redeem_guess_config()
+    max_per_source = _positive_int(
+        cfg.get("redeem_guess_max", _REDEEM_GUESS_MAX), _REDEEM_GUESS_MAX
+    )
+    window = _positive_int(
+        cfg.get("redeem_guess_window_seconds", _REDEEM_GUESS_WINDOW_SECONDS),
+        _REDEEM_GUESS_WINDOW_SECONDS,
+    )
+    global_max = _nonnegative_int(
+        cfg.get("redeem_guess_global_max", _REDEEM_GUESS_GLOBAL_MAX),
+        _REDEEM_GUESS_GLOBAL_MAX,
+    )
+
+    ip_address = None
+    if request is not None:
+        try:
+            ip_address = get_client_ip(request)
+        except Exception as exc:
+            logger.debug(f"invite redeem guess IP resolution failed: {exc}")
+            ip_address = None
+
+    allowed = False
+    try:
+        allowed, _ = check_rate_limit(
+            _invite_redeem_guess_key(user_id, ip_address), max_per_source, window
+        )
+        # A global floor bounds a distributed attacker rotating IPs/users so
+        # the per-source budget cannot simply be multiplied by source count.
+        if allowed and global_max > 0:
+            allowed, _ = check_rate_limit(
+                "invites:redeem-guess:global", global_max, window
+            )
+    except Exception as exc:
+        # A store outage must not reopen the guessing corridor.
+        logger.debug(f"invite redeem guess limiter failed: {exc}")
+        allowed = False
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many invite attempts",
+                }
+            },
+        )
 
 
 def _viewer_is_server_member(servers_mod, server_id, user_id) -> Optional[bool]:
@@ -201,6 +324,10 @@ class ChannelInvitesMixin(ChannelBase):
                     "description": "Invite not found or expired",
                 },
                 409: {"model": ErrorResponse, "description": "Already a member"},
+                429: {
+                    "model": ErrorResponse,
+                    "description": "Too many invite redemption guesses",
+                },
                 500: {"model": ErrorResponse, "description": "Internal server error"},
             },
         )
@@ -467,7 +594,10 @@ class ChannelInvitesMixin(ChannelBase):
             )
 
     async def _join_server_via_invite(
-        self, invite_code: str, current_user: TokenInfo = Depends(get_current_user)
+        self,
+        invite_code: str,
+        current_user: TokenInfo = Depends(get_current_user),
+        request: Request = None,  # type: ignore[assignment]
     ) -> InviteJoinResponse:
         servers_mod = api.get_servers()
         if not servers_mod:
@@ -482,6 +612,11 @@ class ChannelInvitesMixin(ChannelBase):
         try:
             try:
                 invite_code = require_invite_code(invite_code)
+                # Bound online guessing of this bearer credential BEFORE any
+                # code lookup. Wrong guesses consume the same budget as real
+                # attempts; the shared counter is keyed on the authoritative
+                # client IP (canonicalised) and fails closed on limiter faults.
+                _enforce_invite_redeem_guess_limit(current_user.user_id, request)
                 result = servers_mod.use_invite(current_user.user_id, invite_code)
 
                 sid = getattr(result, "server_id", None) or (
