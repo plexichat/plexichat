@@ -1,7 +1,7 @@
 """Member-role assignments, including the self-service whitelist path."""
 
 import json
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from src.core.base import SnowflakeID
 
@@ -350,6 +350,7 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         server_id: SnowflakeID,
         role_ids: List[SnowflakeID],
         allowed_role_ids: List[SnowflakeID],
+        permission_snapshots: Optional[Dict[SnowflakeID, Any]] = None,
     ) -> List[SnowflakeID]:
         """Self-service role assignment for onboarding steps.
 
@@ -361,6 +362,12 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         escalation through self-service flows. Legacy/imported roles whose
         permission blob fails the normal validation are refused as well.
 
+        ``permission_snapshots`` maps each authorized role id to the exact
+        ``srv_roles.permissions`` string the grantability decision read. When
+        supplied, the INSERT is bound to that payload (compare-and-swap) so a
+        role widened after the check cannot be handed out with scopes the
+        whitelist author never held. A missing/mismatched snapshot fails closed.
+
         Returns the list of role IDs actually assigned.
         """
         member = self.manager.get_member(server_id, user_id)
@@ -370,6 +377,16 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         allowed = set(allowed_role_ids or [])
         now = self.manager._get_timestamp()
         assigned: List[SnowflakeID] = []
+        # A grantability-verified payload is required for each role when the
+        # caller supplies snapshots. Normalize keys once so string/int ids match.
+        snapshots: Dict[int, Any] = {}
+        if permission_snapshots is not None:
+            try:
+                snapshots = {
+                    int(k): v for k, v in permission_snapshots.items() if v is not None
+                }
+            except (TypeError, ValueError):
+                snapshots = {}
 
         # Self-service onboarding grants the same permission bits as
         # ``assign_role``, so it takes the same two advisory locks (fixed
@@ -401,6 +418,18 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
                 for role_id in role_ids:
                     if role_id not in allowed:
                         continue
+                    # When the caller verified grantability against a payload
+                    # snapshot, require it for this role. A missing/malformed
+                    # snapshot fails closed (the check that authorized this
+                    # write never produced a usable value for this role).
+                    snapshot = None
+                    if permission_snapshots is not None:
+                        try:
+                            snapshot = snapshots.get(int(role_id))
+                        except (TypeError, ValueError):
+                            snapshot = None
+                        if not isinstance(snapshot, str):
+                            continue
                     row = self.db.fetch_one(
                         "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
                         (role_id,),
@@ -442,17 +471,44 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
                         assigned.append(role_id)
                         continue
 
-                    self.db.execute(
-                        """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
-                           VALUES (?, ?, ?, ?, ?)""",
+                    # Bind the INSERT to the exact permission payload the
+                    # grantability decision read (compare-and-swap, N745/N642).
+                    # A role widened in the check->write gap makes the EXISTS
+                    # guard false and the INSERT a no-op; fail closed with an
+                    # error rather than handing out the escalated role.
+                    guard_sql = ""
+                    guard_params: tuple = ()
+                    if permission_snapshots is not None:
+                        guard_sql = (
+                            " AND EXISTS (SELECT 1 FROM srv_roles pr "
+                            "WHERE pr.id = ? AND pr.permissions = ?)"
+                        )
+                        try:
+                            guard_role_id = int(role_id)
+                        except (TypeError, ValueError):
+                            guard_role_id = role_id
+                        guard_params = (guard_role_id, snapshot)
+                    cursor = self.db.execute(
+                        "INSERT INTO srv_member_roles "
+                        "(id, member_id, role_id, assigned_at, assigned_by) "
+                        "SELECT ?, ?, ?, ?, ? WHERE 1=1" + guard_sql,
                         (
                             self.manager._generate_id(),
                             member.id,
                             role_id,
                             now,
                             user_id,
+                            *guard_params,
                         ),
                     )
+                    rowcount = getattr(cursor, "rowcount", None)
+                    if isinstance(rowcount, int) and rowcount <= 0:
+                        # The role changed after the grantability check. Roll
+                        # back this transaction so no partial grant is kept.
+                        raise PermissionDeniedError(
+                            "Role changed concurrently; onboarding role is no "
+                            "longer authorized"
+                        )
                     self.manager._log_audit(
                         server_id,
                         user_id,

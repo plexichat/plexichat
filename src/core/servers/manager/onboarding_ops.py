@@ -22,6 +22,7 @@ from ..exceptions import (
     OnboardingError,
     ChannelNotFoundError,
     RoleNotFoundError,
+    PermissionDeniedError,
 )
 
 #: Bound every role-id IN list.  SQLite builds with the legacy 999-variable
@@ -275,8 +276,17 @@ class OnboardingManager:
         server_id: int,
         step_type: OnboardingStepType,
         options: Dict[str, Any],
+        *,
+        _out: Optional[Dict[int, Any]] = None,
     ):
-        """Validate step options based on step type."""
+        """Validate step options based on step type.
+
+        ``_out`` optionally captures the exact stored permission payload of
+        every whitelisted role *from the same read that authorized it*. The
+        completion path binds its role-assignment INSERT to these snapshots so
+        a role widened after the grantability check cannot be handed out with
+        scopes the whitelist author never held (compare-and-swap, N745/N642).
+        """
         if step_type == OnboardingStepType.SELECT_ROLES:
             role_ids = options.get("role_ids", [])
             # Bulk self-service grant: the whitelist is the only authorization
@@ -355,6 +365,14 @@ class OnboardingManager:
                     except (TypeError, ValueError):
                         raise OnboardingError(f"Role {role_id} has invalid permissions")
                 check_permissions_grantable(creator_permissions, role_permissions)
+                if _out is not None:
+                    # Capture the raw (pre-parse) payload from the SAME row the
+                    # grantability decision above used. Only a str is a usable
+                    # CAS value; anything else fails closed at completion.
+                    raw_snapshot = role["permissions"]
+                    _out[int(role_id)] = (
+                        raw_snapshot if isinstance(raw_snapshot, str) else None
+                    )
 
         elif step_type == OnboardingStepType.VISIT_CHANNEL:
             channel_id = options.get("channel_id")
@@ -555,9 +573,18 @@ class OnboardingManager:
                     raise OnboardingError(
                         "Onboarding role whitelist has no recorded author"
                     )
+                # Capture the exact permission payload the grantability
+                # re-check read for each whitelisted role; bind the writes below
+                # to those snapshots so a role widened in the check->write gap
+                # cannot escalate the completing member (N745/N642 CAS).
+                _perm_snapshots: Dict[int, Any] = {}
                 try:
                     self._validate_step_options(
-                        int(author_id), server_id, step.step_type, step_options
+                        int(author_id),
+                        server_id,
+                        step.step_type,
+                        step_options,
+                        _out=_perm_snapshots,
                     )
                 except OnboardingError:
                     raise
@@ -570,9 +597,20 @@ class OnboardingManager:
             # does not require "members.manage_roles" - the step creator's
             # whitelist is the authorization - but refuses administrator
             # roles to prevent privilege escalation.
-            self._server_manager.role_handler.assign_roles_from_whitelist(
-                user_id, server_id, selected_roles, allowed_roles
-            )
+            try:
+                self._server_manager.role_handler.assign_roles_from_whitelist(
+                    user_id,
+                    server_id,
+                    selected_roles,
+                    allowed_roles,
+                    permission_snapshots=_perm_snapshots,
+                )
+            except PermissionDeniedError as exc:
+                # The write failed its compare-and-swap: a whitelisted role's
+                # payload changed after the grantability decision. Fail closed.
+                raise OnboardingError(
+                    "Onboarding role whitelist is no longer authorized"
+                ) from exc
 
         completed_steps = progress.completed_steps + [step_id]
         now = self._get_timestamp()
