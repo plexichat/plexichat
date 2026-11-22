@@ -762,6 +762,22 @@ class ApiTokenMixin(AuthManagerProtocol):
         # combined UPDATE below already persists ``last_used_at``; a separate
         # "SET last_used_at = ?" write (formerly gated on the cached value being
         # older than a minute) re-wrote the identical ``now`` and was removed.
+        #
+        # The two binding blind indexes are invariants of (IP, User-Agent) for
+        # this request and are needed by BOTH the last-used UPDATE below and the
+        # usage-event INSERT. Derive each once and thread it into the event
+        # writer instead of paying for two extra keyed BLAKE2b hashes on every
+        # verified request. Only the deterministic, context-free blind indexes
+        # are reused -- the encrypted values below keep their distinct AAD
+        # contexts (token id here, event id in the INSERT), so credential
+        # scoping is unchanged.
+        ua_index = self._ua_index(user_agent)
+        ip_index = None
+        if ip_address:
+            ip_index = self.crypto.fast_blind_index(
+                canonicalize_ip_address(ip_address) or ip_address, "ip_address"
+            )
+
         updates = [
             "last_used_at = ?",
             "ua_index = ?",
@@ -771,7 +787,7 @@ class ApiTokenMixin(AuthManagerProtocol):
         ]
         params: List[Any] = [
             now,
-            self._ua_index(user_agent),
+            ua_index,
             self._encrypt_ua(user_agent, str(token_id)),
             path,
         ]
@@ -783,9 +799,7 @@ class ApiTokenMixin(AuthManagerProtocol):
             updates.append("last_used_ip_encrypted = ?")
             params.extend(
                 [
-                    self.crypto.fast_blind_index(
-                        canonicalize_ip_address(ip_address) or ip_address, "ip_address"
-                    ),
+                    ip_index,
                     self.crypto.encrypt_data(ip_address, context=str(token_id)),
                 ]
             )
@@ -803,6 +817,8 @@ class ApiTokenMixin(AuthManagerProtocol):
             allowed=True,
             scope_match=scope_match,
             reject_reason=None,
+            ip_index=ip_index,
+            ua_index=ua_index,
         )
         return True
 
@@ -911,20 +927,28 @@ class ApiTokenMixin(AuthManagerProtocol):
         allowed: bool,
         scope_match: Optional[bool],
         reject_reason: Optional[str],
+        ip_index: Optional[str] = None,
+        ua_index: Optional[str] = None,
     ) -> None:
+        # ``ip_index``/``ua_index`` may be supplied by verify_api_access_token,
+        # which already derived them for the last-used UPDATE on the hot path.
+        # Rejection callers (and direct callers) omit them, so compute here as a
+        # fallback. Fail-closed behaviour and the distinct encryption contexts
+        # below are unchanged.
         event_id = self._generate_id()
-        ip_index = None
         ip_encrypted = None
         if ip_address:
             # These rows feed COUNT(DISTINCT ip_index) in the token abuse /
             # usage summary. Without a canonical key, one host rotating XFF
             # spellings inflates the distinct-IP count and defeats that signal.
-            ip_index = self.crypto.fast_blind_index(
-                canonicalize_ip_address(ip_address) or ip_address, "ip_address"
-            )
+            if ip_index is None:
+                ip_index = self.crypto.fast_blind_index(
+                    canonicalize_ip_address(ip_address) or ip_address, "ip_address"
+                )
             ip_encrypted = self.crypto.encrypt_data(ip_address, context=str(event_id))
 
-        ua_index = self._ua_index(user_agent)
+        if ua_index is None:
+            ua_index = self._ua_index(user_agent) if user_agent else None
         ua_encrypted = self._encrypt_ua(user_agent, str(event_id))
 
         self._db.execute(
