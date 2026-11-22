@@ -75,6 +75,74 @@ def test_artifact_delete_route_binds_target_and_actor(monkeypatch):
     assert manager.deleted == [(555, 100)]
 
 
+def _gate_call_names(tree: ast.AST) -> set[str]:
+    """Every local name that can refer to ``require_approved_request``.
+
+    Resolves ``from ... import require_approved_request as <alias>`` renames and
+    simple ``gate = require_approved_request`` assignments, so a caller cannot
+    dodge the guard by importing the gate under a different name.  Attribute
+    calls (``module.require_approved_request``) are matched by their ``.attr``
+    in the scanner below and need no per-module alias here.
+    """
+    names = {"require_approved_request"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "require_approved_request":
+                    names.add(alias.asname or alias.name)
+    # Second pass (twice) resolves chains such as ``gate = require_approved_request``
+    # and ``fn = gate`` regardless of source order within the module.
+    for _ in range(2):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name):
+                if node.value.id in names:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            names.add(target.id)
+    return names
+
+
+def _scan_source(
+    source: str, path: str, actions: frozenset[str] | set[str] = TARGET_BEARING_ACTIONS
+) -> tuple[int, list[str]]:
+    """Return ``(checked, offenders)`` for one source string.
+
+    ``checked`` counts target-bearing gate calls that were actually inspected;
+    ``offenders`` names any such call missing the ``target_context`` binding.
+    The action set is injectable so non-vacuity can be proven with a novel
+    target-bearing action as well as the three real call sites.
+    """
+    tree = ast.parse(source, filename=str(path))
+    names = _gate_call_names(tree)
+    offenders: list[str] = []
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name):
+            name = func.id
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+        else:
+            continue
+        if name not in names:
+            continue
+        if (
+            not node.args
+            or not isinstance(node.args[0], ast.Constant)
+            or not isinstance(node.args[0].value, str)
+        ):
+            continue
+        action = node.args[0].value
+        if action not in actions:
+            continue
+        checked += 1
+        if not any(kw.arg == "target_context" for kw in node.keywords):
+            offenders.append(f"{path}:{node.lineno} {action} (via {name})")
+    return checked, offenders
+
+
 def test_no_target_bearing_gate_caller_drops_target_context():
     """Static guard: no target-bearing action may be gated action-only.
 
@@ -82,27 +150,55 @@ def test_no_target_bearing_gate_caller_drops_target_context():
     reintroduce the unbound-approval gap by forgetting ``target_context``.
     """
     admin_routes = Path(artifacts_routes.__file__).resolve().parent
-    offenders = []
+    offenders: list[str] = []
     checked = 0
     for path in sorted(admin_routes.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = getattr(func, "id", None) or getattr(func, "attr", None)
-            if name != "require_approved_request":
-                continue
-            if not node.args or not isinstance(node.args[0], ast.Constant):
-                continue
-            action = node.args[0].value
-            if action not in TARGET_BEARING_ACTIONS:
-                continue
-            checked += 1
-            if not any(kw.arg == "target_context" for kw in node.keywords):
-                offenders.append(f"{path.name}:{node.lineno} {action}")
+        c, o = _scan_source(path.read_text(encoding="utf-8"), path.name)
+        checked += c
+        offenders.extend(o)
 
     assert checked >= 3, "guard must actually inspect the bound call sites"
     assert not offenders, "target-bearing approval callers missing target_context: " + ", ".join(
         offenders
     )
+
+
+def test_detector_recognizes_import_alias_and_assignment_rename():
+    """A gate imported/renamed under another name is still inspected."""
+    source = (
+        "from src.api.routes.admin.utils import "
+        "require_approved_request as _req\n"
+        "gate = _req\n"
+        "def handler():\n"
+        '    gate("artifacts.force_delete")\n'
+    )
+    checked, offenders = _scan_source(source, "alias.py")
+    assert checked == 1, "the aliased call must be recognized as a gate call"
+    assert offenders, "an aliased target-bearing call without the binding must be flagged"
+
+    bound = source.replace(
+        'gate("artifacts.force_delete")',
+        'gate("artifacts.force_delete", target_context=(555, 100))',
+    )
+    checked, offenders = _scan_source(bound, "alias.py")
+    assert checked == 1 and not offenders, "the bound aliased call must pass"
+
+
+def test_detector_non_vacuous_on_novel_target_bearing_action():
+    """A newly added target-bearing action is checked, not silently skipped."""
+    actions = TARGET_BEARING_ACTIONS | {"messages.delete"}
+    source = (
+        "from src.api.routes.admin.utils import "
+        "require_approved_request as gate\n"
+        "def handler():\n"
+        '    gate("messages.delete")\n'
+    )
+    checked, offenders = _scan_source(source, "novel.py", actions)
+    assert checked == 1 and offenders, "novel action missing the binding must be flagged"
+
+    bound = source.replace(
+        'gate("messages.delete")',
+        'gate("messages.delete", target_context=(7, 9))',
+    )
+    checked, offenders = _scan_source(bound, "novel.py", actions)
+    assert checked == 1 and not offenders, "the bound novel call must pass"
