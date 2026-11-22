@@ -18,6 +18,7 @@ import utils.logger as logger
 from src.core.security.errors import SecurityRejection
 
 from .request_context import cached_is_self_test
+from .logging import _safe_log_path
 
 try:
     from utils.logger import sanitize_log_message
@@ -506,8 +507,13 @@ def setup_exception_handlers(app: FastAPI):
         address, so it goes to the log and never to the client.
         """
         headers = _get_cors_headers(request)
+        # SECURITY: the resolved path can carry a credential in a path segment
+        # (notably the live webhook token in ``POST /webhooks/{id}/{token}``).
+        # Route it through the same redactor the access log uses so an error
+        # handler can never write that secret to the log sink.
         logger.warning(
-            f"Security rejection on {request.method} {request.url.path}: "
+            f"Security rejection on {request.method} "
+            f"{_safe_log_path(request.scope, request.url.path)}: "
             f"{type(exc).__name__} code={exc.code} detail={exc}"
         )
         error: Dict[str, Any] = {
@@ -589,8 +595,15 @@ def setup_exception_handlers(app: FastAPI):
         # SECURITY: exc.errors()['input'] holds the raw rejected value (a
         # password/token/code on auth routes). Redact it before logging so the
         # credential never reaches the log sink.
+        # SECURITY: ``request.url.path`` is the *resolved* path. A rejected
+        # webhook execution carries the live webhook token in its final path
+        # segment; writing it verbatim here bypasses the access-log redactor
+        # and leaks the credential on every validation failure. Use the shared
+        # redactor (route template when available, token segment masked when
+        # not) so this error path fails closed as well.
         logger.warning(
-            f"Validation error on {request.method} {request.url.path}: "
+            f"Validation error on {request.method} "
+            f"{_safe_log_path(request.scope, request.url.path)}: "
             f"{_redact_validation_error_inputs(errors)}"
         )
         # SECURITY: Do not read/log full request body to avoid memory DOS
