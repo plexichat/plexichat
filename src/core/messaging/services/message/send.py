@@ -59,6 +59,7 @@ class SendMixin(BaseService, MessageServiceProtocol):
             )
 
         self._enforce_dm_block_rules(conversation_id, user_id)
+        self._enforce_dm_recipient_privacy(conversation_id, user_id)
 
         user_settings = self._user_settings_svc.get_message_settings(user_id)
         max_length = user_settings.max_message_length or self._get_config(
@@ -425,6 +426,95 @@ class SendMixin(BaseService, MessageServiceProtocol):
                 )
         except Exception as e:
             logger.debug(f"Notification scheduling failed for message {msg_id}: {e}")
+
+    def _enforce_dm_recipient_privacy(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Re-check every DM recipient's ``allow_dms_from`` setting at send time.
+
+        ``create_dm`` enforces ``allow_dms_from`` (friends/none) only when the
+        conversation is *opened*.  The send path used to check just block
+        state, so a party to an already-open DM could keep writing into it
+        after the recipient switched to ``none``, or without ever being a
+        friend when the recipient requires ``friends``.  Every user-facing
+        send path (REST, forward, scheduled dispatch, reaction mentions)
+        funnels through ``send_message``, so gating here closes all of them.
+
+        Scoped to single DMs: group-DM membership is gated at *insertion* by
+        ``ConversationService.enforce_group_dm_privacy`` and server channels
+        are governed by server membership, so re-checking per send there would
+        be both redundant and wrong.
+
+        Fails closed: an unreadable conversation/metadata, a failed settings
+        lookup, or an unavailable relationships module with a friends-only
+        recipient all deny the send rather than silently allowing it.
+        """
+        conv_row = self._conversation_repo.get_by_id(conversation_id)
+        if not conv_row or conv_row.get("deleted"):
+            return
+
+        conv_type = conv_row.get("conversation_type")
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+        if conv_type != ConversationType.DM.value:
+            return
+
+        try:
+            recipient_ids = [
+                pid
+                for pid in self._participant_svc.get_participant_ids(conversation_id)
+                if int(pid) != int(user_id)
+            ]
+        except Exception as e:
+            logger.warning(
+                f"DM recipient resolution failed for conversation "
+                f"{conversation_id} (failing closed): {e}"
+            )
+            raise ConversationAccessDeniedError(
+                "Cannot send messages in this conversation"
+            ) from e
+
+        relationships = _get_relationships_module()
+        for recipient_id in recipient_ids:
+            try:
+                settings = self._user_settings_svc.get_message_settings(recipient_id)
+            except Exception as e:
+                logger.warning(
+                    f"DM recipient settings lookup failed for user "
+                    f"{recipient_id} (failing closed): {e}"
+                )
+                raise ConversationAccessDeniedError(
+                    "Cannot send messages in this conversation"
+                ) from e
+
+            if settings.allow_dms_from == "none":
+                raise ConversationAccessDeniedError(
+                    "Cannot send messages in this conversation"
+                )
+            if settings.allow_dms_from == "friends":
+                if relationships is None:
+                    # No relationship source: cannot prove friendship, deny.
+                    raise ConversationAccessDeniedError(
+                        "Cannot send messages in this conversation"
+                    )
+                try:
+                    friend_ids = relationships.get_friend_ids(recipient_id) or []
+                    if int(user_id) not in {int(fid) for fid in friend_ids}:
+                        raise ConversationAccessDeniedError(
+                            "Cannot send messages in this conversation"
+                        )
+                except ConversationAccessDeniedError:
+                    raise
+                except Exception as e:
+                    logger.warning(
+                        f"DM friendship lookup failed for user "
+                        f"{recipient_id} (failing closed): {e}"
+                    )
+                    raise ConversationAccessDeniedError(
+                        "Cannot send messages in this conversation"
+                    ) from e
 
     def _enforce_dm_block_rules(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
