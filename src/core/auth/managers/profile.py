@@ -142,21 +142,29 @@ class ProfileMixin(AuthManagerProtocol):
                 )
                 params.extend([email_index, email_encrypted, 0])
 
-                # Verification-token replay fix: a token row carries only a
-                # user id, not the address it was minted for. Without this,
-                # a token issued for an address the user used to control can
-                # be replayed after the switch and flip ``email_verified`` on
-                # for the NEW (unconfirmed) address. Consume every outstanding
-                # verification token at the instant the address changes so the
-                # only usable token is the fresh one delivered to the new
-                # address below. (Password-reset tokens are deliberately left
-                # untouched — they are not address-bound.)
+                # Recovery-token replay fix: an email token row carries only a
+                # user id, not the address it was minted for. Without this, a
+                # token mailed to an address the user used to control can be
+                # replayed after the switch. For verification that would flip
+                # ``email_verified`` on for the NEW (unconfirmed) address; for
+                # password reset it is worse — an attacker who captured a link
+                # from the old inbox keeps a working account-takeover credential
+                # even after the victim moved to a new address to reclaim the
+                # account. Consume EVERY outstanding address-delivered token at
+                # the instant the address changes so only freshly issued links
+                # (sent to the new address) remain usable. That a token has no
+                # address column is exactly why it must be retired here, not a
+                # reason to leave it live.
                 self._db.execute(
                     "UPDATE auth_email_tokens SET used = 1 "
-                    "WHERE user_id = ? AND token_type = 'verify_email' "
+                    "WHERE user_id = ? AND token_type IN ('verify_email', 'reset_password') "
                     "AND used = 0",
                     (user_id,),
                 )
+                # A retired reset token must not keep answering from a warm
+                # verification cache. Fail closed: the address change is a
+                # credential transition, so drop cached verdicts at once.
+                invalidate_pattern("token_verify:*")
 
                 # An address change is a credential transition: the email is
                 # the account's recovery identifier and the destination for
