@@ -14,6 +14,18 @@ from src.core.messaging.services.edit_history import EditHistoryService
 from src.core.messaging.services.message.edit_delete import BULK_ARCHIVE_MAX_IDS
 
 
+class _WiredDMServers:
+    """A wired servers store whose reverse lookup finds no backing channel
+    (a genuine DM), so the channel-view gate permits the read. The fail-closed
+    gate still denies reads when this module is genuinely unwired."""
+
+    def get_channel_by_conversation(self, conversation_id):
+        return None
+
+    def get_channel(self, channel_id, user_id):
+        raise AssertionError("DM needs no channel view check")
+
+
 @pytest.mark.messaging
 class TestBulkOperationBounds:
     def test_archive_bulk_rejects_oversized_batch(self, messaging_manager, two_users):
@@ -62,7 +74,10 @@ class TestEditHistoryFetchBounds:
         self._seed_history(db, msg.id, user1.id, total)
 
         svc = EditHistoryService(
-            db, messaging_manager._participant_svc, encryption_enabled=False
+            db,
+            messaging_manager._participant_svc,
+            encryption_enabled=False,
+            servers_mod=_WiredDMServers(),
         )
         history = svc.get_edit_history(user1.id, msg.id)
 
@@ -80,7 +95,10 @@ class TestEditHistoryFetchBounds:
         self._seed_history(db, msg.id, user1.id, MAX_EDIT_HISTORY_ROWS + 5)
 
         svc = EditHistoryService(
-            db, messaging_manager._participant_svc, encryption_enabled=False
+            db,
+            messaging_manager._participant_svc,
+            encryption_enabled=False,
+            servers_mod=_WiredDMServers(),
         )
         history = svc.get_edit_history(user1.id, msg.id, limit=1_000_000)
 
