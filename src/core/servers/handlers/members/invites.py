@@ -406,6 +406,17 @@ class MemberInviteMixin:
                 current_uses=invite.uses,
             )
 
+        # The early checks above are a fast-fail courtesy; the single guarded
+        # UPDATE below is the authoritative consumption decision. Its expiry
+        # predicate (``expires_at > ?``) must be evaluated against the clock at
+        # the moment of the write, not the snapshot used for validation above:
+        # an invite that expires between validation and the guarded write would
+        # otherwise still be redeemed and grant membership after expiry (the
+        # "passes validation, DB write lands after expiry" window). Uses and
+        # revoked are already re-checked atomically by the statement itself;
+        # re-reading the clock here closes the same gap for expires_at, and the
+        # refreshed-row error path below reuses this same write-time value.
+        now = self.manager._get_timestamp()
         update_cursor = self.db.execute(
             """UPDATE srv_invites
                SET uses = uses + 1
