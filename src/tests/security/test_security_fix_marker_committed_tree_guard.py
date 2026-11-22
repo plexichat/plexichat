@@ -281,6 +281,35 @@ _ARTIFACT_UPLOAD_BOT_TOKEN_OWNER_GUARD = (
 )
 
 
+# be19f4ca (N644 follow-up): logout re-checks the presented session bearer's
+# IP/UA against the session's blind indexes before the revoking write. The
+# `return False` fail-closed arms and the ip_index/ua_index SELECT distinguish
+# this from the refresh/WS-ticket compares (which return None / raise).
+_LOGOUT_CONTEXT_BINDING_SELECT = (
+    "SELECT user_id, token_hash, ip_index, ua_index FROM auth_sessions WHERE id = ?"
+)
+_LOGOUT_CONTEXT_BINDING_COMPARE = (
+    "                    current_ip_index = self.crypto.fast_blind_index(\n"
+    "                        ip_address, \"ip_address\"\n"
+    "                    )\n"
+    "                    if not hmac.compare_digest(stored_ip_index, current_ip_index):\n"
+    "                        return False\n"
+    "                    if not user_agent:\n"
+    "                        return False\n"
+    "                    stored_ua_index = row.get(\"ua_index\")\n"
+    "                    if not isinstance(stored_ua_index, str) or not stored_ua_index:\n"
+    "                        return False\n"
+    "                    current_ua_index = self._ua_index(user_agent)\n"
+    "                    if not isinstance(current_ua_index, str) or not current_ua_index:\n"
+    "                        return False\n"
+    "                    if not hmac.compare_digest(stored_ua_index, current_ua_index):\n"
+    "                        return False"
+)
+_LOGOUT_FACADE_THREADING = (
+    "    return _get_auth_manager().get_instance().logout(token, ip_address, user_agent)"
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -1271,6 +1300,31 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "alias-moderation-bypass even though the base.py definition remains."
         ),
     ),
+    # be19f4ca: the manager-level logout consumes a session bearer; with
+    # token_binding on it must re-check the presented context before revoking,
+    # else a bearer stolen from another host can log the victim out. Both files
+    # are MM with stale pre-fix staged copies, so whole-file stages are caught.
+    CommittedFixMarker(
+        key="be19f4ca-logout-context-binding",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=_LOGOUT_CONTEXT_BINDING_COMPARE,
+        why=(
+            "be19f4ca: logout re-checks the presented IP/UA against the "
+            "session's blind indexes and fails closed before the revoke; a "
+            "stale staged copy of lifecycle.py drops the check and lets a "
+            "stale-context bearer revoke a session it cannot authenticate"
+        ),
+    ),
+    CommittedFixMarker(
+        key="be19f4ca-logout-facade-context-threading",
+        path="src/core/auth/sessions.py",
+        marker=_LOGOUT_FACADE_THREADING,
+        why=(
+            "be19f4ca: the public logout wrapper threads ip_address/user_agent "
+            "to the manager, matching refresh_session; a stale staged copy "
+            "drops the context and makes the manager gate unreachable"
+        ),
+    ),
 )
 
 
@@ -1319,6 +1373,8 @@ PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
         "b71b0d64-targeted-session-socket-close-method",
         "33cf9e7d-refresh-replay-session-socket-close",
         "ded43f8e-refresh-session-ip-ua-context-binding",
+        "be19f4ca-logout-context-binding",
+        "be19f4ca-logout-facade-context-threading",
         "bb824009-logout-closes-user-sockets",
         "bb824009-revoke-all-closes-user-sockets",
         "bb824009-2fa-enable-closes-user-sockets",
@@ -1637,7 +1693,7 @@ def test_private_index_pinned_keys_are_registered() -> None:
         "private-index key set references keys missing from COMMITTED_FIX_MARKERS: "
         f"{sorted(PRIVATE_INDEX_PINNED_KEYS - set(keys))}"
     )
-    assert len(PRIVATE_INDEX_PINNED_KEYS) == 30
+    assert len(PRIVATE_INDEX_PINNED_KEYS) == 32
     for key in PRIVATE_INDEX_PINNED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path.startswith("src/"), f"bad path for {key!r}"
