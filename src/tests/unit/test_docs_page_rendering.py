@@ -158,6 +158,38 @@ def test_sibling_links_resolve_with_the_page_directory():
     assert resolve_doc_link("rbac.md", routes) is None
 
 
+def test_openapi_pages_declare_the_page_language():
+    """The Swagger/ReDoc pages inherit FastAPI's bare ``<html>`` (WCAG 3.1.1).
+
+    The narrative shell in serving.py emits ``<html lang="en">``, but the
+    branded OpenAPI surfaces wrap FastAPI's templates, which open with a plain
+    ``<html>``. With no declared language a screen reader falls back to the
+    browser's default locale and mispronounces the English docs.
+    """
+    from starlette.requests import Request
+
+    from src.api.routes.docs.openapi import render_redoc_page, render_swagger_ui_page
+
+    def request() -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/docs",
+                "headers": [(b"host", b"testserver")],
+                "client": ("127.0.0.1", 12345),
+                "scheme": "http",
+                "server": ("testserver", 80),
+                "query_string": b"",
+            }
+        )
+
+    for render in (render_swagger_ui_page, render_redoc_page):
+        html = render(request(), "Plexichat", "/openapi.json").body.decode("utf-8")
+        tag = re.search(r"<html\b[^>]*>", html, re.IGNORECASE).group(0)
+        assert re.search(r'\blang\s*=\s*["\']en["\']', tag, re.IGNORECASE), tag
+
+
 def test_admin_index_guide_links_resolve_to_served_routes():
     """docs/admin/index.md links two guides that had no route at all.
 

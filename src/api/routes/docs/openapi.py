@@ -5,6 +5,7 @@ This module wraps FastAPI's built-in Swagger UI and ReDoc renderers with our bra
 """
 
 import html as _html
+import re
 
 from fastapi import Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
@@ -105,6 +106,26 @@ _SPEC_STATUS_SCRIPT = """
 })();
 </script>
 """
+
+
+def _ensure_page_language(markup: str) -> str:
+    """Declare the page language on the root element (WCAG 3.1.1, Level A).
+
+    The narrative docs shell (serving.py) opens with ``<html lang="en">``, but
+    these two surfaces wrap FastAPI's built-in Swagger UI / ReDoc templates,
+    which emit a bare ``<html>``. A screen reader then falls back to the
+    browser's default locale and mispronounces the English docs. Add the
+    attribute to that root element and leave an explicit lang untouched, so a
+    future upstream template that already sets one is not given two.
+    """
+    match = re.search(r"<html\b[^>]*>", markup, re.IGNORECASE)
+    if match is None:
+        return markup
+    tag = match.group(0)
+    if re.search(r"\blang\s*=", tag, re.IGNORECASE):
+        return markup
+    new_tag = re.sub(r"^<html\b", '<html lang="en"', tag, count=1, flags=re.IGNORECASE)
+    return markup[: match.start()] + new_tag + markup[match.end() :]
 
 
 def _build_spec_status_html(openapi_url: str) -> str:
@@ -210,6 +231,7 @@ def render_swagger_ui_page(
     """
 
     html = html.replace("</body>", f"{dark_mode_script}</body>")
+    html = _ensure_page_language(html)
 
     return HTMLResponse(html)
 
@@ -276,5 +298,6 @@ def render_redoc_page(request: Request, title: str, openapi_url: str) -> HTMLRes
     """
 
     html = html.replace("</body>", f"{dark_mode_script}</body>")
+    html = _ensure_page_language(html)
 
     return HTMLResponse(html)
