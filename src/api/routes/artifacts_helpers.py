@@ -771,7 +771,10 @@ def _emit_artifact_message(
                 ]
             except Exception as e:  # pragma: no cover - defensive
                 logger.debug(f"Failed to resolve participants: {e}")
-                user_ids = None
+                # Fail closed: None makes the router fall back to server-wide
+                # routing, leaking the artifact message content to server
+                # members who never participated in the conversation.
+                user_ids = []
 
         events.dispatch(
             event,

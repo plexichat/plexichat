@@ -569,7 +569,10 @@ def _emit_artifact_update(
                 ]
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"transcription: participant resolve failed: {exc}")
-            user_ids = None
+            # Fail closed: None lets the router widen this server-scoped event
+            # to every member of the server instead of the conversation's
+            # verified participants.
+            user_ids = []
 
         events.dispatch(
             event,

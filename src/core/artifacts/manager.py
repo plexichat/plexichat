@@ -432,6 +432,15 @@ class ArtifactManager(BaseManager):
             )
             if user_ids is _UNSET:
                 user_ids = self._event_user_ids(artifact.conversation_id)
+            # SECURITY: an unresolved participant audience must NEVER be handed
+            # to events.dispatch as ``None``. The EventRouter treats ``None``
+            # as "route by scope", and a server-scoped artifact event is then
+            # widened to every member of the server -- including users who
+            # never participated in the conversation, who receive the private
+            # artifact title in the payload. Fail closed: no verifiable
+            # audience means no recipients.
+            if user_ids is None:
+                user_ids = []
             events.dispatch(
                 event,
                 user_ids=user_ids,
