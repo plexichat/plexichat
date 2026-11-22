@@ -769,7 +769,19 @@ class ApiTokenMixin(AuthManagerProtocol):
         )
         return True
 
-    @cached(ttl=30, prefix="access_token_required")
+    @cached(
+        ttl=30,
+        prefix="access_token_required",
+        # Token create/revoke/update calls invalidate_pattern("access_token_required*"),
+        # dropping this single verdict en masse. The auth middleware runs this
+        # sync method in a threadpool for every non-public API request, so on
+        # the cold miss every concurrent request used to run the expensive
+        # auth_api_access_tokens SELECT itself -- one mutation stampedes the DB.
+        # Collapse the miss so one caller reads the verdict and the rest await
+        # it. Availability only; the verdict (and its fail-closed behaviour) is
+        # unchanged.
+        single_flight=True,
+    )
     def is_api_access_token_required(self) -> bool:
         try:
             from src.api.config import get_api_config
