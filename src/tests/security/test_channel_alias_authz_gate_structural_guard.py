@@ -29,8 +29,10 @@ the same miss-as-allow shape. This is a pure AST ratchet (no app import/config
    result variable so a rename does not fool it.
 
 2. ``GATE_REGISTRY`` enumerates every such gate in the committed tree. Each
-   entry states how both id forms are resolved (``dual-sql`` / ``paired``) or
-   is recorded as a ``finding`` with the evidence of the unfixed bypass and a
+   entry states how both id forms are resolved (``dual-sql`` / ``paired`` /
+   ``authoritative`` / ``central`` -- the central ``get_channel_by_conversation``
+   resolver now resolves both forms and prefers the authoritative link) or is
+   recorded as a ``finding`` with the evidence of the unfixed bypass and a
    reason. ``NON_AUTHZ_SITES`` documents the lookups that are NOT gates
    (notification fan-out, search indexing, erasure/cleanup, report context,
    the resolver helpers themselves); those are allowed to be single-form but
@@ -127,6 +129,11 @@ def _production_files(commit: str) -> tuple[str, ...]:
 # "both lookups" fix (channel_exists / get_channel_conversation_id) or the
 # paired channel-context resolution used by the send path.
 DUAL_SQL_MARKER = "OR id = ?"
+CENTRAL_RESOLVER_PATH = "src/core/servers/manager/base.py"
+CENTRAL_RESOLVER_FUNC = "get_channel_by_conversation"
+# The exact-match-first tie-break: a genuine conversation id must win a
+# collision with an unrelated channel whose numeric id equals the value.
+CENTRAL_PREFERENCE_MARKER = "(conversation_id = ?) DESC"
 ID_FORM_PROBES = (
     "channel_exists",
     "get_channel_conversation_id",
@@ -279,6 +286,11 @@ def _sweep(commit: str) -> tuple[Gate, ...]:
 #                    channel-id spelling.
 #   * "authoritative" -- the conversation id is read from a stored message row
 #                    (cannot be substituted with a channel id by the caller).
+#   * "central"    -- the gate delegates to the central
+#                    ``get_channel_by_conversation`` resolver, which now
+#                    resolves ``conversation_id`` OR ``id`` and prefers the
+#                    authoritative link, so the miss-as-allow branch can no
+#                    longer be reached with a channel-id alias.
 #   * "finding"    -- KNOWN unfixed bypass: caller-supplied id, miss-as-allow,
 #                    no id-form probe. These are reported, not declared safe.
 # ``evidence`` markers must remain in the module for non-finding entries; for
@@ -405,49 +417,50 @@ GATE_REGISTRY: tuple[GateEntry, ...] = (
         "Same dual-lookup handling as the poll post gate for the channel-id "
         "spelling.",
     ),
-    # --- Findings: unfixed instances of the same bypass (reported, not safe).
+    # --- N735 gates, fixed centrally. Each still has the miss-as-allow shape
+    #     (so the detector enumerates it), but the resolver they all delegate
+    #     to now resolves both id forms and prefers the authoritative link,
+    #     closing the channel-id-alias bypass for all four at once.
     GateEntry(
-        "FINDING: forward target send gate",
+        "forward target send gate (central-resolver fixed)",
         "src/api/routes/features/forwarding.py",
         "_require_target_send_access",
-        "finding",
+        "central",
         ("get_channel_by_conversation",),
-        "target_conversation_id is caller-supplied; is_participant grants via "
-        "srv_channels.id, but get_channel_by_conversation only matches "
-        "conversation_id, so passing a channel's own id misses and the "
-        "messages.send gate is skipped. Source file is contested; reported, "
-        "not modified here.",
+        "target_conversation_id is caller-supplied. is_participant grants via "
+        "srv_channels.id; the central get_channel_by_conversation now matches "
+        "conversation_id OR id (conversation-first), so a channel-id alias can "
+        "no longer miss and skip the messages.send gate.",
     ),
     GateEntry(
-        "FINDING: forwarding service view gate",
+        "forwarding service view gate (central-resolver fixed)",
         "src/core/messaging/services/forwarding.py",
         "_require_channel_view",
-        "finding",
+        "central",
         ("get_channel_by_conversation",),
-        "Called with the caller-supplied target_conversation_id; the channel-id "
-        "spelling misses the conversation-id-only reverse lookup and skips "
-        "the channels.view gate. Contested source; reported, not modified.",
+        "Called with the caller-supplied target_conversation_id; the central "
+        "dual-form resolver now catches the channel-id spelling before the "
+        "miss-as-allow branch can skip the channels.view gate.",
     ),
     GateEntry(
-        "FINDING: voice send gate",
+        "voice send gate (central-resolver fixed)",
         "src/api/routes/features/voice.py",
         "_require_voice_send_access",
-        "finding",
+        "central",
         ("get_channel_by_conversation",),
-        "conv_id comes from body.conversation_id; the channel-id spelling "
-        "misses the reverse lookup and skips view/send/timeout gates before "
-        "messaging.send_message. Contested source; reported, not modified.",
+        "conv_id comes from body.conversation_id; the central dual-form "
+        "resolver now catches a channel-id alias, so view/send/timeout gates "
+        "cannot be skipped before messaging.send_message.",
     ),
     GateEntry(
-        "FINDING: artifact inline-message send gate",
+        "artifact inline-message send gate (central-resolver fixed)",
         "src/api/routes/artifacts_helpers.py",
         "_can_emit_artifact_message",
-        "finding",
+        "central",
         ("get_channel_by_conversation",),
-        "artifact.conversation_id originates from body.conversation_id at "
-        "creation; the channel-id spelling misses the reverse lookup and "
-        "skips the messages.send/view/timeout gates. Contested source; "
-        "reported, not modified.",
+        "artifact.conversation_id originates from body.conversation_id; the "
+        "central dual-form resolver now catches a channel-id alias, so the "
+        "messages.send/view/timeout gates cannot be skipped.",
     ),
 )
 
@@ -536,11 +549,12 @@ NON_AUTHZ_SITES: tuple[NonAuthzEntry, ...] = (
     ),
     NonAuthzEntry(
         "central reverse resolver",
-        "src/core/servers/manager/base.py",
-        "get_channel_by_conversation",
-        "The single-form resolver itself; it returns a row or None and makes "
-        "no allow/deny choice. Each gate must supply its own id-form coverage "
-        "(see GATE_REGISTRY).",
+        CENTRAL_RESOLVER_PATH,
+        CENTRAL_RESOLVER_FUNC,
+        "The central resolver itself; it returns a row or None and makes no "
+        "allow/deny choice. It resolves conversation_id OR id and prefers the "
+        "authoritative link, so gates delegating to it get both id forms; the "
+        "per-gate resolutions are recorded in GATE_REGISTRY.",
     ),
     NonAuthzEntry(
         "public reverse resolver",
@@ -579,7 +593,22 @@ def _assert_entry_evidence(entry: GateEntry, source: str) -> None:
                 "reclassify it in GATE_REGISTRY"
             )
         return
-    assert entry.resolution in {"dual-sql", "paired", "authoritative"}, entry.resolution
+    if entry.resolution == "central":
+        # The gate must still delegate to the central resolver (not shadow it
+        # with its own single-form SQL). The resolver's dual-form SQL is
+        # verified against the committed blob by the dedicated test below, so
+        # reverting the central fix fails the guard for every 'central' gate.
+        assert "get_channel_by_conversation" in body, (
+            f"{entry.label}: central-fixed gate no longer delegates to "
+            "get_channel_by_conversation"
+        )
+        return
+    assert entry.resolution in {
+        "dual-sql",
+        "paired",
+        "authoritative",
+        "central",
+    }, entry.resolution
     for marker in entry.evidence:
         assert marker in body, (
             f"{entry.label}: evidence marker {marker!r} missing from {entry.path}; "
@@ -763,7 +792,13 @@ def test_registry_entries_require_resolution_and_reason():
     assert GATE_REGISTRY, "no gates registered"
     assert NON_AUTHZ_SITES, "no non-authz sites documented"
     for entry in GATE_REGISTRY:
-        assert entry.resolution in {"dual-sql", "paired", "authoritative", "finding"}
+        assert entry.resolution in {
+            "dual-sql",
+            "paired",
+            "authoritative",
+            "central",
+            "finding",
+        }
         assert entry.why.strip(), f"{entry.label}: empty reason"
         assert entry.path.startswith("src/"), entry.path
         assert entry.func, entry.label
@@ -841,17 +876,41 @@ def test_no_new_undocumented_authz_gate_in_committed_tree(commit_sha):
     )
 
 
-def test_findings_are_documented_with_evidence(commit_sha):
-    findings = [e for e in GATE_REGISTRY if e.resolution == "finding"]
-    assert len(findings) >= 4, "the documented alias-bypass findings were lost"
-    for entry in findings:
+def test_central_resolver_resolves_both_id_forms(commit_sha):
+    """The committed central resolver must resolve both forms, link first.
+
+    This is what makes every ``central`` registry entry non-vacuous: reverting
+    the resolver to ``WHERE conversation_id = ?`` fails this test even though
+    the four gates' own source is unchanged.
+    """
+    source = _make_blob_reader(commit_sha)(CENTRAL_RESOLVER_PATH)
+    assert DUAL_SQL_MARKER in source, "central resolver lost its id-form branch"
+    assert CENTRAL_PREFERENCE_MARKER in source, (
+        "central resolver lost the exact-conversation-id-first tie-break; a "
+        "genuine conversation id could resolve to the wrong channel on collision"
+    )
+
+
+def test_prior_findings_are_now_central_fixed(commit_sha):
+    """All four N735 gates are promoted from findings to central-fixed."""
+    central = [e for e in GATE_REGISTRY if e.resolution == "central"]
+    assert len(central) == 4, "the four centrally-fixed N735 gates were lost"
+    assert {e.path for e in central} == {
+        "src/api/routes/features/forwarding.py",
+        "src/core/messaging/services/forwarding.py",
+        "src/api/routes/features/voice.py",
+        "src/api/routes/artifacts_helpers.py",
+    }
+    # No finding may remain disguised as fixed: every remaining finding must
+    # still be a real, documented miss-as-allow bypass in committed HEAD.
+    reader = _make_blob_reader(commit_sha)
+    for entry in GATE_REGISTRY:
+        if entry.resolution != "finding":
+            continue
         assert entry.label.startswith("FINDING:")
         assert "contested" in entry.why.lower(), (
             f"{entry.label}: finding must record why it is reported, not patched"
         )
-    # Explicit evidence: the offending gates really are single-form in HEAD.
-    reader = _make_blob_reader(commit_sha)
-    for entry in findings:
         source = reader(entry.path)
         assert "get_channel_by_conversation" in source
         assert DUAL_SQL_MARKER not in source

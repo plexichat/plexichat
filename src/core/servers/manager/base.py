@@ -373,14 +373,32 @@ class ServerManager(
         """Membership-agnostic reverse lookup: server channel for a conversation.
 
         Returns ``{"id": <channel_id>, "server_id": <server_id>}`` for the
-        (first, undeleted) server channel linked to ``conversation_id``, or
-        ``None`` when the conversation is not backed by a server channel.
-        Used by messaging to resolve server-side moderation permissions.
+        (first, undeleted) server channel addressed by ``conversation_id``, or
+        ``None`` when the value is not backed by a server channel. Used by
+        messaging to resolve server-side moderation permissions.
+
+        BOTH accepted spellings are resolved here, centrally:
+
+        * the linked ``srv_channels.conversation_id`` (the authoritative link);
+        * the channel's own ``srv_channels.id`` -- ``is_participant`` grants
+          participation under that form too (``WHERE conversation_id = ? OR
+          id = ?``), and ``messages_crud`` persists ``srv_channels.id`` into
+          ``msg_messages.conversation_id`` when the link is missing. A gate
+          that reverse-looked-up a caller-supplied id and skipped on a miss
+          was therefore bypassable by passing the channel's own id.
+
+        An exact ``conversation_id`` match is deliberately ordered FIRST
+        (``ORDER BY (conversation_id = ?) DESC``). That preserves the old
+        single-form result for a genuine conversation id even if a different
+        channel's numeric id happens to equal it: the authoritative link wins
+        the collision and the ``id`` branch only decides when nothing linked
+        matched (exactly the alias case).
         """
         row = self._db.fetch_one(
             "SELECT id, server_id FROM srv_channels "
-            "WHERE conversation_id = ? AND deleted = 0 LIMIT 1",
-            (conversation_id,),
+            "WHERE (conversation_id = ? OR id = ?) AND deleted = 0 "
+            "ORDER BY (conversation_id = ?) DESC LIMIT 1",
+            (conversation_id, conversation_id, conversation_id),
         )
         if row is None:
             return None
