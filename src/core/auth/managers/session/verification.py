@@ -102,6 +102,13 @@ class VerificationMixin(AuthManagerProtocol):
     @cached(
         ttl=10,
         prefix="token_verify",
+        # Revocation/privilege changes invalidate this namespace, dropping every
+        # verdict at once. Without coalescing, all concurrent requests landing
+        # on that cold miss each re-run the session SELECT + constant-time hash
+        # check -- a single invalidation stampedes the DB. Collapse the miss so
+        # one caller verifies and the rest await the same credential-keyed
+        # verdict. (Availability only; authz is unchanged.)
+        single_flight=True,
         # Never embed the raw bearer token in the cache key: hash it so that
         # anyone with cache visibility cannot recover live session tokens. The
         # binding suffix keeps a cached result scoped to the exact IP/UA it was
