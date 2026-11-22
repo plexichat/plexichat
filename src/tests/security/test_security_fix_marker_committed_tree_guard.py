@@ -558,6 +558,21 @@ _N819_UNCONDITIONAL_ADMISSION = (
 )
 
 
+# edacde4c (N773): the automod violation/audit-log read endpoints are the
+# third destination for the offending body (after the moderator
+# notification and the channel alert). The gate requires BOTH
+# channels.view and messages.read on the violation's own channel and
+# fails closed on an unwired store, a missing/unparseable channel id or
+# a raising lookup. Pin the definition, its fail-closed arms, the shared
+# serializer's call site, and BOTH redactions so a stale staged copy of
+# automod.py cannot silently restore the audit-log body leak.
+_N773_VIOLATION_BODY_GATE_DEF = '_VIOLATION_BODY_PERMISSIONS = ("channels.view", "messages.read")\n\n\ndef _viewer_can_read_violation_body(\n    servers_mod, viewer_id, server_id, channel_id\n) -> bool:'
+_N773_VIOLATION_BODY_FAIL_CLOSED = '    if not channel_id:\n        return False\n    try:\n        cid = int(channel_id)\n    except (TypeError, ValueError):\n        return False\n    if not cid:\n        return False\n    for permission in _VIOLATION_BODY_PERMISSIONS:\n        try:\n            if not servers_mod.has_permission(viewer_id, server_id, permission, cid):\n                return False\n        except Exception:\n            return False\n    return True'
+_N773_VIOLATION_BODY_GATE_CALL = '    can_read = _viewer_can_read_violation_body(\n        servers_mod, viewer_id, server_id, violation.channel_id\n    )'
+_N773_VIOLATION_BODY_MATCHED_REDACTED = '        matched_content=violation.matched_content if can_read else "",'
+_N773_VIOLATION_BODY_METADATA_REDACTED = '        metadata=(violation.metadata or {}) if can_read else {},'
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     # --- Test-only private-index guard commits (coordination noise) ---
     # These three commits landed through the private index but change ONLY
@@ -2069,6 +2084,46 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "guard; pin it so a revert cannot expose a tombstone's edit count."
         ),
     ),
+    CommittedFixMarker(
+        key="edacde4c-n773-violation-body-gate-def",
+        path="src/api/routes/servers/automod.py",
+        marker=_N773_VIOLATION_BODY_GATE_DEF,
+        why=(
+            "edacde4c (N773): the per-channel view/read gate definition with the two required permissions; a stale staged copy that drops it leaves only the server-wide server.automod bit on the audit reads"
+        ),
+    ),
+    CommittedFixMarker(
+        key="edacde4c-n773-violation-body-fail-closed",
+        path="src/api/routes/servers/automod.py",
+        marker=_N773_VIOLATION_BODY_FAIL_CLOSED,
+        why=(
+            "edacde4c (N773): missing/unparseable channel id, missing store and a raising permission lookup must all strip the body; a stale staged copy that softens these arms reopens the leak on manual actions and unwired stores"
+        ),
+    ),
+    CommittedFixMarker(
+        key="edacde4c-n773-violation-body-gate-call",
+        path="src/api/routes/servers/automod.py",
+        marker=_N773_VIOLATION_BODY_GATE_CALL,
+        why=(
+            "edacde4c (N773): the shared serializer must actually apply the gate to the violation's own channel; a stale staged copy that drops the call makes both endpoints return the raw body"
+        ),
+    ),
+    CommittedFixMarker(
+        key="edacde4c-n773-violation-body-content-redacted",
+        path="src/api/routes/servers/automod.py",
+        marker=_N773_VIOLATION_BODY_MATCHED_REDACTED,
+        why=(
+            "edacde4c (N773): matched_content is blanked when the viewer cannot read the violating channel"
+        ),
+    ),
+    CommittedFixMarker(
+        key="edacde4c-n773-violation-body-metadata-redacted",
+        path="src/api/routes/servers/automod.py",
+        marker=_N773_VIOLATION_BODY_METADATA_REDACTED,
+        why=(
+            "edacde4c (N773): content-bearing metadata is blanked alongside matched_content, so a stale staged copy cannot leak the body via metadata.examples"
+        ),
+    ),
 )
 
 
@@ -2248,6 +2303,20 @@ LICENSE_FIX_PIN_KEYS: frozenset[str] = frozenset(
     {
         "e4096376-license-derived-caches-invalidated",
         "9c25e861-license-stale-validation-reset",
+    }
+)
+
+
+# edacde4c (N773) audit-log body gate pins. Kept explicit so none of the
+# five anchors can be dropped silently; non-vacuity comes from the
+# parametrized synthetic-revert test plus the live-HEAD tie below.
+N773_AUDIT_BODY_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "edacde4c-n773-violation-body-gate-def",
+        "edacde4c-n773-violation-body-fail-closed",
+        "edacde4c-n773-violation-body-gate-call",
+        "edacde4c-n773-violation-body-content-redacted",
+        "edacde4c-n773-violation-body-metadata-redacted",
     }
 )
 
@@ -3540,4 +3609,57 @@ def test_n819_aggregate_frame_pins_live_at_head_and_non_vacuous(
         assert guard not in handle_body[:call_pos], (
             f"conditional opcode-table guard {guard!r} reintroduced before "
             "the aggregate admission call"
+        )
+
+
+def test_n773_audit_body_gate_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The N773 audit-body gate pins are registered, live and falsifiable.
+
+    Each key resolves to a real committed blob carrying its distinctive anchor,
+    points at the automod route module, and is rejected by a synthetic stale
+    blob with the fix erased. The live-HEAD tie additionally proves BOTH read
+    endpoints route through the shared gated serializer.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert N773_AUDIT_BODY_PIN_KEYS <= set(keys), (
+        "N773 audit-body key set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(N773_AUDIT_BODY_PIN_KEYS - set(keys))}"
+    )
+    assert len(N773_AUDIT_BODY_PIN_KEYS) == 5
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    for key in sorted(N773_AUDIT_BODY_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == "src/api/routes/servers/automod.py", (
+            f"{key} points at {record.path!r}, expected the automod route module"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_automod_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# audit body gate erased\n"
+
+        present, detail = _evaluate(record, stale_automod_blob)
+        assert not present, f"synthetic N773 revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+    # Both audit-log read endpoints must go through the shared gated serializer;
+    # a refactor that inlines a raw `AutomodViolationResponse(...)` in either
+    # endpoint silently drops the redaction even while the helper stays pinned.
+    blob = reader("src/api/routes/servers/automod.py")
+    assert blob.count("_violation_response(") == 3, (
+        "expected the serializer definition plus exactly two endpoint call sites"
+    )
+    for handler, open_sig in (
+        ("list", "async def get_server_automod_violations("),
+        ("single", "async def get_server_automod_violation("),
+    ):
+        start = blob.index(open_sig)
+        end = blob.index("\n@router.", start) if "\n@router." in blob[start:] else len(blob)
+        body = blob[start:end]
+        assert "_violation_response(" in body, (
+            f"the {handler} automod violation read no longer uses the gated serializer"
         )
