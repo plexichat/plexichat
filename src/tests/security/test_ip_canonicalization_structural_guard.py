@@ -33,7 +33,7 @@ AST ratchet (no app import/config/DB) with three halves:
 
 3. The committed-tree reader really returns HEAD blobs, and both detectors are
    proven non-vacuous: the self-tests flag a synthetic raw ``fast_blind_index``
-   key, accept canonicalized forms, and the sweep must find exactly the eight
+   key, accept canonicalized forms, and the sweep must find exactly the nine
    documented raw sites when suppression is removed.
 
 Blobs are read from COMMITTED HEAD (``git show HEAD:<path>``), not the working
@@ -406,6 +406,17 @@ DOCUMENTED_RAW_EXCEPTIONS: tuple[RawIpException, ...] = (
         "credential). Not a mutable-state rate/budget/blacklist key.",
     ),
     RawIpException(
+        "logout binding index",
+        "src/core/auth/managers/session/lifecycle.py",
+        "logout",
+        "Availability: the N644 follow-up logout gate compares the presented "
+        "IP against the session's raw-minted auth_sessions.ip_index before the "
+        "revoking write, mirroring refresh_session/_verify_session_token. A "
+        "canonical-only hash here would reject legitimate logouts while mint "
+        "and verify stay raw; the check only gates a token-consuming write, "
+        "never a mutable rate/budget/blacklist key.",
+    ),
+    RawIpException(
         "2FA challenge creation binding index",
         "src/core/auth/managers/twofactor.py",
         "_create_2fa_challenge",
@@ -703,7 +714,7 @@ def test_documented_ip_key_sites_still_canonicalized_in_committed_tree(commit_sh
 
 
 def test_committed_tree_sweep_detector_is_non_vacuous(commit_sha):
-    # With suppression removed, the detector must fire on the eight real raw
+    # With suppression removed, the detector must fire on the nine real raw
     # sites. If it fires nowhere, the "no new raw key" test below is vacuous.
     findings = _sweep(commit_sha, ())
     found = {(f.path, f.func) for f in findings}
