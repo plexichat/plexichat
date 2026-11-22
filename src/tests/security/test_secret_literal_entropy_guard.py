@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import codecs
 import fnmatch
 import hashlib
 import math
@@ -51,7 +52,9 @@ SCANNED_SUFFIXES = frozenset({".py", ".yaml", ".yml", ".json", ".env"})
 
 # PEM private-key blocks (the marker itself is enough -- a real key never needs
 # to be valid to be a leak, and an invalid one is still a leak of intent).
-PEM_RE = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----")
+PEM_RE = re.compile(
+    r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
+)
 
 # Keyword heuristic: only literals attached to a credential-looking name are
 # candidates.  Deliberately broad on the name, narrow on the value (below), so
@@ -199,17 +202,62 @@ def _wanted(rel: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _const_bytes(node: ast.AST) -> bytes | None:
+    """Static byte payload of a literal-like expression, or None if computed."""
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bytes):
+            return node.value
+        if isinstance(node.value, str):
+            return node.value.encode("utf-8")
+    folded = _const_str(node)
+    return folded.encode("utf-8") if folded is not None else None
+
+
+def _is_env_lookup(node: ast.AST) -> bool:
+    """True for ``os.getenv(...)`` / ``os.environ.get(...)`` call targets."""
+    if isinstance(node, ast.Name) and node.id == "getenv":
+        return True
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "getenv"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "os"
+    ):
+        return True
+    if isinstance(node, ast.Attribute) and node.attr == "get":
+        base = node.value
+        if isinstance(base, ast.Name) and base.id == "environ":
+            return True
+        if (
+            isinstance(base, ast.Attribute)
+            and base.attr == "environ"
+            and isinstance(base.value, ast.Name)
+            and base.value.id == "os"
+        ):
+            return True
+    return False
+
+
 def _const_str(node: ast.AST) -> str | None:
     """Best-effort static string value of a literal-like expression.
 
     Adjacent literals (``"a" "b"``) are already folded into one ``Constant`` by
     the parser, but authors can split a committed token just as easily with
-    ``+`` or ``.join([...])``.  Only folds when *every* part is static, so a
-    runtime/computed value is never guessed at (and never produces a false
-    finding).  Non-static f-string interpolations are ignored, as before.
+    ``+``, ``"%s" % x``, ``"{0}".format(x)``, ``.join([...])`` or an at-use-site
+    decode (``bytes.fromhex``/``codecs.decode``/``base64``).  Only folds when
+    *every* part is static, so a runtime/computed value is never guessed at
+    (and never produces a false finding).  Non-static f-string interpolations
+    are ignored, as before.  Environment lookups fold only their literal
+    fallback default, never the (dynamic) environment value.
     """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    # A byte-string literal is still a committed credential once decoded.
+    if isinstance(node, ast.Constant) and isinstance(node.value, bytes):
+        try:
+            return node.value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
     if isinstance(node, ast.JoinedStr):
         parts = []
         for p in node.values:
@@ -223,6 +271,28 @@ def _const_str(node: ast.AST) -> str | None:
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         left, right = _const_str(node.left), _const_str(node.right)
         return left + right if left is not None and right is not None else None
+    # Old-style ``"prefix%s" % literal`` assembly.  Fold only literal operands.
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        fmt = _const_str(node.left)
+        if fmt is None:
+            return None
+        rhs = node.right
+        if isinstance(rhs, (ast.Tuple, ast.List)):
+            args = []
+            for elt in rhs.elts:
+                part = _const_str(elt)
+                if part is None:
+                    return None
+                args.append(part)
+            arg: str | tuple[str, ...] = tuple(args)
+        else:
+            arg = _const_str(rhs)
+        if arg is None:
+            return None
+        try:
+            return fmt % arg
+        except (TypeError, ValueError):
+            return None
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -239,7 +309,33 @@ def _const_str(node: ast.AST) -> str | None:
                 return None
             parts.append(part)
         return node.func.value.value.join(parts)
-    # ``b64decode(...).decode()`` wraps the fold in a no-op str conversion.
+    # ``"".format(...)/{0}".format(...)`` with all-literal arguments.
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+        and isinstance(node.func.value, ast.Constant)
+        and isinstance(node.func.value.value, str)
+    ):
+        args = []
+        for a in node.args:
+            part = _const_str(a)
+            if part is None:
+                return None
+            args.append(part)
+        kwargs = {}
+        for kw in node.keywords:
+            if kw.arg is None or kw.value is None:
+                return None
+            part = _const_str(kw.value)
+            if part is None:
+                return None
+            kwargs[kw.arg] = part
+        try:
+            return node.func.value.value.format(*args, **kwargs)
+        except (IndexError, KeyError, ValueError, TypeError, AttributeError):
+            return None
+    # ``decode()`` wraps one of the decoders below in a no-op str conversion.
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -247,6 +343,44 @@ def _const_str(node: ast.AST) -> str | None:
         and isinstance(node.func.value, ast.Call)
     ):
         return _const_str(node.func.value)
+    # bytes.fromhex("<hex>") (usually followed by .decode() above).
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "fromhex"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "bytes"
+        and node.args
+    ):
+        hex_str = _const_str(node.args[0])
+        if hex_str is not None:
+            try:
+                return bytes.fromhex(hex_str).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                return None
+    # codecs.decode(<static payload>, "<codec>") for the common text codecs.
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "decode"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "codecs"
+        and len(node.args) >= 2
+    ):
+        codec = _const_str(node.args[1])
+        raw = _const_bytes(node.args[0])
+        if codec is None or raw is None:
+            return None
+        try:
+            result = codecs.decode(raw, codec)
+        except (ValueError, UnicodeDecodeError, LookupError, TypeError):
+            return None
+        if isinstance(result, bytes):
+            try:
+                return result.decode("utf-8")
+            except UnicodeDecodeError:
+                return None
+        return result if isinstance(result, str) else None
     # A secret kept base64-encoded and decoded at the use site is still a
     # committed credential.  Only fold a single literal argument; a computed
     # input is never decoded or guessed at.
@@ -259,16 +393,29 @@ def _const_str(node: ast.AST) -> str | None:
             if isinstance(fn, ast.Attribute)
             else None
         )
-        arg = node.args[0]
-        if (
-            fname == "b64decode"
-            and isinstance(arg, ast.Constant)
-            and isinstance(arg.value, str)
-        ):
+        arg = _const_str(node.args[0])
+        if fname == "b64decode" and arg is not None:
             try:
-                return base64.b64decode(arg.value, validate=True).decode("utf-8")
+                return base64.b64decode(arg, validate=True).decode("utf-8")
             except (ValueError, UnicodeDecodeError):
                 return None
+        if fname == "urlsafe_b64decode" and arg is not None:
+            try:
+                return base64.urlsafe_b64decode(arg).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                return None
+    # os.getenv("X", "<literal>") / os.environ.get("X", default="<literal>"):
+    # the environment value is dynamic, but a hard-coded fallback is not.
+    if isinstance(node, ast.Call) and _is_env_lookup(node.func):
+        default = None
+        if len(node.args) >= 2:
+            default = node.args[1]
+        else:
+            for kw in node.keywords:
+                if kw.arg == "default" and kw.value is not None:
+                    default = kw.value
+                    break
+        return _const_str(default) if default is not None else None
     return None
 
 
@@ -625,6 +772,115 @@ def test_non_static_fragments_are_not_guessed(tmp_path: Path) -> None:
         'prefix = "dBJf8sK2mQ9xL4pR7"\n'
         "API_KEY = prefix + get_suffix()\n"
         'API_TOKEN = "".join(parts)\n',
+        encoding="utf-8",
+    )
+    assert scan_files(tmp_path, ["app/config.py"]) == []
+
+
+# -- Final bounded pass: other static-assembly forms -----------------------
+# Each probe below is non-vacuous: the secret appears only inside a form that
+# the previous folding did not understand, so without the new fold there is no
+# finding at all.
+
+_SECRET = "dBJf8sK2mQ9xL4pR7vT1wY6zA3cN5hE"
+
+
+def _assert_flagged(tmp_path: Path, source: str) -> list[Finding]:
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+    findings = filter_findings(scan_files(tmp_path, ["app/config.py"]))
+    assert any(f.kind == "secret_literal" for f in findings), findings
+    assert _SECRET not in repr([f.to_dict() for f in findings])
+    return findings
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        f'"%s" % "{_SECRET}"',
+        f'"%s-%s" % ("{_SECRET[:16]}", "{_SECRET[16:]}")',
+        f'"key_%s" % "{_SECRET}"',
+    ),
+)
+def test_secret_built_with_percent_formatting_is_flagged(
+    tmp_path: Path, expression: str
+) -> None:
+    """``%``-formatting of all-literal operands is folded, not ignored."""
+    _assert_flagged(tmp_path, f"API_KEY = {expression}\n")
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        f'"{{}}".format("{_SECRET}")',
+        f'"{{0}}".format("{_SECRET}")',
+        f'"k={{k}}".format(k="{_SECRET}")',
+    ),
+)
+def test_secret_built_with_str_format_is_flagged(
+    tmp_path: Path, expression: str
+) -> None:
+    """``str.format`` with only static arguments is folded."""
+    _assert_flagged(tmp_path, f"API_KEY = {expression}\n")
+
+
+def test_secret_built_with_bytes_fromhex_is_flagged(tmp_path: Path) -> None:
+    """A hex-encoded credential decoded at the use site is still committed."""
+    encoded = _SECRET.encode("utf-8").hex()
+    assert encoded != _SECRET  # premise
+    _assert_flagged(tmp_path, f'API_KEY = bytes.fromhex("{encoded}").decode()\n')
+
+
+def test_secret_built_with_codecs_decode_is_flagged(tmp_path: Path) -> None:
+    """``codecs.decode`` of a static payload is folded like b64decode."""
+    encoded = base64.b64encode(_SECRET.encode("utf-8")).decode("ascii")
+    assert encoded != _SECRET  # premise
+    _assert_flagged(
+        tmp_path,
+        f'import codecs\nAPI_KEY = codecs.decode(b"{encoded}", "base64").decode()\n',
+    )
+
+
+def test_urlsafe_base64_wrapped_secret_is_flagged(tmp_path: Path) -> None:
+    """The urlsafe base64 spelling must fold just like b64decode."""
+    encoded = base64.urlsafe_b64encode(_SECRET.encode("utf-8")).decode("ascii")
+    assert encoded != _SECRET  # premise
+    _assert_flagged(
+        tmp_path,
+        f'import base64\nAPI_KEY = base64.urlsafe_b64decode("{encoded}").decode()\n',
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        f'os.getenv("APP_KEY", "{_SECRET}")',
+        f'os.environ.get("APP_KEY", "{_SECRET}")',
+        f'os.environ.get("APP_KEY", default="{_SECRET}")',
+    ),
+)
+def test_hardcoded_env_fallback_secret_is_flagged(
+    tmp_path: Path, expression: str
+) -> None:
+    """The environment value is dynamic, but a literal fallback is not."""
+    _assert_flagged(tmp_path, f"import os\nAPI_KEY = {expression}\n")
+
+
+def test_runtime_operands_in_new_folds_are_not_guessed(tmp_path: Path) -> None:
+    """No false positives: computed operands in every new fold stay unflagged."""
+    path = tmp_path / "app" / "config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f"import base64, codecs, os\n"
+        f'prefix = "{_SECRET[:16]}"\n'
+        f'API_KEY = "%s" % get_suffix()\n'
+        f'API_TOKEN = "{{0}}".format(get_secret())\n'
+        f"API_PASS = bytes.fromhex(get_hex()).decode()\n"
+        f'CLIENT_SECRET = codecs.decode(get_payload(), "base64")\n'
+        f"AUTH_KEY = base64.urlsafe_b64decode(get_blob()).decode()\n"
+        f'BEARER = os.getenv("APP_KEY", get_default())\n'
+        f'PEPPER = os.environ.get("APP_KEY")\n',
         encoding="utf-8",
     )
     assert scan_files(tmp_path, ["app/config.py"]) == []
