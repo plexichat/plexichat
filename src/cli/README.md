@@ -41,11 +41,11 @@ These options are available for every subcommand and must appear before the subc
 ```bash
 # Start the server normally
 python main.py
-python main.py start --host 0.0.0.0 --port 8000
+python main.py --host 0.0.0.0 --port 8000 start
 
 # Validate configuration without binding to a port
 python main.py pre-flight
-python main.py pre-flight --config my-config.yaml
+python main.py --config my-config.yaml pre-flight
 
 # Show help for a subcommand
 python main.py start --help
@@ -82,8 +82,8 @@ Programmatic invocation:
 ```python
 from src.cli.main import parse_args, main as cli_main
 
-args = parse_args(["pre-flight", "--config", "my-config.yaml"])
-cli_main(["pre-flight", "--config", "my-config.yaml"])
+args = parse_args(["--config", "my-config.yaml", "pre-flight"])
+cli_main(["--config", "my-config.yaml", "pre-flight"])
 ```
 
 Unknown subcommands produce a `Did you mean ...?` suggestion based on close matches.

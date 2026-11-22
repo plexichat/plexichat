@@ -62,8 +62,8 @@ Start the API server. This is the default.
 
 ```bash
 python main.py start
-python main.py start --host 0.0.0.0 --port 8080
-python main.py start --config production.yaml
+python main.py --host 0.0.0.0 --port 8080 start
+python main.py --config production.yaml start
 ```
 
 The server does the following, in order:
@@ -83,7 +83,7 @@ Validate the entire configuration and module initialization without binding to a
 
 ```bash
 python main.py pre-flight
-python main.py pre-flight --config staging.yaml
+python main.py --config staging.yaml pre-flight
 ```
 
 The check runs the full startup sequence:
@@ -150,7 +150,7 @@ Regenerate the `applications.webhook_signature_secret` value in the config file 
 
 ```bash
 python main.py rotate-secrets
-python main.py rotate-secrets --config config/production.yaml
+python main.py --config config/production.yaml rotate-secrets
 ```
 
 The command updates the file in place. Back up the file before you run this in production. The new value is `secrets.token_hex(32)` (`src/cli/main.py`).
@@ -257,10 +257,10 @@ python main.py
 python main.py --config config/production.yaml
 
 # Validate a new config without starting the server
-python main.py pre-flight --config config/production.yaml
+python main.py --config config/production.yaml pre-flight
 
 # CI/CD gate: fail the pipeline if pre-flight fails
-python main.py pre-flight --config config/ci.yaml || exit 1
+python main.py --config config/ci.yaml pre-flight || exit 1
 
 # Run self-tests before deployment
 python main.py self-test
@@ -275,7 +275,7 @@ python main.py migrate-db --dry-run
 
 # Rotate the webhook signature secret
 cp config/production.yaml config/production.yaml.bak
-python main.py rotate-secrets --config config/production.yaml
+python main.py --config config/production.yaml rotate-secrets
 
 # Migrate message encryption keys (dry run first)
 python main.py migrate-kek --kek-keyring message_keyring.json \
