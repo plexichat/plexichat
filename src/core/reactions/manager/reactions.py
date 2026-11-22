@@ -373,8 +373,12 @@ class ReactionOpsMixin(ReactionProtocol):
         query += clause
         params.extend(blocked_params)
 
+        # created_at is second-granularity, so two reactions added in the same
+        # second tie and the group order would then depend on whichever plan
+        # SQLite picked (an index scan yields emoji order, a table scan row
+        # order).  id is the insertion order and breaks the tie deterministically.
         query += """ GROUP BY r.emoji, r.is_custom, r.custom_emoji_id, e.url
-                     ORDER BY MIN(r.created_at)"""
+                     ORDER BY MIN(r.created_at), MIN(r.id)"""
 
         rows = self._db.fetch_all(query, tuple(params))
 
@@ -557,7 +561,12 @@ class ReactionOpsMixin(ReactionProtocol):
             query += clause
             params.extend(blocked_params)
 
-            query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
+            # MIN(r.id) breaks created_at ties (see get_reactions) so the pill
+            # order does not depend on the plan SQLite happens to choose.
+            query += (
+                " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url"
+                " ORDER BY r.message_id, MIN(r.created_at), MIN(r.id)"
+            )
 
             rows = self._db.fetch_all(query, tuple(params))
 
