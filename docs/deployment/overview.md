@@ -62,7 +62,7 @@ flowchart TB
 3. **Shared utilities (`common_utils`)** — Internal Python helpers at `src/utils/common_utils/` used only by the server. The web client lives in a separate repository and does not share this package.
 4. **Database** — PostgreSQL 18 (recommended) or SQLite (development only).
 5. **Cache** — Valkey 9.1.1 (recommended for production).
-6. **Storage** — Local filesystem or S3-compatible storage (RustFS `1.0.0-rc.3` in Docker, AWS S3 in production) for media attachments.
+6. **Storage** — Local filesystem or S3-compatible storage (RustFS `1.0.0` in Docker, AWS S3 in production) for media attachments.
 7. **WebRTC SFU (`mediasoup` default, `Janus` alternative)** — Optional signaling peer for voice and video. Media plane uses UDP 30000-30100.
 8. **Reverse proxy and TLS (`plexichat-client` Nginx)** — Terminates TLS and proxies `/api/v1` and `/gateway` to the backend.
 
