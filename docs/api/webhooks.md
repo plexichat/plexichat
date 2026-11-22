@@ -97,7 +97,7 @@ Returns a `WebhookResponse`. `token` and `url` are populated only on create.
 |---|---|---|
 | `400` | `{"error":{"code":400,"message":"Invalid webhook name, avatar or limit reached"}}` | Validation failed or per-channel limit (default 10) reached |
 | `401` | `{"error":{"code":401,"message":"Invalid or expired token"}}` | Not authenticated |
-| `403` | `{"error":{"code":403,"message":"Permission denied"}}` | Lacks `manage webhooks` permission |
+| `403` | `{"error":{"code":403,"message":"Permission denied"}}` | Lacks `webhooks.manage` permission |
 | `404` | `{"error":{"code":404,"message":"Channel not found"}}` | Channel does not exist |
 
 ## Get a webhook
