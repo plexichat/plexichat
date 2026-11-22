@@ -42,6 +42,21 @@ from ..gateway_revocation import (
 from .protocol import AuthManagerProtocol
 
 
+# SECURITY: INCR and the first-hit EXPIRE must be ONE server-side operation.
+# Two client round trips left a window where the bucket existed with no TTL:
+# a worker that died (or whose EXPIRE call failed) between them left the count
+# permanently frozen, locking the account out of 2FA for ever because only the
+# first increment installed the TTL. This mirrors the shared rate limiter's
+# ``_INCR_EXPIRE_SCRIPT`` (src.core.database.cache.rate_limit).
+_2FA_INCR_EXPIRE_SCRIPT = """
+local current = redis.call("INCR", KEYS[1])
+if current == 1 then
+    redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return current
+"""
+
+
 # Process-wide in-process fallback for the 2FA confirm limiter. It is only used
 # when no Valkey backend is configured (single-worker deployments and tests),
 # but it is keyed by user id and used to live for the whole process: every
@@ -212,9 +227,11 @@ class TwoFactorMixin(AuthManagerProtocol):
         """Rate-limit TOTP code guessing for non-challenge 2FA endpoints.
 
         Backed by the shared cache (Valkey primary) so the limit holds across
-        all workers in a horizontally scaled deployment. SECURITY: this limiter
-        fails CLOSED — if the cache backend errors while it is supposed to be
-        available, attempts are refused rather than waved through.
+        all workers in a horizontally scaled deployment. The bucket's first
+        increment and TTL installation are one atomic server-side operation, so
+        a crashed worker cannot leave a counter with no expiry. SECURITY: this
+        limiter fails CLOSED — if the cache backend errors while it is supposed
+        to be available, attempts are refused rather than waved through.
 
         The in-process fallback is a bounded LRU (see module constants). A
         bucket's idle expiry is ``max(window_seconds, idle floor)``, so idle
@@ -231,9 +248,15 @@ class TwoFactorMixin(AuthManagerProtocol):
         if client and is_available():
             full_key = f"ratelimit:auth_2fa_attempts:{user_id}"
             try:
-                current = client.incr(full_key)
-                if current == 1:
-                    client.expire(full_key, window_seconds)
+                # Atomic INCR + first-hit EXPIRE: the TTL is installed by the
+                # server in the same operation that creates the counter, so
+                # there is no no-TTL window for a crash/failed round trip to
+                # exploit. The returned count is still authoritative.
+                current = int(
+                    client.eval_lua(
+                        _2FA_INCR_EXPIRE_SCRIPT, [full_key], [window_seconds]
+                    )
+                )
                 if current > max_attempts:
                     raise TwoFactorInvalidError("Too many attempts; try again later")
                 return

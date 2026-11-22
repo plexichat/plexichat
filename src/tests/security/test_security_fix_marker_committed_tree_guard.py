@@ -249,6 +249,23 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "and swallow a genuine stacked-write separator"
         ),
     ),
+    # f585d31d: the Valkey-backed 2FA attempt limiter now fuses INCR and the
+    # first-hit EXPIRE into one Lua script. The MAIN working tree's copy of
+    # twofactor.py is contested/stale: a staged diff reverts gateway socket
+    # revocation and re-adds a debug print. If that whole stale file is staged
+    # on top of this commit, the atomic script disappears and the two-round-trip
+    # race returns -- a crash between INCR and EXPIRE leaves the counter key
+    # with no TTL, permanently locking the account out of 2FA.
+    CommittedFixMarker(
+        key="2fa-attempt-counter-atomic-incr-expire",
+        path="src/core/auth/managers/twofactor.py",
+        marker="_2FA_INCR_EXPIRE_SCRIPT",
+        why=(
+            "f585d31d: atomic INCR + first-hit EXPIRE for the 2FA attempt "
+            "counter; the contested/stale working-tree copy of twofactor.py "
+            "would restore the no-TTL window and permanent 2FA lockout"
+        ),
+    ),
     # --- Targeted gateway socket closure on session revocation ---
     # Private-index repairs dc3b481e / c62071ac landed these closes at HEAD
     # while peer agents' working-tree/index copies of the same files are stale.
