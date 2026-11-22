@@ -355,6 +355,20 @@ _E91A5BF3_ROUTE_ALIAS_GATE_ID = (
 )
 
 
+# b94d7209 (admin migration read-scope fix): the three migration GET handlers
+# (list/status/details) gate on the delegable admin.migrations.read scope before
+# reading any data, and the scope is declared in PERMISSION_SCOPES (which is what
+# makes it delegable via _build_delegable_permissions). Both anchors are
+# distinctive to the repaired blobs, so a stale staged copy that drops the route
+# gate or the declaration is caught by name.
+_ADMIN_MIGRATION_READ_ROUTE_GATE = (
+    'require_admin_permission(request, "admin.migrations.read")'
+)
+_ADMIN_MIGRATION_READ_SCOPE_DECL = (
+    '"admin.migrations.read": "View migration status, metadata, and execution logs"'
+)
+
+
 # be19f4ca (N644 follow-up): logout re-checks the presented session bearer's
 # IP/UA against the session's blind indexes before the revoking write. The
 # `return False` fail-closed arms and the ip_index/ua_index SELECT distinguish
@@ -1756,6 +1770,33 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "literal re-leaks internal reviewer/admin commentary to the subject"
         ),
     ),
+    # b94d7209: the migration READ routes and the scope declaration must stay in
+    # the committed tree. Pin the literal route gate and the PERMISSION_SCOPES
+    # declaration independently so a stale staged copy of either file that drops
+    # one of them is caught by name.
+    CommittedFixMarker(
+        key="b94d7209-admin-migrations-read-route-gate",
+        path="src/api/routes/admin/migrations.py",
+        marker=_ADMIN_MIGRATION_READ_ROUTE_GATE,
+        why=(
+            "b94d7209: the three migration GET handlers call "
+            "require_admin_permission(request, 'admin.migrations.read') before "
+            "touching any migration data; a stale staged copy drops the gate and "
+            "exposes migration state/integrity/execution logs to any "
+            "authenticated low-privilege admin"
+        ),
+    ),
+    CommittedFixMarker(
+        key="b94d7209-admin-migrations-read-scope-declared",
+        path="src/core/admin/permissions.py",
+        marker=_ADMIN_MIGRATION_READ_SCOPE_DECL,
+        why=(
+            "b94d7209: admin.migrations.read is declared in PERMISSION_SCOPES, "
+            "which also makes it delegable via _build_delegable_permissions; a "
+            "stale staged copy without the declaration leaves the route gate "
+            "referencing an undeclared, non-delegable scope"
+        ),
+    ),
 )
 
 
@@ -3015,3 +3056,62 @@ def test_dsar_notes_denylist_does_not_over_redact_subject_data() -> None:
     )
     assert '_check_admin(current_user)' in route
     assert '"users.tier"' in route
+
+
+# b94d7209 (admin migration read-scope fix): companion key set for the migration
+# read-scope pins. Kept explicit so neither the route gate nor the scope
+# declaration pin can be dropped silently. Both are positive markers;
+# non-vacuity comes from the parametrized test_synthetic_reverted_blob_is_flagged
+# plus the live-HEAD tie below.
+ADMIN_MIGRATION_READ_SCOPE_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "b94d7209-admin-migrations-read-route-gate",
+        "b94d7209-admin-migrations-read-scope-declared",
+    }
+)
+
+
+def test_admin_migration_read_scope_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """Both b94d7209 migration read-scope pins are registered, live, falsifiable.
+
+    Each key resolves to a real committed blob carrying its distinctive marker,
+    points at the expected file, and is rejected by a synthetic stale blob with
+    the fix erased. This complements the parametrized synthetic-removal test with
+    a live-HEAD tie so a key that was registered but never matched anything fails
+    here.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert ADMIN_MIGRATION_READ_SCOPE_PIN_KEYS <= set(keys), (
+        "admin migration read-scope key set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(ADMIN_MIGRATION_READ_SCOPE_PIN_KEYS - set(keys))}"
+    )
+    assert len(ADMIN_MIGRATION_READ_SCOPE_PIN_KEYS) == 2
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "b94d7209-admin-migrations-read-route-gate": (
+            "src/api/routes/admin/migrations.py"
+        ),
+        "b94d7209-admin-migrations-read-scope-declared": (
+            "src/core/admin/permissions.py"
+        ),
+    }
+    for key in sorted(ADMIN_MIGRATION_READ_SCOPE_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_scope_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# read scope erased\n"
+
+        present, detail = _evaluate(record, stale_scope_blob)
+        assert not present, (
+            f"synthetic stale migration read-scope revert of {key} was not caught"
+        )
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
