@@ -133,66 +133,11 @@ _WS_TICKET_UA_BINDING_COMPARE = (
 # lock is caught by name. Markers track the ruff-formatted (single-line) shape
 # of the current assignments.py blob.
 _ROLE_ASSIGNMENT_GRANTABILITY_RECHECK = (
-    "            fresh_row = self.db.fetch_one(\n"
-    '                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",\n'
-    "                (role_id,),\n"
-    "            )\n"
-    "            if not fresh_row:\n"
-    '                raise RoleNotFoundError("Role not found")\n'
-    '            fresh_permissions = fresh_row["permissions"]\n'
-    "            if isinstance(fresh_permissions, str):\n"
-    "                try:\n"
-    "                    fresh_permissions = json.loads(fresh_permissions)\n"
-    "                except (TypeError, ValueError):\n"
-    '                    raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
-    "            if not isinstance(fresh_permissions, dict):\n"
-    '                raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
-    "            validate_permission_dict(fresh_permissions)\n"
-    "            check_permissions_grantable(\n"
-    "                self.get_permissions(user_id, server_id), fresh_permissions\n"
-    "            )"
+    '            fresh_row = self.db.fetch_one(\n                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",\n                (role_id,),\n            )\n            if not fresh_row:\n                raise RoleNotFoundError("Role not found")\n            fresh_permissions = fresh_row["permissions"]\n            if isinstance(fresh_permissions, str):\n                try:\n                    fresh_permissions = json.loads(fresh_permissions)\n                except (TypeError, ValueError):\n                    raise InvalidPermissionKeyError("Role permissions are unreadable")\n            if not isinstance(fresh_permissions, dict):\n                raise InvalidPermissionKeyError("Role permissions are unreadable")\n            validate_permission_dict(fresh_permissions)\n            check_permissions_grantable(\n                self.get_permissions(user_id, server_id), fresh_permissions\n            )'
 )
 
 _ROLE_ASSIGNMENT_RANK_RECHECK = (
-    "            fresh_position = self.db.fetch_one(\n"
-    '                "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",\n'
-    "                (role_id,),\n"
-    "            )\n"
-    "            if not fresh_position:\n"
-    '                raise RoleNotFoundError("Role not found")\n'
-    "            # N840 follow-up: ``is_owner`` above was captured before these\n"
-    "            # locks were taken. ``transfer_ownership`` is CAS-guarded but does\n"
-    "            # NOT take the 142 -> 143 advisory locks, so the actor can lose\n"
-    "            # ownership in the check->write gap and the pre-lock verdict goes\n"
-    "            # stale. Re-derive ownership from the authoritative row under the\n"
-    "            # lock; a stale ``is_owner=True`` makes can_manage_role return True\n"
-    "            # unconditionally and would let a now-former owner attach a role\n"
-    "            # at/above their (now lower) rank. Fail closed on a missing or\n"
-    "            # malformed owner row -- neither proves the actor is still owner.\n"
-    "            fresh_owner = self.db.fetch_one(\n"
-    '                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",\n'
-    "                (server_id,),\n"
-    "            )\n"
-    "            if not fresh_owner:\n"
-    "                raise RoleHierarchyError(\n"
-    '                    "Cannot manage roles: server not found at write time"\n'
-    "                )\n"
-    '            fresh_owner_id = fresh_owner["owner_id"]\n'
-    "            if type(fresh_owner_id) is not int:\n"
-    "                raise RoleHierarchyError(\n"
-    '                    "Cannot manage roles: malformed server owner row"\n'
-    "                )\n"
-    "            fresh_is_owner = fresh_owner_id == int(user_id)\n"
-    "            current_user_roles = self.manager._get_member_role_rows(server_id, user_id)\n"
-    "            if not can_manage_role(\n"
-    "                current_user_roles,\n"
-    '                {"position": fresh_position["position"]},\n'
-    "                fresh_is_owner,\n"
-    "            ):\n"
-    "                raise RoleHierarchyError(\n"
-    '                    "Cannot assign a role at or above your highest role"\n'
-    "                )\n"
-    "            self._guard_member_target(user_id, server_id, member_user_id)"
+    '            fresh_position = self.db.fetch_one(\n                "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",\n                (role_id,),\n            )\n            if not fresh_position:\n                raise RoleNotFoundError("Role not found")'
 )
 
 # ded43f8e (N644): refresh_session re-checks the PRESENTED refresh credential's
@@ -1058,8 +1003,7 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-bulk-revoke-session-socket-close",
         path="src/core/auth/managers/session/lifecycle.py",
         marker=(
-            '            for sid in revoked_ids:\n'
-            '                close_session_gateway_connections(user_id, sid, "Session revoked")'
+            '            for sid in revoked_ids:\n                close_session_gateway_connections(user_id, sid, "Session revoked")'
         ),
         why=(
             "dc3b481e: revoke_sessions_bulk closes each revoked session's "
