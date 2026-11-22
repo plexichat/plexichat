@@ -246,7 +246,6 @@ def test_cross_worker_tuning_audit_stringifies_admin_id():
     client = TestClient(app)
     patchers = (
         patch.object(dashboard_routes, "check_host_restriction"),
-        patch.object(dashboard_routes, "get_admin_from_token", return_value=1),
         # The audit read now carries an explicit admin.audit.read scope gate.
         patch.object(dashboard_routes, "require_admin_permission", return_value=1),
         patch("src.api.get_db", return_value=_AuditDB()),
@@ -295,8 +294,15 @@ def test_plexijoin_listed_reviewed_by_is_string():
     app.include_router(plexijoin_routes.router, prefix="/api/v1/admin")
     client = TestClient(app)
     patchers = (
+        # These routes authenticate through ``require_admin_permission``, not
+        # through the bare token helper: it looks the admin up, checks the
+        # permission and reaches for ``api.get_database()``, so patching the
+        # token helper alone left the real guard in place (401, then a
+        # "module not initialized" when the database was asked for). Patch the
+        # guard where the route module bound it; this test is about the
+        # snowflake serialization, not the auth chain.
         patch.object(plexijoin_routes, "check_host_restriction"),
-        patch.object(plexijoin_routes, "get_admin_from_token", return_value=1),
+        patch.object(plexijoin_routes, "require_admin_permission", return_value=1),
         patch.object(
             plexijoin_routes, "_get_plexijoin_manager", lambda request: _Manager()
         ),

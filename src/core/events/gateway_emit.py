@@ -27,6 +27,23 @@ from .types import EventType
 P = ParamSpec("P")
 
 
+def _module_is_live(module: Any) -> bool:
+    """Return whether a lazily initialized module is safe to call into.
+
+    Core modules import cleanly before ``setup()`` runs: their names resolve but
+    every attribute lookup still raises. Each module flips ``_setup_complete``
+    at the end of its setup, so probing that flag lets a caller treat an
+    uninitialized integration as "not configured" instead of paying an
+    exception on every lookup. Modules without the flag are treated as live.
+    """
+    if module is None:
+        return False
+    try:
+        return bool(getattr(module, "_setup_complete", True))
+    except Exception:
+        return False
+
+
 # Shared, bounded cache of fully resolved channel-event audiences. A burst of
 # typing / reaction / read-receipt frames for one channel reuses a single
 # resolution instead of re-walking every member's channels.view permission on

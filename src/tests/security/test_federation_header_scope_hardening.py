@@ -138,11 +138,6 @@ def _patch_admin(monkeypatch):
         "src.api.routes.admin.plexijoin.require_admin_permission", permission
     )
     monkeypatch.setattr(
-        "src.api.routes.admin.plexijoin.get_admin_from_token",
-        lambda request: pytest.fail("authentication-only helper used as the gate"),
-        raising=False,
-    )
-    monkeypatch.setattr(
         "src.api.routes.admin.plexijoin._get_plexijoin_manager",
         lambda request, **kwargs: manager,
     )

@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 
 import utils.logger as logger
 from src.core.security.hardening import (
@@ -301,6 +301,9 @@ class ThreadMessagingMixin(ThreadProtocol):
         if conversation_id is not None and _v3_interval_ids(rows):
             try:
                 from src.utils.encryption import get_ratchet_manager
+                from src.utils.encryption.channel_ratchet.store import (
+                    ChannelRatchetStore,
+                )
 
                 # A fresh manager bound to this db is used (rather than the
                 # process singleton) so swapping in the preloaded store is
@@ -309,9 +312,16 @@ class ThreadMessagingMixin(ThreadProtocol):
                 intervals = manager.list_intervals(
                     conversation_id, limit=_RATCHET_INTERVAL_PREFETCH_LIMIT
                 )
-                manager._store = _PreloadedRatchetStore(
-                    manager._store,
-                    {int(interval.interval_id): interval for interval in intervals},
+                # The proxy serves ``get_by_id`` from the snapshot and delegates
+                # every other store method through ``__getattr__``, so it stands
+                # in for the concrete store exactly; the cast records that
+                # duck-typed contract for the type checker.
+                manager._store = cast(
+                    ChannelRatchetStore,
+                    _PreloadedRatchetStore(
+                        manager._store,
+                        {int(interval.interval_id): interval for interval in intervals},
+                    ),
                 )
                 ratchet_manager = manager
             except Exception as e:

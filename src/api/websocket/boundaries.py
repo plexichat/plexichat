@@ -201,7 +201,7 @@ PAYLOAD_SIZE_MEMO_MIN_BYTES = 2048
 MAX_PAYLOAD_SIZE_KEY_CHARS = MAX_REPLAY_EVENT_BYTES
 
 _UNCACHEABLE_SIZE_KEY = object()
-_MEMO_MISSING = object()
+_MEMO_MISSING: Any = object()
 
 
 def _size_cache_key(value: Any):
@@ -280,7 +280,7 @@ class _PayloadSizeMemo:
     def lookup(self, value: Any) -> Any:
         """Return the live entry for ``value`` (or ``None``), counting a miss."""
         with self._lock:
-            entry = self._entries.get(id(value), _MEMO_MISSING)
+            entry: Any = self._entries.get(id(value), _MEMO_MISSING)
             if entry is _MEMO_MISSING or entry[0] is not value:
                 self._misses += 1
                 return None

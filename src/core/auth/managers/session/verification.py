@@ -197,7 +197,12 @@ class VerificationMixin(AuthManagerProtocol):
             if not isinstance(stored_ua_index, str) or not stored_ua_index:
                 raise TokenInvalidError("User-Agent Binding Required")
             current_ua_index = self._ua_index(user_agent)
-            if not hmac.compare_digest(stored_ua_index, current_ua_index):
+            # ``_ua_index`` returns None when it cannot derive a binding
+            # material from the header; that is a binding failure, not a
+            # comparison to run (and ``compare_digest`` needs two strings).
+            if not current_ua_index or not hmac.compare_digest(
+                stored_ua_index, current_ua_index
+            ):
                 raise TokenInvalidError("User-Agent Binding Mismatch")
 
         last_activity = row.get("last_activity", 0)

@@ -15,6 +15,8 @@ conftest discovery sees exactly the same names as before.
 
 # Import-time environment setup MUST run first: it installs the test config,
 # logger, and validator shims that every fixture depends on.
+import pytest
+
 from src.tests._conftest import config_env as config_env
 
 from src.tests._conftest.config_env import (
@@ -156,6 +158,26 @@ from src.tests.fixtures.valkey_docker import (
     valkey_config as valkey_config,
     valkey_manager as valkey_manager,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_url_resolution_memo():
+    """No test may inherit another test's URL resolution answer.
+
+    ``URLValidator`` memoizes a validated ``(hostname, resolved_ip)`` pair for a
+    few seconds in a process-global cache. Two modules already clear it around
+    their own cases, but a case in one file that approves a host would still
+    satisfy a case in another file without calling its patched
+    ``getaddrinfo`` -- which reads as "resolved more than once", a pinned IP
+    from the wrong test, or a rebinding answer that can never be observed.
+    Clearing per test keeps every case's own side_effect the only source.
+    """
+    from src.utils.security import clear_url_resolution_cache
+
+    clear_url_resolution_cache()
+    yield
+    clear_url_resolution_cache()
+
 
 __all__ = [
     "config_env",

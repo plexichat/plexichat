@@ -18,6 +18,10 @@ import time
 
 import pytest
 
+
+from types import SimpleNamespace
+
+import src.core.config.snapshot as snapshot_module
 import utils.config as config
 from src.core import features
 from src.core.security.hardening import HardeningViolation
@@ -39,6 +43,15 @@ def test_repeated_resolution_identical_and_single_compute(monkeypatch):
     real_loader = snapshot._loader
     builds = []
 
+    # The snapshot expires against a wall clock, so on a loaded shard the 200
+    # lookups below can straddle the staleness ceiling and rebuild -- the cache
+    # doing its job, not a defect. Freeze the clock this module reads (and only
+    # this reference, not the stdlib module) so the test measures the cache.
+    frozen = time.monotonic()
+    monkeypatch.setattr(
+        snapshot_module, "time", SimpleNamespace(monotonic=lambda: frozen)
+    )
+
     def counting_loader():
         builds.append(1)
         return real_loader()
@@ -46,6 +59,10 @@ def test_repeated_resolution_identical_and_single_compute(monkeypatch):
     monkeypatch.setattr(snapshot, "_loader", counting_loader)
 
     expected = features._compute_tier_limits("standard")
+    # Counters are cumulative for the process, so measure this test's build as
+    # a delta: a neighbouring test in the shard may already have built the
+    # table once and an absolute count would depend on collection order.
+    baseline = snapshot.stats()["rebuilds"]
     results = [features.get_tier_limits("standard") for _ in range(200)]
 
     # One table build serves every hot-path lookup. The verdicts are equal in
@@ -55,7 +72,7 @@ def test_repeated_resolution_identical_and_single_compute(monkeypatch):
     assert all(r is not results[0] for r in results[1:])
     assert len({id(r) for r in results}) == len(results)
     assert len(builds) == 1
-    assert snapshot.stats()["rebuilds"] == 1
+    assert snapshot.stats()["rebuilds"] == baseline + 1
     assert 0 < features._TIER_LIMITS_CACHE_TTL_SECONDS <= 10
 
 

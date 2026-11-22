@@ -347,6 +347,15 @@ _manager: Optional[ServersManager] = None
 _setup_complete = False
 
 
+def is_setup() -> bool:
+    """True once :func:`setup` has installed the manager.
+
+    Lets fan-out code tell "no servers store at all" (the actor cannot be in a
+    server channel) apart from "the store exists but the lookup failed".
+    """
+    return bool(_setup_complete and _manager is not None)
+
+
 def backfill_default_role_permissions(db: Any) -> int:
     """Merge any newly-added default permissions into existing ``@everyone`` roles.
 

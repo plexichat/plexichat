@@ -105,7 +105,11 @@ def test_non_string_allowed_codes_value_is_ignored():
 
 def test_non_string_custom_pattern_falls_back_without_crashing():
     rule = InviteLinkRule(_rule({"pattern": ["not-a-string"]}))
-    assert rule._pattern is InviteLinkRule.DEFAULT_INVITE_PATTERN
+    # Compare the compiled form, not object identity: ``re.compile`` returns the
+    # same object only while its bounded internal cache still holds the pattern,
+    # so an identity check fails once the rest of the suite has evicted it.
+    assert rule._pattern.pattern == InviteLinkRule.DEFAULT_INVITE_PATTERN.pattern
+    assert rule._pattern.flags == InviteLinkRule.DEFAULT_INVITE_PATTERN.flags
     # Caller-facing validation still rejects the malformed pattern.
     valid, issues = InviteLinkRule.validate_config({"pattern": ["not-a-string"]})
     assert valid is False

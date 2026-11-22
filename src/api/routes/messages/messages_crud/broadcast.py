@@ -113,6 +113,16 @@ def _resolve_recipients(
     server_id = None
     is_server_channel = False
 
+    # Imported-but-uninitialized modules raise on every lookup. Treat them as
+    # absent: without a servers store there cannot be a server channel, so a
+    # DM must still reach its participants instead of failing closed.
+    from src.core.events.gateway_emit import _module_is_live
+
+    if not _module_is_live(servers_mod):
+        servers_mod = None
+    if not _module_is_live(messaging):
+        messaging = None
+
     if servers_mod:
         try:
             channel = servers_mod.get_channel(channel_id, actor_id)

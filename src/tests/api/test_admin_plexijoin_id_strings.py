@@ -81,7 +81,6 @@ BIG_ADMIN = 987654321098765432
 
 def _patch_admin(monkeypatch, manager):
     monkeypatch.setattr(admin_plexijoin, "check_host_restriction", lambda request: None)
-    monkeypatch.setattr(admin_plexijoin, "get_admin_from_token", lambda request: 7)
     monkeypatch.setattr(
         admin_plexijoin, "require_admin_permission", lambda request, perm: 7
     )

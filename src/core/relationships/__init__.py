@@ -129,6 +129,16 @@ def _get_manager():
     return _manager
 
 
+def is_setup() -> bool:
+    """True once :func:`setup` has installed the manager.
+
+    Audience resolvers use this to tell "no relationship store at all" (there
+    are no block rows to apply, so the audience is kept) apart from "the store
+    exists but its lookup failed" (fail closed).
+    """
+    return bool(_setup_complete and _manager is not None)
+
+
 # === Friend Request Operations ===
 
 

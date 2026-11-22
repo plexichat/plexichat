@@ -252,7 +252,7 @@ lint:pre-commit:
     # pytest is not shipped (requirements.txt only) but pyright type-checks
     # src/utils/common_utils/tests, which import it. Pinned to the
     # requirements-dev.txt version so lint sees the same API as the suite.
-    - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit pip-audit pytest==9.1.1
+    - pip install ruff==0.15.12 pyright bandit[toml] detect-secrets pre-commit pip-audit pytest==9.1.1
   script:
     # A package that .gitignore hides cannot be committed, and nothing else
     # notices: its tests pass locally, where the files exist on disk, and CI

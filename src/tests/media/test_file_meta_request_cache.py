@@ -14,6 +14,7 @@ Run with: pytest src/tests/media/test_file_meta_request_cache.py -q
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import patch
 
 import pytest
@@ -28,6 +29,30 @@ MINI_PNG = (
     b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01"
     b"\x00\x00\x05\x00\x01\r\n\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+
+class _ThisThreadQueries:
+    """Count ``fetch_one`` calls made by the thread that built the counter.
+
+    ``upload_file`` hands the new row to the scanner on a worker thread, which
+    reads it back through the same connection. Counting every call on the
+    patched attribute made these measurements depend on when that worker ran:
+    on a loaded shard it landed inside the window and added a query the request
+    never issued. Only this thread's queries are part of what is measured.
+    """
+
+    def __init__(self, db):
+        self._real = db.fetch_one
+        self._owner = threading.get_ident()
+        self.count = 0
+
+    def reset(self):
+        self.count = 0
+
+    def __call__(self, *args, **kwargs):
+        if threading.get_ident() == self._owner:
+            self.count += 1
+        return self._real(*args, **kwargs)
 
 
 def _stored_name(db, file_id):
@@ -55,44 +80,45 @@ def test_repeated_identity_lookups_collapse_in_one_request(
     cache = media_manager._file_meta_cache
     cache.clear()
 
-    original_fetch_one = db.fetch_one
+    counter = _ThisThreadQueries(db)
     thumbnail = None
 
     # ── "Before": no memoisation between the three reads of the same file ──
     # Clearing before each read reproduces the pre-cache DB cost exactly.
-    with patch.object(db, "fetch_one", side_effect=original_fetch_one) as spy:
+    with patch.object(db, "fetch_one", new=counter):
         cache.clear()
         file = media_manager.get_file_by_filename(stored)
         assert file is not None
-        before_resolve = spy.call_count
-        spy.reset_mock()
+        before_resolve = counter.count
+        counter.reset()
 
         cache.clear()
         assert media_manager.check_file_access(stored, test_user.id) is True
-        before_direct = spy.call_count
-        spy.reset_mock()
+        before_direct = counter.count
+        counter.reset()
 
         thumbnail = f"thumbnails/{file.id}/{stored}"
         cache.clear()
         assert media_manager.check_file_access(thumbnail, test_user.id) is True
-        before_thumbnail = spy.call_count
+        before_thumbnail = counter.count
 
     before = before_resolve + before_direct + before_thumbnail
 
     # ── "After": one resolve primes the cache for the rest of the request ──
-    with patch.object(db, "fetch_one", side_effect=original_fetch_one) as spy:
+    counter = _ThisThreadQueries(db)
+    with patch.object(db, "fetch_one", new=counter):
         cache.clear()
         file = media_manager.get_file_by_filename(stored)
         assert file is not None
-        after_resolve = spy.call_count
+        after_resolve = counter.count
 
-        spy.reset_mock()
+        counter.reset()
         assert media_manager.check_file_access(stored, test_user.id) is True
-        after_direct = spy.call_count
+        after_direct = counter.count
 
-        spy.reset_mock()
+        counter.reset()
         assert media_manager.check_file_access(thumbnail, test_user.id) is True
-        after_thumbnail = spy.call_count
+        after_thumbnail = counter.count
 
     after = after_resolve + after_direct + after_thumbnail
 
@@ -111,10 +137,10 @@ def test_cold_access_check_still_queries_once(media_manager, db, test_user):
     stored = _stored_name(db, result.file_id)
     media_manager._file_meta_cache.clear()
 
-    original_fetch_one = db.fetch_one
-    with patch.object(db, "fetch_one", side_effect=original_fetch_one) as spy:
+    counter = _ThisThreadQueries(db)
+    with patch.object(db, "fetch_one", new=counter):
         assert media_manager.check_file_access(stored, test_user.id) is True
-        assert spy.call_count == 1
+        assert counter.count == 1
 
 
 @pytest.mark.media
@@ -128,10 +154,10 @@ def test_upload_primes_cache_and_delete_invalidates(media_manager, db, test_user
     file_id = result.file_id
 
     # Primed by the INSERT: access check is free even with no prior read.
-    original_fetch_one = db.fetch_one
-    with patch.object(db, "fetch_one", side_effect=original_fetch_one) as spy:
+    counter = _ThisThreadQueries(db)
+    with patch.object(db, "fetch_one", new=counter):
         assert media_manager.check_file_access(stored, test_user.id) is True
-        assert spy.call_count == 0
+        assert counter.count == 0
 
     assert cache.get_by_filename(stored) is not None
     assert cache.get_by_id(int(file_id)) is not None
@@ -141,9 +167,10 @@ def test_upload_primes_cache_and_delete_invalidates(media_manager, db, test_user
     assert cache.get_by_id(int(file_id)) is None
 
     # The next check must hit the DB and be denied for the soft-deleted file.
-    with patch.object(db, "fetch_one", side_effect=original_fetch_one) as spy:
+    counter = _ThisThreadQueries(db)
+    with patch.object(db, "fetch_one", new=counter):
         assert media_manager.check_file_access(stored, test_user.id) is False
-        assert spy.call_count >= 1
+        assert counter.count >= 1
 
 
 @pytest.mark.media

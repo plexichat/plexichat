@@ -592,18 +592,19 @@ class SendMixin(BaseService, MessageServiceProtocol):
         # The optional relationships module can be unavailable (not
         # initialised in embedded deployments, or a partial outage) while the
         # block rows are still authoritative in the database. Returning here
-        # used to FAIL OPEN: either party could keep writing into a DM after a
-        # block, bypassing the same rule create_dm/typing now enforce even
-        # when the module is down. Probe rel_blocked directly and deny if
-        # either direction is present, or if the probe itself fails (with no
-        # relationship source we cannot prove the pair is unblocked).
+        # used to FAIL OPEN: a blocked user could keep writing into a DM,
+        # bypassing the same rule create_dm/typing now enforce even when the
+        # module is down. Probe rel_blocked directly and deny when one of the
+        # other participants has blocked the sender, or when the probe itself
+        # fails (with no relationship source we cannot prove the pair is
+        # unblocked). Blocking someone yourself must not silence you: the
+        # delivery side already filters recipients by their own block sets.
         try:
             for other_id in other_ids:
                 blocked_row = self._db.fetch_one(
                     "SELECT 1 AS ok FROM rel_blocked WHERE "
-                    "(blocker_id = ? AND blocked_id = ?) OR "
-                    "(blocker_id = ? AND blocked_id = ?)",
-                    (int(user_id), int(other_id), int(other_id), int(user_id)),
+                    "blocker_id = ? AND blocked_id = ?",
+                    (int(other_id), int(user_id)),
                 )
                 if blocked_row is not None:
                     raise ConversationAccessDeniedError(
