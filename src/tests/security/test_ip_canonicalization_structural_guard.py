@@ -395,15 +395,17 @@ DOCUMENTED_RAW_EXCEPTIONS: tuple[RawIpException, ...] = (
         "tickets.",
     ),
     RawIpException(
-        "refresh-session binding index",
+        "refresh/replay binding index (shared helper)",
         "src/core/auth/managers/session/lifecycle.py",
-        "refresh_session",
-        "Availability: the N644 refresh gate compares the presented IP against "
-        "the session's raw-minted auth_sessions.ip_index before consuming the "
-        "bearer. Hashing a canonical form here while mint/verify stay raw would "
-        "reject legitimate refreshes (and break the symmetry that stops a "
-        "stolen refresh bearer from another host rotating the victim's "
-        "credential). Not a mutable-state rate/budget/blacklist key.",
+        "_refresh_binding_ok",
+        "Availability: the N644 refresh gate and the N720 replay-revocation "
+        "branch both compare the presented IP against the session's raw-minted "
+        "auth_sessions.ip_index through this shared fail-closed helper before "
+        "consuming the bearer (extracted out of refresh_session, so the raw "
+        "site now lives here). Hashing a canonical form here while mint/verify "
+        "stay raw would reject legitimate refreshes (and break the symmetry "
+        "that stops a stolen refresh bearer from another host rotating the "
+        "victim's credential). Not a mutable-state rate/budget/blacklist key.",
     ),
     RawIpException(
         "logout binding index",
