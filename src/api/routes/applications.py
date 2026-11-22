@@ -23,6 +23,8 @@ from src.core.applications import InteractionResponse, InteractionResponseType
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
     ApplicationAccessDeniedError,
+    ApplicationLimitError,
+    InvalidApplicationNameError,
     InteractionNotFoundError,
     InteractionExpiredError,
     InteractionAlreadyRespondedError,
@@ -347,6 +349,10 @@ async def list_applications(
     summary="Create a new application",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid application or quota reached",
+        },
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -367,6 +373,22 @@ async def create_application(
             bot_require_code_grant=body.bot_require_code_grant,
         )
         return _application_to_response(app)
+    except ApplicationLimitError:
+        # Owner's application quota is full — a client-actionable outcome, not
+        # a fault. The core message embeds the configured numeric quota and
+        # current count; a static message keeps that internal detail out of
+        # the response. Mirrors the 400 the sibling BotLimitError route uses.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Application limit reached"}},
+        )
+    except InvalidApplicationNameError:
+        # Passed client-side validation but failed the core policy. Static
+        # message: str(exc) can echo the validator's internal reason.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid application name"}},
+        )
     except Exception:
         logger.exception("Unhandled error in applications API")
         raise HTTPException(
