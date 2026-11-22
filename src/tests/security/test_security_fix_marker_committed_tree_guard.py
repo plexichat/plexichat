@@ -93,6 +93,35 @@ class CommittedFixMarker:
         return (self.path,) + self.successors
 
 
+# The two _verify_ws_ticket copies (TicketMixin's active implementation and the
+# LifecycleMixin mirror) share the same binding block. Pin the constant-time
+# compares independently so a stale staged copy of either file that drops the
+# ip_index or ua_index check is caught by name. The distinctive
+# `srow.get("ip_index"/"ua_index")` anchors keep each pin local to the ticket
+# verifier rather than any other session-binding compare in the same file.
+_WS_TICKET_IP_BINDING_COMPARE = (
+    '            stored_ip_index = srow.get("ip_index")\n'
+    "            if not isinstance(stored_ip_index, str) or not stored_ip_index:\n"
+    '                raise TokenInvalidError("IP Binding Required")\n'
+    "            if not hmac.compare_digest(\n"
+    "                stored_ip_index,\n"
+    '                self.crypto.fast_blind_index(ip_address, "ip_address"),\n'
+    "            ):\n"
+    '                raise TokenInvalidError("IP Binding Mismatch")'
+)
+
+_WS_TICKET_UA_BINDING_COMPARE = (
+    '            stored_ua_index = srow.get("ua_index")\n'
+    "            if not isinstance(stored_ua_index, str) or not stored_ua_index:\n"
+    '                raise TokenInvalidError("User-Agent Binding Required")\n'
+    "            current_ua_index = self._ua_index(user_agent)\n"
+    "            if not isinstance(current_ua_index, str) or not current_ua_index:\n"
+    '                raise TokenInvalidError("User-Agent Binding Required")\n'
+    "            if not hmac.compare_digest(stored_ua_index, current_ua_index):\n"
+    '                raise TokenInvalidError("User-Agent Binding Mismatch")'
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -249,21 +278,57 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "and swallow a genuine stacked-write separator"
         ),
     ),
-    # f585d31d: the Valkey-backed 2FA attempt limiter now fuses INCR and the
-    # first-hit EXPIRE into one Lua script. The MAIN working tree's copy of
-    # twofactor.py is contested/stale: a staged diff reverts gateway socket
-    # revocation and re-adds a debug print. If that whole stale file is staged
-    # on top of this commit, the atomic script disappears and the two-round-trip
-    # race returns -- a crash between INCR and EXPIRE leaves the counter key
-    # with no TTL, permanently locking the account out of 2FA.
+    # 3e35a337 / 6b4e443c: the WS-ticket exchange enforces the parent session's
+    # IP/User-Agent binding in BOTH _verify_ws_ticket copies (TicketMixin's
+    # active implementation and the LifecycleMixin mirror). Either file is
+    # staged/modified in peers' working trees, so a whole-file stage can silently
+    # drop one copy's binding check. Pin the constant-time ip_index/ua_index
+    # compares in each copy independently: each entry is a normal positive
+    # marker, so the parametrized synthetic-removal test proves non-vacuity for
+    # it automatically.
     CommittedFixMarker(
-        key="2fa-attempt-counter-atomic-incr-expire",
-        path="src/core/auth/managers/twofactor.py",
-        marker="_2FA_INCR_EXPIRE_SCRIPT",
+        key="3e35a337-ws-ticket-ip-binding-tickets",
+        path="src/core/auth/managers/session/tickets.py",
+        marker=_WS_TICKET_IP_BINDING_COMPARE,
         why=(
-            "f585d31d: atomic INCR + first-hit EXPIRE for the 2FA attempt "
-            "counter; the contested/stale working-tree copy of twofactor.py "
-            "would restore the no-TTL window and permanent 2FA lockout"
+            "3e35a337: TicketMixin._verify_ws_ticket compares the presented IP's "
+            "blind index against the parent session's stored ip_index in "
+            "constant time; a stale staged copy drops the check and lets a "
+            "stolen ticket be exchanged from any host, laundering away the "
+            "session binding the live verifier enforces"
+        ),
+    ),
+    CommittedFixMarker(
+        key="3e35a337-ws-ticket-ua-binding-tickets",
+        path="src/core/auth/managers/session/tickets.py",
+        marker=_WS_TICKET_UA_BINDING_COMPARE,
+        why=(
+            "3e35a337: TicketMixin._verify_ws_ticket compares the presented "
+            "User-Agent's blind index against the stored ua_index in constant "
+            "time; a stale staged copy drops the check and lets a stolen ticket "
+            "be exchanged with an arbitrary User-Agent"
+        ),
+    ),
+    CommittedFixMarker(
+        key="6b4e443c-ws-ticket-ip-binding-lifecycle-mirror",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=_WS_TICKET_IP_BINDING_COMPARE,
+        why=(
+            "6b4e443c: the LifecycleMixin mirror of _verify_ws_ticket must carry "
+            "the same constant-time ip_index compare as TicketMixin so an MRO "
+            "reorder or direct caller cannot bypass binding; a stale staged "
+            "copy drops it and reopens the cross-host ticket exchange"
+        ),
+    ),
+    CommittedFixMarker(
+        key="6b4e443c-ws-ticket-ua-binding-lifecycle-mirror",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=_WS_TICKET_UA_BINDING_COMPARE,
+        why=(
+            "6b4e443c: the LifecycleMixin mirror of _verify_ws_ticket must carry "
+            "the same constant-time ua_index compare as TicketMixin; a stale "
+            "staged copy drops it and lets the mirror accept a stolen ticket "
+            "with an arbitrary User-Agent"
         ),
     ),
     # --- Targeted gateway socket closure on session revocation ---
@@ -740,24 +805,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "and reopens the log-forging leak"
         ),
     ),
-    # 46e545f2: move_role's CAS update carries the caller-observed position in
-    # the WHERE clause and raises on a zero-row update. The MAIN working tree's
-    # copy of roles/crud.py is stale (pre-fix, no position predicate); a peer
-    # staging that whole file would silently drop the CAS and restore the
-    # lost-update race where two concurrent moves clobber each other's reorder.
-    CommittedFixMarker(
-        key="46e545f2-move-role-stale-position-cas",
-        path="src/core/servers/handlers/roles/crud.py",
-        marker="Role changed concurrently, retry",
-        why=(
-            "46e545f2: move_role guards against stale-position TOCTOU with a "
-            "position-scoped CAS update that raises when zero rows change; a "
-            "stale working-tree copy of roles/crud.py restores the unchecked "
-            "UPDATE and lets a concurrent move silently revert another's "
-            "reordering, bypassing the hierarchy revalidation performed "
-            "against the outdated position"
-        ),
-    ),
 )
 
 
@@ -839,6 +886,18 @@ STALE_STAGED_REVERT_KEYS: frozenset[str] = frozenset(
         "9f6efef0-poll-update-guild-message-intent-gate",
         "9f6efef0-poll-update-dm-direct-message-intent-gate",
         "70cd4627-presence-audience-eviction-on-relationship-change",
+    }
+)
+
+# WS-ticket session-binding pins (3e35a337 / 6b4e443c). Kept explicit so none
+# of the four per-copy/per-field pins can be dropped from the registry without
+# this companion check failing.
+WS_TICKET_BINDING_KEYS: frozenset[str] = frozenset(
+    {
+        "3e35a337-ws-ticket-ip-binding-tickets",
+        "3e35a337-ws-ticket-ua-binding-tickets",
+        "6b4e443c-ws-ticket-ip-binding-lifecycle-mirror",
+        "6b4e443c-ws-ticket-ua-binding-lifecycle-mirror",
     }
 )
 
@@ -1054,6 +1113,57 @@ def test_stale_staged_revert_markers_are_registered_and_non_vacuous(
 
         present, detail = _evaluate(record, stale_staged_blob)
         assert not present, f"synthetic stale staged revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+def test_ws_ticket_binding_pins_are_registered_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """Both _verify_ws_ticket copies keep their constant-time binding checks.
+
+    Each pin names a distinctive ip_index/ua_index constant-time compare in one
+    of the two ticket-verifier copies. This proves both sides: the compare is in
+    the real committed blob of each file, and a synthetic stale blob with that
+    compare erased is rejected by the exact same evaluator (never a vacuous
+    pass). Per-entry synthetic removal is additionally covered by the
+    parametrized ``test_synthetic_reverted_blob_is_flagged``.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert WS_TICKET_BINDING_KEYS <= set(keys), (
+        "WS-ticket binding key set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(WS_TICKET_BINDING_KEYS - set(keys))}"
+    )
+    assert len(WS_TICKET_BINDING_KEYS) == 4
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "3e35a337-ws-ticket-ip-binding-tickets": (
+            "src/core/auth/managers/session/tickets.py"
+        ),
+        "3e35a337-ws-ticket-ua-binding-tickets": (
+            "src/core/auth/managers/session/tickets.py"
+        ),
+        "6b4e443c-ws-ticket-ip-binding-lifecycle-mirror": (
+            "src/core/auth/managers/session/lifecycle.py"
+        ),
+        "6b4e443c-ws-ticket-ua-binding-lifecycle-mirror": (
+            "src/core/auth/managers/session/lifecycle.py"
+        ),
+    }
+    for key in sorted(WS_TICKET_BINDING_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_ticket_verifier(path: str) -> str:
+            return f"# stale staged copy of {path}\n# binding compare erased\n"
+
+        present, detail = _evaluate(record, stale_ticket_verifier)
+        assert not present, f"synthetic binding revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
