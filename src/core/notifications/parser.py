@@ -22,11 +22,31 @@ from src.core.security.hardening import HardeningViolation, parse_id
 # accepting a homoglyph id here is a parser differential: ``<@٤٢>`` would
 # notify the real user 42 on the backend while displaying as plain text in the
 # UI. Only canonical ASCII digits may form a mention id.
+#
+# One combined pattern scans the content ONCE. This is the notification
+# fan-out hot path (every message), and five separate ``finditer`` passes used
+# to scan the same text. The alternation is behaviour-preserving: the five
+# token shapes are mutually exclusive at any given position (``<@``+digits,
+# ``<@&``+digits, ``<#``+digits, ``@everyone``, ``@here``), and ``finditer``
+# still yields non-overlapping matches left-to-right. Named groups recover the
+# exact id/type from the single match with no second scan.
+#
+# The branches deliberately share their literal prefixes (``<`` for the three
+# angle-bracket forms, ``@`` for everyone/here). That gives ``re`` a fast
+# literal-search anchor in each branch and keeps the scan linear even on the
+# common mention-free message -- a flat five-way alternation was measurably
+# SLOWER than the old five passes on sparse text. No nested quantifiers are
+# introduced, so the ReDoS-safe shape is unchanged.
+#
+# Kept as a standalone public pattern for the message-serialization caller
+# (``src.api.routes.messages.helpers``) which uses ``findall`` to mirror client
+# mention ids into REST payloads. ``parse_mentions`` itself no longer uses it.
 USER_MENTION_PATTERN = re.compile(r"<@([0-9]+)>")
-ROLE_MENTION_PATTERN = re.compile(r"<@&([0-9]+)>")
-CHANNEL_MENTION_PATTERN = re.compile(r"<#([0-9]+)>")
-EVERYONE_PATTERN = re.compile(r"(?<!\w)@everyone\b")
-HERE_PATTERN = re.compile(r"(?<!\w)@here\b")
+
+COMBINED_MENTION_PATTERN = re.compile(
+    r"<(?:(?P<role>@&)|(?P<user>@)|(?P<channel>#))(?P<id>[0-9]+)>"
+    r"|(?<!\w)@(?P<everyone>everyone|here)\b"
+)
 
 # ``2**63 - 1`` (the largest snowflake) has 19 decimal digits. Bounding the
 # token length keeps an out-of-range id from ever reaching int() (Python raises
@@ -72,65 +92,37 @@ def parse_mentions(content: str) -> List[Mention]:
 
     mentions = []
 
-    for match in USER_MENTION_PATTERN.finditer(content):
-        target_id = _parse_target_id(match.group(1))
-        if target_id is None:
-            continue
+    for match in COMBINED_MENTION_PATTERN.finditer(content):
+        raw = match.group(0)
+        if match.group("role") is not None:
+            mention_type = MentionType.ROLE
+        elif match.group("user") is not None:
+            mention_type = MentionType.USER
+        elif match.group("channel") is not None:
+            mention_type = MentionType.CHANNEL
+        elif match.group("everyone") == "everyone":
+            mention_type = MentionType.EVERYONE
+        else:  # "@here"
+            mention_type = MentionType.HERE
+
+        if mention_type in (
+            MentionType.USER,
+            MentionType.ROLE,
+            MentionType.CHANNEL,
+        ):
+            target_id = _parse_target_id(match.group("id"))
+            if target_id is None:
+                # Malformed/out-of-range id: ignore it so it fails closed,
+                # exactly as the old per-type loops did.
+                continue
+        else:
+            target_id = None
+
         mentions.append(
             Mention(
-                mention_type=MentionType.USER,
+                mention_type=mention_type,
                 target_id=target_id,
-                raw_text=match.group(0),
-                start_pos=match.start(),
-                end_pos=match.end(),
-            )
-        )
-
-    for match in ROLE_MENTION_PATTERN.finditer(content):
-        target_id = _parse_target_id(match.group(1))
-        if target_id is None:
-            continue
-        mentions.append(
-            Mention(
-                mention_type=MentionType.ROLE,
-                target_id=target_id,
-                raw_text=match.group(0),
-                start_pos=match.start(),
-                end_pos=match.end(),
-            )
-        )
-
-    for match in CHANNEL_MENTION_PATTERN.finditer(content):
-        target_id = _parse_target_id(match.group(1))
-        if target_id is None:
-            continue
-        mentions.append(
-            Mention(
-                mention_type=MentionType.CHANNEL,
-                target_id=target_id,
-                raw_text=match.group(0),
-                start_pos=match.start(),
-                end_pos=match.end(),
-            )
-        )
-
-    for match in EVERYONE_PATTERN.finditer(content):
-        mentions.append(
-            Mention(
-                mention_type=MentionType.EVERYONE,
-                target_id=None,
-                raw_text=match.group(0),
-                start_pos=match.start(),
-                end_pos=match.end(),
-            )
-        )
-
-    for match in HERE_PATTERN.finditer(content):
-        mentions.append(
-            Mention(
-                mention_type=MentionType.HERE,
-                target_id=None,
-                raw_text=match.group(0),
+                raw_text=raw,
                 start_pos=match.start(),
                 end_pos=match.end(),
             )
