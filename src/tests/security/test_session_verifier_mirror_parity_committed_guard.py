@@ -92,10 +92,32 @@ REQUIRED_MARKERS: dict[str, dict[str, str]] = {
         "expiry check": "is_expired(",
         "expiry fail-closed": "TokenExpiredError",
     },
+    "_verify_token": {
+        # The cached credential dispatcher was duplicated when the mirror's
+        # expiry re-check was lifted out of its cache. Both copies must keep
+        # dispatching every token type and failing closed on malformed/unknown
+        # input, otherwise a mirror can silently stop verifying a credential
+        # class (or start trusting a garbage parse).
+        "malformed token fail-closed": "if not parsed:",
+        "session dispatch": (
+            "self._verify_session_token(parsed, ip_address, user_agent=user_agent)"
+        ),
+        "ticket dispatch": (
+            "self._verify_ws_ticket(parsed, ip_address, user_agent=user_agent)"
+        ),
+        "unknown type fail-closed": 'raise TokenInvalidError("Unknown type")',
+    },
     "verify_token": {
         "malformed input fail-closed": "is_malformed_token_input(token)",
         "rate limiter": "check_rate_limit",
         "rate-limit key namespace": "token_verify:",
+        # The short-TTL verify cache can serve a verdict whose credential has
+        # since expired. Both mirrors must re-check expiry outside the cache so
+        # a cached-but-expired token fails closed (N712 parity). Without this
+        # marker, a mirror could drop the re-check and drift silently.
+        "cache-hit expiry re-check": (
+            "expires_at is not None and is_expired(expires_at)"
+        ),
     },
 }
 
