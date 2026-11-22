@@ -39,9 +39,19 @@ def verify_token(
     )
 
 
-def refresh_session(token: str) -> Optional[str]:
-    """Refresh a session token. Returns new token or None if not refreshable."""
-    return _get_auth_manager().get_instance().refresh_session(token)
+def refresh_session(
+    token: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> Optional[str]:
+    """Refresh a session token. Returns new token or None if not refreshable.
+
+    ``ip_address``/``user_agent`` are threaded through so the rotation can
+    re-verify the presented credential's context when ``token_binding`` is on.
+    """
+    return _get_auth_manager().get_instance().refresh_session(
+        token, ip_address, user_agent
+    )
 
 
 def create_session_for_user(

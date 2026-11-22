@@ -582,7 +582,12 @@ class LifecycleMixin(AuthManagerProtocol):
                 row["user_id"], session_id, "Session revoked"
             )
 
-    def refresh_session(self, token: str) -> Optional[str]:
+    def refresh_session(
+        self,
+        token: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> Optional[str]:
         parsed = parse_token(token)
         if not parsed or parsed["token_type"] != "session":
             return None
@@ -606,6 +611,37 @@ class LifecycleMixin(AuthManagerProtocol):
             return None
         if is_expired(row["expires_at"], self._get_timestamp()):
             return None
+        # N644: verify the PRESENTED refresh credential's context against the
+        # session's bound indexes, mirroring the fail-closed gate in
+        # VerificationMixin._verify_session_token (and this mixin's verifier).
+        # Verification of the *new* token downstream did not protect this
+        # rotation: a stolen refresh bearer used from another host could force a
+        # rotation, retiring the victim's current credential via the atomic
+        # consume() below. The victim's next refresh would then trip replay-based
+        # revocation (availability) even though the attacker could not use the
+        # new token from that host. Deny BEFORE consume() so a stolen-context
+        # attempt changes nothing and leaves the victim's session intact.
+        # Missing/corrupt binding material fails closed just as it does in the
+        # verifier -- never silently skip the comparison when binding is on.
+        if self._config.get("security", {}).get("token_binding", False):
+            if not ip_address:
+                return None
+            stored_ip_index = row.get("ip_index")
+            if not isinstance(stored_ip_index, str) or not stored_ip_index:
+                return None
+            current_ip_index = self.crypto.fast_blind_index(
+                ip_address, "ip_address"
+            )
+            if not hmac.compare_digest(stored_ip_index, current_ip_index):
+                return None
+            if not user_agent:
+                return None
+            stored_ua_index = row.get("ua_index")
+            if not isinstance(stored_ua_index, str) or not stored_ua_index:
+                return None
+            current_ua_index = self._ua_index(user_agent)
+            if not hmac.compare_digest(stored_ua_index, current_ua_index):
+                return None
         # Atomically claim the still-current token. ``contains`` above detects
         # already-rotated tokens whose hash no longer matches the live row;
         # this consume closes the check-then-add race where two concurrent
