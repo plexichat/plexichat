@@ -48,7 +48,7 @@ static_client:
 
 When you set `auto_update` to `true`, a background task runs at `auto_update_check_interval_seconds` intervals and reapplies the `version_pin` logic. Plexichat installs a newer release only after it is at least `auto_update_min_age_seconds` old. This delay lets downstream caches warm and avoids races with a newly published tag.
 
-Plexichat keeps only the active version and prunes older installs.
+Plexichat keeps the active version plus up to four of the most recent installed versions (five total) so an older build remains available for rollback, and prunes anything beyond that (`src/static_client/fetcher.py`).
 
 The runtime type `src/static_client/config.py` defaults `auto_update` to `true` when the key is absent. The canonical default in `src/config_defaults.py` is `false`. Declare the value explicitly in `config.yaml`.
 
