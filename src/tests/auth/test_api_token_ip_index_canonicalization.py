@@ -52,6 +52,11 @@ class _DB:
     def execute(self, sql, params):
         self.executes.append((sql, tuple(params)))
 
+    def fetch_one(self, sql, params):
+        # A verdict injected into the verification cache is backed by a live,
+        # unrevoked authoritative row; the cache-hit re-check must see it.
+        return {"revoked": 0}
+
 
 def _mixin():
     m = object.__new__(ApiTokenMixin)

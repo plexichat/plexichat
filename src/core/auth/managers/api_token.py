@@ -658,6 +658,34 @@ class ApiTokenMixin(AuthManagerProtocol):
         )
         return verdict
 
+    def _api_token_verdict_still_authoritative(self, token, verdict) -> bool:
+        """Re-check the authoritative row for a cached positive verdict.
+
+        The verification cache is a *process-local* ``BoundedLRU``; the
+        ``_invalidate_api_token_verify_cache()`` hook clears only this worker's
+        copy. A revoke or rotation (which revokes the old row) committed on a
+        peer therefore cannot evict our warm ``authentic=True`` verdict, and a
+        plain cache hit would replay a dead credential for the rest of the TTL.
+        Re-read the authoritative ``revoked`` flag by primary key on every hit
+        and fail closed when the row is gone, revoked, or unreadable. Rotation
+        leaves the old row revoked (no in-place secret mutation), so this single
+        check also denies a rotated-away secret with no grace window.
+        """
+        token_id = verdict.get("token_id")
+        if not isinstance(token_id, int):
+            return False
+        try:
+            row = self._db.fetch_one(
+                "SELECT revoked FROM auth_api_access_tokens WHERE id = ?",
+                (token_id,),
+            )
+        except Exception as exc:
+            logger.debug(f"api token verify: authoritative recheck failed: {exc}")
+            return False
+        if not row or row["revoked"]:
+            return False
+        return True
+
     def verify_api_access_token(
         self,
         token: str,
@@ -676,6 +704,15 @@ class ApiTokenMixin(AuthManagerProtocol):
         if verdict is _API_TOKEN_VERIFY_MISS:
             verdict = self._introspect_api_access_token(token, ip_address)
             _API_TOKEN_VERIFY_CACHE.set(key, verdict)
+        elif verdict["authentic"]:
+            # A peer worker's revoke/rotation cannot clear this process-local
+            # cache. Re-check the authoritative 'revoked' flag on every hit so a
+            # warm verdict cannot authenticate a revoked/rotated token for the
+            # rest of the TTL. Fail closed and evict the stale verdict so the
+            # next request re-introspects from the source of truth.
+            if not self._api_token_verdict_still_authoritative(token, verdict):
+                _API_TOKEN_VERIFY_CACHE.invalidate_where(lambda k: k == key)
+                return False
 
         if not verdict["authentic"]:
             return False
