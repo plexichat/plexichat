@@ -8,7 +8,7 @@ from src.core.database import cached
 
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AccountType, TokenInfo
-from ...permissions import permissions_from_json
+from ...permissions import has_permission, permissions_from_json
 from ...tokens import (
     is_expired,
     is_malformed_token_input,
@@ -289,6 +289,30 @@ class VerificationMixin(AuthManagerProtocol):
         ):
             raise TokenInvalidError("Invalid Bot")
 
+        # A bot's permission map is a DELEGATION of its owner's authority, not
+        # an independent grant. ``create_bot``/``update_bot_permissions`` only
+        # check that the owner holds a scope at *write* time; an admin demotion
+        # afterwards used to leave the stored map unchanged, so the bot token
+        # kept exercising scopes its owner had lost. Enforce the ceiling on
+        # every verification instead: the bot's effective permissions are the
+        # intersection of its stored map with the owner's CURRENT grants.
+        # Fail closed when the owner row is missing or its permission payload
+        # is not a well-formed map (a dangling owner must not authenticate).
+        owner_row = self._db.fetch_one(
+            "SELECT permissions FROM auth_users WHERE id = ?", (row["owner_id"],)
+        )
+        if not owner_row:
+            raise TokenInvalidError("Invalid Bot")
+        owner_perms = permissions_from_json(owner_row["permissions"])
+        bot_perms = permissions_from_json(row["permissions"])
+        if not isinstance(owner_perms, dict) or not isinstance(bot_perms, dict):
+            raise TokenInvalidError("Invalid Bot")
+        effective_perms = {
+            perm: allowed
+            for perm, allowed in bot_perms.items()
+            if not allowed or has_permission(owner_perms, perm)
+        }
+
         return TokenInfo(
             valid=True,
             token_type="bot",
@@ -296,7 +320,7 @@ class VerificationMixin(AuthManagerProtocol):
             user_id=row["owner_id"],
             session_id=None,
             username=row["username"],
-            permissions=permissions_from_json(row["permissions"]),
+            permissions=effective_perms,
             account_type=AccountType.BOT,
             rate_limit_tier="bot",
             expires_at=None,
