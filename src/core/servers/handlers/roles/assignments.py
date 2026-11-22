@@ -13,6 +13,8 @@ from ...exceptions import (
     RoleHierarchyError,
     DefaultRoleError,
     MemberNotFoundError,
+    PermissionDeniedError,
+    InvalidPermissionKeyError,
 )
 from ...permission_utils import (
     can_manage_role,
@@ -159,6 +161,65 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
         try:
             if not is_postgres:
                 self.db.begin_transaction()
+
+            # The grantability check above ran against a snapshot read before
+            # this transaction. ``update_role`` takes these same 142 -> 143
+            # locks, so a concurrent privileged edit can widen the role's
+            # payload in that window and the stale decision would otherwise
+            # attach a role the editor is not allowed to hand out (including
+            # one carrying ``administrator``). Re-read the authoritative row
+            # under the lock and re-run validation + grantability before the
+            # write. Fail closed on a missing/malformed row: neither helper
+            # treats ``None`` as a grant, so an explicit refusal is required.
+            fresh_row = self.db.fetch_one(
+                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",
+                (role_id,),
+            )
+            if not fresh_row:
+                raise RoleNotFoundError("Role not found")
+            fresh_permissions = fresh_row["permissions"]
+            if isinstance(fresh_permissions, str):
+                try:
+                    fresh_permissions = json.loads(fresh_permissions)
+                except (TypeError, ValueError):
+                    raise InvalidPermissionKeyError(
+                        "Role permissions are unreadable"
+                    )
+            if not isinstance(fresh_permissions, dict):
+                raise InvalidPermissionKeyError("Role permissions are unreadable")
+            validate_permission_dict(fresh_permissions)
+            check_permissions_grantable(
+                self.get_permissions(user_id, server_id), fresh_permissions
+            )
+
+            # The rank checks above (``can_manage_role`` and
+            # ``_guard_member_target``) ran against that same pre-lock snapshot.
+            # ``move_role`` is CAS-guarded on its own but deliberately does NOT
+            # take these 142 -> 143 advisory locks, so an owner can promote this
+            # role -- or the grantee -- in the gap. Without re-reading the
+            # authoritative hierarchy here, the stale "you outrank this role"
+            # decision attaches a role now at/above the editor's own rank and
+            # lifts the grantee over the editor: the exact escalation the rank
+            # gate exists to prevent. Re-assert both decisions under the lock
+            # and fail closed if either no longer holds.
+            fresh_position = self.db.fetch_one(
+                "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",
+                (role_id,),
+            )
+            if not fresh_position:
+                raise RoleNotFoundError("Role not found")
+            current_user_roles = self.manager._get_member_role_rows(
+                server_id, user_id
+            )
+            if not can_manage_role(
+                current_user_roles,
+                {"position": fresh_position["position"]},
+                is_owner,
+            ):
+                raise RoleHierarchyError(
+                    "Cannot assign a role at or above your highest role"
+                )
+            self._guard_member_target(user_id, server_id, member_user_id)
 
             now = self.manager._get_timestamp()
             self.db.execute(
