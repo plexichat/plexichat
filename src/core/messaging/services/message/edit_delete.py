@@ -173,6 +173,45 @@ def _can_view_conversation_messages(user_id, conversation_id) -> bool:
         return False
 
 
+def _resolve_authoritative_server_scope(conversation_id) -> Optional[tuple]:
+    """Resolve ``(channel_id, server_id)`` from a message's SERVER conversation.
+
+    The edit route derives its moderation/timeout ``server_id`` from the
+    client-supplied URL id. That id may be the conversation-id alias of a
+    server channel, which ``get_channel`` cannot see as a channel, so the
+    server-scoped gates silently do not run for that spelling. Derive the
+    scope here from the message's authoritative conversation id instead: it
+    cannot be spoofed by the caller and also protects service-level callers
+    (websocket handlers, background tasks) that never pass through the route
+    gate at all. ``None`` means the conversation has no backing server channel
+    (a genuine DM/group) and carries no server timeout to enforce.
+    """
+    servers = _get_servers_module()
+    if servers is None:
+        return None
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(lookup):
+        return None
+    try:
+        info = lookup(int(conversation_id))
+    except Exception:
+        return None
+    if not info:
+        return None
+    if isinstance(info, dict):
+        channel_id = info.get("id")
+        server_id = info.get("server_id")
+    else:
+        channel_id = getattr(info, "id", None)
+        server_id = getattr(info, "server_id", None)
+    if channel_id is None or server_id is None:
+        return None
+    try:
+        return int(channel_id), int(server_id)
+    except (TypeError, ValueError):
+        return None
+
+
 class EditDeleteMixin(BaseService, MessageServiceProtocol):
     @staticmethod
     def _cleanup_thread_links(message_id) -> None:
@@ -251,6 +290,34 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
 
         if msg_row["author_id"] != user_id:
             raise MessageAccessDeniedError("Can only edit own messages")
+
+        # Authoritative server scope: derive the backing channel/server from
+        # the message's SERVER-SIDE conversation id, never from the
+        # client-supplied URL alias. The route's ``get_channel(url_id)`` probe
+        # cannot see a conversation-id alias as a channel, so its timeout (and
+        # automod) gates silently skip that spelling -- a timed-out member can
+        # otherwise keep editing their messages through the alias. Enforce the
+        # timeout here on the authoritative scope (failing closed when the
+        # check itself is unproven) and cover internal callers that bypass the
+        # route entirely. A DM/group has no backing channel and is not gated.
+        authoritative_scope = _resolve_authoritative_server_scope(
+            msg_row["conversation_id"]
+        )
+        if authoritative_scope is not None:
+            _, authoritative_server_id = authoritative_scope
+            servers = _get_servers_module()
+            timeout_checker = getattr(servers, "is_timed_out", None)
+            if callable(timeout_checker):
+                try:
+                    timed_out = bool(
+                        timeout_checker(user_id, authoritative_server_id)
+                    )
+                except Exception:
+                    timed_out = True  # unproven -> fail closed
+                if timed_out:
+                    raise MessageAccessDeniedError(
+                        "Cannot edit while timed out in this server"
+                    )
 
         # Optimistic locking (M3): reject stale writes when the client
         # supplied a revision token that no longer matches.
