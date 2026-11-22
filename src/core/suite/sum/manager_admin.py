@@ -284,7 +284,15 @@ class SumManagerAdmin(SumManagerProtocol):
         column_end: int,
         permission: str,
     ) -> Dict[str, Any]:
-        self._workbook(user_id, workbook_id, mutation=True)
+        workbook = self._workbook(user_id, workbook_id, mutation=True)
+        # Fail closed: range permissions are part of the same ACL that
+        # ``grant_workbook`` guards with owner/share authority. Changing a
+        # ``read_only`` range to ``editable`` (or adding a new range) delegates
+        # edit capability to every non-owner viewer -- including an ``edit``
+        # grantee the owner deliberately locked out of those cells. Cell-edit
+        # access alone must not be able to rewrite the ACL that constrains it,
+        # so require the same owner/server-manager authority as grants.
+        self._require_share_authority(workbook, user_id)
         self._ensure_sheet_live(workbook_id, str(sheet_id))
         if permission not in ("read_only", "editable"):
             raise SumValidationError("permission must be read_only or editable")
@@ -391,7 +399,12 @@ class SumManagerAdmin(SumManagerProtocol):
         )
         if not row:
             raise SumNotFoundError("Range permission not found")
-        self._workbook(user_id, workbook_id, mutation=True)
+        # Same ACL authority as ``set_range_permission`` / ``grant_workbook``:
+        # deleting a ``read_only`` range removes the owner's protection and
+        # grants edit capability to non-owners, so cell-edit access alone is
+        # not sufficient (N640 grantor-holds-it invariant).
+        workbook = self._workbook(user_id, workbook_id, mutation=True)
+        self._require_share_authority(workbook, user_id)
         self._db.execute(
             "DELETE FROM sum_range_permissions WHERE id = ?", (int(range_id),)
         )
