@@ -5,7 +5,7 @@ Admin PlexiJoin federation routes for managing inter-instance connections.
 import json
 
 from fastapi import APIRouter, Request, HTTPException, Query
-from typing import Any, Dict, Optional
+from typing import Annotated, Any, Dict, Optional
 
 from .utils import (
     check_host_restriction,
@@ -14,6 +14,7 @@ from .utils import (
 from src.api.request_guards import read_body_capped
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 from src.core.plexijoin.validation import validate_shared_key
+from src.core.security.hardening import HardeningViolation
 import utils.logger as logger
 
 router = APIRouter()
@@ -210,13 +211,25 @@ def _get_plexijoin_manager(request, *, require_encryption: bool = True):
 )
 async def list_connections(
     request: Request,
-    status: Optional[str] = Query(
-        None, max_length=32, description="Filter by connection status"
-    ),
-    page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=200),
+    status: Annotated[
+        Optional[str], Query(max_length=32, description="Filter by connection status")
+    ] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    per_page: Annotated[int, Query(ge=1, le=200)] = 50,
+    before: Annotated[
+        Optional[str],
+        Query(
+            max_length=64,
+            description='Keyset cursor "<created_at>:<id>" of the last row seen',
+        ),
+    ] = None,
 ):
-    """List all outbound federation connections."""
+    """List all outbound federation connections.
+
+    ``before`` is optional and additive: the cursor continues from a row the
+    caller already has, replacing the OFFSET walk while leaving the paged
+    contract (and the response shape) exactly as it was.
+    """
     check_host_restriction(request)
     # Scope gate (also closes the IDOR-style read of federation metadata by
     # authenticated admins who lack the federation scope).
@@ -227,7 +240,11 @@ async def list_connections(
         # crypto-service dependency on this hot path.
         manager = _get_plexijoin_manager(request, require_encryption=False)
         result = manager.list_connections(
-            status=status, page=page, per_page=per_page, decrypt_keys=False
+            status=status,
+            page=page,
+            per_page=per_page,
+            decrypt_keys=False,
+            before=before,
         )
 
         connections_data = []
@@ -243,6 +260,13 @@ async def list_connections(
         }
     except HTTPException:
         raise
+    except HardeningViolation as e:
+        # The manager validates the cursor before touching the DB; a bad one is
+        # caller input, not an internal failure.
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(e)}},
+        ) from e
     except Exception as e:
         logger.error(f"PlexiJoin list connections error: {e}", exc_info=True)
         raise HTTPException(

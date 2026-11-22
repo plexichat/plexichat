@@ -108,10 +108,13 @@ def test_keyset_page_matches_offset_page_with_one_bounded_query(db):
     counting = _CountingDB(db)
     got = _manager(counting).list_user_files(_USER, limit=5, before_id=cursor)
 
-    # Result parity: identical files and identical response shape.
-    assert got == expected
+    # Result parity: the same files in the same order and the same response
+    # shape. The paging metadata differs by design -- a keyset page has no
+    # offset to report, so it echoes 0 rather than the implied position.
+    assert got["files"] == expected["files"]
     assert list(got) == ["files", "limit", "offset"]
-    assert got["limit"] == 5 and got["offset"] == 0
+    assert got["limit"] == expected["limit"] == 5
+    assert got["offset"] == 0
 
     # Bounded cost: one read, no OFFSET walk, cursor + limit both bound params.
     assert counting.reads == 1, counting.sql
@@ -137,7 +140,8 @@ def test_keyset_page_matches_offset_page_with_path_prefix(db):
     got = _manager(db).list_user_files(
         _USER, limit=4, before_id=cursor, path_prefix=path
     )
-    assert got == expected
+    assert got["files"] == expected["files"]
+    assert got["limit"] == expected["limit"] == 4
 
 
 def test_keyset_keeps_uploader_scope_at_manager(db):

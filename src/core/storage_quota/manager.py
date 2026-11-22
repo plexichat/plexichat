@@ -706,6 +706,7 @@ class StorageQuotaManager:
         limit: int = 50,
         offset: int = 0,
         path_prefix: Optional[str] = None,
+        before_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Return a bounded page of the user's live media rows.
 
@@ -713,10 +714,35 @@ class StorageQuotaManager:
         control-character-free and traversal-free, so a caller cannot use a
         huge offset, a ``..`` component or LIKE wildcards to scan outside their
         own files.
+
+        ``before_id`` is an opt-in keyset cursor: the ``id`` of the last row the
+        caller saw. ``ORDER BY id DESC`` already matches the index, so a keyset
+        page is a single ``id < ?`` seek with a bound ``LIMIT`` instead of an
+        OFFSET walk that deepens with the page number. The ``uploaded_by``
+        scope stays on both branches, so a cursor taken from someone else's rows
+        can never widen the result.
         """
         uid = parse_id(user_id, "user_id")
         limit = bounded_int(limit, "limit", minimum=1, maximum=MAX_LIST_LIMIT)
         offset = bounded_int(offset, "offset", minimum=0, maximum=MAX_LIST_OFFSET)
+
+        cursor: Optional[int] = None
+        if before_id is not None:
+            # Mixing the two paging styles would silently drop one of them, so
+            # the combination is refused before any query runs.
+            if offset:
+                raise HardeningViolation("before_id cannot be combined with offset")
+            if (
+                isinstance(before_id, bool)
+                or not isinstance(before_id, str)
+                or not before_id.isascii()
+                or not before_id.isdigit()
+                or len(before_id) > 19
+            ):
+                raise HardeningViolation("invalid before_id cursor")
+            cursor = int(before_id)
+            if cursor <= 0 or cursor > 2**63 - 1:
+                raise HardeningViolation("invalid before_id cursor")
 
         prefix: Optional[str] = None
         if path_prefix is not None and str(path_prefix) != "":
@@ -746,13 +772,23 @@ class StorageQuotaManager:
         # keeps the whole listing at exactly one query regardless of page size.
         # ``metadata`` (free-form JSON) and ``uploaded_by`` (a snowflake) are
         # deliberately not exposed through this user-facing response.
-        rows = self._db.fetch_all(
+        columns = (
             "SELECT id, filename, original_filename, size, storage_path, "
             "uploaded_at, content_type, media_type, storage_backend, "
             "checksum, scan_status, scan_result "
-            f"FROM media_files WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-            tuple(params) + (limit, offset),
         )
+        if cursor is not None:
+            rows = self._db.fetch_all(
+                columns + f"FROM media_files WHERE {where} AND id < ? "
+                "ORDER BY id DESC LIMIT ?",
+                tuple(params) + (cursor, limit),
+            )
+        else:
+            rows = self._db.fetch_all(
+                columns + f"FROM media_files WHERE {where} "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                tuple(params) + (limit, offset),
+            )
         # Ids cross the API boundary as strings like every other snowflake;
         # never leak a bare int from a free-form response.
         files = []
@@ -764,7 +800,8 @@ class StorageQuotaManager:
         return {
             "files": files,
             "limit": limit,
-            "offset": offset,
+            # A keyset page has no offset: the cursor is the position.
+            "offset": 0 if cursor is not None else offset,
         }
 
     def _ensure_schema(self) -> None:

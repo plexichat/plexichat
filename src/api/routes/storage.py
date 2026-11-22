@@ -1,6 +1,6 @@
 """Storage quota endpoints for the current user."""
 
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -49,16 +49,29 @@ async def get_my_storage_usage(
 
 @router.get("/files", summary="List my stored files")
 async def list_my_storage_files(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0, le=1_000_000),
-    path: Optional[str] = Query(None, max_length=512),
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    path: Annotated[Optional[str], Query(max_length=512)] = None,
+    before_id: Annotated[
+        Optional[str],
+        Query(max_length=32, description="Keyset cursor: id of the last file seen"),
+    ] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> dict:
-    """List a bounded page of the caller's files, optionally under ``path``."""
+    """List a bounded page of the caller's files, optionally under ``path``.
+
+    ``before_id`` is an optional additive cursor: it continues a listing from
+    a row the caller already has instead of walking an OFFSET, and it may not
+    be combined with ``offset``.
+    """
     require_user_token(current_user)
     try:
         return get_manager().list_user_files(
-            current_user.user_id, limit=limit, offset=offset, path_prefix=path
+            current_user.user_id,
+            limit=limit,
+            offset=offset,
+            path_prefix=path,
+            before_id=before_id,
         )
     except HardeningViolation as exc:
         raise HTTPException(

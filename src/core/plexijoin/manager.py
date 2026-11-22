@@ -6,11 +6,13 @@ Handles outbound joins, inbound requests, traffic tracking, and health checks.
 
 import json
 import logging
+import re
 import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from src.core.admin.logging import AdminLogEntry
+from src.core.security.hardening import HardeningViolation
 
 from .validation import (
     bound_direction,
@@ -38,6 +40,28 @@ from .validation import (
 from src.utils.common_utils.utils.logger.core import SanitizingFilter
 
 logger = logging.getLogger(__name__)
+
+# Keyset cursor: ``"<created_at>:<id>"``, the pair the caller already sees on
+# every returned row. Parsed and bounded here so a hostile cursor is rejected
+# before it can reach SQL; a cursor that fails any check is a 400, never a
+# silently-widened page.
+_CURSOR_PART = re.compile(r"[0-9]{1,19}")
+_MAX_CURSOR_COMPONENT = 2**63 - 1
+
+
+def _parse_connection_cursor(before: Any) -> Tuple[int, int]:
+    """Return ``(created_at, id)`` for a keyset cursor, or raise."""
+    if not isinstance(before, str) or len(before) > 64:
+        raise HardeningViolation("invalid connection cursor")
+    parts = before.split(":")
+    if len(parts) != 2 or not all(_CURSOR_PART.fullmatch(p) for p in parts):
+        raise HardeningViolation("invalid connection cursor")
+    created_at, row_id = int(parts[0]), int(parts[1])
+    if created_at > _MAX_CURSOR_COMPONENT or row_id > _MAX_CURSOR_COMPONENT:
+        raise HardeningViolation("invalid connection cursor")
+    return created_at, row_id
+
+
 logger.addFilter(SanitizingFilter())
 
 # Inbound route paths on the REMOTE instance that this instance POSTs to.
@@ -233,6 +257,7 @@ class PlexiJoinManager:
         per_page: int = 50,
         *,
         decrypt_keys: bool = True,
+        before: Optional[str] = None,
     ) -> Dict[str, Any]:
         """List all outbound federation connections.
 
@@ -241,10 +266,18 @@ class PlexiJoinManager:
         pure work (O(page size) AEAD calls) on a hot endpoint. Callers that
         actually federate (``artifacts``, outbound transport) keep the default
         ``True`` and still receive the plaintext key.
+
+        ``before`` is an opt-in keyset cursor: the ``"<created_at>:<id>"`` pair
+        of the last row a caller saw. It replaces the OFFSET walk with a single
+        tuple-range seek on the ``(created_at, id)`` index, so page depth does
+        not change the cost. The OFFSET contract is untouched when it is None.
         """
         page, per_page = bound_pagination(page, per_page)
         where = ""
         params: List[Any] = []
+        cursor = None
+        if before is not None:
+            cursor = _parse_connection_cursor(before)
 
         if status:
             where = " WHERE status = ?"
@@ -259,14 +292,28 @@ class PlexiJoinManager:
             "SELECT COUNT(*) AS total FROM plexijoin_connections" + where, params
         )["total"]
 
-        query = (
-            "SELECT * FROM plexijoin_connections"
-            + where
-            + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-        )
-        connections = self.db.fetch_all(
-            query, [*params, per_page, (page - 1) * per_page]
-        )
+        if cursor is not None:
+            # Tuple comparison matches the ``(created_at, id)`` index, so the
+            # seek lands directly on the continuation point; the ``id`` half
+            # keeps rows with equal ``created_at`` ordered and non-overlapping.
+            query = (
+                "SELECT * FROM plexijoin_connections"
+                + (where + " AND " if where else " WHERE ")
+                + "(created_at, id) < (?, ?)"
+                + " ORDER BY created_at DESC, id DESC LIMIT ?"
+            )
+            connections = self.db.fetch_all(
+                query, [*params, cursor[0], cursor[1], per_page]
+            )
+        else:
+            query = (
+                "SELECT * FROM plexijoin_connections"
+                + where
+                + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            )
+            connections = self.db.fetch_all(
+                query, [*params, per_page, (page - 1) * per_page]
+            )
         if decrypt_keys:
             connections = [self._materialize_connection(c) for c in connections]
 

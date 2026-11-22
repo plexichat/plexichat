@@ -52,19 +52,46 @@ class BaseAction(ABC):
         to report success), so no stale grant is silently left in place.
         """
         servers = self._servers
-        if servers is None:
+        if servers is not None:
+            manager = getattr(servers, "_get_manager", None)
+            manager = manager() if callable(manager) else servers
+            invalidator = getattr(manager, "_invalidate_member_caches", None)
+            if callable(invalidator):
+                logger.debug(
+                    "Invalidating cached authorization state for removed member "
+                    "%s in server %s",
+                    user_id,
+                    server_id,
+                )
+                invalidator(server_id, user_id)
+
+        # The permission-checked kick/ban/leave paths also call
+        # ``remove_participant_from_conversations``. The raw-SQL system
+        # fallback skipped it, so the ``msg_participants`` rows seeded on join
+        # stayed live and the artifact export/download gate -- which grants a
+        # server-scoped artifact to any participant of a channel conversation
+        # bound to that server -- kept serving the server's files to a member
+        # who had just been kicked or banned. Replay the same cleanup through
+        # the messaging layer so its ``is_participant`` verdict cache is
+        # invalidated as well.
+        messaging = self._messaging
+        remover = getattr(messaging, "remove_participant_from_conversations", None)
+        if not callable(remover):
             return
-        manager = getattr(servers, "_get_manager", None)
-        manager = manager() if callable(manager) else servers
-        invalidator = getattr(manager, "_invalidate_member_caches", None)
-        if not callable(invalidator):
-            return
-        logger.debug(
-            "Invalidating cached authorization state for removed member %s in server %s",
-            user_id,
-            server_id,
+        rows = self._db.fetch_all(
+            "SELECT conversation_id FROM srv_channels "
+            "WHERE server_id = ? AND deleted = 0",
+            (server_id,),
         )
-        invalidator(server_id, user_id)
+        conversation_ids = []
+        for row in rows or []:
+            conversation_id = (
+                row["conversation_id"] if isinstance(row, dict) else row[0]
+            )
+            if conversation_id:
+                conversation_ids.append(conversation_id)
+        if conversation_ids:
+            remover(user_id, conversation_ids)
 
     @abstractmethod
     def execute(
