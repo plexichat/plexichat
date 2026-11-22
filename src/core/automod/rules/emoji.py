@@ -64,7 +64,15 @@ class MassEmojiRule(BaseRule):
         # invisible characters, deflating the emoji percentage below the cap
         # even though a human sees a wall of emoji. NFKC folding also folds
         # compatibility-codepoint lookalikes onto the patterns below.
-        content = fold_invisible_for_matching(content)
+        #
+        # Match on the FULL folded view, not the truncated one. NFKC can expand
+        # ONE codepoint into many (U+FDFA -> 18), so a few hundred schema-legal
+        # characters can push the folded form past MAX_CANONICAL_LENGTH; emoji
+        # placed after the cut would be invisible here while the raw message
+        # (with every emoji) is stored and rendered to recipients. That is the
+        # same filter/consumer view gap fixed for keywords and mentions. Input
+        # is length-bounded at the schema, so the full form stays bounded.
+        content = fold_invisible_for_matching(content, max_length=None)
 
         custom_count = 0
         unicode_count = 0

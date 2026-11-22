@@ -73,7 +73,16 @@ class RepeatedCharsRule(BaseRule):
         # between repeated characters break the ``(.)\1{n,}`` run while looking
         # identical on screen, which turned obvious cap/character spam into a
         # detection bypass. NFKC folding also catches fullwidth lookalikes.
-        for m in self._pattern.finditer(fold_invisible_for_matching(content)):
+        #
+        # Match on the FULL folded view. NFKC expansion (U+FDFA -> 18) can push
+        # the folded form past MAX_CANONICAL_LENGTH with a short, schema-legal
+        # message; a repeated run placed after the cut would be invisible here
+        # while the raw message is delivered unchanged -- the same filter vs.
+        # consumer view gap fixed for keywords and mentions. max_length=None
+        # keeps the filter view identical to the consumer's view.
+        for m in self._pattern.finditer(
+            fold_invisible_for_matching(content, max_length=None)
+        ):
             char = m.group(1)
             if self._ignore_whitespace and char.isspace():
                 continue

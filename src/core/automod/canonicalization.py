@@ -76,7 +76,9 @@ def canonicalize_for_matching(
     return text
 
 
-def fold_invisible_for_matching(content: Any) -> str:
+def fold_invisible_for_matching(
+    content: Any, *, max_length: Optional[int] = MAX_CANONICAL_LENGTH
+) -> str:
     """NFKC-fold text and strip visually invisible characters, nothing else.
 
     ``canonicalize_for_matching`` also case-folds and collapses whitespace,
@@ -89,8 +91,13 @@ def fold_invisible_for_matching(content: Any) -> str:
     separator (U+200B), soft hyphen, word joiner, bidi override or BOM spliced
     between repeated characters broke the run while rendering identically to a
     human -- obvious spam sailed through the filter. Folding both seeks and
-    obfuscated forms to the same canonical bytes closes that gap. Length is
-    bounded because NFKC can expand a single codepoint into many.
+    obfuscated forms to the same canonical bytes closes that gap.
+
+    ``max_length`` mirrors ``canonicalize_for_matching``: callers whose filter
+    must see EVERY byte the consumer later delivers/renders should pass
+    ``max_length=None``. Truncating here can hide a run/emoji placed past the
+    cut while the raw message is delivered unchanged (the filter/consumer view
+    gap the canonicalization campaign closed for keywords and mentions).
     """
     if content is None:
         return ""
@@ -100,6 +107,6 @@ def fold_invisible_for_matching(content: Any) -> str:
     text = "".join(
         ch for ch in text if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES
     )
-    if len(text) > MAX_CANONICAL_LENGTH:
-        text = text[:MAX_CANONICAL_LENGTH]
+    if max_length is not None and len(text) > max_length:
+        text = text[:max_length]
     return text
