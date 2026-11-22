@@ -139,9 +139,7 @@ _ROLE_ASSIGNMENT_GRANTABILITY_RECHECK = (
     "                try:\n"
     "                    fresh_permissions = json.loads(fresh_permissions)\n"
     "                except (TypeError, ValueError):\n"
-    "                    raise InvalidPermissionKeyError(\n"
-    '                        "Role permissions are unreadable"\n'
-    "                    )\n"
+    '                    raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
     "            if not isinstance(fresh_permissions, dict):\n"
     '                raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
     "            validate_permission_dict(fresh_permissions)\n"
@@ -157,13 +155,34 @@ _ROLE_ASSIGNMENT_RANK_RECHECK = (
     "            )\n"
     "            if not fresh_position:\n"
     '                raise RoleNotFoundError("Role not found")\n'
-    "            current_user_roles = self.manager._get_member_role_rows(\n"
-    "                server_id, user_id\n"
+    "            # N840 follow-up: ``is_owner`` above was captured before these\n"
+    "            # locks were taken. ``transfer_ownership`` is CAS-guarded but does\n"
+    "            # NOT take the 142 -> 143 advisory locks, so the actor can lose\n"
+    "            # ownership in the check->write gap and the pre-lock verdict goes\n"
+    "            # stale. Re-derive ownership from the authoritative row under the\n"
+    "            # lock; a stale ``is_owner=True`` makes can_manage_role return True\n"
+    "            # unconditionally and would let a now-former owner attach a role\n"
+    "            # at/above their (now lower) rank. Fail closed on a missing or\n"
+    "            # malformed owner row -- neither proves the actor is still owner.\n"
+    "            fresh_owner = self.db.fetch_one(\n"
+    '                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",\n'
+    "                (server_id,),\n"
     "            )\n"
+    "            if not fresh_owner:\n"
+    "                raise RoleHierarchyError(\n"
+    '                    "Cannot manage roles: server not found at write time"\n'
+    "                )\n"
+    '            fresh_owner_id = fresh_owner["owner_id"]\n'
+    "            if type(fresh_owner_id) is not int:\n"
+    "                raise RoleHierarchyError(\n"
+    '                    "Cannot manage roles: malformed server owner row"\n'
+    "                )\n"
+    "            fresh_is_owner = fresh_owner_id == int(user_id)\n"
+    "            current_user_roles = self.manager._get_member_role_rows(server_id, user_id)\n"
     "            if not can_manage_role(\n"
     "                current_user_roles,\n"
     '                {"position": fresh_position["position"]},\n'
-    "                is_owner,\n"
+    "                fresh_is_owner,\n"
     "            ):\n"
     "                raise RoleHierarchyError(\n"
     '                    "Cannot assign a role at or above your highest role"\n'
@@ -681,6 +700,30 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "2e2ee251 is a private-index re-landing of the PlexiSum segment "
             "gap-filler range-ACL fix; pinned by the distinctive merged-view "
             "comment it introduced."
+        ),
+    ),
+    CommittedFixMarker(
+        key="52151ef1-private-index-security-fix",
+        path="src/core/servers/handlers/roles/assignments.py",
+        marker='fresh_owner_id = fresh_owner["owner_id"]',
+        why=(
+            '52151ef1 is a private-index re-landing of the roles under-lock ownership recheck; pinned by its strict-int fresh_owner_id block.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="695fc5a6-private-index-security-fix",
+        path="src/core/stickers/manager.py",
+        marker='# The pack-level quotas (packs per server / packs per user) had the same',
+        why=(
+            '695fc5a6 is a genuine security fix landed via the private index: pack quotas now use guarded inserts to close a check-then-insert TOCTOU; pinned by its distinctive rationale comment.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="98748ba8-private-index-security-fix",
+        path="src/core/auth/deletion_log.py",
+        marker='Every checksum is an **HMAC-SHA256** over ``prev_hash + canonical(entry)``',
+        why=(
+            '98748ba8 is a genuine security fix landed via the private index: deletion audit logs use an HMAC chain with explicit key ids; pinned by its distinctive integrity-model text.'
         ),
     ),
     CommittedFixMarker(
@@ -2674,7 +2717,7 @@ PRIVATE_INDEX_NON_SECURITY_SHAS: frozenset[str] = frozenset(
         # only accepts src/ paths, so it cannot carry a marker; name it here
         # explicitly, never a blanket exemption. The reflog unknown-fix test
         # still flags any other unpinned SHA.
-        "47b03e2a", "e7562b9b", "35430e0f",
+        "47b03e2a", "e7562b9b", "35430e0f", "1186b52b",
     }
 )
 
