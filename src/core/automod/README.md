@@ -36,7 +36,7 @@ Infrastructure defaults that affect AutoMod:
 | Rate limiting global | 25,000 req/60s burst 5,000 | `src/config_defaults.py:270` |
 | Rate limiting user | 10,000 req/60s burst 2,500 | `src/config_defaults.py:270` |
 | Rate limiting IP | 5,000 req/60s burst 1,500 | `src/config_defaults.py:270` |
-| Gateway opcodes | `50` (identify), `60–67` (voice) | `src/api/websocket/opcodes.py` |
+| Gateway opcodes | `2` (identify), `4`/`20`–`26` (voice), `50` (ratchet update), `60`–`67` (artifacts/PlexiSum), `68` (artifact op rejected) | `src/api/websocket/opcodes.py` |
 | Gateway intents | `20`, `21` | `src/api/websocket/intents.py` |
 
 ## Set up AutoMod
