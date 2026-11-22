@@ -15,6 +15,30 @@ from .base import BaseService
 from src.core.base import SnowflakeID
 
 
+def _invalidate_dm_participant_audience() -> None:
+    """Retire the gateway's memoized DM/group participant audiences.
+
+    ``EventRouter._dm_participant_cache`` memoizes the fully filtered recipient
+    set of a DM/group conversation for a short epoch. A membership write must
+    retire that set at once: otherwise a user just removed from the conversation
+    remains in the cached audience and private events (message bodies, typing,
+    reactions) keep being routed to them until the cache TTL lapses -- a cached
+    participant set outliving the removal.
+
+    Lazy import keeps ``core.messaging`` decoupled from ``core.events`` (and
+    avoids an import cycle). Invalidation is best-effort: a failure is logged
+    but never turns an otherwise successful DB removal into an error.
+    """
+    import utils.logger as logger
+
+    try:
+        from src.core.events.router import clear_dm_participant_cache
+
+        clear_dm_participant_cache()
+    except Exception as e:
+        logger.debug(f"DM participant audience cache invalidation failed: {e}")
+
+
 class ParticipantService(BaseService):
     """Service for participant operations."""
 
@@ -105,6 +129,9 @@ class ParticipantService(BaseService):
         # ``invalidate_pattern(f"participant_ids:*{cid}*")`` loop.
         for cid in conversation_ids:
             self._cache_invalidate((cid, user_id))
+        # A removal must not leave the removed user in the gateway's memoized
+        # DM/group participant audience (server kicks/bans reach this path).
+        _invalidate_dm_participant_audience()
 
     def remove_participant(
         self,
@@ -115,6 +142,10 @@ class ParticipantService(BaseService):
         """Remove a participant from a conversation."""
         self._repo.delete(conversation_id, user_id, auto_commit=auto_commit)
         self._cache_invalidate((conversation_id, user_id))
+        # A removal must retire the gateway's memoized DM/group participant
+        # audience so the removed user cannot keep receiving private events
+        # routed with the pre-removal participant set.
+        _invalidate_dm_participant_audience()
         # ORPHAN-FIX (see add_participant): drop the now-unreachable
         # ``invalidate_pattern(f"participant_ids:*{conversation_id}*")``.
 
