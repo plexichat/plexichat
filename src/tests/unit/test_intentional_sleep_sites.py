@@ -29,6 +29,138 @@ SLEEP_CALL = re.compile(r"^\s*[^#\n]*\.sleep\(", re.MULTILINE)
 
 # relative path under src/tests -> (number of .sleep() calls, why they exist)
 INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
+    "api/test_ack_server_channel_block_audience.py": (
+        1,
+        "drain task queue so the fire-and-forget audience fan-out runs",
+    ),
+    "api/test_admin_read_cache_single_flight.py": (
+        2,
+        "poll until every cold caller is inside the loader, then leave the leader a window to fill the cache before releasing the gate",
+    ),
+    "api/test_admin_summary_cache_singleflight.py": (
+        1,
+        "poll a predicate until the coalesced build finishes",
+    ),
+    "api/test_maintenance_sweep_interval_hardening.py": (
+        1,
+        "let the background sweep run one interval so the NaN-interval crash would surface",
+    ),
+    "api/test_message_audience_fail_closed.py": (
+        1,
+        "drain task queue so the audience fan-out completes before assertions",
+    ),
+    "api/test_pin_fanout_strips_viewer_fields.py": (
+        1,
+        "drain task queue so the fire-and-forget pin broadcast runs",
+    ),
+    "api/test_typing_channel_block_audience.py": (
+        1,
+        "drain task queue so the typing audience fan-out runs",
+    ),
+    "api/test_typing_conversation_id_alias_gate.py": (
+        1,
+        "drain task queue so the typing fan-out runs before assertions",
+    ),
+    "artifacts/test_capability_cache_inflight_coalescing.py": (
+        1,
+        "hold the leader inside the loader so the followers are observably waiting",
+    ),
+    "auth/test_2fa_attempt_atomic_incr_expire.py": (
+        1,
+        "stand in for the cache round trip that makes the increment race deterministic",
+    ),
+    "auth/test_api_token_required_cache_singleflight.py": (
+        1,
+        "serialized cold-loader delay so N callers cost N delays without single-flight",
+    ),
+    "auth/test_device_revocation_socket_closes.py": (
+        1,
+        "yield to the loop so the scheduled socket close runs before the loop is torn down",
+    ),
+    "auth/test_disable_2fa_no_exception_closes_all_sockets.py": (
+        1,
+        "yield to the loop so every scheduled revocation close runs",
+    ),
+    "auth/test_disable_2fa_revocation_socket_close.py": (
+        1,
+        "yield to the loop so the scheduled socket close runs",
+    ),
+    "auth/test_refresh_replay_revoke_closes_session_socket.py": (
+        1,
+        "yield to the loop so the replay revocation closes the session socket",
+    ),
+    "auth/test_remaining_revocation_socket_closes.py": (
+        2,
+        "yield to the loop so a scheduled revocation close runs before the loop ends",
+    ),
+    "auth/test_revocation_closes_gateway_sockets.py": (
+        1,
+        "yield to the loop so the gateway socket close is dispatched",
+    ),
+    "auth/test_revocation_closes_gateway_sockets_routes.py": (
+        3,
+        "yield to the loop so the route-triggered revocation closes its sockets",
+    ),
+    "auth/test_session_id_rotation_on_2fa_transition.py": (
+        1,
+        "yield to the loop so the rotation's socket close is dispatched",
+    ),
+    "auth/test_single_session_revoke_closes_matching_socket.py": (
+        1,
+        "yield to the loop so the single-session revoke closes its socket",
+    ),
+    "auth/test_token_verify_cache_singleflight.py": (
+        1,
+        "serialized verify delay so N callers cost N delays without single-flight",
+    ),
+    "auth/test_username_blacklist_plan_cache.py": (
+        1,
+        "let the bounded blacklist plan TTL expire so the remote change is observed",
+    ),
+    "embeds/test_link_preview_inflight_coalescing.py": (
+        3,
+        "hold the leader fetch open long enough for the followers to join it",
+    ),
+    "features/test_report_evidence_url_fanout_perf.py": (
+        1,
+        "synthetic per-URL latency in the stubbed check so fan-out overlap is measurable",
+    ),
+    "messaging/test_message_fanout_strips_viewer_fields.py": (
+        1,
+        "drain task queue so the message fan-out completes before assertions",
+    ),
+    "security/test_credential_strength_final_guard.py": (
+        1,
+        "retry the source read while another worker rewrites the file atomically",
+    ),
+    "security/test_invite_code_entropy.py": (
+        1,
+        "retry the generator source read while the file is being rewritten",
+    ),
+    "security/test_shared_config_cache_copy_isolation_guard.py": (
+        1,
+        "retry the source read while another worker rewrites the file atomically",
+    ),
+    "servers/test_has_perm_verdict_cache_singleflight.py": (
+        1,
+        "per-call permission loader delay so the coalesced path is measurable",
+    ),
+    "unit/test_admin_grant_cache_unlocked_hit.py": (
+        2,
+        "model the cost of an uncached lookup, and let a short grant TTL expire",
+    ),
+    "unit/test_content_filter_pattern_cache_perf.py": (
+        1,
+        "slow compile double so a cached pattern is observably faster",
+    ),
+    "webhooks/test_delivery_bounded_concurrency.py": (
+        2,
+        "stand-in delivery latency so concurrent deliveries overlap observably",
+    ),
+    "webhooks/test_signature_lock_keying_invariants.py": (
+        1,
+        "give the contending thread time to block on the signature lock",
+    ),
     "api/test_admin_dashboard_summary_warmup.py": (
         1,
         "slow-build double widens the window where two readers race the cache fill",

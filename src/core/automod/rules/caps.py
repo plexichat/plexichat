@@ -8,11 +8,11 @@ import math
 from typing import Dict, Any, Optional
 
 from .base import BaseRule
+from ..limits import MAX_MIN_LENGTH
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 DEFAULT_MAX_PERCENTAGE = 70.0
 DEFAULT_MIN_LENGTH = 10
-MAX_MIN_LENGTH = 10_000
 
 
 def _bounded_float(value: Any, default: float, low: float, high: float) -> float:

@@ -54,9 +54,12 @@ def _manager(db_path, *, applied=3, pending=0):
 
 def _response(manager):
     request = MagicMock()
+    # The route now gates through ``require_admin_permission`` (the action
+    # scope plus ``maintenance``), so patch that gate rather than the token
+    # helper it used to call directly; the host gate is the assertion target.
     with (
         patch.object(route, "check_host_restriction") as host_gate,
-        patch.object(route, "get_admin_from_token", return_value=1),
+        patch.object(route, "require_admin_permission", return_value=1),
     ):
         result = asyncio.run(
             route.list_migrations(request, manager=manager, admin_user=1)

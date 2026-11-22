@@ -4,6 +4,7 @@ Mass emoji detection rule.
 Detects messages with excessive emoji usage.
 """
 
+import math
 import re
 from typing import Dict, Any, Optional
 
@@ -11,6 +12,7 @@ from src.core.security.hardening import HardeningViolation, bounded_int
 
 from .base import BaseRule
 from ..canonicalization import fold_invisible_for_matching
+from ..limits import MAX_EMOJI_COUNT, MAX_MIN_LENGTH
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
@@ -21,6 +23,37 @@ def _bounded(value, field, minimum, maximum, default):
         )
     except HardeningViolation:
         return default
+
+
+def _clamped_int(value, minimum, maximum, default):
+    """Clamp a stored integer knob into range, falling back on non-integers.
+
+    ``min_length`` is admin-stored but still untrusted input: a stored 1e9
+    made the rule skip every realistic message, so an oversized value is
+    pulled down to the shared ceiling rather than trusted or reset.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    return max(minimum, min(value, maximum))
+
+
+def _coerced_bool(value, default):
+    """Accept only a real bool; stored strings keep the compiled default."""
+    return value if isinstance(value, bool) else default
+
+
+def _clamped_float(value, minimum, maximum, default):
+    """Clamp a stored float knob into range, rejecting NaN/inf and bools.
+
+    ``max_percentage: NaN`` used to make every ``percentage > NaN`` compare
+    False and silently disable the percentage check for the whole rule.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    number = float(value)
+    if not math.isfinite(number):
+        return default
+    return max(minimum, min(number, maximum))
 
 
 class MassEmojiRule(BaseRule):
@@ -44,12 +77,21 @@ class MassEmojiRule(BaseRule):
     def __init__(self, rule: Rule):
         super().__init__(rule)
         self._max_emoji: int = _bounded(
-            self.config.get("max_emoji"), "max_emoji", 1, 1_000, 10
+            self.config.get("max_emoji"), "max_emoji", 1, MAX_EMOJI_COUNT, 10
         )
-        self._max_percentage: float = self.config.get("max_percentage", 50.0)
-        self._count_custom: bool = self.config.get("count_custom", True)
-        self._count_unicode: bool = self.config.get("count_unicode", True)
-        self._min_length: int = self.config.get("min_length", 5)
+        self._max_percentage: float = _clamped_float(
+            self.config.get("max_percentage"), 0.0, 100.0, 50.0
+        )
+        # Stored configs are JSON that an admin may have edited by hand; a
+        # truthy string used to make the rule treat the toggle as opaque, so
+        # only a real bool is honoured and anything else keeps the default.
+        self._count_custom: bool = _coerced_bool(self.config.get("count_custom"), True)
+        self._count_unicode: bool = _coerced_bool(
+            self.config.get("count_unicode"), True
+        )
+        self._min_length: int = _clamped_int(
+            self.config.get("min_length"), 1, MAX_MIN_LENGTH, 5
+        )
 
     def check(
         self,
@@ -140,14 +182,34 @@ class MassEmojiRule(BaseRule):
 
         try:
             bounded_int(
-                config.get("max_emoji", 10), "max_emoji", minimum=1, maximum=1_000
+                config.get("max_emoji", 10),
+                "max_emoji",
+                minimum=1,
+                maximum=MAX_EMOJI_COUNT,
             )
         except HardeningViolation:
-            issues.append("max_emoji must be an integer between 1 and 1000")
+            issues.append(
+                f"max_emoji must be an integer between 1 and {MAX_EMOJI_COUNT}"
+            )
 
         max_pct = config.get("max_percentage", 50.0)
-        if not isinstance(max_pct, (int, float)) or not 0 <= max_pct <= 100:
+        if (
+            isinstance(max_pct, bool)
+            or not isinstance(max_pct, (int, float))
+            or not math.isfinite(max_pct)
+            or not 0 <= max_pct <= 100
+        ):
             issues.append("max_percentage must be between 0 and 100")
+
+        min_len = config.get("min_length", 5)
+        if (
+            isinstance(min_len, bool)
+            or not isinstance(min_len, int)
+            or not 1 <= min_len <= MAX_MIN_LENGTH
+        ):
+            issues.append(
+                f"min_length must be an integer between 1 and {MAX_MIN_LENGTH}"
+            )
 
         for field in ["count_custom", "count_unicode"]:
             if field in config and not isinstance(config[field], bool):

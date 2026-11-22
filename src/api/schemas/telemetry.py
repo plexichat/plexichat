@@ -17,9 +17,11 @@ _MAX_DB_QUERIES = 1_000_000
 # (as JSON literals or strings) by default.  NaN defeats every range comparison
 # in the core (``x < 0`` and ``x > max`` are both False), so it reached the
 # ``REAL`` columns and turned later ``AVG()`` aggregates into NaN.  +Infinity
-# likewise overflowed stored metrics.  Reject both here, and keep the earlier
-# ``ge=0`` checks intact so legitimate negative values are still refused.
-_FINITE_NON_NEGATIVE_FLOAT = dict(ge=0, allow_inf_nan=False)
+# likewise overflowed stored metrics.  Reject both on every float field, and
+# keep the ``ge=0`` checks so legitimate negative values are still refused.
+# The constraints are spelled out per field: spreading a shared ``dict`` into
+# ``Field(**constraints)`` hides each keyword from the typed overload, so the
+# same guard read as a type error instead of a checked constraint.
 
 
 class ResponseTimeEntry(BaseModel):
@@ -37,9 +39,10 @@ class ResponseTimeEntry(BaseModel):
     method: str = Field(..., max_length=10, description="The HTTP method used")
     response_time_ms: float = Field(
         ...,
+        ge=0,
         le=_MAX_RESPONSE_TIME_MS,
+        allow_inf_nan=False,
         description="The response time in milliseconds",
-        **_FINITE_NON_NEGATIVE_FLOAT,
     )
     status_code: Union[int, str] = Field(
         ..., description="The HTTP status code returned"
@@ -52,9 +55,10 @@ class ResponseTimeEntry(BaseModel):
     )
     db_time_ms: Optional[float] = Field(
         0.0,
+        ge=0,
         le=_MAX_DB_TIME_MS,
+        allow_inf_nan=False,
         description="Time spent executing database queries in ms",
-        **_FINITE_NON_NEGATIVE_FLOAT,
     )
     timestamp: Optional[int] = Field(
         None,

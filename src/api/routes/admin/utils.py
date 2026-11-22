@@ -322,7 +322,10 @@ def _credential_binding(request: Request):
     if is_authenticated_self_test(request):
         return ("selftest",)
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
+    # Request doubles (and some ASGI shims) hand back non-string header
+    # values; fingerprinting them would raise out of the admin gate and turn
+    # a cache lookup into a 500, so only a real bearer string is bound.
+    if isinstance(auth_header, str) and auth_header.startswith("Bearer "):
         return (
             "bearer",
             hashlib.sha256(auth_header[7:].encode("utf-8")).hexdigest(),

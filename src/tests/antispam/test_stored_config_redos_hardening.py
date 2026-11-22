@@ -51,7 +51,10 @@ def _clean_counters():
 # ---------------------------------------------------------------------------
 
 _GLOB_CASES = [
-    ("*free crypto*", "get FREE crypto now", True),
+    # The detector matches its casefolded canonical text against a casefolded
+    # pattern, so this row feeds the matcher the same lowercased pair; the
+    # fnmatch oracle above is case-sensitive and would otherwise disagree.
+    ("*free crypto*", "get free crypto now", True),
     ("*free crypto*", "nothing here", False),
     ("banned-word*", "banned-word here", True),
     ("*banned-word", "here banned-word", True),

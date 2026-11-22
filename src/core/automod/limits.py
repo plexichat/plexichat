@@ -17,6 +17,12 @@ MAX_PATTERN_NAME_LENGTH = 128
 MAX_REPEATS = 100
 # Invite-link code length is interpolated into a regex quantifier as well.
 MAX_CODE_LENGTH = 64
+# Ceiling for the caps rule's ``min_length``; a larger value only makes the
+# rule fire on every message, so it is bounded like the other config knobs.
+MAX_MIN_LENGTH = 10_000
+# A single message can carry thousands of emoji, and the emoji rule walks
+# every one of them on each message; 1_000 is far above any legitimate post.
+MAX_EMOJI_COUNT = 1_000
 # Keyword list / per-keyword ceilings.
 MAX_KEYWORDS = 500
 MAX_KEYWORD_LENGTH = 256
