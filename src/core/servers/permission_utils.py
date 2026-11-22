@@ -18,6 +18,16 @@ MAX_PERMISSION_ENTRIES = len(SERVER_PERMISSIONS)
 #: Individual keys are short dotted identifiers; cap hostile string input.
 MAX_PERMISSION_KEY_LENGTH = 64
 
+#: The full-grant permission set is a request-invariant vocabulary: it depends
+#: only on the static ``SERVER_PERMISSIONS`` catalog. Bulk member-list reads
+#: resolve permissions once per member of a page, and an owner or an
+#: administrator used to rebuild this dict comprehension on every resolution
+#: (and again when channel overrides were applied) -- the same N keys inserted
+#: over and over for one request. Build the template once; every caller gets a
+#: fresh shallow copy so timeout restrictions and overrides still mutate only
+#: their own result, never the shared template or another member's verdict.
+_ALL_PERMISSIONS = {perm: True for perm in SERVER_PERMISSIONS}
+
 
 def validate_permission_dict(permissions: Optional[Dict[str, Any]]) -> None:
     """
@@ -101,7 +111,7 @@ def calculate_base_permissions(
         Dict of permission name to boolean
     """
     if is_owner:
-        return {perm: True for perm in SERVER_PERMISSIONS}
+        return dict(_ALL_PERMISSIONS)
 
     result = {}
 
@@ -118,7 +128,7 @@ def calculate_base_permissions(
 
         # Administrator bypasses all permissions
         if role_perms.get("administrator"):
-            return {perm: True for perm in SERVER_PERMISSIONS}
+            return dict(_ALL_PERMISSIONS)
 
         for perm, value in role_perms.items():
             if value:
@@ -161,7 +171,7 @@ def apply_channel_overrides(
 
     # If user has administrator, skip overrides
     if result.get("administrator"):
-        return {perm: True for perm in SERVER_PERMISSIONS}
+        return dict(_ALL_PERMISSIONS)
 
     # Apply role overrides in the order given (lowest position first). Each
     # override is applied deny-then-allow, so later (higher-position) roles
