@@ -260,6 +260,15 @@ def _get_profile_visibility(owner_id: int) -> str:
     # Normalize to a plain ``int`` here so the read and invalidation keys agree:
     # otherwise a tightened visibility (public -> private/friends/servers) stays
     # warm for the full TTL and keeps exposing private fields to viewers.
+    # A profile_visibility row lives in the database independently of the
+    # settings module being wired in this process. When that module is unwired
+    # _read_profile_visibility_raw cannot read the row and returns None, which
+    # below would fall back to the public default and expose a profile the
+    # owner explicitly stored as private/friends/servers. Fail closed to the
+    # restricted projection instead; a genuinely absent row (settings wired)
+    # still gets the documented public default.
+    if not api.get_settings():
+        return _FAIL_CLOSED_VISIBILITY
     raw = _read_profile_visibility_raw(int(owner_id))
     if not raw:
         return _DEFAULT_VISIBILITY
