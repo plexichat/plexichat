@@ -15,6 +15,7 @@ from src.core.auth.models import TokenInfo
 from src.core.auth.exceptions import AuthError
 
 from .policy_cache import get_static_policy
+from .logging import _safe_log_path
 from .request_context import (
     bind_current_context,
     cached_client_ip,
@@ -701,8 +702,15 @@ async def get_current_user(request: Request) -> TokenInfo:
             "auth_error", "Authentication required"
         )
 
+        # SECURITY: request.url.path is the RESOLVED path. Authenticated routes
+        # can carry a credential in a path segment (e.g. a push token at
+        # /features/push/tokens/{token_value}); logging it verbatim on a failed
+        # auth check bypasses the access-log redactor and writes that secret to
+        # the sink. Route it through the shared redactor, which fails closed by
+        # emitting the matched route template when routing metadata is present.
         logger.debug(
-            f"get_current_user: No user in state for path {request.url.path}. Error: {error}"
+            f"get_current_user: No user in state for path "
+            f"{_safe_log_path(request.scope, request.url.path)}. Error: {error}"
         )
 
         raise HTTPException(
