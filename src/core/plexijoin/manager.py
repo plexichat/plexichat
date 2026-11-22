@@ -25,7 +25,21 @@ from .validation import (
     validate_timestamp,
 )
 
+# This module logs through a plain ``logging.getLogger(__name__)`` logger, not
+# ``AppLogger``, so it never receives the on-disk ``SanitizingFilter``. Among
+# its call sites, ``send_join_request``/``send_message`` log ``result["error"]``
+# from ``_post_signed`` -- text derived from an outbound call to a (semi-trusted,
+# possibly hostile) remote instance and from exception messages. That value is
+# not run through any control-character validation, so a U+0085 (NEL),
+# U+2028/U+2029 or bidi control can forge extra entries in the captured
+# disk/SIEM log (CWE-117). Install the same sink-level guard ``AppLogger`` uses
+# so every line from this module -- including messages built from exception
+# text -- is neutralised. The guard escapes control characters visibly rather
+# than dropping them, keeping audit content readable.
+from src.utils.common_utils.utils.logger.core import SanitizingFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(SanitizingFilter())
 
 # Inbound route paths on the REMOTE instance that this instance POSTs to.
 # Mirrors the routes registered in ``src/api/routes/federation.py``.
