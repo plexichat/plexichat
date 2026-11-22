@@ -23,11 +23,17 @@ from ..repositories.message import MessageRepository
 from ..repositories.participant import ParticipantRepository
 from .base import BaseService
 from src.core.base import SnowflakeID
+from src.core.security.hardening import reject_control_characters
 
 # Server-generated export IDs are always ``export_`` + base64url entropy.
 # The getters reject anything else so a crafted ``export_id`` can never
 # drive path construction (traversal) or probe bookkeeping.
-_EXPORT_ID_RE = re.compile(r"^export_[A-Za-z0-9_-]{16,}$")
+# ``\Z`` (not ``$``) pins the end of the string: Python's ``$`` also matches
+# just before a trailing newline, which let a crafted id such as
+# ``export_<entropy>\n`` pass the old ``re.match`` check even though it is
+# not a shape this service ever emits. The caller additionally uses
+# ``fullmatch`` so the value is consumed in full even if the pattern changes.
+_EXPORT_ID_RE = re.compile(r"^export_[A-Za-z0-9_-]{16,}\Z")
 
 # The only formats the generators emit. An unrecognised value falls back to
 # JSON for the *content*, so the same normalised value MUST drive the output
@@ -143,7 +149,17 @@ class TranscriptExportService(BaseService):
     @staticmethod
     def _is_valid_export_id(export_id: Any) -> bool:
         """True only for server-shaped export IDs (traversal-safe)."""
-        return isinstance(export_id, str) and bool(_EXPORT_ID_RE.match(export_id))
+        if not isinstance(export_id, str):
+            return False
+        # Reject control characters explicitly before matching. The strict
+        # base64url class already excludes them, but spelling the rule out
+        # keeps the gate correct if the pattern is ever widened, and closes
+        # the trailing-newline bypass that ``$`` + ``match`` allowed.
+        try:
+            reject_control_characters(export_id, field="export_id")
+        except ValueError:
+            return False
+        return bool(_EXPORT_ID_RE.fullmatch(export_id))
 
     @staticmethod
     def _ensure_private_dir(path: Path) -> None:
