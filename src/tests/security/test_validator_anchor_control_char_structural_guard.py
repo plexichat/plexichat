@@ -142,9 +142,10 @@ NAME_HINTS = (
     "input",
 )
 
-# Evidence anywhere in the function body that the trailing-newline / control
-# character gap is closed.  ``fullmatch``/``\Z`` close the anchor; the others
-# reject the control set or strip it upstream.  ``\\\\Z`` is the ast.unparse
+# Vocabulary of mitigation markers (descriptive). The sweep does NOT treat a
+# bare substring as proof: ``_mitigated_names`` below requires the mitigation to
+# be applied to the value that actually reaches ``match()`` so a dead/unrelated
+# call cannot satisfy the marker vacuously. ``\\\\Z`` is the ast.unparse
 # rendering of a literal ``\Z`` inside a string constant.
 MITIGATION_MARKERS = (
     "fullmatch",
@@ -228,6 +229,83 @@ def _match_pattern(
     return None
 
 
+# Sanitizing calls whose argument (or assigned result) is genuinely protected
+# from a trailing NUL/newline. A marker on an UNRELATED value must not count.
+_SANITIZER_CALLS = frozenset(
+    {"reject_control_characters", "cap_config_string", "is_valid_control"}
+)
+_STRIP_METHODS = frozenset({"strip", "lstrip", "rstrip"})
+
+
+def _name_args(call: ast.Call) -> set[str]:
+    """Names appearing among a call's arguments."""
+    out: set[str] = set()
+    for arg in call.args:
+        for node in ast.walk(arg):
+            if isinstance(node, ast.Name):
+                out.add(node.id)
+    return out
+
+
+def _mitigated_names(fn: ast.AST) -> set[str]:
+    """Names genuinely protected by a strip / control-rejection in ``fn``.
+
+    A marker only counts when it is applied to the value that is later matched:
+    ``x = x.strip()`` and ``reject_control_characters(x)`` protect ``x``, while
+    ``y = x.strip()`` followed by ``match(x)`` does NOT. This keeps the sweep's
+    mitigation markers from being satisfied by a dead or unrelated call.
+    """
+    names: set[str] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            value = node.value
+            cname = _call_name(value)
+            is_strip = cname in _STRIP_METHODS or (
+                isinstance(value.func, ast.Attribute)
+                and value.func.attr in _STRIP_METHODS
+            )
+            is_sanitizer = cname in _SANITIZER_CALLS or cname.startswith(
+                "_reject_sdp_control"
+            )
+            if is_strip or is_sanitizer:
+                if is_sanitizer:
+                    names.update(_name_args(value))
+                for target in node.targets:
+                    for sub in ast.walk(target):
+                        if isinstance(sub, ast.Name):
+                            names.add(sub.id)
+                continue
+        if isinstance(node, ast.Call):
+            cname = _call_name(node)
+            if cname in _SANITIZER_CALLS or cname.startswith("_reject_sdp_control"):
+                names.update(_name_args(node))
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "CONTROL_CHARACTERS"
+                and func.attr in {"search", "match", "fullmatch", "findall", "sub"}
+            ):
+                names.update(_name_args(node))
+    return names
+
+
+def _matched_value_names(call: ast.Call) -> set[str]:
+    """Names of the value argument of a ``re.match``/``PAT.match`` call."""
+    func = call.func
+    if not (isinstance(func, ast.Attribute) and func.attr == "match"):
+        return set()
+    base = func.value
+    # re.match(pattern, value) -> value is the 2nd arg; PAT.match(value) -> 1st.
+    args = call.args[1:] if (isinstance(base, ast.Name) and base.id == "re") else call.args
+    names: set[str] = set()
+    for arg in args:
+        for node in ast.walk(arg):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+    return names
+
+
 def _evidence(fn: ast.AST, source: str) -> str:
     """Unparsed + raw source of a function (so both ``\\Z`` spellings appear)."""
     raw = ast.get_source_segment(source, fn) or ""  # type: ignore[arg-type]
@@ -273,14 +351,18 @@ def _loose_validator_candidates(
             continue
         if not _is_security_named(fn.name):
             continue
-        evidence = _evidence(fn, source)
-        if any(marker in evidence for marker in MITIGATION_MARKERS):
-            continue
+        mitigated = _mitigated_names(fn)
         for call in ast.walk(fn):
             if not isinstance(call, ast.Call):
                 continue
             pattern = _match_pattern(call, path, module_patterns)
             if pattern is None or not pattern.endswith("$") or r"\Z" in pattern:
+                continue
+            # A mitigation only neutralizes the call when it was applied to the
+            # very value being matched; a dead .strip()/reject on another name
+            # must not suppress the finding.
+            value_names = _matched_value_names(call)
+            if value_names and value_names <= mitigated:
                 continue
             permissive = any(tok in pattern for tok in PERMISSIVE_TOKENS)
             reason = "$ + match ignores a trailing newline (bare match + $)"
@@ -523,6 +605,67 @@ DOCUMENTED_VALIDATORS: tuple[ValidatorSite, ...] = (
         "pepper-id group is strict and verification fails closed. Not user "
         "input feeding a path, DB lookup, audience or authz decision.",
     ),
+    # ---- previously masked by a vacuous whole-function marker substring ------
+    # These bare-match sites were suppressed only because some OTHER call in the
+    # body contained `fullmatch`/`.strip()`. Each is genuinely neutralized as
+    # described below; with the name-aware sweep they must be reviewed instead.
+    ValidatorSite(
+        "unicode emoji keycap token",
+        "src/core/reactions/manager/validation.py",
+        "_is_valid_unicode_emoji",
+        "reaction validation / stored emoji",
+        "documented-loose",
+        ("KEYCAP_EMOJI_PATTERN", "REJECTED_CHARS"),
+        "The keycap class `[#*0-9]\\uFE0F?\\u20E3` captures no control byte, and "
+        "the only production caller (_validate_emoji) .strip()s the emoji before "
+        "dispatch; the method's per-codepoint scan rejects C0/DEL/rejected "
+        "characters for every non-keycap input. A trailing newline cannot "
+        "change the validated reaction.",
+    ),
+    ValidatorSite(
+        "custom emoji name",
+        "src/core/reactions/manager/validation.py",
+        "_validate_emoji_name",
+        "stored emoji name / event echo",
+        "documented-loose",
+        ("strip()", "re.match"),
+        "`name = name.strip().lower()` removes a trailing newline before the "
+        "strict `[a-z0-9_]+` match; NUL is not in the strict class and `$` does "
+        "not match before it, so no control byte survives into the returned name.",
+    ),
+    ValidatorSite(
+        "TLS hostname label",
+        "src/core/tls/config_validation.py",
+        "validate_hostname",
+        "TLS config hostname",
+        "documented-loose",
+        ("cap_config_string", "_LABEL"),
+        "`cap_config_string` calls `reject_control_characters`, `.strip()` is "
+        "applied, and each dot-split label is matched against a strict DNS "
+        "class; no control byte reaches the returned hostname.",
+    ),
+    ValidatorSite(
+        "TLS fingerprint",
+        "src/core/tls/config_validation.py",
+        "validate_fingerprint",
+        "TLS config pin",
+        "documented-loose",
+        ("cap_config_string", "_FINGERPRINT"),
+        "`cap_config_string` rejects control characters and the value is "
+        "stripped/lowercased before the strict 64-hex fingerprint match on the "
+        "colon-compacted value; NUL/newline cannot reach the stored pin.",
+    ),
+    ValidatorSite(
+        "PEP 440 version string",
+        "src/utils/common_utils/utils/version/core.py",
+        "parse_version",
+        "in-memory version parse",
+        "documented-loose",
+        ("VERSION_PATTERN", "strip()"),
+        "An explicit `any(c in version_string for c in \"\\r\\n\\x00\")` "
+        "rejection plus `.strip().lower()` precede the strict PEP 440 pattern; "
+        "a trailing NUL/newline cannot survive. Not a path/DB/authz value.",
+    ),
 )
 
 DOCUMENTED_LOOSE = tuple(s for s in DOCUMENTED_VALIDATORS if s.mode == "documented-loose")
@@ -702,6 +845,63 @@ def test_self_test_documented_exception_suppresses_only_its_own_site():
             tree, path=path, source=source, exceptions=other
         )
     ) == 1
+
+
+def test_self_test_dead_mitigation_markers_do_not_suppress_finding():
+    """A mitigation on a different value must not neutralize a loose match.
+
+    Regression for the sweep's vacuity: a ``.strip()`` on ``y``, a control
+    rejection on ``other``, or a local literally named ``fullmatch`` all used to
+    satisfy a whole-function substring marker while the matched value stayed
+    unguarded. Each such call must still be flagged.
+    """
+    dead = textwrap.dedent(
+        """
+        import re
+        from src.core.security.hardening.text import reject_control_characters
+        def validate_id(x):
+            y = x.strip()                      # dead: match is on unstripped x
+            return re.match(r"^id$", x)
+        def validate_code(code):
+            reject_control_characters(other)   # wrong value
+            return re.match(r"^code$", code)
+        def validate_name(name):
+            fullmatch = 1                      # marker as a dead local name
+            return re.match(r"^name$", name)
+        """
+    )
+    findings = _loose_validator_candidates(
+        ast.parse(dead), path="src/api/_synthetic.py", source=dead
+    )
+    assert {f.func for f in findings} == {
+        "validate_id",
+        "validate_code",
+        "validate_name",
+    }, findings
+
+    # The same mitigations applied to the matched value DO neutralize it.
+    live = textwrap.dedent(
+        """
+        import re
+        from src.core.security.hardening.text import reject_control_characters
+        def validate_id(x):
+            x = x.strip()
+            return re.match(r"^id$", x)
+        def validate_code(code):
+            reject_control_characters(code, "code")
+            return re.match(r"^code$", code)
+        def validate_label(label):
+            if CONTROL_CHARACTERS.search(label):
+                return None
+            return LABEL_RE.match(label)
+        """
+    )
+    assert (
+        _loose_validator_candidates(
+            ast.parse(live), path="src/api/_synthetic.py", source=live
+        )
+        == []
+    )
 
 
 def test_self_test_anchor_and_control_assertions_fail_when_removed():
