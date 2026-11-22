@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.core.messaging.services import pin
 from src.core.messaging.services.message import edit_delete
 from src.core.polls.manager import post_gate
 from src.core.polls.manager import reading as poll_reading
@@ -54,16 +55,31 @@ class _NoBackingChannel:
         return False
 
 
+class _PrivateChannelAliasNoGrant:
+    """A wired store where the conversation aliases a private channel.
+
+    The reverse lookup resolves the alias, but no live ``channels.view`` grant
+    can be proven, so the gate must deny rather than fall through to allow.
+    """
+
+    def get_channel_by_conversation(self, conversation_id):
+        return {"id": CHANNEL}
+
+    def get_channel(self, channel_id, user_id):
+        return None
+
+
 _GATES = (
     (edit_delete._can_view_conversation_messages, (USER, CONV)),
     (poll_reading._can_view_poll_message, (_Messaging(), MESSAGE, USER)),
     (post_gate.can_post_poll_message, (_Messaging(), MESSAGE, USER)),
+    (pin._can_view_conversation_messages, (USER, CONV)),
 )
 
 
 @pytest.mark.parametrize("gate,args", _GATES)
 def test_unwired_servers_denies(monkeypatch, gate, args):
-    for module in (edit_delete, poll_reading, post_gate):
+    for module in (edit_delete, poll_reading, post_gate, pin):
         monkeypatch.setattr(module, "_get_servers_module", lambda: None)
 
     assert gate(*args) is False, "unwired servers module must fail closed"
@@ -72,7 +88,21 @@ def test_unwired_servers_denies(monkeypatch, gate, args):
 @pytest.mark.parametrize("gate,args", _GATES)
 def test_wired_genuine_dm_still_allowed(monkeypatch, gate, args):
     """Control: a wired store with no backing channel is still a DM/group."""
-    for module in (edit_delete, poll_reading, post_gate):
+    for module in (edit_delete, poll_reading, post_gate, pin):
         monkeypatch.setattr(module, "_get_servers_module", lambda: _NoBackingChannel())
 
     assert gate(*args) is True, "fail-closed must not blanket-deny genuine DMs"
+
+
+def test_pin_gate_wired_private_channel_alias_denies_without_view(monkeypatch):
+    """Non-vacuous control: a real private-channel alias must deny.
+
+    The unwired denial is only meaningful if a wired store that actually
+    resolves a backing channel still denies when the live view grant cannot be
+    proven; otherwise fail-closed would be an unrelated blanket denial.
+    """
+    monkeypatch.setattr(
+        pin, "_get_servers_module", lambda: _PrivateChannelAliasNoGrant()
+    )
+
+    assert pin._can_view_conversation_messages(USER, CONV) is False

@@ -61,7 +61,12 @@ def _can_view_conversation_messages(user_id, conversation_id) -> bool:
     """
     servers = _get_servers_module()
     if servers is None:
-        return True
+        # The backing-channel lookup cannot be evaluated without the servers
+        # module. Deny instead of skipping the gate: an unwired dependency is
+        # exactly the state in which the reverse lookup cannot prove the
+        # absence of a private-channel alias (the unwired-dependency invariant
+        # in src/tests/api/test_unwired_dependency_fails_closed.py).
+        return False
     reverse = getattr(servers, "get_channel_by_conversation", None)
     if not callable(reverse):
         return True  # legacy/stub store: only the participation gate is available
