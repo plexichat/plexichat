@@ -11,6 +11,7 @@ import src.api as api
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.artifacts import ArtifactResponse, ConvertUploadRequest
 from src.api.schemas.common import ErrorResponse
 from src.core.artifacts.models import ArtifactType
@@ -48,6 +49,10 @@ async def _convert_upload_impl(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactResponse:
     """Convert an existing attachment into an artifact."""
+    # A bot token's user_id is its human owner. Without this gate a narrow
+    # bot credential wields the owner's server/conversation authority through
+    # _authorize_scope and authors the converted row as the owner.
+    require_user_token(current_user)
     try:
         conversation_id = (
             int(body.conversation_id) if body.conversation_id is not None else None

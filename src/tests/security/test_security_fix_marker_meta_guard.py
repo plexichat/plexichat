@@ -261,6 +261,28 @@ FIX_MARKERS: tuple[FixMarker, ...] = (
             "unwired/absent instead of silently skipping the check"
         ),
     ),
+    # --- Follow-up to N675: artifact management bot-token owner-confusion ---
+    FixMarker(
+        key="artifact-management-bot-token-owner-guard",
+        path="src/api/routes/artifacts/routes/crud.py",
+        marker="bot credential wields the owner's server/conversation authority",
+        why=(
+            "the create/update/delete artifact handlers reject bot credentials "
+            "before _authorize_scope treats the bot owner's user_id as the "
+            "acting member and before manager.create authors the row as the "
+            "owner; matches the emoji/sticker/soundboard management fixes"
+        ),
+    ),
+    FixMarker(
+        key="artifact-convert-upload-bot-token-owner-guard",
+        path="src/api/routes/artifacts/routes/uploads.py",
+        marker="bot credential wields the owner's server/conversation authority",
+        why=(
+            "the convert-upload handler rejects bot credentials before "
+            "_authorize_scope and manager.create author the converted artifact "
+            "as the bot's human owner"
+        ),
+    ),
 )
 
 # The four entries added by the follow-up audit.  Kept explicit so the

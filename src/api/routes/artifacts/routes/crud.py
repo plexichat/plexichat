@@ -9,6 +9,7 @@ import utils.logger as logger
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.artifacts import (
     ArtifactCreateRequest,
     ArtifactListResponse,
@@ -58,6 +59,11 @@ async def create_artifact(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactResponse:
     """Create a new artifact and emit an inline transcript message."""
+    # A bot token's user_id is its human owner. Without this gate a narrow
+    # bot credential wields the owner's server/conversation authority through
+    # _authorize_scope and charges the authored row to the owner's identity.
+    # Match the emoji, sticker and soundboard management routes.
+    require_user_token(current_user)
     try:
         conversation_id = (
             int(body.conversation_id) if body.conversation_id is not None else None
@@ -374,6 +380,7 @@ async def update_artifact(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactResponse:
     """Update mutable fields of an artifact."""
+    require_user_token(current_user)
     try:
         manager = _get_manager()
         artifact = manager.get(artifact_id)
@@ -538,6 +545,7 @@ async def delete_artifact(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     """Delete an artifact."""
+    require_user_token(current_user)
     try:
         aid = parse_artifact_id(artifact_id)
 
