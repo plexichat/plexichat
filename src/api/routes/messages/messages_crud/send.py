@@ -298,6 +298,21 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                 self._enforce_dm_spam_protection(
                     cid, current_user.user_id, content_value, messaging
                 )
+                # A server channel's linked ``conversation_id`` also lands here
+                # (``_resolve_server_id`` sees no channel row), so the
+                # ``if server_id:`` automod gate above never ran for it. Apply
+                # that same fast gate against the real backing channel; a
+                # genuine DM has no backing channel and is left to
+                # participation + the DM spam check above.
+                self._enforce_alias_automod(
+                    cid,
+                    automod_content,
+                    current_user.user_id,
+                    servers_mod,
+                    messaging,
+                    automod,
+                    _channel_ctx=_channel_ctx,
+                )
 
             msg, server_id = await self._send_message_with_fallback(
                 cid,

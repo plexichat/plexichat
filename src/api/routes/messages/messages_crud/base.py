@@ -729,6 +729,129 @@ class MessagesCRUDBase:
             headers={"Retry-After": str(int(retry_after) + 1)},
         )
 
+    def _enforce_alias_automod(
+        self,
+        addressed_id: int,
+        content: str,
+        user_id: int,
+        servers_mod: Any,
+        messaging: Any,
+        automod: Any = None,
+        source: str = "message_create",
+        _channel_ctx: Optional[dict] = None,
+    ) -> None:
+        """Run the server automod fast gate for a conversation-id alias send.
+
+        The REST send route's ``if server_id:`` block is the only place that
+        runs ``automod.check_message_fast``. A server channel's linked
+        ``conversation_id`` used in the URL resolves to no channel row, so that
+        block -- and its moderation -- is skipped entirely. Resolve the alias
+        back to its real backing channel/server and apply the same check there.
+
+        A conversation with no backing channel is a genuine DM/group and is
+        left to participation plus DM spam protection. Anything that cannot be
+        resolved cleanly, or a moderation service that cannot be evaluated,
+        denies the send: unlike the normal channel-id path there is no second
+        automod gate to fall back to on this route.
+        """
+        if automod is None:
+            from src.core import automod as _automod
+
+            automod = _automod
+
+        def _deny() -> HTTPException:
+            return HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+
+        if _channel_ctx is not None and _channel_ctx.get("channel") is not None:
+            # A channel row was resolved for this id, so it is a channel id,
+            # not a conversation-id alias. There is no alias to reverse-map.
+            return
+        if not servers_mod or getattr(servers_mod, "_setup_complete", True) is False:
+            # No server-channel store from which an alias could be produced.
+            # Genuine DMs are gated by participation; alias sends are denied
+            # by ``_require_alias_send_access`` in the fallback below.
+            return
+
+        lookup = getattr(servers_mod, "get_channel_by_conversation", None)
+        if not callable(lookup):
+            # Cannot distinguish an alias from a DM: fail closed, matching the
+            # alias send gate in ``_require_alias_send_access``.
+            raise _deny()
+        try:
+            info = lookup(int(addressed_id))
+        except Exception:
+            raise _deny()
+        if info is None:
+            return  # genuine DM/group conversation: no server automod
+        channel_id = info.get("id") if isinstance(info, dict) else None
+        server_id = info.get("server_id") if isinstance(info, dict) else None
+        if channel_id is None or server_id is None:
+            raise _deny()
+        channel_id = int(channel_id)
+        server_id = int(server_id)
+
+        automod_context = self._build_automod_context(
+            channel_id, user_id, content, servers_mod, messaging, source
+        )
+        violations: list = []
+        try:
+            fast_result = automod.check_message_fast(
+                server_id=server_id,
+                channel_id=channel_id,
+                user_id=user_id,
+                content=content,
+                message_id=None,
+                context=automod_context,
+            )
+            if not fast_result.passed:
+                violations = list(fast_result.violations or [])
+                for match in violations:
+                    automod.process_violation(
+                        server_id=server_id,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                        message_id=None,
+                        match=match,
+                        actions=fast_result.actions_to_take,
+                        context=automod_context,
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Alias-path automod fast check failed for {channel_id}: {e}")
+            try:
+                automod.record_internal_error(
+                    f"fast_check:{source}:conversation_alias",
+                    server_id,
+                    channel_id,
+                    user_id,
+                    None,
+                    e,
+                )
+            except Exception:
+                pass
+            # No second moderation gate runs on this path: deny rather than
+            # publish content that was never checked.
+            raise _deny()
+
+        if violations:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "MESSAGE_BLOCKED",
+                        "message": "Message blocked by auto-moderation",
+                        "violations": [
+                            getattr(v.rule_type, "value", v.rule_type)
+                            for v in violations
+                        ],
+                    }
+                },
+            )
+
     def _enforce_dm_spam_protection(
         self, channel_id: int, sender_id: int, content: str, messaging: Any
     ) -> None:
