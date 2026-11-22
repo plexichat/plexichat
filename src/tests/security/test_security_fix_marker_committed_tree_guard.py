@@ -2037,6 +2037,38 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "opcodes bypass the aggregate ceiling"
         ),
     ),
+    CommittedFixMarker(
+        key="d6b8451e-edit-history-deleted-redaction-history",
+        path="src/core/messaging/services/edit_history.py",
+        marker=(
+            "        # A soft-delete blanks the live content but leaves the prior versions\n"
+            "        # in msg_edit_history. Treat a deleted message as nonexistent so the\n"
+            "        # tombstone cannot be bypassed to recover redacted text. Mirrors the\n"
+            "        # fail-closed guard in record_edit.\n"
+            '        if msg_row.get("deleted"):\n'
+            '            raise MessageNotFoundError("Message not found")'
+        ),
+        why=(
+            "d6b8451e: get_edit_history now treats a soft-deleted message as "
+            "nonexistent, so deleting a message really redacts its prior "
+            "content. A stale committed copy without this guard leaks the "
+            "secret prior text to any channel viewer."
+        ),
+    ),
+    CommittedFixMarker(
+        key="d6b8451e-edit-history-deleted-redaction-count",
+        path="src/core/messaging/services/edit_history.py",
+        marker=(
+            "        # Mirror get_edit_history: a deleted message is a tombstone and its\n"
+            "        # prior version count must not be observable either.\n"
+            '        if msg_row.get("deleted"):\n'
+            '            raise MessageNotFoundError("Message not found")'
+        ),
+        why=(
+            "d6b8451e: get_edit_count mirrors the deleted-message fail-closed "
+            "guard; pin it so a revert cannot expose a tombstone's edit count."
+        ),
+    ),
 )
 
 
