@@ -1,22 +1,30 @@
-"""SEC200 invariant: mutating ``add_api_route`` registrations are auth-gated.
+"""SEC200 invariant: dynamically registered mutating routes are auth-gated.
 
 The decorator-based sweep lives in
 ``test_sec200_mutating_route_auth_invariant.py``. That sweep does not see routes
-registered at runtime with ``router.add_api_route(...)``: those bind the
-endpoint by reference, so no ``@router.post``/``@router.delete`` decorator is
-present for the AST to find. This module closes that gap with an independent,
-whole-tree AST scan of ``src/api/routes/**``. It imports no app, config or DB
-and cannot flake.
+registered at runtime with ``router.add_api_route(...)`` or Starlette's low-level
+``router.add_route(...)``: those bind the endpoint by reference, so no
+``@router.post``/``@router.delete`` decorator is present for the AST to find.
+This module closes that gap with an independent, whole-tree AST scan of
+``src/api/routes/**``. It imports no app, config or DB and cannot flake.
 
-For each ``add_api_route`` call we resolve the endpoint function by name within
-the same module and reuse the same auth heuristics as the decorator sweep (auth
-flavoured ``Depends(...)`` on the endpoint or on the registration's
+Both registration forms are inventoried, including local aliases of the
+registrar and of the ``methods`` collection (a module-level literal list such as
+``VERBS = ["POST"]`` passed as ``methods=VERBS``). An unresolvable ``methods``
+expression is treated as potentially mutating rather than silently dropped.
+``add_websocket_route`` is deliberately out of scope: WebSocket handlers are
+gated by their own opcode handshake, not by HTTP route dependencies.
+
+For each registration we resolve the endpoint function by name within the same
+module and reuse the same auth heuristics as the decorator sweep (auth flavoured
+``Depends(...)`` on the endpoint or, for ``add_api_route``, on the registration's
 ``dependencies=[...]``, or an in-handler permission/signature guard). Every
 mutating registration must be guarded unless explicitly allowlisted as a
 legitimately public credential-exchange route.
 
-The detector is proven non-vacuous by a self-test that feeds it a synthetic
-unguarded registration and asserts it is flagged.
+Synthetic fixtures feed the detector an unguarded ``add_api_route`` and an
+unguarded ``add_route`` registration and assert both are flagged, while guarded
+and read-only registrations pass, so the tree-wide assertion is not vacuous.
 """
 
 import ast
@@ -28,6 +36,21 @@ ROOT = Path(__file__).resolve().parents[3]
 ROUTES = ROOT / "src/api/routes"
 
 MUTATING = frozenset({"post", "put", "patch", "delete"})
+
+# Runtime registration forms that bind an endpoint without a decorator.
+# ``add_api_route`` is FastAPI's high-level form (it also accepts
+# ``dependencies=[...]``); ``add_route`` is Starlette's low-level form and has
+# no registration-level dependency hook, so auth must live on the endpoint.
+# Both are inventoried so a future mutating route registered through either
+# form fails closed. ``add_websocket_route`` is deliberately NOT here: WS
+# handlers are authenticated by their own opcode handshake, not HTTP deps.
+DYNAMIC_REGISTRARS = ("add_api_route", "add_route")
+
+# A ``methods`` expression that cannot be resolved from source may still hide a
+# mutating verb, so it is inventoried as a potentially mutating registration
+# instead of being silently dropped (mirrors the audit D sweep's fail-closed
+# policy for unresolved dynamic methods).
+UNRESOLVED_METHOD = "<unresolved>"
 
 # Mirrors the decorator sweep's auth vocabulary so the two scans agree on what
 # counts as a guard. Deliberately broad: a renamed principal helper still reads
@@ -144,18 +167,18 @@ def _own_body_guard_calls(fn: ast.AST):
 
 
 def _canonical_names(tree):
-    """Resolve local aliases of ``add_api_route`` to its canonical name.
+    """Resolve local aliases of every dynamic registrar to its canonical name.
 
-    ``add = router.add_api_route`` followed by ``add(...)`` is a plain
-    ``ast.Name`` call, not the ``ast.Attribute`` this detector keys on. Without
-    resolution such a state-changing registration is never added to
-    ``_DYNAMIC_ROUTES`` and every invariant below passes vacuously for it, even
+    ``add = router.add_api_route`` (or ``add = router.add_route``) followed by
+    ``add(...)`` is a plain ``ast.Name`` call, not the ``ast.Attribute`` this
+    detector keys on. Without resolution such a state-changing registration is
+    never inventoried and every invariant below passes vacuously for it, even
     when its endpoint carries no auth -- the same name-resolution fail-open
     fixed for the fan-out, cached-route and admin-destructive guards.
 
     Resolution runs to a fixpoint so chained aliases
-    (``add = router.add_api_route; wire = add``) collapse too. A bare call
-    spelled ``add_api_route`` with no resolvable alias is still treated as a
+    (``add = router.add_route; wire = add``) collapse too. A bare call spelled
+    with a registrar name but no resolvable alias is still treated as a
     registration, so over-resolution can only *add* sites to the inventory,
     never drop one -- the guard fails closed.
     """
@@ -169,6 +192,15 @@ def _canonical_names(tree):
             name = aliases[name]
         return name
 
+    def canonical_of(value):
+        if isinstance(value, ast.Attribute) and value.attr in DYNAMIC_REGISTRARS:
+            return value.attr
+        if isinstance(value, ast.Name):
+            resolved = resolve(value.id)
+            if resolved in DYNAMIC_REGISTRARS:
+                return resolved
+        return None
+
     for _ in range(len(nodes) + 1):
         changed = False
         for node in nodes:
@@ -177,27 +209,19 @@ def _canonical_names(tree):
                 pairs = [
                     (a.asname or a.name, a.name)
                     for a in node.names
-                    if a.name == "add_api_route"
+                    if a.name in DYNAMIC_REGISTRARS
                 ]
             elif isinstance(node, ast.Assign):
-                targets, value = node.targets, node.value
-                canonical = None
-                if isinstance(value, ast.Attribute) and value.attr == "add_api_route":
-                    canonical = "add_api_route"
-                elif isinstance(value, ast.Name):
-                    canonical = resolve(value.id)
-                if canonical == "add_api_route":
+                canonical = canonical_of(node.value)
+                if canonical is not None:
                     pairs = [
-                        (t.id, canonical) for t in targets if isinstance(t, ast.Name)
+                        (t.id, canonical)
+                        for t in node.targets
+                        if isinstance(t, ast.Name)
                     ]
             elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
-                value = node.value
-                canonical = None
-                if isinstance(value, ast.Attribute) and value.attr == "add_api_route":
-                    canonical = "add_api_route"
-                elif isinstance(value, ast.Name):
-                    canonical = resolve(value.id)
-                if canonical == "add_api_route" and isinstance(node.target, ast.Name):
+                canonical = canonical_of(node.value)
+                if canonical is not None and isinstance(node.target, ast.Name):
                     pairs = [(node.target.id, canonical)]
             for local, canonical in pairs:
                 if aliases.get(local) != canonical:
@@ -208,20 +232,75 @@ def _canonical_names(tree):
     return aliases
 
 
-def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
-    """Yield (key, protected) for each mutating ``add_api_route`` registration.
+def _method_aliases(tree):
+    """Map local names to the expression they are bound to, for method resolution.
 
-    ``add_api_route`` binds the endpoint by reference, so the auth gate usually
-    lives on the handler function rather than on the registration call. Resolve
-    that handler within the same module and reuse ``_is_protected``. A
-    registration counts as guarded when either its own ``dependencies=[...]``
+    A registration may pass ``methods=VERBS`` where ``VERBS = ["POST"]`` is
+    defined elsewhere in the module. Collecting every simple assignment first
+    lets ``_resolve_methods`` follow names regardless of definition order.
+    """
+    aliases = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) or isinstance(
+            node, (ast.AnnAssign, ast.NamedExpr)
+        ):
+            if isinstance(node, ast.Assign):
+                targets = [t for t in node.targets if isinstance(t, ast.Name)]
+            else:
+                targets = [node.target] if isinstance(node.target, ast.Name) else []
+            for target in targets:
+                aliases[target.id] = node.value
+    return aliases
+
+
+def _resolve_methods(expr, method_aliases, seen=None):
+    """Return method strings for a literal/aliased ``methods`` expression.
+
+    Handles a single string, a list/tuple/set of strings, and names bound to any
+    of those (including nested aliases). Returns ``None`` when the expression
+    cannot be resolved from source -- callers must fail closed in that case.
+    """
+    if seen is None:
+        seen = set()
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return [expr.value]
+    if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+        methods = []
+        for elt in expr.elts:
+            if isinstance(elt, ast.Starred):
+                return None
+            resolved = _resolve_methods(elt, method_aliases, seen)
+            if resolved is None:
+                return None
+            methods.extend(resolved)
+        return methods
+    if isinstance(expr, ast.Name):
+        name = expr.id
+        if name in seen or name not in method_aliases:
+            return None
+        return _resolve_methods(method_aliases[name], method_aliases, seen | {name})
+    return None
+
+
+def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
+    """Yield (key, protected) for each mutating dynamic route registration.
+
+    Covers both ``add_api_route`` and Starlette's low-level ``add_route``, plus
+    local aliases of either. ``add_route`` binds the endpoint by reference, so
+    the auth gate lives on the handler function rather than on the registration
+    call. Resolve that handler within the same module and reuse ``_is_protected``.
+    A registration counts as guarded when either its own ``dependencies=[...]``
     carry an auth-flavoured ``Depends`` or the resolved endpoint does.
 
     The key shape mirrors the decorator sweep: (source file, method, raw path).
     One registration can declare several methods; each mutating method is
-    yielded separately. An unresolvable endpoint fails closed (protected=False).
+    yielded separately. An unresolvable endpoint or ``methods`` expression fails
+    closed (the latter under the ``UNRESOLVED_METHOD`` sentinel). A registration
+    with no ``methods`` is Starlette's read-only GET default and is not swept,
+    unless a ``**kwargs`` bag could hide a mutating verb.
     """
-    aliases = _canonical_names(tree)
+    registrar_aliases = _canonical_names(tree)
+    method_aliases = _method_aliases(tree)
     functions_by_name = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -231,31 +310,36 @@ def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
+        registrar = None
         if isinstance(func, ast.Attribute):
-            if func.attr != "add_api_route":
-                continue
+            if func.attr in DYNAMIC_REGISTRARS:
+                registrar = func.attr
         elif isinstance(func, ast.Name):
-            # Resolve (possibly aliased) bare-name registrations. A bare
-            # ``add_api_route(...)`` with no alias is counted too (fail closed).
-            if aliases.get(func.id, func.id) != "add_api_route":
-                continue
-        else:
+            # Resolve (possibly aliased) bare-name registrations. A bare call
+            # spelled with a registrar name but no alias is counted too (fail
+            # closed).
+            candidate = registrar_aliases.get(func.id, func.id)
+            if candidate in DYNAMIC_REGISTRARS:
+                registrar = candidate
+        if registrar is None:
             continue
 
         raw_path = ""
         if node.args and isinstance(node.args[0], ast.Constant):
             raw_path = node.args[0].value
 
-        methods = []
-        for kw in node.keywords:
-            if kw.arg == "methods" and isinstance(
-                kw.value, (ast.List, ast.Tuple, ast.Set)
-            ):
-                methods = [
-                    elt.value
-                    for elt in kw.value.elts
-                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-                ]
+        methods_kw = next((kw for kw in node.keywords if kw.arg == "methods"), None)
+        if methods_kw is None:
+            # No ``methods`` means Starlette's GET default (read-only), but a
+            # ``**kwargs`` bag may smuggle a mutating verb -- fail closed there.
+            methods = (
+                [UNRESOLVED_METHOD]
+                if any(kw.arg is None for kw in node.keywords)
+                else []
+            )
+        else:
+            resolved = _resolve_methods(methods_kw.value, method_aliases)
+            methods = resolved if resolved is not None else [UNRESOLVED_METHOD]
 
         endpoint = node.args[1] if len(node.args) > 1 else None
         if endpoint is None:
@@ -281,7 +365,7 @@ def _dynamic_routes_in_tree(tree: ast.AST, relative: str):
 
         for method in methods:
             lowered = method.lower()
-            if lowered in MUTATING:
+            if lowered in MUTATING or method == UNRESOLVED_METHOD:
                 yield (
                     (relative, lowered, raw_path),
                     (protected_by_registration or protected_by_endpoint),
@@ -321,8 +405,9 @@ def test_every_mutating_add_api_route_is_protected_or_justified_public():
         if not protected and (rel, method, path) not in PUBLIC_DYNAMIC_MUTATING_ROUTES
     ]
     assert not offenders, (
-        "Dynamically registered mutating routes (add_api_route) with no auth "
-        "dependency or permission guard on the registration or its endpoint:\n  "
+        "Dynamically registered mutating routes (add_api_route / add_route) with "
+        "no auth dependency or permission guard on the registration or its "
+        "endpoint:\n  "
         + "\n  ".join(sorted(offenders))
     )
 
@@ -479,3 +564,126 @@ class SyntheticMixin:
     assert found[("src/api/routes/synthetic.py", "post", "/dead-nested")] is False
     assert found[("src/api/routes/synthetic.py", "post", "/dead-lambda")] is False
     assert found[("src/api/routes/synthetic.py", "post", "/live")] is True
+
+
+def test_add_route_detector_flags_unguarded_mutating_route():
+    """Non-vacuity for Starlette's low-level ``add_route`` registration form.
+
+    Before this form was inventoried, a mutating endpoint registered through it
+    was invisible to every route-auth guard. The synthetic unguarded POST must
+    be flagged, a guarded DELETE accepted, and a literal GET left unflagged.
+    """
+    source = """
+class SyntheticMixin:
+    def _register(self):
+        self.router.add_route("/bad", self._bad, methods=["POST"])
+        self.router.add_route("/good", self._good, methods=["DELETE"])
+        self.router.add_route("/readonly", self._bad, methods=["GET"])
+
+    async def _bad(self, body: str):
+        return body
+
+    async def _good(self, body: str, current_user=Depends(get_current_user)):
+        return body
+"""
+    found = dict(
+        _dynamic_routes_in_tree(ast.parse(source), "src/api/routes/synthetic.py")
+    )
+    base = "src/api/routes/synthetic.py"
+    assert found[(base, "post", "/bad")] is False, (
+        "detector failed to flag an unguarded mutating add_route"
+    )
+    assert found[(base, "delete", "/good")] is True, (
+        "detector failed to recognise Depends(get_current_user) on an add_route endpoint"
+    )
+    assert not any(path == "/readonly" for _, _, path in found), found
+
+
+def test_add_route_alias_and_method_alias_resolution():
+    """Aliases of both the registrar and the methods collection are resolved.
+
+    ``add = router.add_route`` is an ``ast.Name`` call and ``methods=VERBS``
+    points at a module-level literal. Neither may silently drop a mutating
+    registration; a guarded endpoint still passes and a read-only alias leaves
+    the inventory clean.
+    """
+    source = """
+router = APIRouter()
+add = router.add_route
+wire = add
+VERBS = ["POST"]
+READ_ONLY = ["GET"]
+
+async def nuke(request, body=None):
+    return None
+
+async def guarded(request, current_user=Depends(get_current_user), body=None):
+    return None
+
+add("/aliased-nuke", nuke, methods=VERBS)
+wire("/chained-nuke", nuke, methods=["DELETE"])
+add("/aliased-good", guarded, methods=VERBS)
+add("/readonly", nuke, methods=READ_ONLY)
+"""
+    tree = ast.parse(source)
+    aliases = _canonical_names(tree)
+    assert aliases["add"] == "add_route"
+    assert aliases["wire"] == "add_route"  # chained alias collapses
+
+    found = dict(_dynamic_routes_in_tree(tree, "src/api/routes/synthetic.py"))
+    base = "src/api/routes/synthetic.py"
+    assert found[(base, "post", "/aliased-nuke")] is False
+    assert found[(base, "delete", "/chained-nuke")] is False
+    assert found[(base, "post", "/aliased-good")] is True
+    assert not any(path == "/readonly" for _, _, path in found), found
+
+
+def test_unresolvable_methods_fail_closed_for_add_route():
+    """A non-literal ``methods`` cannot silently drop a mutating registration."""
+    source = """
+router = APIRouter()
+
+async def nuke(request, body=None):
+    return None
+
+async def guarded(request, current_user=Depends(get_current_user), body=None):
+    return None
+
+router.add_route("/variable", nuke, methods=METHODS)
+router.add_route("/starred", nuke, methods=[*METHODS])
+router.add_route("/bag", nuke, **opts)
+router.add_route("/guarded-variable", guarded, methods=METHODS)
+router.add_route("/plain-get", nuke)
+"""
+    found = dict(
+        _dynamic_routes_in_tree(ast.parse(source), "src/api/routes/synthetic.py")
+    )
+    base = "src/api/routes/synthetic.py"
+    for path in ("/variable", "/starred", "/bag"):
+        assert found[(base, UNRESOLVED_METHOD, path)] is False, path
+    assert found[(base, UNRESOLVED_METHOD, "/guarded-variable")] is True
+    # No methods means Starlette's read-only GET default -- not swept.
+    assert not any(path == "/plain-get" for _, _, path in found), found
+
+
+def test_add_websocket_route_is_not_swept_as_http_route():
+    """WS registration stays out of the HTTP inventory; WS has its own auth.
+
+    ``add_websocket_route`` is a different registrar with its own opcode
+    handshake. Sweeping it here would be incorrect and noisy, so neither the
+    direct nor the aliased form may appear in the dynamic route inventory.
+    """
+    source = """
+router = APIRouter()
+
+async def ws_endpoint(websocket):
+    await websocket.close()
+
+router.add_websocket_route("/ws", ws_endpoint)
+wsadd = router.add_websocket_route
+wsadd("/ws-alias", ws_endpoint, methods=["POST"])
+"""
+    found = dict(
+        _dynamic_routes_in_tree(ast.parse(source), "src/api/routes/synthetic.py")
+    )
+    assert not found, f"WS registration was swept as an HTTP route: {found}"
