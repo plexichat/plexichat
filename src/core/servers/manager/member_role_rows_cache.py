@@ -28,14 +28,19 @@ Safety properties (mirrored by ``src/tests/servers/test_member_role_rows_cache.p
 * **Fail closed** -- a miss, an expired entry or any cache error yields the
   ``_MISS`` sentinel so the caller recomputes from the authoritative database.
   The cache never synthesizes a role or widens an authorization decision.
-* **Copy in / copy out** -- only normalized ``dict`` rows are stored, and every
-  read hands back fresh copies, so a caller mutating its result cannot poison a
-  later authorization decision.
+* **Immutable values, no per-read copy** -- rows are frozen into a tuple of
+  ``MappingProxyType`` mappings (including nested dicts/lists such as the
+  ``permissions`` vocabulary) when stored. Every hit returns the *same* frozen
+  object instead of rebuilding a dict per row per authorization check. A
+  caller mutation attempt raises ``TypeError`` rather than silently editing a
+  detached copy, so it can never poison a later decision -- and no allocation
+  is spent defending against a mutation that cannot succeed.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from types import MappingProxyType
+from typing import Any, Dict, List, cast
 
 from src.core.bounded_lru import BoundedLRU
 
@@ -47,7 +52,7 @@ MEMBER_ROLE_ROWS_TTL_SECONDS = 10.0
 MEMBER_ROLE_ROWS_MAX_ENTRIES = 2048
 MEMBER_ROLE_ROWS_MAX_BYTES = 256 * 1024
 
-#: Distinct from any possible cached value (always a list) so a cached empty
+#: Distinct from any possible cached value (always a tuple) so a cached empty
 #: role list is a real hit rather than being mistaken for a miss.
 _MISS = object()
 
@@ -58,6 +63,26 @@ _member_role_rows_cache = BoundedLRU(
     max_bytes=MEMBER_ROLE_ROWS_MAX_BYTES,
     ttl_seconds=MEMBER_ROLE_ROWS_TTL_SECONDS,
 )
+
+
+def _freeze(value: Any) -> Any:
+    """Recursively freeze a row into immutable mappings/sequences.
+
+    Role rows carry nested mutable payloads -- most importantly the permission
+    vocabulary under ``permissions``. Freezing only the outer dict would let a
+    caller reach through ``row["permissions"]`` and widen a cached grant, so
+    nested dicts become ``MappingProxyType`` and nested lists become tuples.
+    """
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _freeze_rows(rows: _RoleRows) -> tuple:
+    """Normalize authoritative rows into the immutable cached value shape."""
+    return tuple(_freeze(dict(row)) for row in rows)
 
 
 def _cache_key(server_id: Any, user_id: Any) -> tuple:
@@ -73,32 +98,45 @@ def _cache_key(server_id: Any, user_id: Any) -> tuple:
 
 
 def get_cached_member_role_rows(server_id: Any, user_id: Any) -> Any:
-    """Return a copy of the cached role rows, or ``_MISS`` on a miss.
+    """Return the cached frozen role rows, or ``_MISS`` on a miss.
 
     Any cache failure is treated as a miss: callers resolve from the database
     on ``_MISS``, so a broken cache can only cost a query, never grant access.
+
+    Values are immutable, so the frozen tuple is handed straight back; the
+    ``tuple(...)`` call is idempotent for an already-frozen value (it returns
+    the same object, allocating nothing) and also normalizes any unexpected
+    cached shape without ever exposing a mutable row to a caller.
     """
     try:
         value = _member_role_rows_cache.get(_cache_key(server_id, user_id), _MISS)
     except Exception:  # pragma: no cover - defensive; never fail a caller open
         return _MISS
-    if value is _MISS:
+    if value is _MISS or not isinstance(value, tuple):
+        # Only rows this module froze are served; a malformed/corrupt entry is
+        # a miss, so the caller recomputes fail-closed from the database.
         return _MISS
-    # Hand out copies so a caller that sorts/mutates its rows cannot change
-    # what a later authorization check sees.
-    return [dict(row) for row in value]
+    return tuple(value)
 
 
 def prime_member_role_rows(
     server_id: Any, user_id: Any, rows: _RoleRows
-) -> None:
-    """Cache a normalized copy of an authoritative role-row list."""
+) -> List[Dict[str, Any]]:
+    """Cache a deeply immutable snapshot of an authoritative role-row list.
+
+    Returns the frozen snapshot so an authoritative (miss) read can hand back
+    the exact same immutable value a later cache hit returns -- hit and miss
+    are indistinguishable to callers, and neither can be mutated into a grant.
+    The value is a read-only sequence of mapping rows; every consumer only
+    indexes/iterates it, so it satisfies the historical ``List[Dict]`` contract
+    (the cast keeps that public annotation stable for callers).
+    """
+    frozen = _freeze_rows(rows)
     try:
-        _member_role_rows_cache.set(
-            _cache_key(server_id, user_id), [dict(row) for row in rows]
-        )
+        _member_role_rows_cache.set(_cache_key(server_id, user_id), frozen)
     except Exception:  # pragma: no cover - cache is an accelerator only
         pass
+    return cast(List[Dict[str, Any]], frozen)
 
 
 def invalidate_member_role_rows_cache() -> None:

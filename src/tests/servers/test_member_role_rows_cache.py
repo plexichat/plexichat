@@ -95,7 +95,7 @@ def test_repeated_resolution_hits_db_once():
     hits_before = mrc.member_role_rows_cache_stats()["hits"]
 
     for _ in range(50):
-        assert manager._get_member_role_rows(1, 10) == [
+        assert list(manager._get_member_role_rows(1, 10)) == [
             {"id": 1, "name": "mod", "position": 5}
         ]
 
@@ -122,36 +122,42 @@ def test_rows_are_server_and_user_scoped_and_negative_cached():
         },
     )
 
-    assert manager._get_member_role_rows(1, 10) == [{"id": 1, "name": "alice-role"}]
-    assert manager._get_member_role_rows(1, 20) == [{"id": 2, "name": "bob-role"}]
+    assert list(manager._get_member_role_rows(1, 10)) == [
+        {"id": 1, "name": "alice-role"}
+    ]
+    assert list(manager._get_member_role_rows(1, 20)) == [{"id": 2, "name": "bob-role"}]
     # Same user id in a different server is a distinct key and a distinct join.
-    assert manager._get_member_role_rows(2, 10) == []
+    assert list(manager._get_member_role_rows(2, 10)) == []
     assert db.calls == [11, 22, 33]
 
     # Repeating either call is a hit -- one member's rows are never served for
     # another, and neither is re-read from the database.
-    assert manager._get_member_role_rows(1, 10) == [{"id": 1, "name": "alice-role"}]
-    assert manager._get_member_role_rows(1, 20) == [{"id": 2, "name": "bob-role"}]
-    assert manager._get_member_role_rows(2, 10) == []
+    assert list(manager._get_member_role_rows(1, 10)) == [
+        {"id": 1, "name": "alice-role"}
+    ]
+    assert list(manager._get_member_role_rows(1, 20)) == [{"id": 2, "name": "bob-role"}]
+    assert list(manager._get_member_role_rows(2, 10)) == []
     assert db.calls == [11, 22, 33]
 
     # A missing member resolves to an empty list, which is cached too.
-    assert manager._get_member_role_rows(1, 99) == []
-    assert manager._get_member_role_rows(1, 99) == []
+    assert list(manager._get_member_role_rows(1, 99)) == []
+    assert list(manager._get_member_role_rows(1, 99)) == []
     assert len(db.calls) == 3  # no join at all for a non-member
 
 
-def test_rows_are_copied_in_and_out():
-    """A caller mutating its rows cannot poison a later authz decision."""
+def test_rows_are_immutable_and_cannot_be_mutated_into_a_grant():
+    """A caller cannot edit cached rows (nor its nested permission map)."""
     source = [{"id": 1, "name": "mod", "position": 5}]
     manager, db = _manager(rows={11: source}, members={(1, 10): _member(11)})
 
     first = manager._get_member_role_rows(1, 10)
-    first[0]["name"] = "tampered"
-    first.append({"id": 999, "name": "injected"})
+    with pytest.raises(TypeError):
+        first[0]["name"] = "tampered"
+    with pytest.raises((AttributeError, TypeError)):
+        first.append({"id": 999, "name": "injected"})
 
     second = manager._get_member_role_rows(1, 10)
-    assert second == [{"id": 1, "name": "mod", "position": 5}]
+    assert [dict(r) for r in second] == [{"id": 1, "name": "mod", "position": 5}]
     assert len(db.calls) == 1
 
 
@@ -162,7 +168,7 @@ def test_role_epoch_bump_revokes_cached_rows_fail_closed():
         members={(1, 10): _member(11)},
     )
 
-    assert manager._get_member_role_rows(1, 10) == [{"id": 1, "name": "mod"}]
+    assert list(manager._get_member_role_rows(1, 10)) == [{"id": 1, "name": "mod"}]
     assert len(db.calls) == 1
 
     # Every role assignment/removal already performs this bump. Changing the
@@ -171,7 +177,7 @@ def test_role_epoch_bump_revokes_cached_rows_fail_closed():
     get_channel_access_cache().bump(1, 10)
     db.rows[11] = [{"id": 2, "name": "revoked-and-replaced"}]
 
-    assert manager._get_member_role_rows(1, 10) == [
+    assert list(manager._get_member_role_rows(1, 10)) == [
         {"id": 2, "name": "revoked-and-replaced"}
     ]
     assert len(db.calls) == 2  # recomputed from the authoritative source
@@ -198,11 +204,11 @@ def test_server_epoch_bump_revokes_every_member_in_scope():
 
 def test_full_invalidation_drops_cached_rows():
     manager, db = _manager(rows={11: [{"id": 1}]}, members={(1, 10): _member(11)})
-    assert manager._get_member_role_rows(1, 10) == [{"id": 1}]
+    assert list(manager._get_member_role_rows(1, 10)) == [{"id": 1}]
     assert len(db.calls) == 1
 
     mrc.invalidate_member_role_rows_cache()
-    assert manager._get_member_role_rows(1, 10) == [{"id": 1}]
+    assert list(manager._get_member_role_rows(1, 10)) == [{"id": 1}]
     assert len(db.calls) == 2
 
 
@@ -237,6 +243,6 @@ def test_cache_errors_fail_closed_to_the_database(monkeypatch):
     monkeypatch.setattr(mrc._member_role_rows_cache, "get", boom)
     monkeypatch.setattr(mrc._member_role_rows_cache, "set", boom)
 
-    assert manager._get_member_role_rows(1, 10) == [{"id": 1, "name": "mod"}]
-    assert manager._get_member_role_rows(1, 10) == [{"id": 1, "name": "mod"}]
+    assert list(manager._get_member_role_rows(1, 10)) == [{"id": 1, "name": "mod"}]
+    assert list(manager._get_member_role_rows(1, 10)) == [{"id": 1, "name": "mod"}]
     assert len(db.calls) == 2  # both reads resolved authoritatively

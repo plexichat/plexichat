@@ -339,5 +339,7 @@ class CacheOpsMixin(ServerProtocol):
             )
             rows = [dict(row) for row in db_rows]
 
-        prime_member_role_rows(sid, uid, rows)
-        return rows
+        # Freeze once and return the same immutable snapshot a cache hit
+        # returns; role rows carry the permission vocabulary behind every
+        # hierarchy decision, so no caller may hold a mutable handle to them.
+        return prime_member_role_rows(sid, uid, rows)
