@@ -113,7 +113,21 @@ class TestBroadcastAudienceHardening:
         assert ids == []
         assert server_id == 700
 
-    def test_dm_fallback_still_returns_participants(self):
+    def test_dm_fallback_still_returns_participants(self, monkeypatch):
+        # No block relationships: the two-way filter must keep every
+        # participant. Wire an explicit unblocked relationship source so this
+        # test does not inherit the real ``src.core.relationships`` module,
+        # which is importable but uninitialized in unit tests — its failed
+        # authoritative lookup would (correctly) fail closed to an empty
+        # audience, masking the DM fallback behaviour under test.
+        class _Relationships:
+            def get_all_blocked_ids(self, user_id):
+                return []
+
+        import src.api as api
+
+        monkeypatch.setattr(api, "get_relationships", lambda: _Relationships())
+
         messaging = _CountingMessaging([11, 22])
 
         ids, server_id = _resolve_recipients(None, messaging, 55, 55, actor_id=11)
