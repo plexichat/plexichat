@@ -26,6 +26,7 @@ import src.api as api
 import utils.logger as logger
 import utils.config as config
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.routes.users.helpers import require_user_token
 from src.api.schemas.soundboard import (
     SoundPermissionRequest,
     SoundPermissionResponse,
@@ -414,6 +415,11 @@ async def upload_sound(
     configured allow-list and stored through the shared media pipeline;
     client-declared url/size/duration are never trusted.
     """
+    # A bot token's user_id is its human owner. Without this gate a narrow
+    # bot credential wields the owner's server roles to manage sounds and the
+    # media upload is charged to the owner's storage quota. Match the emoji
+    # and sticker management routes.
+    require_user_token(current_user)
     soundboard = _get_soundboard()
     sid = _parse_server_id(server_id)
 
@@ -513,6 +519,7 @@ async def update_sound(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SoundResponse:
     """Update editable metadata (name, emoji, volume, cooldown)."""
+    require_user_token(current_user)
     soundboard = _get_soundboard()
     sid = _parse_server_id(server_id)
     sid_sound = _parse_int(sound_id, "sound ID")
@@ -549,6 +556,7 @@ async def delete_sound(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Remove a sound from the server's soundboard."""
+    require_user_token(current_user)
     soundboard = _get_soundboard()
     sid = _parse_server_id(server_id)
     sid_sound = _parse_int(sound_id, "sound ID")
@@ -581,6 +589,7 @@ async def set_sound_permission(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SoundPermissionResponse:
     """Allow or deny a role from playing this sound (manage scope required)."""
+    require_user_token(current_user)
     soundboard = _get_soundboard()
     sid = _parse_server_id(server_id)
     sid_sound = _parse_int(sound_id, "sound ID")
