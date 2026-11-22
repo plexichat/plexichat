@@ -154,10 +154,13 @@ class _FakeChannel:
 
 
 class _FakeServers:
-    def __init__(self, *, channel=True, members=MEMBERS, permission=True):
+    def __init__(
+        self, *, channel=True, members=MEMBERS, permission=True, permitted=(1, 2, 3)
+    ):
         self._channel = _FakeChannel(GUILD_ID) if channel else None
         self._members = members
         self._permission = permission
+        self._permitted = permitted
 
     def get_channel(self, channel_id, actor_id):
         return self._channel
@@ -166,7 +169,7 @@ class _FakeServers:
         return list(self._members)
 
     def has_permission(self, uid, server_id, permission, channel_id):
-        return self._permission and uid in (1, 2, 3)
+        return self._permission and uid in self._permitted
 
 
 class _FakeMessaging:
@@ -241,7 +244,12 @@ def test_channel_recipients_scope_private_thread_members(monkeypatch):
     monkeypatch.setattr(threads, "get_thread_type_value", lambda tid: "private")
     monkeypatch.setattr(threads, "get_thread_member_user_ids", lambda tid: [1, 2, 3])
     # A private-thread channel must not fall through to the server member list.
-    _patch_api(monkeypatch, _FakeServers(members=[1, 2, 3, 99]))
+    # Permit 99 on the server too: if thread scoping were bypassed the audience
+    # would widen to [2, 3, 99] and this assertion would fail.
+    _patch_api(
+        monkeypatch,
+        _FakeServers(members=[1, 2, 3, 99], permitted=[1, 2, 3, 99]),
+    )
 
     recipients = resolve_channel_event_recipients(
         PRIVATE_THREAD_ID, guild_id=GUILD_ID, actor_id=1
