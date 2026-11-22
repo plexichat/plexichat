@@ -48,8 +48,28 @@ _REACTION_READ_PREFIX = "reaction_read_api"
 
 
 def _invalidate_reaction_read_cache() -> None:
-    """Drop all cached reaction-list bodies after a mutation."""
+    """Drop every cached body that can embed a reaction after a mutation.
+
+    The single-message reaction body lives in the ``reaction_read_api``
+    namespace, but reaction pills (emoji, count and the per-viewer ``me`` flag)
+    are ALSO hydrated into the cached channel-message-list body. That page is
+    memoized in the shared ``messages_api`` body cache and in the in-process
+    render LRU. Invalidating only the reaction namespace left a window where a
+    page cached before an add/remove kept serving a pill for a reaction that no
+    longer existed -- and a ``me`` flag for the wrong state. Drop all of them
+    so the next read is authoritative (fail closed).
+    """
     invalidate_pattern(f"{_REACTION_READ_PREFIX}:*")
+    invalidate_pattern("*messages_api:*")
+    try:
+        from src.api.routes.messages.render_cache import get_render_cache
+
+        get_render_cache().clear()
+    except Exception as e:
+        # Invalidation is best-effort only for the in-process tier; the shared
+        # body cache above is authoritative. Never let a render-cache failure
+        # turn a successful reaction mutation into a 500.
+        logger.debug(f"reaction mutation render-cache clear failed: {e}")
 
 
 @cached(
