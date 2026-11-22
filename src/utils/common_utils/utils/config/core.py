@@ -16,6 +16,85 @@ INTERPOLATION_RE = re.compile(r"\$\{([^}:]+)(?::-(.*?))?\}")
 # Sentinel used to distinguish a cached None from a cache miss in get().
 _CACHE_SENTINEL = object()
 
+# Hard bounds on config parsing. ``yaml.safe_load`` prevents arbitrary object
+# construction, but it is still a recursive-descent parser over an unbounded
+# input: a config with a few hundred nested levels raises ``RecursionError``
+# (which is *not* a ``yaml.YAMLError`` and used to escape the loader and crash
+# the process at startup), and an arbitrarily large file was read and decoded
+# in full before any check. These caps keep a malformed/tampered config from
+# turning a config read into a CPU/memory DoS. They are deliberately generous:
+# a real config is a few kilobytes with a handful of nesting levels.
+MAX_CONFIG_BYTES = 2 * 1024 * 1024
+MAX_CONFIG_DEPTH = 64
+MAX_CONFIG_NODES = 50_000
+
+
+class ConfigParseError(yaml.YAMLError):
+    """A config exceeded the parser's safety bounds.
+
+    Subclasses ``yaml.YAMLError`` so the existing malformed-config handler
+    routes it to the configured ``MalformedConfigAction`` (fail closed) rather
+    than leaking a raw parser/interpreter error to callers.
+    """
+
+
+class _BoundedSafeLoader(yaml.SafeLoader):
+    """SafeLoader that refuses to compose abusive YAML documents."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._config_depth = 0
+        self._config_nodes = 0
+
+    def compose_node(self, parent, index):
+        self._config_nodes += 1
+        if self._config_nodes > MAX_CONFIG_NODES:
+            raise ConfigParseError(
+                f"Config YAML exceeds maximum node count ({MAX_CONFIG_NODES})"
+            )
+        self._config_depth += 1
+        if self._config_depth > MAX_CONFIG_DEPTH:
+            raise ConfigParseError(
+                f"Config YAML exceeds maximum nesting depth ({MAX_CONFIG_DEPTH})"
+            )
+        try:
+            return super().compose_node(parent, index)
+        finally:
+            self._config_depth -= 1
+
+
+def safe_load_bounded(source):
+    """Parse a YAML config with bounded size, nesting depth and node count.
+
+    ``source`` may be bytes, str, or a binary file-like object. File objects
+    are read at most one byte past the cap so an oversized file never has to
+    be materialised in memory first. Over-limit input raises
+    :class:`ConfigParseError`, which callers route through their malformed
+    config handling. Empty input is treated as an empty mapping (matching
+    ``yaml.safe_load("") -> None`` -> ``loaded_config or {}`` at call sites).
+    """
+    if hasattr(source, "read"):
+        raw = source.read(MAX_CONFIG_BYTES + 1)
+    else:
+        raw = source
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
+    else:
+        raw = bytes(raw)
+    if len(raw) > MAX_CONFIG_BYTES:
+        raise ConfigParseError(
+            f"Config file exceeds maximum size ({MAX_CONFIG_BYTES} bytes)"
+        )
+    if not raw:
+        return {}
+    # Equivalent to yaml.load(raw, Loader=_BoundedSafeLoader) but explicit, so
+    # no bare ``yaml.load`` call is introduced into the codebase.
+    loader = _BoundedSafeLoader(raw)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
+
 
 class MalformedConfigAction(Enum):
     CRASH_ON_SINGLE = "crash_on_single"
@@ -208,13 +287,19 @@ class ConfigLoader:
             used_defaults = True
         else:
             try:
-                with open(self.config_path, "r") as f:
+                with open(self.config_path, "rb") as f:
                     if self.config_path.endswith(".yaml") or self.config_path.endswith(
                         ".yml"
                     ):
-                        loaded_config = yaml.safe_load(f)
+                        loaded_config = safe_load_bounded(f)
                     elif self.config_path.endswith(".json"):
-                        loaded_config = json.load(f)
+                        raw = f.read(MAX_CONFIG_BYTES + 1)
+                        if len(raw) > MAX_CONFIG_BYTES:
+                            raise ConfigParseError(
+                                f"Config file exceeds maximum size "
+                                f"({MAX_CONFIG_BYTES} bytes)"
+                            )
+                        loaded_config = json.loads(raw.decode("utf-8")) if raw else {}
                     else:
                         raise ValueError(
                             "Unsupported config format. Use .yaml, .yml, or .json"

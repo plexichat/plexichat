@@ -15,7 +15,13 @@ Usage:
 import copy as _copy
 import os as _os
 from typing import Any, Optional, Dict
-from .core import ConfigLoader, MalformedConfigAction
+from .core import (
+    ConfigLoader,
+    MalformedConfigAction,
+    ConfigParseError,
+    MAX_CONFIG_BYTES,
+    safe_load_bounded,
+)
 
 # Global config instance
 _config_instance: Optional[ConfigLoader] = None
@@ -59,16 +65,21 @@ def _apply_explicit_allowlists(instance: ConfigLoader) -> None:
     if not path or not _os.path.exists(path):
         return
     try:
-        with open(path, "rb") as fh:
-            raw = fh.read()
         if str(path).lower().endswith(".json"):
             import json as _json
 
+            with open(path, "rb") as fh:
+                raw = fh.read(MAX_CONFIG_BYTES + 1)
+            if len(raw) > MAX_CONFIG_BYTES:
+                raise ConfigParseError(
+                    f"Config file exceeds maximum size ({MAX_CONFIG_BYTES} bytes)"
+                )
             doc = _json.loads(raw) if raw else {}
         else:
-            import yaml as _yaml
-
-            doc = _yaml.safe_load(raw) if raw else {}
+            # Bounded parse: a tampered config must not be able to turn this
+            # hot re-read into a recursion/alloc DoS.
+            with open(path, "rb") as fh:
+                doc = safe_load_bounded(fh)
         if not isinstance(doc, dict):
             return
         merged = getattr(instance, "config", None)

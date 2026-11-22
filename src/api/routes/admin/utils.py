@@ -164,16 +164,27 @@ def _explicit_admin_allowed_hosts():
             # check clock so the hot path skips the stat again for a window.
             _explicit_hosts_cache["checked_at"] = now
             return _copy_explicit_hosts(_explicit_hosts_cache["value"])
-        with open(path, "rb") as fh:
-            raw = fh.read()
+        from src.utils.common_utils.utils.config.core import (
+            ConfigParseError,
+            MAX_CONFIG_BYTES,
+            safe_load_bounded,
+        )
+
         if str(path).lower().endswith(".json"):
             import json
 
+            with open(path, "rb") as fh:
+                raw = fh.read(MAX_CONFIG_BYTES + 1)
+            if len(raw) > MAX_CONFIG_BYTES:
+                raise ConfigParseError(
+                    f"Config file exceeds maximum size ({MAX_CONFIG_BYTES} bytes)"
+                )
             doc = json.loads(raw) if raw else {}
         else:
-            import yaml
-
-            doc = yaml.safe_load(raw) if raw else {}
+            # Bounded parse: this runs on every admin request via the host
+            # gate, so an abusive config must never become a parser DoS.
+            with open(path, "rb") as fh:
+                doc = safe_load_bounded(fh)
         value = None
         if isinstance(doc, dict):
             ui = doc.get("admin_ui")
