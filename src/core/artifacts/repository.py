@@ -628,9 +628,14 @@ def append_artifact_op(
     if op_type in _TRANSIENT_OP_TYPES:
         return None
     try:
+        # Measure the exact representation persisted below (``_json_dumps`` ->
+        # ``json.dumps`` with default ``ensure_ascii=True``). Measuring a more
+        # compact form (e.g. ``ensure_ascii=False``) would let non-ASCII payloads
+        # pass the cap while being stored at nearly twice the allowed size.
+        data_json = _json_dumps(data)
         if (
-            len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
-            > _MAX_ARTIFACT_OP_BYTES
+            data_json is not None
+            and len(data_json.encode("utf-8")) > _MAX_ARTIFACT_OP_BYTES
         ):
             logger.warning(
                 "Artifact op rejected for %s: payload too large", artifact_id
@@ -644,7 +649,6 @@ def append_artifact_op(
     if get_artifact(db, artifact_id) is None:
         return None
     now = int(time.time() * 1000)
-    data_json = _json_dumps(data)
     # Atomic seq allocation: in-process threads serialize on the per-artifact
     # mutex while ``UNIQUE(artifact_id, seq)`` (schema.py) arbitrates races
     # from other processes/connections — a colliding loser retries with a
