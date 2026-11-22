@@ -167,6 +167,51 @@ def get_role(db, role_id: SnowflakeID) -> Optional[Dict]:
     return db.fetch_one("SELECT * FROM srv_roles WHERE id = ?", (role_id,))
 
 
+def role_covers_all_members(
+    db, role_id: SnowflakeID, server_id: SnowflakeID
+) -> bool:
+    """Whether every member of ``server_id`` holds ``role_id``.
+
+    A non-default role that has been assigned to the whole server is an
+    @everyone-equivalent mass ping: ``NotificationCreatorMixin.create_notifications``
+    fans a ROLE mention out to all of that role's members, exactly like the
+    default ``is_default = 1`` role.  Checking the ``is_default`` flag alone
+    lets such a "recreated everyone" role evade the mass-mention gate.
+
+    Bounded set-based counts keep this to a fixed number of round trips (no
+    per-member scans).  A well-formed ``COUNT(*)`` always returns a row with
+    the ``n`` alias; a query failure fails closed (treat as covering everyone,
+    so an unverifiable audience cannot authorize a mass ping).  A backend that
+    cannot answer these counts at all (e.g. a minimal stub) keeps the
+    pre-existing role-mention behaviour rather than denying legitimate pings.
+    """
+    try:
+        total = db.fetch_one(
+            "SELECT COUNT(*) AS n FROM srv_members WHERE server_id = ?",
+            (server_id,),
+        )
+        covered = db.fetch_one(
+            """SELECT COUNT(DISTINCT m.user_id) AS n
+               FROM srv_member_roles mr
+               JOIN srv_members m ON mr.member_id = m.id
+               WHERE mr.role_id = ? AND m.server_id = ?""",
+            (role_id, server_id),
+        )
+    except Exception:
+        return True
+    if (
+        not total
+        or not covered
+        or "n" not in total
+        or "n" not in covered
+    ):
+        return False
+    try:
+        return int(total["n"]) > 0 and int(covered["n"]) >= int(total["n"])
+    except (TypeError, ValueError):
+        return True
+
+
 def channel_exists(db, channel_id: SnowflakeID) -> bool:
     row = db.fetch_one("SELECT 1 FROM srv_channels WHERE id = ?", (channel_id,))
     return row is not None

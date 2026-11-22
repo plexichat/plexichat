@@ -9,6 +9,7 @@ from .helpers import (
     get_role,
     channel_exists,
     has_mention_everyone_permission,
+    role_covers_all_members,
 )
 
 
@@ -39,37 +40,52 @@ class MentionValidationMixin(NotificationProtocol):
         # missing row still marks the mention invalid, and the
         # cross-server / non-mentionable checks still run against the same row.
         roles_by_id: Dict[SnowflakeID, Optional[dict]] = {}
+        # Memo of the "role covers every server member" verdict. The
+        # mass-mention gate and the per-mention decision below must agree, so
+        # the (single) anti-join query is shared through this memo.
+        all_member_roles: Dict[SnowflakeID, bool] = {}
 
         def _role_row(role_id: SnowflakeID) -> Optional[dict]:
             if role_id not in roles_by_id:
                 roles_by_id[role_id] = get_role(self._db, role_id)
             return roles_by_id[role_id]
 
+        def _is_all_member_role(role_id: SnowflakeID) -> bool:
+            if role_id not in all_member_roles:
+                all_member_roles[role_id] = role_covers_all_members(
+                    self._db, role_id, server_id
+                )
+            return all_member_roles[role_id]
+
         def _is_everyone_role(mention) -> bool:
-            """Whether a ROLE mention targets this server's default @everyone role.
+            """Whether a ROLE mention is an @everyone-equivalent mass ping.
 
             Every member holds the default (``is_default = 1``) role, so a
-            ``<@&default_role_id>`` mention fans out to the entire server -- an
-            @everyone-equivalent mass ping. Restrict the verdict to a role that
-            exists, belongs to this server and is flagged as the default role.
-            The role row is memoised by ``_role_row`` (the validation loop below
-            needs it too), so this adds no extra query.
+            ``<@&default_role_id>`` mention fans out to the entire server.
+            A non-default role explicitly assigned to every member has the
+            same fan-out (``create_notifications`` pings all of a role's
+            members), so it must clear the same gate -- otherwise a "recreated
+            everyone" role evades detection simply by lacking ``is_default``.
+            Restrict the verdict to a role that exists and belongs to this
+            server; the role row is memoised by ``_role_row`` (the validation
+            loop below needs it too), so the flag check adds no extra query.
             """
             if server_id is None or mention.mention_type != MentionType.ROLE:
                 return False
             if mention.target_id is None:
                 return False
             role = _role_row(mention.target_id)
+            if not role or role.get("server_id") != server_id:
+                return False
             return bool(
-                role
-                and role.get("is_default")
-                and role.get("server_id") == server_id
+                role.get("is_default") or _is_all_member_role(mention.target_id)
             )
 
         # SECURITY: an explicit ``@everyone``/``@here``, a mention of the
-        # CURRENT channel (``<#this-channel>``), AND a mention of the server's
-        # default ``@everyone`` role (``<@&default_role_id>``) all fan out to
-        # every member who can view the channel (see
+        # CURRENT channel (``<#this-channel>``), a mention of the server's
+        # default ``@everyone`` role (``<@&default_role_id>``), AND a mention of
+        # any role held by every server member all fan out to every member who
+        # can view the channel (see
         # NotificationCreatorMixin.create_notifications). Each is therefore an
         # @everyone-equivalent mass ping and must clear the SAME fail-closed
         # permission gate. Compute that verdict once from the existing gate
@@ -167,12 +183,19 @@ class MentionValidationMixin(NotificationProtocol):
                     elif role["server_id"] != server_id:
                         m.valid = False
                         m.error = "Role not in this server"
-                    elif role.get("is_default") and mass_mention_error is not None:
-                        # Mentioning the default (@everyone) role pings every
-                        # member -- an @everyone-equivalent mass ping. Gate it
-                        # with the SAME fail-closed permission as @everyone/@here
-                        # and a self-channel mention, even when the role is
-                        # marked mentionable or the author holds roles.manage.
+                    elif (
+                        (
+                            role.get("is_default")
+                            or _is_all_member_role(mention.target_id)
+                        )
+                        and mass_mention_error is not None
+                    ):
+                        # Mentioning the default (@everyone) role -- or any
+                        # role held by every member -- pings the whole server,
+                        # an @everyone-equivalent mass ping. Gate it with the
+                        # SAME fail-closed permission as @everyone/@here and a
+                        # self-channel mention, even when the role is marked
+                        # mentionable or the author holds roles.manage.
                         m.valid = False
                         m.error = mass_mention_error
                     elif not bool(role["mentionable"]):
