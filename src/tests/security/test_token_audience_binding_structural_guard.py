@@ -299,13 +299,21 @@ class VerifierEntry:
     func: str
     accept: frozenset[str]
     reason: str
+    # Same-module helper(s) a "delegated" wrapper forwards to. When present the
+    # registry check requires the wrapper to actually call each target AND the
+    # target (or a same-module chain from it) to carry a real family binding.
+    # This stops "delegated" from becoming a rubber stamp for unbound helpers.
+    delegates_to: frozenset[str] = frozenset()
 
 
-def _entry(path: str, func: str, accept: str, reason: str) -> VerifierEntry:
+def _entry(
+    path: str, func: str, accept: str, reason: str, delegates_to: str = ""
+) -> VerifierEntry:
     kinds = frozenset(k.strip() for k in accept.split("|"))
     assert kinds and kinds <= ALL_KINDS, f"bad binding kinds for {path}:{func}: {kinds}"
     assert reason.strip(), f"missing reason for {path}:{func}"
-    return VerifierEntry(path, func, kinds, reason)
+    targets = frozenset(t.strip() for t in delegates_to.split("|") if t.strip())
+    return VerifierEntry(path, func, kinds, reason, targets)
 
 
 VERIFIER_REGISTRY: tuple[VerifierEntry, ...] = (
@@ -318,7 +326,9 @@ VERIFIER_REGISTRY: tuple[VerifierEntry, ...] = (
         "addition to session/bot tokens: it delegates to _verify_token, whose "
         "typed dispatch routes wst to _verify_ws_ticket (which itself rejects "
         "any token_type != 'wst' and atomically consumes the ticket). This is "
-        "the documented WS-ticket-accepted-by-session-verify exception.",
+        "the documented WS-ticket-accepted-by-session-verify exception. The "
+        "delegation target is verified to be family-bound below.",
+        delegates_to="_verify_token",
     ),
     _entry(
         "src/core/auth/managers/session/verification.py",
@@ -344,9 +354,22 @@ VERIFIER_REGISTRY: tuple[VerifierEntry, ...] = (
     _entry(
         "src/core/auth/managers/session/lifecycle.py",
         "verify_token",
+        "delegated",
+        "Thin uncached wrapper: malformed-input check, token-verify rate limit, "
+        "then delegates to _verify_token (which parses and dispatches on "
+        "parsed['token_type'] to session/bot/wst sub-verifiers, failing closed "
+        "on unknown types) and re-checks the cached verdict's expiry on every "
+        "call. Delegation target is verified to be family-bound below.",
+        delegates_to="_verify_token",
+    ),
+    _entry(
+        "src/core/auth/managers/session/lifecycle.py",
+        "_verify_token",
         "dispatch|type",
-        "Lifecycle mixin's own dispatcher: parsed['token_type'] routes to "
-        "session/bot/wst sub-verifiers, unknown types fail closed.",
+        "Cached core verifier: parse_token then token_type dispatch to "
+        "session/bot/wst sub-verifiers; unknown types raise 'Unknown type', so "
+        "no untyped family reaches an auth decision. This is the bound target "
+        "of the thin verify_token wrapper above.",
     ),
     _entry(
         "src/core/auth/managers/session/lifecycle.py",
@@ -778,6 +801,42 @@ def _called_names(node: ast.AST) -> frozenset[str]:
     )
 
 
+def _self_delegation_targets(node: ast.AST) -> frozenset[str]:
+    """Method names invoked on ``self``/``cls`` (same-module delegation edges)."""
+    return frozenset(
+        sub.func.attr
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and isinstance(sub.func.value, ast.Name)
+        and sub.func.value.id in {"self", "cls"}
+    )
+
+
+def _target_binds_family(
+    blob: str,
+    target: str,
+    functions: Mapping[str, list[ast.FunctionDef | ast.AsyncFunctionDef]],
+    _seen: frozenset[str] = frozenset(),
+) -> bool:
+    """Whether ``target`` (or a same-module chain from it) binds a family.
+
+    Delegation edges are followed to the terminal helper so a wrapper cannot
+    claim a "bound" target that is itself only another unbound forwarder. Only
+    self-binding kinds count -- a further "delegated" hop is not evidence.
+    """
+    if target in _seen:
+        return False
+    for node in functions.get(target, []):
+        kinds, _ = analyze(node, _body_code(blob, node))
+        if kinds & SELF_BINDING_KINDS:
+            return True
+        for nested in _self_delegation_targets(node):
+            if _target_binds_family(blob, nested, functions, _seen | {target}):
+                return True
+    return False
+
+
 def _is_candidate(name: str, kinds: frozenset[str], called: frozenset[str]) -> bool:
     if name not in CANDIDATE_NAME:
         return False
@@ -826,7 +885,8 @@ def registry_violations(
                 problems.append(f"{entry.path}: registry path missing from tree")
             continue
         blob = read(entry.path)
-        nodes = _functions(blob).get(entry.func, [])
+        functions = _functions(blob)
+        nodes = functions.get(entry.func, [])
         if not nodes:
             problems.append(f"{entry.path}:{entry.func}: function not found in blob")
             continue
@@ -839,6 +899,25 @@ def registry_violations(
                     f"{entry.path}:{entry.func}: expected one of "
                     f"{sorted(entry.accept)}, got {sorted(kinds)}"
                 )
+                continue
+            if entry.delegates_to:
+                # "delegated" is a documented kind, but the documentation must
+                # be true: the wrapper actually calls each declared target and
+                # that target resolves to a family-bound verifier. Delegation
+                # chains are followed to the terminal helper.
+                called = _called_names(node)
+                for target in sorted(entry.delegates_to):
+                    if target not in called:
+                        problems.append(
+                            f"{entry.path}:{entry.func}: documented delegation "
+                            f"target {target!r} is not called"
+                        )
+                        continue
+                    if not _target_binds_family(blob, target, functions):
+                        problems.append(
+                            f"{entry.path}:{entry.func}: delegation target "
+                            f"{target!r} carries no family binding"
+                        )
     return problems
 
 
@@ -907,6 +986,42 @@ _DELEGATED_SRC = """
 def verify_token(token):
     return self._auth.verify_token(token)
 """
+
+# A thin wrapper is only safe when the helper it forwards to actually binds
+# the family. These two synthetic modules are identical except for the
+# helper's token_type check -- exactly the lifecycle.py refactor shape.
+_DELEGATED_BOUND_MODULE = """
+def verify_token(self, token):
+    return self._verify_token(token)
+
+
+def _verify_token(self, token):
+    parsed = parse_token(token)
+    if not parsed or parsed["token_type"] != "session":
+        raise TokenInvalidError("Invalid token")
+    return self._db.fetch_one("SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],))
+"""
+
+_DELEGATED_UNBOUND_MODULE = """
+def verify_token(self, token):
+    return self._verify_token(token)
+
+
+def _verify_token(self, token):
+    parsed = parse_token(token)
+    if not parsed:
+        return None
+    # BUG: no token_type check -- every family is accepted by the helper.
+    return self._db.fetch_one("SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],))
+"""
+
+
+def _module_blob(funcs_src: str) -> str:
+    """Wrap bare method definitions in a class for AST analysis."""
+    return "class _Synthetic:\n" + "\n".join(
+        "    " + line if line.strip() else line
+        for line in funcs_src.strip().splitlines()
+    )
 
 
 def _analyze_source(src: str) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
@@ -1065,3 +1180,41 @@ def test_registry_check_reacts_to_removed_binding() -> None:
         [good], bad_map, [_SYNTH_PATH], lambda p: _UNBOUND_SRC, require_present=True
     )
     assert violations and "expected one of ['type']" in violations[0]
+
+
+def test_delegated_wrapper_must_target_a_bound_helper() -> None:
+    """A wrapper delegating to an UNBOUND helper is still flagged.
+
+    This is the exact shape of the lifecycle.py refactor: the guard accepts the
+    thin wrapper only because the terminal helper still dispatches on
+    token_type. Flipping that check in the helper flips the verdict.
+    """
+    entry = _entry(
+        _SYNTH_PATH,
+        "verify_token",
+        "delegated",
+        "Synthetic wrapper delegates to _verify_token, which must bind family.",
+        delegates_to="_verify_token",
+    )
+    bound_blob = _module_blob(_DELEGATED_BOUND_MODULE)
+    assert not registry_violations(
+        [entry], {}, [_SYNTH_PATH], lambda p: bound_blob, require_present=True
+    )
+    unbound_blob = _module_blob(_DELEGATED_UNBOUND_MODULE)
+    violations = registry_violations(
+        [entry], {}, [_SYNTH_PATH], lambda p: unbound_blob, require_present=True
+    )
+    assert violations and "no family binding" in violations[0], violations
+
+    # The wrapper must actually call the declared target; pointing at an
+    # unrelated delegated verifier is not enough.
+    no_target_blob = _module_blob(
+        "def verify_token(self, token):\n"
+        "    return self.verify_api_access_token(token)\n"
+        "def _verify_token(self, token):\n"
+        "    return parse_token(token)\n"
+    )
+    violations = registry_violations(
+        [entry], {}, [_SYNTH_PATH], lambda p: no_target_blob, require_present=True
+    )
+    assert violations and "is not called" in violations[0], violations
