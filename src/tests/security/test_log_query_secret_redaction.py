@@ -135,3 +135,38 @@ def test_control_chars_still_scrubbed_with_query_redaction():
     # CR/LF pair was escaped by the final scrubbing pass.
     assert rendered.count("\n") == 1, rendered
     assert "\\x0d\\x0a" in rendered
+
+
+def test_nested_query_secret_redacted():
+    """A secret inside a nested redirect/OAuth URL must not reach the sink.
+
+    Without stopping values at ``?``, the outer ``redirect`` value swallows the
+    whole nested URL, so the inner ``code=`` is never examined and leaks.
+    """
+    rendered = _emit(f"?redirect=https://cb.example.test/cb?code={CANARY}&page=2")
+    assert CANARY not in rendered, rendered
+    # The benign outer prefix and the neighbouring pair must survive.
+    assert "redirect=https://cb.example.test/cb?" in rendered, rendered
+    assert "page=2" in rendered, rendered
+
+    rendered = _emit(f"&next=/local?state={CANARY}#frag")
+    assert CANARY not in rendered, rendered
+
+
+def test_nested_query_benign_pairs_preserved():
+    """Stopping values at ``?`` must not over-redact a nested benign query."""
+    rendered = _emit("GET /?redirect=https://x.test/p?page=2&debug=true - 200")
+    for value in ("page=2", "debug=true"):
+        assert value in rendered, f"over-redaction dropped {value}: {rendered}"
+
+
+def test_whitespace_around_equals_redacted():
+    """Whitespace around ``=`` is tolerated, as in the keyword pass."""
+    for msg in (
+        f"?code = {CANARY}&page=2",
+        f"?code= {CANARY}&page=2",
+        f"?code ={CANARY}&page=2",
+    ):
+        rendered = _emit(msg)
+        assert CANARY not in rendered, rendered
+        assert "page=2" in rendered, f"over-redaction dropped benign pair: {rendered}"

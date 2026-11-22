@@ -251,14 +251,18 @@ _QUERY_SECRET_MARKER = "********"
 
 # A ``key=value`` pair introduced by ``?``/``&``, at a token boundary (start of
 # string, whitespace, quote, parenthesis), with an optional quoted value. The
-# value stops at ``&``/``#``/whitespace/quotes so a pair never swallows the next
-# one. Bounded character classes keep the scan linear-time.
+# value stops at ``&``/``#``/``?``/whitespace/quotes so a pair never swallows the
+# next one. ``?`` is significant: a nested URL in a redirect/OAuth parameter
+# (e.g. ``?redirect=https://x/cb?code=SECRET``) would otherwise be consumed as
+# the outer value, leaving the inner secret unredacted. Whitespace around ``=``
+# is tolerated to match the keyword pass's ``[\"'\s]*[:=]\s*`` semantics.
+# Bounded character classes keep the scan linear-time.
 _QUERY_PARAM_RE = re.compile(
     r"""(?ix)
     (?P<lead>[?&]|^|(?<=[\s"'(]))
     (?P<key>[A-Za-z0-9_.\-]+)
-    =
-    (?P<value>"[^"]*"|'[^']*'|[^&#\s"'<>]*)
+    \s*=\s*
+    (?P<value>"[^"]*"|'[^']*'|[^&#?\s"'<>]*)
     """
 )
 
