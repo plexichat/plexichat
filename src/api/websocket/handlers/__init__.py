@@ -10,7 +10,7 @@ This module aggregates opcode handlers from sub-modules:
 - sum.py: PlexiSum real-time fabric handlers (workbook subscribe, op, sync)
 """
 
-from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
+from typing import Awaitable, Callable, Optional, Dict, Any, List, Tuple, TYPE_CHECKING, cast
 
 import time
 
@@ -136,6 +136,87 @@ IGNORED_OPCODES = frozenset(
         GatewayOpcode.ARTIFACT_OP_REJECTED,
     }
 )
+
+
+# PERF: ``OpcodeHandler.handle`` runs on EVERY inbound gateway frame. Routing
+# used to walk a ~21-branch ``if/elif`` chain, so a late-chain opcode paid 21
+# equality comparisons per frame and a client flooding those opcodes amplified
+# the linear cost without bound. The table below makes dispatch O(1) regardless
+# of where the opcode sits. It is built once at import time and read-only after.
+#
+# Each entry is:
+#   (sub-handler attribute, method name, pass dispatcher, require dispatcher,
+#    no-dispatcher warning suffix)
+# ``require dispatcher`` opcodes are soft-rejected (ignored + logged, connection
+# kept) when no dispatcher is wired -- hard-closing would push healthy clients
+# into an auth/reconnect loop for a server-side config gap. ``pass dispatcher``
+# without ``require dispatcher`` covers ARTIFACT_SUBSCRIBE, which historically
+# receives a possibly-None dispatcher without a guard; behaviour is preserved.
+_OpcodeRoute = Tuple[str, str, bool, bool, str]
+_HandlerResult = Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]
+_DispatchMethod = Callable[..., Awaitable[_HandlerResult]]
+
+_OPCODE_DISPATCH_TABLE: Dict[GatewayOpcode, _OpcodeRoute] = {
+    GatewayOpcode.HEARTBEAT: ("_connection_handler", "handle_heartbeat", False, False, ""),
+    GatewayOpcode.IDENTIFY: ("_connection_handler", "handle_identify", False, False, ""),
+    GatewayOpcode.RESUME: ("_connection_handler", "handle_resume", False, False, ""),
+    GatewayOpcode.PRESENCE_UPDATE: (
+        "_presence_handler", "handle_presence_update", False, False, "",
+    ),
+    GatewayOpcode.TYPING_START: (
+        "_presence_handler", "handle_typing_start", False, False, "",
+    ),
+    GatewayOpcode.VOICE_STATE_UPDATE: (
+        "_voice_handler", "handle_voice_state_update", False, False, "",
+    ),
+    GatewayOpcode.REQUEST_GUILD_MEMBERS: (
+        "_guild_handler", "handle_request_guild_members", False, False, "",
+    ),
+    GatewayOpcode.VOICE_CONNECT: (
+        "_voice_handler", "handle_voice_connect", False, False, "",
+    ),
+    GatewayOpcode.VOICE_DISCONNECT: (
+        "_voice_handler", "handle_voice_disconnect", False, False, "",
+    ),
+    GatewayOpcode.VOICE_SDP_OFFER: (
+        "_voice_handler", "handle_voice_sdp_offer", False, False, "",
+    ),
+    GatewayOpcode.VOICE_SDP_ANSWER: (
+        "_voice_handler", "handle_voice_sdp_answer", False, False, "",
+    ),
+    GatewayOpcode.VOICE_ICE_CANDIDATE: (
+        "_voice_handler", "handle_voice_ice_candidate", False, False, "",
+    ),
+    GatewayOpcode.VOICE_SPEAKING: (
+        "_voice_handler", "handle_voice_speaking", False, False, "",
+    ),
+    GatewayOpcode.VOICE_QUALITY: (
+        "_voice_handler", "handle_voice_quality", False, False, "",
+    ),
+    GatewayOpcode.TYPING_STOP: (
+        "_presence_handler", "handle_typing_stop", False, False, "",
+    ),
+    GatewayOpcode.ARTIFACT_SUBSCRIBE: (
+        "_artifact_handler", "handle_artifact_subscribe", True, False, "",
+    ),
+    GatewayOpcode.ARTIFACT_UNSUBSCRIBE: (
+        "_artifact_handler", "handle_artifact_unsubscribe", False, False, "",
+    ),
+    # Ordered-log writes + fan-out: a missing dispatcher is a config gap, so
+    # soft-reject rather than force a reconnect loop (see comment above).
+    GatewayOpcode.ARTIFACT_OP: (
+        "_artifact_handler", "handle_artifact_op", True, True, "frame ignored",
+    ),
+    GatewayOpcode.SUM_SUBSCRIBE: (
+        "_sum_handler", "handle_sum_subscribe", True, True, "request denied",
+    ),
+    GatewayOpcode.SUM_UNSUBSCRIBE: (
+        "_sum_handler", "handle_sum_unsubscribe", False, False, "",
+    ),
+    GatewayOpcode.SUM_OP: (
+        "_sum_handler", "handle_sum_op", True, True, "frame ignored",
+    ),
+}
 
 
 class OpcodeHandler:
@@ -394,88 +475,26 @@ class OpcodeHandler:
             )
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
-        if op == GatewayOpcode.HEARTBEAT:
-            return await self._connection_handler.handle_heartbeat(connection, data)
-        elif op == GatewayOpcode.IDENTIFY:
-            return await self._connection_handler.handle_identify(connection, data)
-        elif op == GatewayOpcode.RESUME:
-            return await self._connection_handler.handle_resume(connection, data)
-        elif op == GatewayOpcode.PRESENCE_UPDATE:
-            # Throttle already enforced above.
-            return await self._presence_handler.handle_presence_update(connection, data)
-        elif op == GatewayOpcode.TYPING_START:
-            return await self._presence_handler.handle_typing_start(connection, data)
-        elif op == GatewayOpcode.VOICE_STATE_UPDATE:
-            return await self._voice_handler.handle_voice_state_update(connection, data)
-        elif op == GatewayOpcode.REQUEST_GUILD_MEMBERS:
-            return await self._guild_handler.handle_request_guild_members(
-                connection, data
-            )
-        elif op == GatewayOpcode.VOICE_CONNECT:
-            return await self._voice_handler.handle_voice_connect(connection, data)
-        elif op == GatewayOpcode.VOICE_DISCONNECT:
-            return await self._voice_handler.handle_voice_disconnect(connection, data)
-        elif op == GatewayOpcode.VOICE_SDP_OFFER:
-            return await self._voice_handler.handle_voice_sdp_offer(connection, data)
-        elif op == GatewayOpcode.VOICE_SDP_ANSWER:
-            return await self._voice_handler.handle_voice_sdp_answer(connection, data)
-        elif op == GatewayOpcode.VOICE_ICE_CANDIDATE:
-            return await self._voice_handler.handle_voice_ice_candidate(
-                connection, data
-            )
-        elif op == GatewayOpcode.VOICE_SPEAKING:
-            return await self._voice_handler.handle_voice_speaking(connection, data)
-        elif op == GatewayOpcode.VOICE_QUALITY:
-            return await self._voice_handler.handle_voice_quality(connection, data)
-        elif op == GatewayOpcode.TYPING_STOP:
-            return await self._presence_handler.handle_typing_stop(connection, data)
-        elif op == GatewayOpcode.ARTIFACT_SUBSCRIBE:
-            return await self._artifact_handler.handle_artifact_subscribe(
-                connection, data, self._dispatcher
-            )
-        elif op == GatewayOpcode.ARTIFACT_UNSUBSCRIBE:
-            return await self._artifact_handler.handle_artifact_unsubscribe(
-                connection, data
-            )
-        elif op == GatewayOpcode.ARTIFACT_OP:
-            if self._dispatcher is None:
-                # SOFT REJECT: a wiring/config gap must not kill healthy
-                # connections with UNKNOWN_ERROR 4000; clients would
-                # reconnect-loop straight into the same condition. Ignore
-                # and log so the session survives until the dispatcher is
-                # available.
-                logger.warning(
-                    f"Connection {connection.connection_id}: {op.name} received "
-                    f"but no gateway dispatcher is configured; frame ignored"
-                )
-                return None, None, None
-            return await self._artifact_handler.handle_artifact_op(
-                connection, data, self._dispatcher
-            )
-        elif op == GatewayOpcode.SUM_SUBSCRIBE:
-            if self._dispatcher is None:
-                # Deliberate silent denial (documented on the sum handler):
-                # never NOT_AUTHENTICATED / UNKNOWN_ERROR, which would push
-                # clients into auth/reconnect loops for a server-side gap.
-                logger.warning(
-                    f"Connection {connection.connection_id}: SUM_SUBSCRIBE received "
-                    f"but no gateway dispatcher is configured; request denied"
-                )
-                return None, None, None
-            return await self._sum_handler.handle_sum_subscribe(
-                connection, data, self._dispatcher
-            )
-        elif op == GatewayOpcode.SUM_UNSUBSCRIBE:
-            return await self._sum_handler.handle_sum_unsubscribe(connection, data)
-        elif op == GatewayOpcode.SUM_OP:
-            if self._dispatcher is None:
-                logger.warning(
-                    f"Connection {connection.connection_id}: SUM_OP received "
-                    f"but no gateway dispatcher is configured; frame ignored"
-                )
-                return None, None, None
-            return await self._sum_handler.handle_sum_op(
-                connection, data, self._dispatcher
-            )
-        else:
+        # O(1) dispatch: one table lookup replaces the old linear chain that
+        # compared every frame against ~21 opcodes. A missing entry fails
+        # closed with UNKNOWN_OPCODE, exactly like the old ``else`` branch.
+        route = _OPCODE_DISPATCH_TABLE.get(op)
+        if route is None:
             return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
+
+        handler_attr, method_name, pass_dispatcher, require_dispatcher, warning = route
+        if require_dispatcher and self._dispatcher is None:
+            # SOFT REJECT: a wiring/config gap must not kill healthy
+            # connections with UNKNOWN_ERROR 4000; clients would reconnect-loop
+            # straight into the same condition. Ignore and log so the session
+            # survives until the dispatcher is available.
+            logger.warning(
+                f"Connection {connection.connection_id}: {op.name} received "
+                f"but no gateway dispatcher is configured; {warning}"
+            )
+            return None, None, None
+
+        method = cast("_DispatchMethod", getattr(getattr(self, handler_attr), method_name))
+        if pass_dispatcher:
+            return await method(connection, data, self._dispatcher)
+        return await method(connection, data)
