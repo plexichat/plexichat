@@ -727,74 +727,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
-        key="2033f017-docs-copy-button-renderer",
-        path="src/api/routes/docs/renderer.py",
-        marker='from mistune.renderers.html import escape_text, safe_entity',
-        why=(
-            '2033f017 is a docs-navigation change landed via the private index: the mistune path emits copy buttons via a dedicated renderer; pinned by the distinctive import it introduced.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="62d843f9-add-reaction-unwired-fail-closed",
-        path="src/api/routes/reactions.py",
-        marker='Use the canonical helper so an unwired or',
-        why=(
-            '62d843f9 is a genuine security fix landed via the private index: the add-reaction view gate now fails closed when the servers module is unwired; pinned by the distinctive comment it introduced.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="cf25e0fd-docs-shell-header",
-        path="src/api/routes/docs/openapi.py",
-        marker='from .navigation import (',
-        why=(
-            'cf25e0fd is a docs-only change landed via the private index: the API Explorer/ReDoc shell now imports a shared navigation builder; pinned by that introduced import.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="8acaaadd-admin-artifact-keyset-cursor",
-        path="src/api/routes/admin/artifacts.py",
-        marker='def _parse_before_cursor(value):',
-        why=(
-            '8acaaadd is a perf change landed via the private index: the admin artifact list gained an additive keyset cursor parser; pinned by the distinctive helper it introduced.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="9f361506-private-index-audit-pin",
-        path="src/core/servers/handlers/roles/permissions.py",
-        marker='# Bulk override hydration must never bind an unbounded IN list: SQLite caps',
-        why=(
-            'Private-index commit 9f361506 pinned by a distinctive line it introduced. '
-            'Falsifiable by the guard synthetic-revert test.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="c3efb6b2-private-index-audit-pin",
-        path="src/tests/security/test_unwired_servers_add_reaction_committed_tree_guard.py",
-        marker='pytestmark = [pytest.mark.unit, pytest.mark.security]',
-        why=(
-            'Private-index commit c3efb6b2 pinned by a distinctive line it introduced. '
-            'Falsifiable by the guard synthetic-revert test.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="e9fb77fc-private-index-audit-pin",
-        path="src/api/routes/admin/moderation.py",
-        marker='from src.core.security.hardening import HardeningViolation, parse_id',
-        why=(
-            'Private-index commit e9fb77fc pinned by a distinctive line it introduced. '
-            'Falsifiable by the guard synthetic-revert test.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="02f08707-private-index-audit-pin",
-        path="src/api/routes/docs/openapi.py",
-        marker='def _ensure_page_language(markup: str) -> str:',
-        why=(
-            'Private-index commit 02f08707 pinned by a distinctive line it introduced. '
-            'Falsifiable by the guard synthetic-revert test.'
-        ),
-    ),
-    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
@@ -2785,7 +2717,7 @@ PRIVATE_INDEX_NON_SECURITY_SHAS: frozenset[str] = frozenset(
         # only accepts src/ paths, so it cannot carry a marker; name it here
         # explicitly, never a blanket exemption. The reflog unknown-fix test
         # still flags any other unpinned SHA.
-        "47b03e2a", "e7562b9b", "35430e0f", "1186b52b", "bc4de0eb", "8667bb47",
+        "47b03e2a", "e7562b9b", "35430e0f", "1186b52b",
     }
 )
 

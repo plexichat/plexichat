@@ -638,7 +638,7 @@ GET /api/v1/servers/{server_id}/invites
 
 ### Get audit log entries
 
-Get audit log entries for a server. Requires the `server.view_audit_log` permission.
+Get audit log entries for a server. Requires the `audit_log.view` permission.
 
 ```
 GET /api/v1/servers/{server_id}/audit-logs

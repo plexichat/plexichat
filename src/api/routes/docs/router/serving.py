@@ -92,10 +92,9 @@ class ServingMixin:
     <style>{build_brand_styles(conf)}</style>
 </head>
 <body class="plexi-docs-page">
-    <a class="skip-link" href="#main-content">Skip to content</a>
     <div class="docs-layout">
         {sidebar_html}
-        <main class="docs-main" id="main-content">
+        <main class="docs-main">
             <div class="docs-content">
                 {shell_header}
                 <div class="content-container">{html_content}</div>

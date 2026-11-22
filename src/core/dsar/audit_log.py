@@ -19,8 +19,6 @@ except ImportError:
 import utils.config as config
 import utils.logger as logger
 
-from src.core.telemetry.scrubbing import redact_secrets
-
 
 class DSARLog:
     """
@@ -177,19 +175,12 @@ class DSARLog:
         """
         id_hash = hashlib.sha256(identifier.encode()).hexdigest()
 
-        # SECURITY: ``metadata`` is caller-supplied free-form data. Real callers
-        # put exception text in it (harvester logs ``{"error": str(e)}`` on a
-        # failed export), so a credential embedded in an error message would be
-        # written to this on-disk audit file in the clear. Scrub *before*
-        # building the entry so the checksum covers only redacted content --
-        # the secret must never reach the file, not merely be hidden on read.
-        # This mirrors ``AuditChain.append`` in core/telemetry/audit.py.
         entry = {
             "timestamp": int(time.time()),
             "user_id": user_id,
             "identifier_hash": id_hash,
             "action": action,
-            "metadata": redact_secrets(metadata or {}),
+            "metadata": metadata or {},
         }
 
         # SECURITY: previously the file was opened, the lock
@@ -555,12 +546,7 @@ class DSARLog:
         ``integrity_hash`` binds the event's own payload so an operator can
         verify a single export/deletion record without replaying the chain.
         """
-        # Redact before hashing: ``log_event`` now redacts the metadata again
-        # before persisting it (idempotently), so the self-verifying hash must
-        # be computed over the same redacted payload that lands on disk.
-        # Otherwise verify_chain would reject every integrity event whose
-        # metadata contained a secret.
-        payload = redact_secrets(dict(metadata))
+        payload = dict(metadata)
         payload["integrity_hash"] = self._integrity_hash(payload)
         return self.log_event(user_id, action, identifier, payload)
 

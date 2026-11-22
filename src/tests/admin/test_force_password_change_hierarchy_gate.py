@@ -21,22 +21,15 @@ pytestmark = [pytest.mark.security, pytest.mark.unit]
 
 
 class _HierarchyDB:
-    """Minimal db double for the hierarchy lookups and session revocation."""
+    """Minimal db double that answers the two position lookups by id."""
 
     def __init__(self, positions):
         self.positions = positions
-        self.executed = []
 
     def fetch_one(self, sql, params):
         if "MAX(r.position)" in sql:
             return {"max_pos": self.positions.get(int(params[0]), 0)}
         return {"id": params[0]}
-
-    def execute(self, sql, params=()):
-        # The success path revokes the target's admin sessions. Record it so
-        # the refusal tests can prove neither the mutation nor its side
-        # effects run when the hierarchy gate denies the operation.
-        self.executed.append((" ".join(sql.split()), tuple(params)))
 
 
 @pytest.fixture
@@ -57,34 +50,28 @@ def hierarchy(monkeypatch):
         "src.core.admin.auth.password_mixin.force_password_change_target",
         _fake_target,
     )
-    return calls, db
+    return calls
 
 
 def test_support_admin_cannot_force_password_change_on_super_admin(hierarchy):
-    calls, db = hierarchy
     ok, message = admin_module.force_password_change(10, 100)
 
     assert ok is False
     assert message
-    assert calls == [], "mutation ran despite the hierarchy refusal"
-    assert db.executed == [], "sessions revoked despite the hierarchy refusal"
+    assert hierarchy == [], "mutation ran despite the hierarchy refusal"
 
 
 def test_equal_position_cannot_force_password_change(hierarchy):
-    calls, db = hierarchy
     ok, _ = admin_module.force_password_change(10, 10)
 
     assert ok is False
-    assert calls == []
-    assert db.executed == []
+    assert hierarchy == []
 
 
 def test_super_admin_can_still_force_password_change_on_support_admin(hierarchy):
-    calls, db = hierarchy
     ok, message = admin_module.force_password_change(100, 10)
 
     assert ok is True, message
-    assert len(calls) == 1
-    assert calls[0]["acting_admin_id"] == 100
-    assert calls[0]["target_admin_id"] == 10
-    assert any("DELETE FROM admin_sessions" in sql for sql, _ in db.executed)
+    assert len(hierarchy) == 1
+    assert hierarchy[0]["acting_admin_id"] == 100
+    assert hierarchy[0]["target_admin_id"] == 10

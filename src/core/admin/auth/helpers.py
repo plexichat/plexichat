@@ -399,31 +399,3 @@ def _check_rate_limit(
     if allowed:
         return True, None
     return False, lockout_seconds
-
-
-# The ``admin_login:{ip}`` bucket above bounds guesses from ONE source, but a
-# caller with a botnet (or a trusted-proxy header chain it controls) gets a
-# fresh bucket for every attempt and can guess the single admin password
-# forever. Admin OTP already has an account-scoped budget (``admin_otp_account:``);
-# the password phase needs the same invariant. Keyed by the admin id resolved
-# from the admin_users row -- never the submitted username -- so a client cannot
-# pick, rotate, or collide with another account's bucket. Raised limiter faults
-# deny the attempt instead of reopening unlimited guessing.
-ADMIN_PASSWORD_MAX_ATTEMPTS = 5
-ADMIN_PASSWORD_WINDOW_SECONDS = 900
-
-
-def _check_admin_password_budget(admin_id: int) -> bool:
-    """Consume one account-scoped admin password guess; fail closed on faults."""
-    from src.core.database import check_rate_limit
-
-    try:
-        allowed, _remaining = check_rate_limit(
-            f"admin_login_account:{admin_id}",
-            ADMIN_PASSWORD_MAX_ATTEMPTS,
-            ADMIN_PASSWORD_WINDOW_SECONDS,
-        )
-    except Exception:
-        logger.error("admin password limiter: store error - failing closed")
-        return False
-    return bool(allowed)

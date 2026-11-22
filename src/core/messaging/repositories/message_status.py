@@ -89,50 +89,6 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
         )
         return {row["message_id"]: MessageStatusType(row["status"]) for row in rows}
 
-    def get_read_receipts_enabled(
-        self, conversation_ids: List[SnowflakeID]
-    ) -> Dict[int, bool]:
-        """Resolve the public-read-receipt flag for many channels at once.
-
-        ``mark_read_bulk`` used to call ``servers.get_channel(conv, user)``
-        once per conversation just to read this single boolean. That helper
-        re-checks server membership and ``channels.view`` on every call, so an
-        N-channel bulk ack paid an O(N) authz/DB fan-out on top of the batched
-        status work. The flag itself lives on ``srv_channels``, so one bounded
-        ``IN`` query is enough.
-
-        Only rows that exist (and are not deleted) are returned; the caller
-        defaults every missing conversation to ``True``, matching the legacy
-        ``get_channel`` fallback for DMs and channels the caller cannot see.
-        No user id is bound here: this is a non-authoritative config read, and
-        the bulk caller has already gated every conversation through the
-        fail-closed participation check before reaching this method. Ids are
-        strictly int-typed (``bool`` is never a channel id) so a malformed
-        value cannot be laundered into a real channel by ``int()`` coercion --
-        it is simply left to the caller's ``True`` default.
-        """
-        unique: List[int] = []
-        seen = set()
-        for raw in conversation_ids:
-            if type(raw) is not int or raw in seen:
-                continue
-            seen.add(raw)
-            unique.append(raw)
-        if not unique:
-            return {}
-
-        result: Dict[int, bool] = {}
-        for chunk in _iter_chunks(unique):
-            in_clause, params = self._build_in_clause(chunk)
-            rows = self._fetch_all(
-                "SELECT id, read_receipts_enabled FROM srv_channels "
-                f"WHERE deleted = 0 AND id IN {in_clause}",
-                tuple(params),
-            )
-            for row in rows:
-                result[int(row["id"])] = bool(row.get("read_receipts_enabled", True))
-        return result
-
     def get_batch_counts(
         self, message_ids: List[SnowflakeID]
     ) -> Dict[SnowflakeID, Dict[str, int]]:

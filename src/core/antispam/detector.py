@@ -20,7 +20,6 @@ import hashlib
 import re
 import threading
 import unicodedata
-from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import utils.logger as logger
@@ -135,24 +134,17 @@ def _glob_segments(pattern: str) -> list[str]:
     return parts
 
 
-@lru_cache(maxsize=256)
-def _glob_segment_tokens(pattern: str) -> tuple:
-    """Compile a stored glob's ``*``-separated segment matchers once.
+def _linear_glob_match(name: str, pattern: str) -> bool:
+    """Match a glob in linear time without a backtracking quantifier chain.
 
-    ``_linear_glob_match`` runs for every recipient pattern-filter row on
-    every scanned message.  The row is recipient configuration; its segment
-    regexes are a pure function of the (length-bounded) pattern string and
-    are identical for every message.  Rebuilding them on each call was pure
-    repeated work on the send path.  Cache the immutable tuple of compiled
-    patterns (``None`` marks a single ``*`` wildcard) by the pattern string.
-
-    The ``maxsize`` bound keeps rotating/hostile patterns from pinning memory;
-    the key is the caller-bounded pattern (``_safe_fnmatchcase`` rejects
-    patterns longer than ``MAX_FILTER_PATTERN_LENGTH`` before the matcher is
-    reached).  Nothing user-specific is shared: a cached value depends only on
-    the pattern's own text, so no authz decision or per-recipient state is
-    involved.  Compiled patterns are immutable and their ``match`` is
-    thread-safe.
+    The pattern is split into ``*``-separated fixed-width segments. Each
+    segment is validated with ``fnmatch``'s own translation, which for a
+    ``*``-free segment contains only literals, ``?`` and ``[seq]`` single
+    character classes -- no ``.*`` -- so matching one segment is linear.
+    Segments are then aligned with the classic greedy two-pointer wildcard
+    algorithm: on a mismatch only the most recent ``*`` is advanced, so a
+    stored pattern of up to ``MAX_FILTER_PATTERN_LENGTH`` chars against a
+    bounded canonical message cannot blow up exponentially.
     """
     tokens: list[Any] = []
     for index, part in enumerate(_glob_segments(pattern)):
@@ -168,24 +160,6 @@ def _glob_segment_tokens(pattern: str) -> tuple:
             # 3.14 emits ``\z``; older releases emit ``\Z``.
             translated = translated.removesuffix(r"\z").removesuffix(r"\Z")
             tokens.append(re.compile(translated))
-    return tuple(tokens)
-
-
-def _linear_glob_match(name: str, pattern: str) -> bool:
-    """Match a glob in linear time without a backtracking quantifier chain.
-
-    The pattern is split into ``*``-separated fixed-width segments. Each
-    segment is validated with ``fnmatch``'s own translation, which for a
-    ``*``-free segment contains only literals, ``?`` and ``[seq]`` single
-    character classes -- no ``.*`` -- so matching one segment is linear.
-    Segments are then aligned with the classic greedy two-pointer wildcard
-    algorithm: on a mismatch only the most recent ``*`` is advanced, so a
-    stored pattern of up to ``MAX_FILTER_PATTERN_LENGTH`` chars against a
-    bounded canonical message cannot blow up exponentially.  The compiled
-    segment matchers are cached per pattern; the linear two-pointer algorithm
-    below is unchanged, so the ReDoS protection is preserved.
-    """
-    tokens = _glob_segment_tokens(pattern)
 
     token_i = 0
     name_i = 0

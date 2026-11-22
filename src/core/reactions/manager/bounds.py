@@ -95,6 +95,13 @@ def validate_bulk_message_ids(ids: Iterable[object]) -> List[int]:
     if len(raw) > MAX_BULK_MESSAGE_IDS:
         raise ValueError(f"message_ids exceeds maximum of {MAX_BULK_MESSAGE_IDS} ids")
     parsed: List[int] = []
+    # This helper runs on EVERY reaction-batch hydration (cold and warm cache
+    # hits alike), for up to 100 ids.  Membership against the growing ``parsed``
+    # list made de-duplication an O(n^2) scan -- 4,950 equality comparisons for
+    # a full page, dominating the helper's cost.  Track accepted ids in a set
+    # so each id is checked once; ``parsed`` still preserves first-occurrence
+    # order for the caller's IN clause.
+    seen = set()
     for value in raw:
         # int(True) == 1 and int(1.5) == 1, which would silently reinterpret
         # a bogus id as a real snowflake; reject those types before parsing.
@@ -106,6 +113,7 @@ def validate_bulk_message_ids(ids: Iterable[object]) -> List[int]:
             message_id = parse_id(value, "message_id")
         except HardeningViolation as exc:
             raise ValueError(str(exc)) from exc
-        if message_id not in parsed:
+        if message_id not in seen:
+            seen.add(message_id)
             parsed.append(message_id)
     return parsed

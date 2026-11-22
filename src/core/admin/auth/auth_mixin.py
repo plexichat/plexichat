@@ -10,7 +10,6 @@ from typing import Any
 
 from .dataclasses import AdminLoginResult
 from .helpers import (
-    _check_admin_password_budget,
     _check_rate_limit,
     _create_otp_challenge,
     _generate_password,
@@ -146,26 +145,12 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
                 error="Insecure password hash on file; contact operator",
             )
 
-        # Account-scoped budget: the per-IP limit cannot bound a distributed
-        # guessing campaign against one admin. Uses the DB-resolved admin id,
-        # and denies on limiter faults. Same message as the IP throttle so the
-        # two denial reasons are indistinguishable to a caller.
-        if not _check_admin_password_budget(admin_id):
-            return AdminLoginResult(
-                success=False,
-                error="Too many login attempts. Try again later.",
-                rate_limited=True,
-            )
-
         if not encryption.verify_password(password, password_hash):
             return AdminLoginResult(success=False, error="Invalid credentials")
 
-        # A successful password phase clears both failure buckets. Leaving the
-        # account-scoped one charged would keep refusing a legitimate admin for
-        # the rest of its window after a few stale wrong guesses. OTP
+        # A successful password phase clears the shared failure bucket. OTP
         # verification has its own challenge-bound attempt budget.
         reset_rate_limit(f"admin_login:{ip}")
-        reset_rate_limit(f"admin_login_account:{admin_id}")
 
         otp_required = admin_config.get("require_otp", True)
         if not otp_required:

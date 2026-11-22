@@ -980,21 +980,6 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     from src.core import automod
     from src.core.automod.models import RuleType
 
-    # Platform-admin rule creation writes a server-scoped rule. Bind the
-    # caller-supplied server id through the strict ASCII snowflake gate before
-    # any write: the SnowflakeID schema rejects bool/coercible tokens on the
-    # normal HTTP path, but a directly constructed body or internal caller
-    # bypasses that validation. Bare ``int()`` laundered those tokens
-    # (``True``->1, ``5.9``->5, ``"١٢٣"``->123, ``"1_2"``->12) into a rule bound
-    # to a DIFFERENT server. parse_id fails closed with 400 before any write.
-    try:
-        server_id = parse_id(body.server_id, "server_id")
-    except (HardeningViolation, TypeError, ValueError):
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid request data"}},
-        )
-
     try:
         rule_type = RuleType(body.rule_type)
     except Exception:
@@ -1005,7 +990,7 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     try:
         rule = automod.create_rule(
             user_id=int(admin_id),
-            server_id=server_id,
+            server_id=int(body.server_id),
             name=body.name,
             rule_type=rule_type,
             rule_config=body.config,
