@@ -1629,6 +1629,30 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "the interaction payload to every server member."
         ),
     ),
+    # 9215ff01 (N756 follow-up): the refresh replay-revocation branch now
+    # re-checks the presented IP/User-Agent binding through the shared
+    # _refresh_binding_ok() helper BEFORE revoking the session. The replay
+    # branch runs ahead of the normal secret/context checks, so a bearer that is
+    # cryptographically valid but presented from the wrong host/user-agent
+    # could otherwise drive _revoke_for_refresh_replay and kill the victim's
+    # session without ever passing the binding gate -- the same stale-context
+    # availability DoS N720 closed in logout(). Replay from the bound context
+    # still revokes (leak detection intact); wrong-context/unbound attempts
+    # fail closed and change nothing. lifecycle.py is a contested, stale-copy-
+    # prone file, so a stale staged copy that drops the helper call (or the
+    # helper itself) silently reopens the DoS. Pin the distinctive helper name.
+    CommittedFixMarker(
+        key="9215ff01-refresh-replay-revocation-binding-recheck",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker="_refresh_binding_ok",
+        why=(
+            "9215ff01 (N756 follow-up): refresh replay revocation re-checks the "
+            "presented IP/UA binding via _refresh_binding_ok before revoking, so "
+            "a stale-context (wrong-host/user-agent) bearer cannot trigger the "
+            "replay-revocation DoS; a stale staged copy of lifecycle.py that "
+            "drops the helper call reopens it"
+        ),
+    ),
 )
 
 
@@ -2689,3 +2713,46 @@ def test_artifact_interaction_audience_pins_live_at_head_and_non_vacuous(
         assert not present, f"synthetic audience revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+# 9215ff01 (N756 follow-up) refresh-replay revocation binding pin. Held as an
+# explicit set so the pin cannot be dropped from the registry silently; the
+# parametrized synthetic-removal test already covers this entry, and the live-
+# HEAD tie below additionally proves it matches a real committed blob.
+REFRESH_REPLAY_BINDING_PIN_KEYS: frozenset[str] = frozenset(
+    {"9215ff01-refresh-replay-revocation-binding-recheck"}
+)
+
+
+def test_refresh_replay_binding_pin_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The N756 replay-revocation binding pin is real at HEAD and falsifiable.
+
+    The shared _refresh_binding_ok helper is present in the committed
+    lifecycle.py blob, points at the expected file, and a synthetic stale blob
+    with the helper erased is rejected by the exact same evaluator. Per-entry
+    parametrized synthetic-removal coverage is provided by
+    ``test_synthetic_reverted_blob_is_flagged``.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert REFRESH_REPLAY_BINDING_PIN_KEYS <= set(keys), (
+        "refresh-replay binding pin set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(REFRESH_REPLAY_BINDING_PIN_KEYS - set(keys))}"
+    )
+    assert len(REFRESH_REPLAY_BINDING_PIN_KEYS) == 1
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    key = next(iter(REFRESH_REPLAY_BINDING_PIN_KEYS))
+    record = by_key[key]
+    assert record.path == "src/core/auth/managers/session/lifecycle.py"
+    present, detail = _evaluate(record, reader)
+    assert present, f"{key} is not pinned at HEAD: {detail}"
+
+    def stale_replay_binding_blob(path: str) -> str:
+        return f"# stale staged copy of {path}\n# replay binding re-check erased\n"
+
+    present, detail = _evaluate(record, stale_replay_binding_blob)
+    assert not present, f"synthetic replay-binding revert of {key} was not caught"
+    assert record.key in detail and record.marker in detail
+    assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
