@@ -162,7 +162,7 @@ On deletion the server broadcasts both `MESSAGE_DELETE` and a `MESSAGE_UPDATE` t
 | Code | Condition |
 |------|-----------|
 | 400 | Invalid message ID |
-| 403 | Not author and no manage permission |
+| 403 | Not author and no `messages.manage` permission |
 | 404 | Message not found |
 
 ## Bulk-delete messages
