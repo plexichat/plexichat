@@ -3,7 +3,16 @@ from typing import Any, Callable, Dict, List, Optional
 import utils.logger as logger
 from src.utils.encryption import decrypt_data, decrypt_message, is_message_encrypted
 from .base import SearchManagerBase
+from .result_cache import get_result_cache
 from ..models import IndexedMessage
+
+# Message index writes change both *which* documents a search can return
+# (delete) and *what content* they carry (edit/move). Any earlier memoized
+# final page is stale from that instant on, so both message result caches
+# must be dropped. Scope the invalidation to message caches only: clearing
+# the user/server memos on every send/edit would discard unrelated hot
+# entries.
+_MESSAGE_RESULT_CACHE_NAMES = ("messages", "messages_page")
 
 # Reindex streams messages through memory in fixed-size pages: select one
 # page, decrypt it, hand it to the indexer, drop the plaintext, then move on.
@@ -25,6 +34,19 @@ class ReindexCancelled(Exception):
 
 
 class MessageIndexingMixin(SearchManagerBase):
+    def _invalidate_message_result_caches(self) -> None:
+        """Drop memoized final pages after a message index write.
+
+        The result caches hold fully authorized, fully enriched result
+        objects — including message content. They are computed before this
+        write, so once a document is inserted, updated or removed every
+        cached page is stale: a deleted message would keep being returned
+        (and an edited one would keep its old content) for the whole cache
+        TTL. Fail closed by discarding those memos at the write boundary.
+        """
+        for name in _MESSAGE_RESULT_CACHE_NAMES:
+            get_result_cache(self, name).clear()
+
     def index_message(
         self,
         message_id: int,
@@ -69,6 +91,7 @@ class MessageIndexingMixin(SearchManagerBase):
         )
 
         self._indexer.index_message(indexed)
+        self._invalidate_message_result_caches()
 
         now = self._get_timestamp()
         source_updated_at = metadata.get("source_updated_at", 0) or 0
@@ -107,6 +130,7 @@ class MessageIndexingMixin(SearchManagerBase):
 
     def remove_from_index(self, message_id: int) -> None:
         self._indexer.remove_message(message_id)
+        self._invalidate_message_result_caches()
         self._db.execute(
             "DELETE FROM search_message_index WHERE message_id = ?", (message_id,)
         )
