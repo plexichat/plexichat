@@ -211,16 +211,43 @@ async def search_messages(
         alias_channel_id = None
         if channel is None and servers_mod:
             reverse = getattr(servers_mod, "get_channel_by_conversation", None)
-            if callable(reverse):
+            # A wired, initialized server store can contain a private-channel
+            # conversation-id alias. On this path we cannot tell such an alias
+            # from a genuine DM by any other means, so the reverse lookup MUST
+            # prove the absence of a backing channel. Treating an unproven
+            # lookup (missing API, raised error, corrupt row) as "no backing
+            # channel" would skip the live messages.read gate below and serve a
+            # warm private result page -- fail closed instead. A wired-but-
+            # uninitialized store has no channel table, so a DM is the only
+            # possibility there and must not be over-denied.
+            if getattr(servers_mod, "_setup_complete", True) is not False:
+                if not callable(reverse):
+                    raise _not_found()
                 try:
                     backing = reverse(cid)
-                except Exception:
-                    backing = None
-                if isinstance(backing, dict) and backing.get("id") is not None:
-                    alias_channel_id = int(backing["id"])
+                except Exception as lookup_error:
+                    logger.debug(
+                        f"message search backing-channel lookup failed for {cid}: "
+                        f"{lookup_error}"
+                    )
+                    raise _not_found()
+                if backing:
+                    raw_id = (
+                        backing.get("id")
+                        if isinstance(backing, dict)
+                        else getattr(backing, "id", None)
+                    )
+                    if raw_id is None:
+                        raise _not_found()
+                    try:
+                        alias_channel_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        raise _not_found()
                     channel = servers_mod.get_channel(
                         alias_channel_id, current_user.user_id
                     )
+            # A clean `None` backing result is a genuine DM/group: no server
+            # channel to gate, and the participation check below still applies.
 
         # A server channel's messages require a per-channel read grant, not
         # merely membership of the parent server. The participant check below

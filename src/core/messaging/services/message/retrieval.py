@@ -66,16 +66,31 @@ def _resolve_authoritative_server_scope(conversation_id) -> Optional[tuple]:
     """
     servers = _get_servers_module()
     if servers is None:
+        # No server module at all: there is no server-channel scope to resolve.
+        # A DM-only deployment still searches through the participation gate.
+        return None
+    if getattr(servers, "_setup_complete", True) is False:
+        # Wired but uninitialized: no channel store exists, so a DM/group is
+        # the only possible conversation (mirrors the bookmark/recent-chat
+        # read gates). Do not over-deny genuine DMs here.
         return None
     lookup = getattr(servers, "get_channel_by_conversation", None)
     if not callable(lookup):
-        return None
+        # The server module IS wired and initialized, so a private-channel
+        # conversation-id alias can exist. Without the reverse lookup we cannot
+        # tell it apart from a DM; treating "unknown" as "DM" would skip the
+        # messages.read gate. Fail closed, as every peer alias gate does.
+        raise ConversationAccessDeniedError("Cannot verify channel read access")
     try:
         info = lookup(int(conversation_id))
-    except Exception:
-        return None
+    except Exception as lookup_error:
+        # An unproven lookup is NOT evidence of a missing backing channel. A
+        # member denied messages.read must not search a private channel simply
+        # because the channel store was unavailable on this request.
+        logger.debug(f"conversation backing-channel lookup failed: {lookup_error}")
+        raise ConversationAccessDeniedError("Cannot verify channel read access")
     if not info:
-        return None
+        return None  # clean "no backing channel": a genuine DM/group
     if isinstance(info, dict):
         channel_id = info.get("id")
         server_id = info.get("server_id")
@@ -83,11 +98,13 @@ def _resolve_authoritative_server_scope(conversation_id) -> Optional[tuple]:
         channel_id = getattr(info, "id", None)
         server_id = getattr(info, "server_id", None)
     if channel_id is None or server_id is None:
-        return None
+        # A backing row with no usable channel/server id cannot prove which
+        # grant to check. Never degrade that into "no gate".
+        raise ConversationAccessDeniedError("Cannot verify channel read access")
     try:
         return int(channel_id), int(server_id)
-    except (TypeError, ValueError):
-        return None
+    except (TypeError, ValueError) as exc:
+        raise ConversationAccessDeniedError("Cannot verify channel read access") from exc
 
 
 # L6: the rebuild previously did DELETE + RPUSH as two separate commands,
