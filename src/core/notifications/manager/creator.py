@@ -13,6 +13,7 @@ from ..models import (
 )
 from .helpers import (
     get_blocked_user_ids,
+    get_conversation_participants,
     get_role_members,
     get_server_members,
     get_online_members,
@@ -238,6 +239,17 @@ class NotificationCreatorMixin(NotificationProtocol):
             users_to_notify, server_id, channel_id
         )
 
+        # SECURITY: a DM has no server/channel context, so the channel-view
+        # filter above is a no-op there. A mention alone is NOT authority to
+        # read a DM: only actual participants of the conversation may receive
+        # a notification carrying its private content preview (and, on push
+        # dispatch, a push payload). Without this gate a caller could mention
+        # an unrelated user in a DM and leak the private body to them.
+        if server_id is None:
+            users_to_notify = self._filter_recipients_by_conversation(
+                users_to_notify, conversation_id
+            )
+
         now = self._get_timestamp()
         preview = truncate_content(content, self._config)
 
@@ -372,6 +384,50 @@ class NotificationCreatorMixin(NotificationProtocol):
                     f"excluding from notification fan-out: {e}"
                 )
         return allowed
+
+    def _filter_recipients_by_conversation(
+        self, user_ids: set, conversation_id: SnowflakeID
+    ) -> set:
+        """Keep only recipients who participate in ``conversation_id``.
+
+        Used for DM / group-DM contexts (``server_id is None``), where there is
+        no channel to authorize against and the channel-view gate is a no-op.
+        Conversation membership is the only authority for receiving a DM's
+        private content preview. The lookup is fail-closed: an error, an
+        unavailable participant store, or an empty participant set excludes
+        every recipient, so an unverifiable DM audience can never be notified.
+        """
+        recipients = set(user_ids)
+        if not recipients:
+            return recipients
+
+        def _as_int(value):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        try:
+            participants = get_conversation_participants(self._db, conversation_id)
+        except Exception as e:
+            logger.warning(
+                "DM mention fan-out skipped: conversation participants could "
+                f"not be resolved (conversation {conversation_id}): {e}"
+            )
+            return set()
+
+        allowed = {
+            pid
+            for pid in (_as_int(uid) for uid in (participants or []))
+            if pid is not None
+        }
+        if not allowed:
+            logger.warning(
+                "DM mention fan-out skipped: no participants resolved for "
+                f"conversation {conversation_id}"
+            )
+            return set()
+        return {uid for uid in recipients if _as_int(uid) in allowed}
 
     def _should_notify_user_optimized(
         self,
