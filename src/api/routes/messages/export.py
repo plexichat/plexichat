@@ -223,9 +223,14 @@ async def request_transcript_export(
                     }
                 },
             )
+        # ``messages.export_transcript`` and ``administrator`` are SERVER-scoped
+        # permissions (the catalog places export under its own section, not
+        # under ``Message permissions (per channel)``). Resolving them with the
+        # channel id folded that channel's overrides into the result, so a
+        # per-channel allow grant could authorize a full transcript export even
+        # when the member had no server-level grant. Resolve at server scope.
         permissions = (
-            servers_mod.get_permissions(current_user.user_id, channel.server_id, cid)
-            or {}
+            servers_mod.get_permissions(current_user.user_id, channel.server_id) or {}
         )
         if not permissions.get("messages.export_transcript") and not permissions.get(
             "administrator"
