@@ -125,6 +125,14 @@ MAX_SAFE_NESTED_REPEAT = 8
 # rejecting nested shapes (2*8*8 = 128 > 16).
 MAX_NESTED_REPEAT_PRODUCT = 16
 
+# Wildcard chains are the other classic ReDoS shape: a fnmatch-style glob such
+# as ``*a*a*a*b`` compiles to ``.*a.*a.*a.*b``. There are no nested quantifiers,
+# so the group analysis below cannot see it, yet the backtracking engine can
+# split a run of a's exponentially many ways between the interleaved ``.*``
+# atoms. Three broad unbounded quantifiers at one nesting level is the point
+# where a short (100-200 char) message stalls a worker; two stay cheap.
+MAX_SEQUENTIAL_WILDCARDS = 3
+
 
 def _quantifier_choices(bounds: Optional[tuple]) -> int:
     """How many repetition counts a quantifier permits (ambiguity factor).
@@ -272,6 +280,94 @@ def _has_backreference_redos_risk(pattern_str: str) -> bool:
     return False
 
 
+def _has_sequential_wildcard_redos_risk(pattern_str: str) -> bool:
+    """Flag 3+ broad unbounded quantifiers at the same nesting level.
+
+    This is the shape ``fnmatch``/glob translation produces (``.*a.*a.*b``)
+    and the group-nesting analysis in :func:`_has_redos_risk` cannot see it:
+    every quantifier is a sibling, not nested. A "broad" atom is one that can
+    consume the literal separators between the other wildcards -- a dot, a
+    negated class, or a wide shorthand class (``\\w``, ``\\S``, ``\\s``,
+    ``\\W``, ``\\D``). Narrow atoms such as ``\\d`` or an escaped literal cannot
+    absorb neighbouring separators, so chains built from them stay linear and
+    are left alone.
+
+    A quantified group carries its inner chain count outward (via ``max``) so
+    wrapping the chain cannot hide it from the enclosing level.
+    """
+    depth = 0
+    chains = [0]
+    broad_atom = [False]
+    i = 0
+    n = len(pattern_str)
+
+    while i < n:
+        ch = pattern_str[i]
+
+        if ch == "\\":
+            nxt = pattern_str[i + 1] if i + 1 < n else ""
+            broad_atom[depth] = nxt in "wWsSD"
+            i += 2
+            continue
+
+        if ch == "[":
+            j = i + 1
+            negated = False
+            if j < n and pattern_str[j] == "^":
+                negated = True
+                j += 1
+            if j < n and pattern_str[j] == "]":
+                j += 1
+            while j < n and pattern_str[j] != "]":
+                if pattern_str[j] == "\\":
+                    j += 1
+                j += 1
+            broad_atom[depth] = negated
+            i = j + 1
+            continue
+
+        if ch == "(":
+            depth += 1
+            chains.append(0)
+            broad_atom.append(False)
+            i += 1
+            continue
+
+        if ch == ")":
+            if depth:
+                inner_chain = chains.pop()
+                inner_broad = broad_atom.pop()
+                depth -= 1
+                chains[depth] = max(chains[depth], inner_chain)
+                broad_atom[depth] = broad_atom[depth] or inner_broad
+            i += 1
+            continue
+
+        if ch == ".":
+            broad_atom[depth] = True
+            i += 1
+            continue
+
+        q_len = _match_quantifier(pattern_str, i)
+        if q_len:
+            bounds = _quantifier_bounds(pattern_str, i)
+            unbounded = bounds is not None and bounds[1] == _UNBOUNDED
+            if unbounded and broad_atom[depth]:
+                chains[depth] += 1
+                if chains[depth] >= MAX_SEQUENTIAL_WILDCARDS:
+                    return True
+            broad_atom[depth] = False
+            i += q_len
+            continue
+
+        # Any other atom is a literal separator: a broad wildcard may still
+        # consume it, but the atom itself does not extend the chain.
+        broad_atom[depth] = False
+        i += 1
+
+    return False
+
+
 def _has_redos_risk(pattern_str: str) -> bool:
     """Static analysis for ReDoS-prone constructs in fallback patterns.
 
@@ -297,9 +393,13 @@ def _has_redos_risk(pattern_str: str) -> bool:
 
     Quantified backreferences to variable-length captures (``(a+)\1+``) are
     also catastrophic but live outside the group analysis below, so they are
-    caught by :func:`_has_backreference_redos_risk` first.
+    caught by :func:`_has_backreference_redos_risk` first. Flat chains of
+    wildcards (``.*a.*a.*b``) are caught by
+    :func:`_has_sequential_wildcard_redos_risk`.
     """
     if _has_backreference_redos_risk(pattern_str):
+        return True
+    if _has_sequential_wildcard_redos_risk(pattern_str):
         return True
 
     # Stack frames:
