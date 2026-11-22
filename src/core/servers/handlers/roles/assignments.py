@@ -182,9 +182,7 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
                 try:
                     fresh_permissions = json.loads(fresh_permissions)
                 except (TypeError, ValueError):
-                    raise InvalidPermissionKeyError(
-                        "Role permissions are unreadable"
-                    )
+                    raise InvalidPermissionKeyError("Role permissions are unreadable")
             if not isinstance(fresh_permissions, dict):
                 raise InvalidPermissionKeyError("Role permissions are unreadable")
             validate_permission_dict(fresh_permissions)
@@ -208,9 +206,7 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
             )
             if not fresh_position:
                 raise RoleNotFoundError("Role not found")
-            current_user_roles = self.manager._get_member_role_rows(
-                server_id, user_id
-            )
+            current_user_roles = self.manager._get_member_role_rows(server_id, user_id)
             if not can_manage_role(
                 current_user_roles,
                 {"position": fresh_position["position"]},

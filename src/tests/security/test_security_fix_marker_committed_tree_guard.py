@@ -128,47 +128,47 @@ _WS_TICKET_UA_BINDING_COMPARE = (
 # raise on a missing row, and the re-decision call itself, so a stale copy
 # that drops either re-check under the lock is caught by name.
 _ROLE_ASSIGNMENT_GRANTABILITY_RECHECK = (
-    '            fresh_row = self.db.fetch_one(\n'
+    "            fresh_row = self.db.fetch_one(\n"
     '                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",\n'
-    '                (role_id,),\n'
-    '            )\n'
-    '            if not fresh_row:\n'
+    "                (role_id,),\n"
+    "            )\n"
+    "            if not fresh_row:\n"
     '                raise RoleNotFoundError("Role not found")\n'
     '            fresh_permissions = fresh_row["permissions"]\n'
-    '            if isinstance(fresh_permissions, str):\n'
-    '                try:\n'
-    '                    fresh_permissions = json.loads(fresh_permissions)\n'
-    '                except (TypeError, ValueError):\n'
-    '                    raise InvalidPermissionKeyError(\n'
+    "            if isinstance(fresh_permissions, str):\n"
+    "                try:\n"
+    "                    fresh_permissions = json.loads(fresh_permissions)\n"
+    "                except (TypeError, ValueError):\n"
+    "                    raise InvalidPermissionKeyError(\n"
     '                        "Role permissions are unreadable"\n'
-    '                    )\n'
-    '            if not isinstance(fresh_permissions, dict):\n'
+    "                    )\n"
+    "            if not isinstance(fresh_permissions, dict):\n"
     '                raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
-    '            validate_permission_dict(fresh_permissions)\n'
-    '            check_permissions_grantable(\n'
-    '                self.get_permissions(user_id, server_id), fresh_permissions\n'
-    '            )'
+    "            validate_permission_dict(fresh_permissions)\n"
+    "            check_permissions_grantable(\n"
+    "                self.get_permissions(user_id, server_id), fresh_permissions\n"
+    "            )"
 )
 
 _ROLE_ASSIGNMENT_RANK_RECHECK = (
-    '            fresh_position = self.db.fetch_one(\n'
+    "            fresh_position = self.db.fetch_one(\n"
     '                "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",\n'
-    '                (role_id,),\n'
-    '            )\n'
-    '            if not fresh_position:\n'
+    "                (role_id,),\n"
+    "            )\n"
+    "            if not fresh_position:\n"
     '                raise RoleNotFoundError("Role not found")\n'
-    '            current_user_roles = self.manager._get_member_role_rows(\n'
-    '                server_id, user_id\n'
-    '            )\n'
-    '            if not can_manage_role(\n'
-    '                current_user_roles,\n'
+    "            current_user_roles = self.manager._get_member_role_rows(\n"
+    "                server_id, user_id\n"
+    "            )\n"
+    "            if not can_manage_role(\n"
+    "                current_user_roles,\n"
     '                {"position": fresh_position["position"]},\n'
-    '                is_owner,\n'
-    '            ):\n'
-    '                raise RoleHierarchyError(\n'
+    "                is_owner,\n"
+    "            ):\n"
+    "                raise RoleHierarchyError(\n"
     '                    "Cannot assign a role at or above your highest role"\n'
-    '                )\n'
-    '            self._guard_member_target(user_id, server_id, member_user_id)'
+    "                )\n"
+    "            self._guard_member_target(user_id, server_id, member_user_id)"
 )
 
 # ded43f8e (N644): refresh_session re-checks the PRESENTED refresh credential's
@@ -194,9 +194,9 @@ _REFRESH_SESSION_CONTEXT_BINDING = (
 # is caught by name.
 _VERIFY_TOKEN_MIRROR_EXPIRY_RECHECK = (
     "        # N712 parity: re-check the cached verdict's expiry on every call.\n"
-    "        expires_at = getattr(result, \"expires_at\", None)\n"
+    '        expires_at = getattr(result, "expires_at", None)\n'
     "        if expires_at is not None and is_expired(expires_at):\n"
-    "            raise TokenExpiredError(\"Expired\")"
+    '            raise TokenExpiredError("Expired")'
 )
 
 
@@ -290,7 +290,6 @@ _ARTIFACT_UPLOAD_BOT_TOKEN_OWNER_GUARD = (
 )
 
 
-
 # N716 (5525788b) / N762 (9a6ef8df): private event emitters now fail closed
 # with an empty recipient list when the audience cannot be resolved. Passing
 # ``None`` to events.dispatch makes the EventRouter fall back to server-wide
@@ -300,18 +299,10 @@ _ARTIFACT_UPLOAD_BOT_TOKEN_OWNER_GUARD = (
 # stale staged copy that restores ``user_ids = None`` (or a bare dispatch) is
 # caught by name. Non-vacuity is proven by the parametrized
 # ``test_synthetic_reverted_blob_is_flagged`` plus the live-HEAD tie below.
-_ARTIFACT_MESSAGE_AUDIENCE_FAIL_CLOSED = (
-    '                # Fail closed: None makes the router fall back to server-wide\n                # routing, leaking the artifact message content to server\n                # members who never participated in the conversation.\n                user_ids = []'
-)
-_ARTIFACT_LIFECYCLE_AUDIENCE_FAIL_CLOSED = (
-    '            # SECURITY: an unresolved participant audience must NEVER be handed\n            # to events.dispatch as ``None``. The EventRouter treats ``None``\n            # as "route by scope", and a server-scoped artifact event is then\n            # widened to every member of the server -- including users who\n            # never participated in the conversation, who receive the private\n            # artifact title in the payload. Fail closed: no verifiable\n            # audience means no recipients.\n            if user_ids is None:\n                user_ids = []'
-)
-_ARTIFACT_TRANSCRIPTION_AUDIENCE_FAIL_CLOSED = (
-    "            # Fail closed: None lets the router widen this server-scoped event\n            # to every member of the server instead of the conversation's\n            # verified participants.\n            user_ids = []"
-)
-_INTERACTION_BOT_OWNER_AUDIENCE_FAIL_CLOSED = (
-    '            # Fail closed: an unresolved bot-owner audience must NEVER be\n            # handed to events.dispatch as ``None``. The EventRouter treats\n            # ``None`` as "route by scope", and this server-scoped\n            # INTERACTION_CREATE carries the private interaction token and\n            # body -- widening it would deliver that content to every member\n            # of the server, including non-participants. No verifiable\n            # recipient means no recipients.\n            self._events.dispatch(event, user_ids=[])'
-)
+_ARTIFACT_MESSAGE_AUDIENCE_FAIL_CLOSED = "                # Fail closed: None makes the router fall back to server-wide\n                # routing, leaking the artifact message content to server\n                # members who never participated in the conversation.\n                user_ids = []"
+_ARTIFACT_LIFECYCLE_AUDIENCE_FAIL_CLOSED = '            # SECURITY: an unresolved participant audience must NEVER be handed\n            # to events.dispatch as ``None``. The EventRouter treats ``None``\n            # as "route by scope", and a server-scoped artifact event is then\n            # widened to every member of the server -- including users who\n            # never participated in the conversation, who receive the private\n            # artifact title in the payload. Fail closed: no verifiable\n            # audience means no recipients.\n            if user_ids is None:\n                user_ids = []'
+_ARTIFACT_TRANSCRIPTION_AUDIENCE_FAIL_CLOSED = "            # Fail closed: None lets the router widen this server-scoped event\n            # to every member of the server instead of the conversation's\n            # verified participants.\n            user_ids = []"
+_INTERACTION_BOT_OWNER_AUDIENCE_FAIL_CLOSED = '            # Fail closed: an unresolved bot-owner audience must NEVER be\n            # handed to events.dispatch as ``None``. The EventRouter treats\n            # ``None`` as "route by scope", and this server-scoped\n            # INTERACTION_CREATE carries the private interaction token and\n            # body -- widening it would deliver that content to every member\n            # of the server, including non-participants. No verifiable\n            # recipient means no recipients.\n            self._events.dispatch(event, user_ids=[])'
 
 # 578cf7c6: the owner-scoped message-forward route rejects bot credentials
 # before parse_id/ForwardingService publishes the new message as the bot token's
@@ -350,9 +341,7 @@ _E91A5BF3_ROUTE_ALIAS_REVERSE_RESOLUTION = (
     "        if channel is None and servers_mod:\n"
     '            reverse = getattr(servers_mod, "get_channel_by_conversation", None)\n'
 )
-_E91A5BF3_ROUTE_ALIAS_GATE_ID = (
-    "            gate_channel_id = alias_channel_id if alias_channel_id is not None else cid"
-)
+_E91A5BF3_ROUTE_ALIAS_GATE_ID = "            gate_channel_id = alias_channel_id if alias_channel_id is not None else cid"
 
 
 # b94d7209 (admin migration read-scope fix): the three migration GET handlers
@@ -378,13 +367,13 @@ _LOGOUT_CONTEXT_BINDING_SELECT = (
 )
 _LOGOUT_CONTEXT_BINDING_COMPARE = (
     "                    current_ip_index = self.crypto.fast_blind_index(\n"
-    "                        ip_address, \"ip_address\"\n"
+    '                        ip_address, "ip_address"\n'
     "                    )\n"
     "                    if not hmac.compare_digest(stored_ip_index, current_ip_index):\n"
     "                        return False\n"
     "                    if not user_agent:\n"
     "                        return False\n"
-    "                    stored_ua_index = row.get(\"ua_index\")\n"
+    '                    stored_ua_index = row.get("ua_index")\n'
     "                    if not isinstance(stored_ua_index, str) or not stored_ua_index:\n"
     "                        return False\n"
     "                    current_ua_index = self._ua_index(user_agent)\n"
@@ -393,9 +382,7 @@ _LOGOUT_CONTEXT_BINDING_COMPARE = (
     "                    if not hmac.compare_digest(stored_ua_index, current_ua_index):\n"
     "                        return False"
 )
-_LOGOUT_FACADE_THREADING = (
-    "    return _get_auth_manager().get_instance().logout(token, ip_address, user_agent)"
-)
+_LOGOUT_FACADE_THREADING = "    return _get_auth_manager().get_instance().logout(token, ip_address, user_agent)"
 
 
 # N722 (e4096376): a failed license reload/hot-swap still leaves the manager
@@ -419,8 +406,7 @@ _LICENSE_DERIVED_CACHE_INVALIDATION = (
 # reset together with its following return so a stale staged copy of core.py
 # that drops it is caught by name.
 _LICENSE_STALE_VALIDATION_RESET = (
-    "            self._validation_result = None\n"
-    "            return license_obj"
+    "            self._validation_result = None\n            return license_obj"
 )
 
 
@@ -444,7 +430,7 @@ _REPLAY_SCOPE_STAMP_BLOCK = (
 _REPLAY_SCOPE_FROM_D_BLOCK = (
     "    server_id = event.server_id\n"
     "    channel_id = event.channel_id\n"
-    '    if channel_id is None and isinstance(event.data, dict):\n'
+    "    if channel_id is None and isinstance(event.data, dict):\n"
     '        server_id = _coerce_envelope_scope_id(event.data.get("server_id"))\n'
     "        if server_id is None:\n"
     '            server_id = _coerce_envelope_scope_id(event.data.get("guild_id"))\n'
@@ -829,10 +815,10 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="c62071ac-disable-2fa-session-socket-close",
         path="src/core/auth/managers/twofactor.py",
         marker=(
-            'for row in to_close:\n'
-            '            close_session_gateway_connections(\n'
+            "for row in to_close:\n"
+            "            close_session_gateway_connections(\n"
             '                user_id, int(row["id"]), "Session revoked"\n'
-            '            )'
+            "            )"
         ),
         why=(
             "c62071ac: disable_2fa closes the sockets of the sessions it "
@@ -844,9 +830,9 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-logout-session-socket-close",
         path="src/core/auth/managers/session/lifecycle.py",
         marker=(
-            'close_session_gateway_connections(\n'
+            "close_session_gateway_connections(\n"
             '                    row["user_id"], parsed["id"], "Session revoked"\n'
-            '                )'
+            "                )"
         ),
         why=(
             "dc3b481e: bearer-token logout closes its own session's socket; "
@@ -857,9 +843,9 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-max-eviction-session-socket-close",
         path="src/core/auth/managers/session/lifecycle.py",
         marker=(
-            'close_session_gateway_connections(\n'
+            "close_session_gateway_connections(\n"
             '                        user_id, evicted_id, "Session revoked"\n'
-            '                    )'
+            "                    )"
         ),
         why=(
             "dc3b481e: max-sessions-per-user eviction closes the evicted "
@@ -871,8 +857,8 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-bulk-revoke-session-socket-close",
         path="src/core/auth/managers/session/lifecycle.py",
         marker=(
-            'for row in now_revoked:\n'
-            '                close_session_gateway_connections('
+            "for row in now_revoked:\n"
+            "                close_session_gateway_connections("
         ),
         why=(
             "dc3b481e: revoke_sessions_bulk closes each revoked session's "
@@ -884,9 +870,9 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-revoke-device-session-socket-close",
         path="src/core/auth/managers/device.py",
         marker=(
-            'self._log_audit(AuditEventType.DEVICE_REVOKED, user_id, True)\n'
-            '        for row in owned:\n'
-            '            close_session_gateway_connections('
+            "self._log_audit(AuditEventType.DEVICE_REVOKED, user_id, True)\n"
+            "        for row in owned:\n"
+            "            close_session_gateway_connections("
         ),
         why=(
             "dc3b481e: revoke_device closes the revoked device's session "
@@ -898,9 +884,9 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-untrust-device-session-socket-close",
         path="src/core/auth/managers/device.py",
         marker=(
-            'self._log_audit(AuditEventType.DEVICE_UNTRUSTED, user_id, True)\n'
-            '        for row in owned:\n'
-            '            close_session_gateway_connections('
+            "self._log_audit(AuditEventType.DEVICE_UNTRUSTED, user_id, True)\n"
+            "        for row in owned:\n"
+            "            close_session_gateway_connections("
         ),
         why=(
             "dc3b481e: untrust_device closes the revoked fingerprint's session "
@@ -1499,7 +1485,7 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         path="src/core/auth/oauth/state.py",
         marker=_OAUTH_STATE_REDIRECT_BINDING_BLOCK,
         why=(
-            "verify_state checks row[\"redirect_uri\"] != redirect_uri before "
+            'verify_state checks row["redirect_uri"] != redirect_uri before '
             "the atomic consume, binding the state to the exact callback that "
             "minted it; a stale staged copy drops the check and lets a valid "
             "state be replayed against a different redirect_uri"
@@ -1673,7 +1659,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "drops the reset reopens that full-entitlement bypass"
         ),
     ),
-
     # 120208f2: the replay scope is stamped onto a copy of each private frame
     # at dispatch time. Without the stamp the RESUME path has nothing to
     # re-check, so every queued private event replays unconditionally.
@@ -2195,7 +2180,6 @@ DM_PRIVACY_PIN_KEYS: frozenset[str] = frozenset(
 )
 
 
-
 # N716 (5525788b) artifact-audience and N762 (9a6ef8df) interaction-audience
 # fail-closed pins. Kept explicit so dropping any emitter-site pin fails here
 # as well as in the parametrized synthetic-removal test. All are positive
@@ -2672,9 +2656,7 @@ def test_legacy_private_index_shas_keep_their_committed_markers(
         anc = _git("merge-base", "--is-ancestor", sha_prefix, commit_sha)
         assert anc.returncode == 0, f"{sha_prefix} is not an ancestor of HEAD"
         record = by_key.get(key)
-        assert record is not None, (
-            f"mapping for {sha_prefix} names unknown key {key!r}"
-        )
+        assert record is not None, f"mapping for {sha_prefix} names unknown key {key!r}"
         present, detail = _evaluate(record, reader)
         assert present, f"mapping for {sha_prefix} no longer pins its fix: {detail}"
 
@@ -2693,9 +2675,7 @@ def test_committed_absent_marker_scopes_resolve(commit_sha: str) -> None:
 
 
 @pytest.mark.parametrize("key", sorted(QUERY_CACHE_COMMITTED_KEYS))
-def test_query_cache_committed_marker_non_vacuity(
-    key: str, commit_sha: str
-) -> None:
+def test_query_cache_committed_marker_non_vacuity(key: str, commit_sha: str) -> None:
     """Each committed sub-fix is live at HEAD and the guard reacts if undone.
 
     Positive markers are proven by a synthetic reverted blob.  ``absent``
@@ -2886,7 +2866,9 @@ def test_alias_automod_pins_live_at_head_and_non_vacuous(
             return f"# stale staged copy of {path}\n# alias automod gate erased\n"
 
         present, detail = _evaluate(record, stale_alias_automod_blob)
-        assert not present, f"synthetic stale alias-automod revert of {key} was not caught"
+        assert not present, (
+            f"synthetic stale alias-automod revert of {key} was not caught"
+        )
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
@@ -2935,6 +2917,7 @@ def test_dm_privacy_pins_live_at_head_and_non_vacuous(
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
+
 # cdeda33b N700/N642: companion key set for the two assign_role re-check pins,
 # kept explicit so neither can be dropped from the registry silently.
 ROLE_ASSIGNMENT_TOCTOU_PIN_KEYS: frozenset[str] = frozenset(
@@ -2977,6 +2960,7 @@ def test_role_assignment_toctou_pins_live_at_head_and_non_vacuous(
         assert not present, f"synthetic assign_role revert of {key} not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
 
 def test_license_fix_pins_live_at_head_and_non_vacuous(
     commit_sha: str,
@@ -3057,9 +3041,7 @@ def test_replay_scope_pins_live_at_head_and_non_vacuous(commit_sha: str) -> None
         "4fc26f05-replay-scope-derived-from-payload-d": (
             "src/api/websocket/dispatcher.py"
         ),
-        "4fc26f05-replay-scope-dual-view-recheck": (
-            "src/api/websocket/dispatcher.py"
-        ),
+        "4fc26f05-replay-scope-dual-view-recheck": ("src/api/websocket/dispatcher.py"),
     }
     for key in sorted(REPLAY_SCOPE_PIN_KEYS):
         record = by_key[key]
@@ -3232,7 +3214,9 @@ def test_e91a5bf3_search_scope_pins_live_at_head_and_non_vacuous(
             return f"# stale staged copy of {path}\n# authoritative scope erased\n"
 
         present, detail = _evaluate(record, stale_scope_blob)
-        assert not present, f"synthetic stale search-scope revert of {key} was not caught"
+        assert not present, (
+            f"synthetic stale search-scope revert of {key} was not caught"
+        )
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
@@ -3320,7 +3304,7 @@ def test_dsar_notes_denylist_does_not_over_redact_subject_data() -> None:
     route = (_REPO_ROOT / "src/api/routes/features/tier_features.py").read_text(
         encoding="utf-8"
     )
-    assert '_check_admin(current_user)' in route
+    assert "_check_admin(current_user)" in route
     assert '"users.tier"' in route
 
 
