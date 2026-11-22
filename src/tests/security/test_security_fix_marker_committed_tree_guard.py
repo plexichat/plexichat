@@ -1733,6 +1733,29 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "reopening the private-channel message search leak"
         ),
     ),
+    # d3767f9c: ``user_features.notes`` is the schema's only bare ``notes``
+    # column -- an "Admin notes" field written solely through the admin
+    # feature-management path (set_user_features(..., admin_id=...), gated on the
+    # admin ``users.tier`` scope). The SELECT * FeaturesCollector copied it
+    # verbatim into DSAR JSON/ZIP artifacts, and because the bare name carried
+    # no secret suffix it survived the choke-point redaction gate. d3767f9c
+    # added the ``"notes"`` literal to INTERNAL_EXPORT_FIELDS in privacy.py so
+    # the whole-payload gate strips it. privacy.py is a shared, stale-copy-prone
+    # file: a peer staging an older copy would drop the denylist entry and
+    # silently re-leak admin commentary to the data subject. No subject-owned
+    # table has a field of this name, so the denial cannot drop legitimate
+    # subject data (over-redaction check below). Pin the exact denylist literal.
+    CommittedFixMarker(
+        key="d3767f9c-dsar-admin-feature-notes-redaction",
+        path="src/core/dsar/privacy.py",
+        marker='"notes",',
+        why=(
+            "d3767f9c: DSAR exports must not ship the admin-only "
+            "user_features.notes field; the choke-point denylist strips it from "
+            "the whole payload, and a stale staged privacy.py that drops the "
+            "literal re-leaks internal reviewer/admin commentary to the subject"
+        ),
+    ),
 )
 
 
@@ -2905,3 +2928,90 @@ def test_e91a5bf3_search_scope_pins_live_at_head_and_non_vacuous(
         assert not present, f"synthetic stale search-scope revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+# d3767f9c DSAR admin-feature-notes redaction pin. Held as an explicit set so
+# the pin cannot silently vanish from the registry. The generic parametrized
+# tests (test_committed_fix_marker_present / test_synthetic_reverted_blob_is_flagged)
+# already cover presence at HEAD and synthetic-revert falsifiability; the live-
+# HEAD tie below additionally proves the key resolves to a real committed blob.
+DSAR_ADMIN_NOTES_PIN_KEYS: frozenset[str] = frozenset(
+    {"d3767f9c-dsar-admin-feature-notes-redaction"}
+)
+
+
+def test_dsar_admin_notes_pin_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The d3767f9c DSAR redaction pin is registered, live and falsifiable.
+
+    The literal ``"notes",`` denylist entry is present in the committed
+    privacy.py blob, points at the expected file, and a synthetic stale blob
+    that restores the pre-fix denylist is rejected by the exact same evaluator.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert DSAR_ADMIN_NOTES_PIN_KEYS <= set(keys), (
+        "DSAR admin-notes pin set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(DSAR_ADMIN_NOTES_PIN_KEYS - set(keys))}"
+    )
+    assert len(DSAR_ADMIN_NOTES_PIN_KEYS) == 1
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    key = next(iter(DSAR_ADMIN_NOTES_PIN_KEYS))
+    record = by_key[key]
+    assert record.path == "src/core/dsar/privacy.py"
+    assert '"notes"' in record.marker
+    present, detail = _evaluate(record, reader)
+    assert present, f"{key} is not pinned at HEAD: {detail}"
+
+    def stale_privacy_blob(path: str) -> str:
+        return (
+            f"# stale staged copy of {path}\n"
+            "INTERNAL_EXPORT_FIELDS = frozenset({'admin_notes'})\n"
+        )
+
+    present, detail = _evaluate(record, stale_privacy_blob)
+    assert not present, f"synthetic stale DSAR-redaction revert of {key} was not caught"
+    assert record.key in detail and record.marker in detail
+    assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+def test_dsar_notes_denylist_does_not_over_redact_subject_data() -> None:
+    """Over-redaction check: the only bare ``notes`` column is admin-owned.
+
+    A bare ``notes`` column means exactly ``notes <sqltype>`` -- the negative
+    lookbehind excludes ``internal_notes`` / ``admin_notes`` (the other
+    admin-only note columns, already denylisted separately). If a subject-owned
+    table ever gains a legitimate ``notes`` column this test fails, forcing a
+    re-review of the ``notes`` denylist entry before it can strip subject data.
+    """
+    import re
+
+    bare_notes = re.compile(
+        r"(?<![\w])notes\s+(?:TEXT|VARCHAR|CHAR|STRING|NVARCHAR|CLOB)\b", re.I
+    )
+    owners: list[str] = []
+    for path in (_REPO_ROOT / "src" / "core").rglob("*.py"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in bare_notes.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            owners.append(f"{path.relative_to(_REPO_ROOT)}:{line}")
+
+    assert len(owners) == 1, (
+        f"expected exactly one bare `notes` column in the production schema, "
+        f"found {owners}; re-check the over-redaction analysis before pinning"
+    )
+    assert owners[0].startswith("src/core/features/schema.py:"), (
+        f"the only bare `notes` column is {owners[0]!r}, not user_features; "
+        "re-check ownership before keeping the `notes` denylist entry"
+    )
+    # The `notes` field is written only through the admin feature-management
+    # route, which gates on admin membership and the admin `users.tier` scope.
+    route = (_REPO_ROOT / "src/api/routes/features/tier_features.py").read_text(
+        encoding="utf-8"
+    )
+    assert '_check_admin(current_user)' in route
+    assert '"users.tier"' in route
