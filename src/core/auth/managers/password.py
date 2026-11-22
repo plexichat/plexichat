@@ -220,11 +220,20 @@ class PasswordMixin(AuthManagerProtocol):
         # cannot be redeemed. This mirrors the single-use guard used by email
         # verification and closes the time-of-check/time-of-use gap where an
         # almost-expired token's claim landed after its expiry.
+        #
+        # The expiry predicate of the authoritative write must be evaluated
+        # against the clock at the moment of the write, not the ``now`` snapshot
+        # captured for the validity SELECT above. Reusing the stale snapshot
+        # lets a token that expires between validation and the claim still be
+        # redeemed (the same TOCTOU class as invite redemption and email
+        # verification). Re-read the clock here so the guarded UPDATE fails
+        # closed if the token is no longer live when the claim lands.
+        consume_now = self._get_timestamp()
         cursor = self._db.execute(
             "UPDATE auth_email_tokens SET used = 1 "
             "WHERE id = ? AND used = 0 AND token_type = 'reset_password' "
             "AND expires_at > ?",
-            (rec["id"], now),
+            (rec["id"], consume_now),
         )
         if getattr(cursor, "rowcount", 0) == 0:
             raise TokenInvalidError("Invalid token")
