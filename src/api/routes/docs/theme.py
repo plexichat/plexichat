@@ -631,13 +631,14 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }
 
         /* Swagger UI's CDN stylesheet paints method badges with white ink on
-           light GET/POST/DELETE fills (2.0-3.6:1, below WCAG AA) and only flips
-           to dark ink under `html.dark-mode`. This site toggles
-           `[data-theme="dark"]` instead, so that fallback never applies and
-           the badges stay low-contrast in every theme. Re-ink them with a
-           theme-aware token: --method-badge-ink resolves to the near-black
-           body ink in light mode and to --code-bg in dark mode, both reusing
-           existing colors. */
+           light fills -- GET #61affe 2.31:1, POST #49cc90 2.03:1 and DELETE
+           #f93e3e 3.63:1, all below the 4.5:1 WCAG AA minimum for their small
+           bold 12px labels. That stylesheet only flips to dark ink under
+           `html.dark-mode`, but this site toggles `[data-theme="dark"]`, so
+           the fallback never applies and the badges stay low-contrast in every
+           theme. Re-ink them with a theme-aware token: --method-badge-ink
+           resolves to the near-black body ink in light mode and to --code-bg
+           in dark mode, both reusing existing colors. */
         .plexi-swagger-page .swagger-ui .opblock .opblock-summary-method {
             color: var(--method-badge-ink);
             text-shadow: none;
