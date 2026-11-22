@@ -7,6 +7,7 @@ import re
 from typing import Any, Mapping
 
 from ...sdp import _SDP_UNICODE_CONTROL_CHARS
+from src.core.security.hardening.text import CONTROL_CHARACTERS
 from .constants import (
     MAX_DTLS_FINGERPRINTS,
     MAX_ICE_CANDIDATE_BYTES,
@@ -62,11 +63,27 @@ def _require_str(value: Any, name: str, *, max_len: int) -> str:
 def validate_identifier(
     value: Any, name: str = "id", *, max_len: int = MAX_ID_LEN
 ) -> str:
-    """Validate a peer/room/transport/producer/consumer id (fail-closed)."""
+    """Validate a peer/room/transport/producer/consumer id (fail-closed).
+
+    These ids are used verbatim as recording filename components (see
+    ``RecordingMixin.start_recording``) and are interpolated into log lines, so
+    an id that survives this gate must contain no control characters at all —
+    not merely no path separators. Reject the whole shared control set (C0, DEL,
+    C1, Unicode separators and bidi/invisible format controls) before applying
+    the character allowlist.
+    """
     text = _require_str(value, name, max_len=max_len)
-    if not _ID_RE.match(text):
+    if CONTROL_CHARACTERS.search(text):
+        raise SFUValidationError(f"{name} contains control characters")
+    # ``fullmatch`` matters: Python's ``$`` also matches just before a final
+    # newline, so ``_ID_RE.match("room\n")`` succeeded and the raw newline was
+    # returned. That let a trailing LF bypass the allowlist and land in a
+    # recording path and in the log line emitted for it.
+    if not _ID_RE.fullmatch(text):
         raise SFUValidationError(f"{name} contains invalid characters")
-    return text
+    # Return a fresh plain str: a str subclass could otherwise pass the regex
+    # on its real buffer while overriding __str__/__format__ at the use site.
+    return "".join((text,))
 
 
 def validate_room_id(value: Any, name: str = "room_id") -> str:
