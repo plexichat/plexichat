@@ -608,6 +608,16 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="27708237-admin-migration-e2e-test-pin",
+        path="src/tests/security/test_admin_migration_read_scope_e2e.py",
+        marker="def test_real_permission_chain_enforces_delegated_read_scope(",
+        why=(
+            "27708237 is a test-only private-index landing: it adds the end-to-end "
+            "admin migration read-scope test that drives the real permission chain. "
+            "Pinned by the distinctive test function it introduced."
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
@@ -2582,7 +2592,16 @@ def test_ws_ticket_binding_pins_are_registered_and_non_vacuous(
 # a security marker; documenting them here keeps the reflog enumeration test
 # exhaustive rather than silently ignoring them.
 PRIVATE_INDEX_NON_SECURITY_SHAS: frozenset[str] = frozenset(
-    {"05908b2d", "8e32e6b9", "d9099f91", "e53e9526", "db7a4143"}
+    {
+        "05908b2d", "8e32e6b9", "d9099f91", "e53e9526", "db7a4143",
+        # 47b03e2a / e7562b9b are empty-tree private-index commits (no file
+        # changes) whose subjects are test-only (roles TOCTOU regression
+        # determinism and admin migration read-scope e2e pin). They cannot be
+        # pinned to introduced text; each is named explicitly here, never a
+        # blanket exemption. The reflog unknown-fix test still flags any other
+        # unpinned SHA.
+        "47b03e2a", "e7562b9b",
+    }
 )
 
 # Early private-index markers use descriptive keys that do not embed their
