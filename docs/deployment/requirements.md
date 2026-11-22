@@ -51,7 +51,7 @@ These numbers include model weights and the inference runtime. The deploy script
 ### Storage
 
 - **Primary**: Local filesystem with adequate permissions.
-- **Optional**: S3-compatible service such as AWS S3, RustFS (`rustfs/rustfs:1.0.0-rc.3` in Docker), or Ceph for media attachments.
+- **Optional**: S3-compatible service such as AWS S3, RustFS (`rustfs/rustfs:1.0.0` in Docker), or Ceph for media attachments.
 - **Bucket**: Dedicated bucket with proper CORS configuration if you use S3.
 
 ### Reverse proxy (recommended)

@@ -82,7 +82,7 @@ Expected output (names and ports vary by Compose project name):
 NAME                IMAGE                              STATUS              PORTS
 plexichat-db-1      postgres:18-alpine                 Up 2 minutes (healthy)
 plexichat-valkey-1  valkey/valkey:9.1.1-alpine          Up 2 minutes (healthy)
-plexichat-rustfs-1  rustfs/rustfs:1.0.0-rc.3             Up 2 minutes (healthy)
+plexichat-rustfs-1  rustfs/rustfs:1.0.0             Up 2 minutes (healthy)
 plexichat-clamav-1  clamav/clamav:1.5.4                 Up 2 minutes (healthy)
 plexichat-backend-1 plexichat:dev                      Up 1 minute (healthy)   0.0.0.0:8000->8000/tcp, 0.0.0.0:30000-30100->30000-30100/udp
 plexichat-client-1  nginx:stable-alpine                Up 1 minute (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
@@ -232,7 +232,7 @@ The default stack uses:
 
 - PostgreSQL 18 (`postgres:18-alpine` at `plexichat/docker-compose.yml`)
 - Valkey 9.1 (`valkey/valkey:9.1.1-alpine` at `plexichat/docker-compose.yml`)
-- RustFS 1.0 (`rustfs/rustfs:1.0.0-rc.3`) for S3-compatible storage
+- RustFS 1.0 (`rustfs/rustfs:1.0.0`) for S3-compatible storage
 - Backend on 8000/TCP and 30000–30100/UDP (`plexichat/Dockerfile:40`)
 - Frontend on 80/443 (`plexichat-client/Dockerfile:16`)
 

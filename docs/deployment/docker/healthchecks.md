@@ -129,7 +129,7 @@ docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli INF
 
 ### RustFS healthcheck
 
-*   **Image:** `rustfs/rustfs:1.0.0-rc.3`
+*   **Image:** `rustfs/rustfs:1.0.0`
 *   **Endpoints:** `GET http://127.0.0.1:9000/health` (S3) and `GET http://127.0.0.1:9001/rustfs/console/health` (console)
 
 **Docker healthcheck:**
