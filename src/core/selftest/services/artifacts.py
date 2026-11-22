@@ -776,7 +776,12 @@ class ArtifactsTester(ArtifactsEvalMixin):
                         run_ceremony,
                     )
 
-                    _approved = run_ceremony(self.ctx, "artifacts.force_delete")
+                    _approved = run_ceremony(
+                        self.ctx,
+                        "artifacts.force_delete",
+                        target_id=art_id,
+                        requester_is_executor=True,
+                    )
                 except Exception as _cer_e:
                     logger.debug("Force-delete ceremony note: %s", _cer_e)
                     _approved = False

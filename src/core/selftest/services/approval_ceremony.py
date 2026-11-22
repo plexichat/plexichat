@@ -119,8 +119,18 @@ def third_user_session(ctx):
         return None
 
 
-def run_ceremony(ctx, action_type: str) -> bool:
-    """Run the full approval ceremony for *action_type*."""
+def run_ceremony(
+    ctx, action_type: str, target_id=None, requester_is_executor: bool = False
+) -> bool:
+    """Run the full approval ceremony for *action_type*.
+
+    ``target_id`` pins the approval to the exact object a target-bearing gate
+    will later require (see ``require_approved_request``).  Target-bearing
+    gates also bind ``requested_by`` to the executing admin, so
+    ``requester_is_executor`` makes the *main* (executing) session file the
+    request; the two approvers are then the other admins.  Global actions keep
+    the default flow (filed by the other admin, approved by main + third).
+    """
     base = ctx.base_url
     main = ctx.session
     other = getattr(ctx, "other_session", None)
@@ -133,15 +143,19 @@ def run_ceremony(ctx, action_type: str) -> bool:
     ):
         logger.warning(f"Approval ceremony skipped ({action_type}): other dead")
         return False
-    # 1. Request (other admin).
+    requester = main if requester_is_executor else other
+    body = {
+        "action_type": action_type,
+        "target_type": "artifact" if target_id is not None else "system",
+        "action_details": f"self-test ceremony for {action_type}",
+    }
+    if target_id is not None:
+        body["target_id"] = str(target_id)
+    # 1. Request.
     try:
-        req_resp = other.post(
+        req_resp = requester.post(
             f"{base}/api/v1/admin/approvals/request",
-            json={
-                "action_type": action_type,
-                "target_type": "system",
-                "action_details": f"self-test ceremony for {action_type}",
-            },
+            json=body,
             timeout=10,
         )
     except Exception as e:
@@ -176,9 +190,11 @@ def run_ceremony(ctx, action_type: str) -> bool:
     if approval_id is None:
         logger.warning(f"Approval ceremony ({action_type}): no id resolved")
         return False
-    # 2. Approve as main.
+    # 2. First approval: main for the default flow, the *other* admin when
+    #    main filed the request (self-approval is forbidden).
+    first_approver = other if requester_is_executor else main
     try:
-        a1 = main.post(
+        a1 = first_approver.post(
             f"{base}/api/v1/admin/approvals/{approval_id}/approve", timeout=10
         )
     except Exception as e:

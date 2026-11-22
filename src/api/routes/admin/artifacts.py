@@ -145,28 +145,37 @@ async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str,
     """
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "admin.artifacts.manage")
-    require_approved_request("artifacts.force_delete")
     if admin_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": {"code": 403, "message": "Admin token required"}},
         )
 
+    # Bind the path segment through the canonical ASCII snowflake gate. A
+    # bare ``int()`` accepted homoglyph digits ("٤٢" -> 42), PEP-515
+    # separators ("1_2" -> 12), signs/whitespace, negatives and unbounded
+    # integers, so a segment one hop reads as text was silently
+    # reinterpreted as a different id at a destructive, cross-server
+    # endpoint. Every other admin route family parses ids with parse_id.
+    # Parse *before* the approval gate so the id can pin the single-use
+    # approval to the exact artifact being deleted.
     try:
-        # Bind the path segment through the canonical ASCII snowflake gate. A
-        # bare ``int()`` accepted homoglyph digits ("٤٢" -> 42), PEP-515
-        # separators ("1_2" -> 12), signs/whitespace, negatives and unbounded
-        # integers, so a segment one hop reads as text was silently
-        # reinterpreted as a different id at a destructive, cross-server
-        # endpoint. Every other admin route family parses ids with parse_id.
-        try:
-            aid = parse_id(artifact_id, "artifact_id")
-        except (HardeningViolation, TypeError, ValueError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
-            )
+        aid = parse_id(artifact_id, "artifact_id")
+    except (HardeningViolation, TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
+        )
 
+    # This route destroys one concrete artifact, so the approval must be
+    # granted for that exact object and admin (N646). Without the binding an
+    # approval for artifact A -- or a global row with target_id NULL, which the
+    # gate's ``? IS NULL OR col = ?`` disjunct lets through -- could be spent
+    # deleting artifact B. Consume it fail-closed: a mismatched binding is a
+    # 403 and no delete side effect follows.
+    require_approved_request("artifacts.force_delete", target_context=(aid, admin_id))
+
+    try:
         manager = _get_manager()
         # ``manager.delete`` already fetches the row internally before removing
         # it. Use that result instead of a separate pre-flight ``get``; on the
