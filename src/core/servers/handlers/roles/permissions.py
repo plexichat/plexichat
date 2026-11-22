@@ -14,6 +14,23 @@ from ...permission_utils import (
 )
 from .protocol import RoleHandlerProtocol
 
+# Bulk override hydration must never bind an unbounded IN list: SQLite caps
+# variables per statement (~999) and a giant IN list also gives the planner a
+# poor plan. Keep one global bind budget per statement, shared by both IN
+# lists and the scalar target_id predicate.
+_MAX_BULK_CHUNK = 500
+# The member query also binds target_id, leaving one fewer channel slot.
+_MEMBER_CHANNEL_CHUNK = _MAX_BULK_CHUNK - 1
+# The role query binds both dimensions; split the budget across them so the
+# combined statement still stays within _MAX_BULK_CHUNK binds.
+_ROLE_CHANNEL_CHUNK = _MAX_BULK_CHUNK // 2
+_ROLE_TARGET_CHUNK = _MAX_BULK_CHUNK - _ROLE_CHANNEL_CHUNK
+
+
+def _iter_chunks(items: List[SnowflakeID], size: int):
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
 
 class RolePermissionMixin(RoleHandlerProtocol):
     def get_permissions_batch(
@@ -24,11 +41,13 @@ class RolePermissionMixin(RoleHandlerProtocol):
     ) -> Dict[SnowflakeID, Dict[str, bool]]:
         """Get permissions for multiple channels in a server.
 
-        Overrides are fetched with at most two set-based queries (one for the
-        caller's member overrides, one for all of their role overrides)
-        instead of one query per ``(channel, role)`` pair.  The channel-listing
-        path calls this with every channel in a server, so the old loop grew
-        linearly with ``channels x roles`` on every cold cache read.
+        Overrides are fetched with set-based queries (one family for the
+        caller's member overrides, one for their role overrides) instead of
+        one query per ``(channel, role)`` pair.  Both channel and role id lists
+        are bound in bounded chunks so a full channel listing can never blow
+        past SQLite's variable ceiling.  The result is identical to one huge
+        query: role overrides accumulate per channel before the
+        position-ordered sort, and the member override still wins last.
         """
         if not channel_ids:
             return {}
@@ -53,36 +72,43 @@ class RolePermissionMixin(RoleHandlerProtocol):
         # allow (see apply_channel_overrides ordering contract).
         role_positions = {int(r["id"]): int(r.get("position") or 0) for r in role_rows}
 
-        # 3. Fetch every relevant override in two bounded queries.  The
+        # 3. Fetch every relevant override with bounded IN lists.  The
         #    placeholders are generated from the number of bound parameters,
         #    never from untrusted values, and every value is bound -- the same
-        #    pattern MemberOpsMixin.get_members uses for its role batch.
-        channel_ph = ",".join("?" for _ in channel_ids)
-        member_rows = self.db.fetch_all(
-            "SELECT * FROM srv_channel_overrides "
-            f"WHERE channel_id IN ({channel_ph}) "
-            "AND target_type = 'member' AND target_id = ?",
-            (*channel_ids, user_id),
-        )
-        member_overrides: Dict[SnowflakeID, Dict[str, Any]] = {
-            row["channel_id"]: dict(row) for row in member_rows
-        }
+        #    pattern d4905984 uses for bulk profile hydration.
+        member_overrides: Dict[SnowflakeID, Dict[str, Any]] = {}
+        for channel_chunk in _iter_chunks(channel_ids, _MEMBER_CHANNEL_CHUNK):
+            channel_ph = ",".join("?" for _ in channel_chunk)
+            member_rows = self.db.fetch_all(
+                "SELECT * FROM srv_channel_overrides "
+                f"WHERE channel_id IN ({channel_ph}) "
+                "AND target_type = 'member' AND target_id = ?",
+                (*channel_chunk, user_id),
+            )
+            for row in member_rows:
+                member_overrides[row["channel_id"]] = dict(row)
 
         channel_overrides: Dict[SnowflakeID, List[Dict[str, Any]]] = {
             cid: [] for cid in channel_ids
         }
-        if role_ids:
-            role_ph = ",".join("?" for _ in role_ids)
-            role_override_rows = self.db.fetch_all(
-                "SELECT * FROM srv_channel_overrides "
-                f"WHERE channel_id IN ({channel_ph}) "
-                f"AND target_type = 'role' AND target_id IN ({role_ph})",
-                (*channel_ids, *role_ids),
-            )
-            for row in role_override_rows:
-                cid = row["channel_id"]
-                if cid in channel_overrides:
-                    channel_overrides[cid].append(dict(row))
+        # Both IN lists are independent sets, so partitioning either one just
+        # splits the same result across more statements -- no pair is lost.
+        # Accumulate every chunk before the sort below: a channel must see all
+        # of the caller's role overrides, including roles in another chunk.
+        for channel_chunk in _iter_chunks(channel_ids, _ROLE_CHANNEL_CHUNK):
+            channel_ph = ",".join("?" for _ in channel_chunk)
+            for role_chunk in _iter_chunks(role_ids, _ROLE_TARGET_CHUNK):
+                role_ph = ",".join("?" for _ in role_chunk)
+                role_override_rows = self.db.fetch_all(
+                    "SELECT * FROM srv_channel_overrides "
+                    f"WHERE channel_id IN ({channel_ph}) "
+                    f"AND target_type = 'role' AND target_id IN ({role_ph})",
+                    (*channel_chunk, *role_chunk),
+                )
+                for row in role_override_rows:
+                    cid = row["channel_id"]
+                    if cid in channel_overrides:
+                        channel_overrides[cid].append(dict(row))
 
         # Lowest-position role first so the highest role's decision wins.
         for cid in channel_overrides:
