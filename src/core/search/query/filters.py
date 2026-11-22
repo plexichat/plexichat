@@ -50,8 +50,13 @@ class FilterProcessor:
         for query_filter in parsed_query.filters:
             filtered = self._apply_single_filter(filtered, query_filter, user_id)
 
-        for phrase in parsed_query.exact_phrases:
-            filtered = [r for r in filtered if phrase.lower() in r.content.lower()]
+        # Case-folding the phrase is invariant across every result in the
+        # comprehension below. Fold each phrase once up front instead of once
+        # per (phrase, result) pair; the predicate and results are otherwise
+        # untouched.
+        phrase_lowers = [phrase.lower() for phrase in parsed_query.exact_phrases]
+        for phrase_lower in phrase_lowers:
+            filtered = [r for r in filtered if phrase_lower in r.content.lower()]
 
         return filtered
 
