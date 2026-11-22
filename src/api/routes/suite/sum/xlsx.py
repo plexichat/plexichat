@@ -64,6 +64,10 @@ async def import_xlsx(
     body: SumXlsxImportRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumCsvImportResponse:
+    # See export_xlsx: the manager authorizes this WRITE on ``user_id``, which
+    # for a bot credential is the owner. Reject bot credentials before they can
+    # mutate cells in the owner's private workbook.
+    require_user_token(current_user)
     try:
         return SumCsvImportResponse.model_validate(
             _manager().import_xlsx(

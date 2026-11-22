@@ -151,6 +151,11 @@ async def import_csv(
     body: SumCsvImportRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SumCsvImportResponse:
+    # See download_file: the manager authorizes this WRITE on
+    # ``current_user.user_id``, which for a bot credential is the owner. Without
+    # this gate a bot token could overwrite cells in its owner's private
+    # workbook. PlexiSum is an owner-scoped, human-only feature.
+    require_user_token(current_user)
     try:
         return SumCsvImportResponse.model_validate(
             _manager().import_csv(
