@@ -79,6 +79,14 @@ INTERNAL_EXPORT_FIELDS: FrozenSet[str] = frozenset(
         "internal_notes",
         "internal_notes_format",
         "admin_notes",
+        # ``user_features.notes`` is documented as "Admin notes" and written
+        # only by the admin feature-management path, but the ``SELECT *``
+        # FeaturesCollector ships it verbatim. Its bare name carries no secret
+        # suffix, so it survived the gate just like ``admin_notes`` did before
+        # N771. Deny the generic "notes" column too: in this schema it is the
+        # admin-only feature note and no subject-owned table projects a field
+        # of that name, so a subject's legitimate data is never dropped.
+        "notes",
     }
 )
 
