@@ -843,6 +843,40 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             # without an explicit invalidation a cached TokenInfo still carries
             # the old account_locked flag for the rest of the verify TTL.
             invalidate_privilege_caches()
+            # Disabling an account (new_status == 1) is a revocation just like
+            # lock-user / force-logout: it must revoke the target's live gateway
+            # socket on the server, not merely push a client-side hint. Without
+            # this a disabled admin keeps a live, authenticated WebSocket -- the
+            # same gap those two routes already close. Fail closed: do this on
+            # every transition into the locked/disabled state, best-effort and
+            # non-raising so a gateway failure cannot 500 a committed disable.
+            if new_status:
+                try:
+                    from src.api.websocket import (
+                        get_dispatcher,
+                        is_setup as ws_is_setup,
+                    )
+                    from src.core.events.models import Event
+                    from src.core.events.types import EventType
+
+                    if ws_is_setup():
+                        event = Event(
+                            event_type=EventType.SECURITY_LOGOUT,
+                            data={"user_id": str(uid), "message": "Account disabled"},
+                        )
+                        await get_dispatcher().dispatch_event(event, [uid])
+                        # The frame is only a client-side hint; close the live
+                        # socket on this worker as well (worker-local -- see
+                        # src.core.auth.gateway_revocation).
+                        await get_dispatcher().close_user_connections(
+                            user_id=uid, reason="Account disabled"
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to revoke gateway sockets for disabled user %s",
+                        uid,
+                        exc_info=True,
+                    )
             log_admin_action(
                 db,
                 admin_id,

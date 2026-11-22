@@ -70,6 +70,24 @@ All event names are the string values of `EventType` in
 | `SECURITY_LOGOUT` | One of your sessions was invalidated and you must re-authenticate. | None |
 | `SECURITY_ALERT` | An account security event occurred, such as password change, 2FA disable, or account lock. Display this promptly. | None |
 
+> **Known limitation — multi-worker revocation.** When a revocation happens
+> (force-logout, account lock/disable, password change, device/session revoke),
+> the worker that handles the request closes that user's live gateway sockets
+> **on that worker only**. There is no cross-worker socket-closure handler.
+> The `SECURITY_LOGOUT` / `SECURITY_ALERT` events published to sibling workers
+> are **client-side hints only**: a well-behaved client should disconnect, but
+> the server-side socket is not closed. An already-open socket on another
+> worker therefore remains authenticated and usable until the client honours
+> the hint or the socket otherwise drops. Two mitigations limit the exposure:
+> (1) revocation deletes the persisted sessions and invalidates the shared
+> `token_verify` cache, so a fresh socket cannot authenticate as the revoked
+> principal on any worker; (2) live event dispatch re-checks channel/DM
+> membership per event, so a revoked viewer cannot receive private channel or
+> DM frames. Live dispatch does **not** re-check session validity/ban state, so
+> closing worker-local sockets and honouring the client hint are the only
+> server-side controls on an existing socket. Clients must act on these events
+> promptly.
+
 ### Channels and guilds
 
 | Event | Description | Required intent |

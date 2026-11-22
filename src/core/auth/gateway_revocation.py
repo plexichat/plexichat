@@ -43,14 +43,23 @@ def _gateway_loop() -> Optional[asyncio.AbstractEventLoop]:
 def close_user_gateway_connections(
     user_id: int, reason: str = "Session revoked"
 ) -> None:
-    """Close every local gateway connection belonging to ``user_id``.
+    """Close every gateway connection belonging to ``user_id`` on THIS worker.
 
     Non-raising, best-effort, and safe to call from a synchronous context on or
     off the serving loop. The dispatcher closes with a non-resumable code by
     default, so a revoked session cannot resume into a fresh authenticated
-    socket. A socket we cannot reach locally is also closed on sibling workers
-    by the cross-worker revocation event, so closure here is defence in depth
-    rather than the sole guarantee.
+    socket.
+
+    Closure is worker-local: the dispatcher only knows about sockets in this
+    process. There is NO cross-worker socket-closure handler. On a multi-worker
+    deployment the ``SECURITY_LOGOUT`` / ``SECURITY_ALERT`` events fanned out to
+    sibling workers are *client-side hints* only -- they ask a well-behaved
+    client to disconnect but do not close the server-side socket. An
+    already-open socket on another worker therefore stays authenticated and
+    usable until the client honours the hint or the socket otherwise drops.
+    Re-authentication is blocked on every worker because revocation deletes the
+    persisted sessions and invalidates the shared ``token_verify`` cache, so a
+    fresh socket cannot authenticate as the revoked principal.
     """
     loop = _gateway_loop()
     if loop is None or loop.is_closed():
