@@ -49,7 +49,7 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 *   [SQLite to PostgreSQL migration](./deployment/postgres-migration.md) — Automated migration guide.
 *   [Security best practices](security.md) — Authentication security, encryption, and production checklist.
 *   [Performance tuning](performance.md) — Subsystem optimization and scaling recommendations.
-*   [Access tokens](admin/index.md#access-tokens) — Optional API access-token gate for closed deployments.
+*   [Access tokens](deployment/configuration/config-api.md) — Optional API access-token gate for closed deployments.
 *   [Data export (DSAR)](admin/data-export.md) — GDPR Article 20 right-to-portability exports.
 *   [Rate limits](rate-limits.md) — Rate limit tiers and `429` response handling.
 *   [Errors](errors.md) — Error response format and common error codes.
