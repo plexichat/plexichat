@@ -171,8 +171,22 @@ class ReactionPermissionsMixin(ReactionProtocol):
     def _get_channel_for_conversation(
         self, conversation_id: SnowflakeID
     ) -> Optional[Dict]:
+        """Resolve the backing server channel for either accepted id form.
+
+        Besides the linked ``conversation_id``, callers can address a server
+        channel by its own ``id``: ``messages_crud`` stores
+        ``msg_messages.conversation_id = srv_channels.id`` when the conversation
+        link is missing and cannot be repaired, and ``is_participant`` grants
+        server members participation in that id via ``srv_channels.id``
+        (``WHERE conversation_id = ? OR id = ?``) regardless of the per-channel
+        grant. A lookup keyed only on ``conversation_id`` misses that alias,
+        makes the channel look like a genuine DM, and makes every caller skip
+        its live ``messages.add_reactions`` / ``messages.manage`` / read-audience
+        gate. Resolve both id forms so the same gate is applied either way.
+        """
         return self._db.fetch_one(
-            "SELECT * FROM srv_channels WHERE conversation_id = ?", (conversation_id,)
+            "SELECT * FROM srv_channels WHERE conversation_id = ? OR id = ?",
+            (conversation_id, conversation_id),
         )
 
     def _check_server_permission(
