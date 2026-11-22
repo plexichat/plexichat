@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from src.core.database import cache_get, cache_set
+from src.core.database import cache_get, cache_get_many, cache_set
 
 from ...models import Message
 from ...pagination import MessagePage
@@ -104,7 +104,9 @@ def _resolve_authoritative_server_scope(conversation_id) -> Optional[tuple]:
     try:
         return int(channel_id), int(server_id)
     except (TypeError, ValueError) as exc:
-        raise ConversationAccessDeniedError("Cannot verify channel read access") from exc
+        raise ConversationAccessDeniedError(
+            "Cannot verify channel read access"
+        ) from exc
 
 
 # L6: the rebuild previously did DELETE + RPUSH as two separate commands,
@@ -296,10 +298,21 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                     list_key = f"msg:recent:{conversation_id}"
                     cached_ids = client.lrange(list_key, 0, limit - 1)
                     if cached_ids:
+                        # One MGET for every payload instead of one sequential
+                        # GET per message id. ``cache_get_many`` applies the
+                        # same per-key reconstruction as ``cache_get`` and
+                        # stays fail-closed (it falls back to individual
+                        # cache_get calls on a transport error), so key
+                        # scoping and miss handling are unchanged.
+                        bulk = cache_get_many(
+                            [f"msg:obj:{mid}" for mid in cached_ids]
+                        )
                         messages = []
                         missing_ids = []
                         for mid in cached_ids:
-                            m_obj = _cached_recent_payload(cache_get(f"msg:obj:{mid}"))
+                            m_obj = _cached_recent_payload(
+                                bulk.get(f"msg:obj:{mid}")
+                            )
                             if m_obj is not None:
                                 messages.append(m_obj)
                             else:
@@ -446,11 +459,11 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
         if authoritative_scope is not None:
             channel_id, server_id = authoritative_scope
             servers = _get_servers_module()
-            has_permission = getattr(servers, "has_permission", None) if servers else None
+            has_permission = (
+                getattr(servers, "has_permission", None) if servers else None
+            )
             if not callable(has_permission):
-                raise ConversationAccessDeniedError(
-                    "Cannot verify channel read access"
-                )
+                raise ConversationAccessDeniedError("Cannot verify channel read access")
             try:
                 allowed = bool(
                     has_permission(user_id, server_id, "messages.read", channel_id)
