@@ -2,14 +2,9 @@
 Mutual information operations mixin for the RelationshipManager.
 """
 
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from src.core.base import SnowflakeID
-from src.core.security.hardening import (
-    SNOWFLAKE_MAX,
-    HardeningViolation,
-    bounded_int,
-)
 
 from ..models import MutualInfo
 from .helpers import RelationshipHelpersMixin
@@ -19,22 +14,6 @@ from .helpers import RelationshipHelpersMixin
 # execution and each chunk binds at most this many target ids to the IN clause,
 # so the widest statement carries 1 + 500 = 501 binds (below SQLite's ceiling).
 _BULK_SERVER_ID_CHUNK_SIZE = 500
-
-# A direct manager call bypasses the HTTP edge's page-size bound. Keep the
-# same 200-row ceiling used by the other listing helpers so a huge positive
-# limit cannot materialize every suggestion candidate.
-_MAX_SUGGESTIONS_PAGE_SIZE = 200
-
-
-def _clamp_page_limit(value: Any) -> int:
-    """Return a page size in ``[0, _MAX_SUGGESTIONS_PAGE_SIZE]``, failing closed."""
-    try:
-        number = bounded_int(
-            value, "limit", minimum=0, maximum=SNOWFLAKE_MAX, default=0
-        )
-    except HardeningViolation:
-        return 0
-    return min(number, _MAX_SUGGESTIONS_PAGE_SIZE)
 
 
 def _server_id_chunks(items: List[int]):
@@ -166,9 +145,9 @@ class MutualInfoMixin(RelationshipHelpersMixin):
         self, user_id: SnowflakeID, limit: int = 10
     ) -> List[SnowflakeID]:
         """Get friend suggestions based on mutual friends."""
-        # Clamp both ends: LIMIT -1 is *unlimited* and a huge positive limit
-        # dumped every candidate. Invalid input fails closed.
-        limit = _clamp_page_limit(limit)
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every candidate.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """
             SELECT f2.friend_id, COUNT(*) as mutual_count

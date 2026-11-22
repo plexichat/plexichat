@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict
+from typing import Callable, Iterable, Optional, List, Dict, cast
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
@@ -454,6 +454,26 @@ class NotificationCreatorMixin(NotificationProtocol):
 
         servers = getattr(self, "_servers", None)
         has_permission = getattr(servers, "has_permission", None)
+        get_viewers = getattr(servers, "get_channel_view_user_ids", None)
+
+        # PERF: resolve the whole audience with ONE batched permission query
+        # (bounded IN chunks) instead of one has_permission call -- and thus
+        # one owner/member/role/override read storm -- per recipient. The
+        # batched resolver reuses the exact same permission helpers and fail
+        # -closed rules as the per-user path, so the allowed set is identical.
+        if callable(get_viewers):
+            resolve = cast(
+                Callable[..., Iterable[SnowflakeID]], get_viewers
+            )
+            try:
+                return set(resolve(list(recipients), server_id, channel_id))
+            except Exception as e:
+                logger.debug(
+                    "Batched channel-view resolution failed; excluding all "
+                    f"recipients from fan-out (fail closed): {e}"
+                )
+                return set()
+
         if not callable(has_permission):
             logger.warning(
                 "Notification fan-out skipped: channel-scoped recipients "
@@ -461,6 +481,8 @@ class NotificationCreatorMixin(NotificationProtocol):
             )
             return set()
 
+        # Legacy/fake servers modules without the batched API keep the old
+        # per-recipient behaviour.
         allowed = set()
         for user_id in recipients:
             try:
