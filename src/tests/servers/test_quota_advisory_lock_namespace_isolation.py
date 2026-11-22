@@ -57,6 +57,10 @@ _QUOTA_LOCKS = {
     "invite": ("core/servers/handlers/members/invites.py", {1, 2}),
     "emoji": ("core/reactions/manager/emojis.py", {100, 101}),
     "sticker": ("core/stickers/manager.py", {102}),
+    # Reaction add-quota lock. Uses 103, not 102: 102 belongs to stickers and
+    # sharing it would over-serialise two unrelated quotas (see the
+    # non-vacuity test below, which rejects a synthetic reaction=102 share).
+    "reaction": ("core/reactions/manager/reactions.py", {103}),
     "soundboard": ("core/soundboard/manager.py", {120}),
     "webhook": ("core/webhooks/manager/crud.py", {130}),
     "scheduled-event": ("core/servers/manager/scheduled_event_ops.py", {140}),
@@ -70,6 +74,15 @@ _QUOTA_LOCKS = {
 # through unchecked, and so a switch to a two-key form is caught.
 _SINGLE_ARG_LOCKS = {
     "storage": ("core/storage_quota/manager.py",),
+}
+
+# Two-key locks whose first key is itself a resource hash, not a fixed
+# namespace (the OAuth per-IP pending-state cap uses a SHA-256-derived int4
+# pair). They occupy the whole keyspace, so no namespace can collide with them.
+# Registered so such a lock cannot slip through unchecked and so a regression
+# to a fixed constant namespace is caught.
+_HASH_KEYED_LOCKS = {
+    "oauth-state": ("core/auth/oauth/state.py",),
 }
 
 # Namespaces intentionally shared between a gated writer and the RBAC mutations
@@ -95,6 +108,7 @@ _SHARED_LOCK_PATHS = {
 _ALL_REGISTERED_PATHS = (
     {path for path, _ in _QUOTA_LOCKS.values()}
     | {path for (path,) in _SINGLE_ARG_LOCKS.values()}
+    | {path for (path,) in _HASH_KEYED_LOCKS.values()}
     | {path for paths in _SHARED_LOCK_PATHS.values() for path in paths}
 )
 
@@ -215,6 +229,17 @@ def test_every_advisory_lock_is_registered():
         assert paths <= discovered
 
 
+def _first_quota_namespace_collision(actual):
+    """Return ``(left, right, overlap)`` for the first colliding quota pair."""
+    names = list(actual)
+    for i, left in enumerate(names):
+        for right in names[i + 1 :]:
+            overlap = actual[left] & actual[right]
+            if overlap:
+                return left, right, overlap
+    return None
+
+
 def test_all_quota_namespaces_are_distinct_and_stable():
     """Every quota owns a stable exclusive band disjoint from all others."""
     actual = {}
@@ -227,18 +252,38 @@ def test_all_quota_namespaces_are_distinct_and_stable():
         )
         actual[quota] = namespaces
 
-    names = list(actual)
-    for i, left in enumerate(names):
-        for right in names[i + 1 :]:
-            overlap = actual[left] & actual[right]
-            assert not overlap, (
-                f"quotas {left!r} and {right!r} share namespace(s) {sorted(overlap)}; "
-                "unrelated quotas must serialise on distinct namespaces"
-            )
+    collision = _first_quota_namespace_collision(actual)
+    assert collision is None, (
+        f"quotas {collision[0]!r} and {collision[1]!r} share namespace(s) "
+        f"{sorted(collision[2])}; "
+        "unrelated quotas must serialise on distinct namespaces"
+    )
     quota_union = set().union(*actual.values())
     assert not (quota_union & _SHARED_PERMISSION_NAMESPACES), (
         "an exclusive quota namespace collides with a shared permission guard"
     )
+
+
+def test_quota_collision_guard_flags_synthetic_102_share():
+    """Non-vacuity: the collision checker rejects a synthetic reaction=102 share.
+
+    Reactions once reused the sticker namespace 102. Feeding that same overlap
+    through the checker used by the production test must be flagged, while the
+    real 103/102 split must pass -- so a checker that silently passes every
+    namespace cannot keep this suite green.
+    """
+    collided = _first_quota_namespace_collision(
+        {"sticker": {102}, "reaction": {102}}
+    )
+    assert collided is not None, "collision checker passed a synthetic 102 share"
+    assert set(collided[2]) == {102} and {collided[0], collided[1]} == {
+        "sticker",
+        "reaction",
+    }
+    distinct = _first_quota_namespace_collision(
+        {"sticker": {102}, "reaction": {103}}
+    )
+    assert distinct is None, "collision checker flagged distinct namespaces"
 
 
 def test_role_and_scheduled_event_still_have_distinct_namespaces():
@@ -350,6 +395,26 @@ def test_single_arg_locks_have_no_namespace_to_collide():
         assert all(_arg_count(call.args[0]) == 1 for call, _ in calls), (
             f"{quota}: expected a single-argument advisory lock"
         )
+
+
+def test_hash_keyed_two_key_locks_have_no_constant_namespace():
+    """Full-keyspace two-key locks must hash the resource, never fix a namespace."""
+    assert _HASH_KEYED_LOCKS, "hash-keyed registry is empty - guard is vacuous"
+    for quota, (rel_path,) in _HASH_KEYED_LOCKS.items():
+        tree = _parse(rel_path)
+        calls = list(_advisory_lock_calls(tree))
+        assert calls, f"{quota}: no advisory lock found in {rel_path}"
+        assert any(_arg_count(call.args[0]) >= 2 for call, _ in calls), (
+            f"{quota}: expected a two-key advisory lock"
+        )
+        assert not _namespaces_for(tree), (
+            f"{quota}: expected no fixed namespace on a hash-keyed lock"
+        )
+        for _call, params in calls:
+            assert not isinstance(params, (ast.Tuple, ast.List)), (
+                f"{quota}: hash keys must come from a resource-derived helper, "
+                "not an inline tuple/constant"
+            )
 
 
 def test_lock_keys_derive_from_resource():

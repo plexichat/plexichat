@@ -154,12 +154,12 @@ class ReactionOpsMixin(ReactionProtocol):
             if getattr(self._db, "type", "") == "postgres":
                 # PostgreSQL READ COMMITTED would let two concurrent adds both
                 # pass the quota probe below. Serialize per message with an
-                # advisory xact lock; namespace 102 stays clear of the emoji
-                # (100/101) and invite (1/2) lock namespaces, and masking to 30
-                # bits keeps the key in signed int4 range.
+                # advisory xact lock; namespace 103 stays clear of the sticker
+                # (102), emoji (100/101) and invite (1/2) lock namespaces, and
+                # masking to 30 bits keeps the key in signed int4 range.
                 self._db.execute(
                     "SELECT pg_advisory_xact_lock(?, ?)",
-                    (102, int(message_id) & 0x3FFFFFFF),
+                    (103, int(message_id) & 0x3FFFFFFF),
                 )
 
             existing = self._db.fetch_one(
