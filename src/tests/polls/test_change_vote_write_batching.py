@@ -39,6 +39,8 @@ class _CountingDB:
 
     def fetch_one(self, sql, params=()):
         self.calls.append(("fetch_one", sql, tuple(params)))
+        if "COUNT(*) AS count FROM poll_options" in sql:
+            return {"count": len(self.option_ids)}
         if "FROM poll_voters" in sql:
             return {"1": 1}  # existing voter -> no poll_voters INSERT
         return None

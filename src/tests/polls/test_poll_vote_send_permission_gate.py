@@ -88,6 +88,8 @@ class _DB:
             return {"count": 1, "mine": 1}
         if "FROM poll_votes" in sql:
             return {"id": 1}
+        if "COUNT(*) AS count FROM poll_options" in sql:
+            return {"count": 1} if params and int(params[-1]) == OPT else {"count": 0}
         return None
 
     def fetch_all(self, sql, params=()):
