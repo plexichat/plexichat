@@ -113,9 +113,6 @@ class DeleteMessageAction(BaseAction):
             logger.warning("Cannot replace message: messaging module not available")
             return False
 
-        reason = None
-        if context:
-            reason = context.get("__automod_reason__") or violation.matched_content
         rule_name = None
         if violation.rule_id:
             try:
@@ -125,6 +122,17 @@ class DeleteMessageAction(BaseAction):
                 rule_name = rule.name if rule else None
             except Exception:
                 rule_name = None
+
+        # SECURITY: ``violation.matched_content`` is the private offending
+        # message body. It used to be stored as ``metadata.automod_reason``,
+        # which the MESSAGE_UPDATE fan-out serializes to every ``channels.view``
+        # recipient -- including moderators denied ``messages.read``. Never put
+        # message content in this broadcast-visible field: use a neutral
+        # rule/action label instead. The audit-log row keeps its own,
+        # separately access-controlled reason and is untouched by this change.
+        # A context-supplied ``__automod_reason__`` is deliberately ignored so
+        # an untrusted caller cannot smuggle content back in through it.
+        reason = f"automod {ActionType.DELETE_MESSAGE.value} (rule {violation.rule_id})"
 
         try:
             msg = self._messaging.automod_remove_message(

@@ -59,6 +59,21 @@ def _fanout_safe_message_body(response) -> dict:
     data["read_by"] = []
     data["status"] = None
 
+    # AutoMod tombstone metadata carries ``automod_reason``. That value is
+    # derived from the rule match -- the private offending body -- and this one
+    # body is fanned out to every channels.view recipient, including moderators
+    # denied messages.read. Strip it from the wire copy so an already-stored
+    # legacy row (or a direct ``automod_remove_message`` caller) cannot leak the
+    # private body either. The audit-log row keeps its own access-controlled
+    # reason, so no audit data is lost; only this broadcast body is sanitized.
+    # Fail closed: a serialized metadata blob cannot be field-stripped safely,
+    # so drop it from the fan-out rather than forward a potential private body.
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        metadata.pop("automod_reason", None)
+    elif isinstance(metadata, str):
+        data["metadata"] = None
+
     # Reaction "me" flags describe the serializer's viewer, not the receiver.
     reactions = data.get("reactions")
     if isinstance(reactions, list):
