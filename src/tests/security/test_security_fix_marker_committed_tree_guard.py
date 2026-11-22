@@ -1096,6 +1096,34 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "a code issued for one callback is redeemable from another"
         ),
     ),
+    # --- N699 (c6ebc44b): artifact-management bot-token owner-confusion ---
+    # One pin per artifact mutating-handler file. Each marker is the distinctive
+    # comment + require_user_token block added by c6ebc44b, so a stale staged
+    # copy of either file that drops the gate is caught by name.
+    CommittedFixMarker(
+        key="c6ebc44b-artifact-crud-bot-token-owner-guard",
+        path="src/api/routes/artifacts/routes/crud.py",
+        marker=_ARTIFACT_CRUD_BOT_TOKEN_OWNER_GUARD,
+        why=(
+            "N699: create/update/delete_artifact reject bot credentials before "
+            "_authorize_scope treats the bot owner's user_id as the acting "
+            "member and before manager.create authors the row as the owner; a "
+            "stale staged copy of crud.py drops the require_user_token gate and "
+            "lets a narrow bot credential wield the owner's server/conversation "
+            "authority"
+        ),
+    ),
+    CommittedFixMarker(
+        key="c6ebc44b-artifact-upload-bot-token-owner-guard",
+        path="src/api/routes/artifacts/routes/uploads.py",
+        marker=_ARTIFACT_UPLOAD_BOT_TOKEN_OWNER_GUARD,
+        why=(
+            "N699: _convert_upload_impl rejects bot credentials before "
+            "_authorize_scope and manager.create author the converted artifact "
+            "as the bot's human owner; a stale staged copy of uploads.py drops "
+            "the require_user_token gate and reopens the owner-confusion"
+        ),
+    ),
 )
 
 
@@ -1208,6 +1236,16 @@ OAUTH_INVARIANT_PIN_KEYS: frozenset[str] = frozenset(
         "oauth-app-redirect-literal-equality",
         "oauth-state-redirect-uri-binding",
         "oauth-app-code-redirect-uri-binding",
+    }
+)
+
+
+# N699 (c6ebc44b) artifact bot-token owner-confusion pins. Kept explicit so
+# neither of the two per-file pins can be dropped without this check failing.
+N699_ARTIFACT_BOT_TOKEN_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "c6ebc44b-artifact-crud-bot-token-owner-guard",
+        "c6ebc44b-artifact-upload-bot-token-owner-guard",
     }
 )
 
@@ -1325,6 +1363,56 @@ def test_registry_is_documentable_and_unique() -> None:
         # These are the contested repairs: silently tolerating removal would
         # defeat the whole point of the guard, so no successors are allowed.
         assert not record.successors, f"undocumented removal allowed for {record.key!r}"
+
+
+def test_registry_has_no_orphaned_marker_entries() -> None:
+    """Structural invariant: every module-level marker sits in the registry tuple.
+
+    This heavily-contested file has repeatedly had a ``CommittedFixMarker(...)``
+    appended just OUTSIDE the ``COMMITTED_FIX_MARKERS`` tuple. Such an entry is
+    silently unguarded -- the parametrized presence/non-vacuity tests only see
+    the tuple -- and, while being pasted, produced transient IndentationErrors.
+    Parse this file's own AST and fail if any module-scope marker construction
+    lives outside the registry tuple, or if two registry keys collide. Synthetic
+    fixtures created *inside* test functions are intentionally exempt.
+    """
+    import ast
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(Path(__file__)))
+    registry = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.AnnAssign)
+            and getattr(node.target, "id", "") == "COMMITTED_FIX_MARKERS"
+        ),
+        None,
+    )
+    assert registry is not None, "COMMITTED_FIX_MARKERS assignment not found"
+    assert isinstance(registry.value, ast.Tuple), "registry is no longer a tuple"
+
+    in_registry = {el.lineno for el in registry.value.elts}
+    orphan_lines: list[int] = []
+    for node in tree.body:
+        if node is registry or isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Call)
+                and getattr(sub.func, "id", "") == "CommittedFixMarker"
+                and sub.lineno not in in_registry
+            ):
+                orphan_lines.append(sub.lineno)
+    assert not orphan_lines, (
+        "CommittedFixMarker constructed outside the COMMITTED_FIX_MARKERS "
+        f"tuple (orphaned / unguarded entry) at lines {sorted(orphan_lines)}"
+    )
+
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert len(keys) == len(set(keys)), "duplicate fix keys in registry"
 
 
 @pytest.mark.parametrize(
