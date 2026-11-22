@@ -353,8 +353,13 @@ class ConnectionHandler:
 
         # Bind only AFTER a successful verification, and only when a connection
         # was supplied. Never bind on the failure paths below.
+        # ``session_id`` is Optional (bot tokens carry None); read it defensively
+        # so an unexpected/partial token-info shape cannot raise an unhandled
+        # AttributeError out of the IDENTIFY/RESUME auth path and tear the
+        # socket open. A missing session id simply means "no session binding",
+        # matching the documented bot-token behaviour.
         if bind_connection is not None:
-            bind_connection.auth_session_id = token_info.session_id
+            bind_connection.auth_session_id = getattr(token_info, "session_id", None)
 
         if getattr(token_info, "token_type", "user") == "bot":
             bot_id = getattr(token_info, "account_id", None)
