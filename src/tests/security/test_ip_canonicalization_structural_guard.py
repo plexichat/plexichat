@@ -373,6 +373,16 @@ DOCUMENTED_RAW_EXCEPTIONS: tuple[RawIpException, ...] = (
         "the stored index was minted raw, so the comparison stays raw.",
     ),
     RawIpException(
+        "WS ticket binding index",
+        "src/core/auth/managers/session/tickets.py",
+        "_verify_ws_ticket",
+        "Availability: a gateway ticket inherits its session's raw-minted "
+        "ip_index, so the exchange must hash the presented address the same "
+        "raw way as _create_session/_verify_session_token. Canonicalizing only "
+        "this side would not match stored raw indexes and would wrongly reject "
+        "bound tickets.",
+    ),
+    RawIpException(
         "2FA challenge creation binding index",
         "src/core/auth/managers/twofactor.py",
         "_create_2fa_challenge",
