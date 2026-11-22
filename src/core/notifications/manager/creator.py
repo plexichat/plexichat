@@ -18,6 +18,7 @@ from .helpers import (
     get_role_members,
     get_server_members,
     get_online_members,
+    role_covers_all_members,
     sanitize_notification_content,
     truncate_content,
 )
@@ -161,14 +162,18 @@ class NotificationCreatorMixin(NotificationProtocol):
 
         blocked_users = get_blocked_user_ids(self._relationships, self._db, author_id)
 
-        # Lazily resolved, memoised for this one fan-out: whether a role
-        # mention reaches every server member. An @everyone-equivalent role
-        # (the default role or any role assigned to the whole server) is a
-        # mass ping; a normal role ping is not.
-        _server_member_count = None
+        def _role_is_everyone_equivalent(role_id) -> bool:
+            """Whether a ROLE mention fans out to the whole @everyone audience.
 
-        def _role_is_everyone_equivalent(role_id, role_members) -> bool:
-            nonlocal _server_member_count
+            The verdict MUST match the permission gate in
+            ``MentionValidationMixin.validate_mentions`` and the fan-out below:
+            the fan-out always skips the author, so a role held by every OTHER
+            member reaches exactly the @everyone audience (N783). Delegating to
+            the SAME ``role_covers_all_members`` helper with ``author_id``
+            excluded keeps the ``suppress_everyone`` audience in lockstep with
+            the gate -- an ad-hoc "role covers N of N members" count missed the
+            all-except-author shape and leaked a mass ping to opted-out users.
+            """
             if not server_id:
                 return False
             role = None
@@ -179,18 +184,15 @@ class NotificationCreatorMixin(NotificationProtocol):
             if role is not None and role.get("server_id") == server_id:
                 if role.get("is_default"):
                     return True
-            if _server_member_count is None:
-                try:
-                    _server_member_count = len(get_server_members(self._db, server_id))
-                except Exception:
-                    _server_member_count = 0
-            # A non-default role explicitly held by every member fans out to
-            # the same audience as @everyone. Fail closed on an unresolved
-            # member set by not widening this verdict.
-            return (
-                _server_member_count > 0
-                and len(set(role_members)) >= _server_member_count
-            )
+            # Fail closed: the shared helper treats an unverifiable audience as
+            # covering everyone, which can only WIDEN suppression here. It also
+            # excludes the author from both counts, matching the fan-out.
+            try:
+                return role_covers_all_members(
+                    self._db, role_id, server_id, author_id
+                )
+            except Exception:
+                return True
 
         # ROLE-member hydration N+1: a message mentioning several roles used to
         # issue one ``SELECT ... srv_member_roles JOIN srv_members WHERE
@@ -237,9 +239,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                         )
                     except (TypeError, ValueError):
                         role_members = []
-                role_is_everyone = _role_is_everyone_equivalent(
-                    mention.target_id, role_members
-                )
+                role_is_everyone = _role_is_everyone_equivalent(mention.target_id)
                 for member_id in role_members:
                     if member_id != author_id and member_id not in blocked_users:
                         # Record every role-ping audience member regardless of
