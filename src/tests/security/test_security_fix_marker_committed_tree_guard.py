@@ -324,6 +324,32 @@ _LOGOUT_FACADE_THREADING = (
 )
 
 
+# N722 (e4096376): a failed license reload/hot-swap still leaves the manager
+# holding the newly loaded (invalid) license and demotes the module to free
+# tier. _invalidate_license_derived_caches clears every process-local verdict
+# derived from the license (capability cache, feature matrix and launcher/admin
+# capability payload memos) on BOTH the success and failure paths, so a stale
+# AVAILABLE/grant from the previously loaded license cannot keep handing out a
+# capability the instance no longer holds. Pin the definition so a stale staged
+# copy of licensing.py that reverts to clearing only the success path is caught
+# by name.
+_LICENSE_DERIVED_CACHE_INVALIDATION = (
+    "def _invalidate_license_derived_caches() -> None:\n"
+    '    """Drop every process-local verdict derived from the license document.'
+)
+
+# N681 (9c25e861): a newly loaded license has not been validated yet. Resetting
+# self._validation_result in _parse_license_data drops any verdict cached for a
+# previously loaded license, so lazy entitlement getters cannot answer from a
+# forged/invalid license under the OLD valid verdict (a full bypass). Pin the
+# reset together with its following return so a stale staged copy of core.py
+# that drops it is caught by name.
+_LICENSE_STALE_VALIDATION_RESET = (
+    "            self._validation_result = None\n"
+    "            return license_obj"
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -1352,6 +1378,36 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "drops the context and makes the manager gate unreachable"
         ),
     ),
+    # N722 (e4096376): failed license reload clears every derived verdict cache.
+    CommittedFixMarker(
+        key="e4096376-license-derived-caches-invalidated",
+        path="src/api/routes/admin/licensing.py",
+        marker=_LICENSE_DERIVED_CACHE_INVALIDATION,
+        why=(
+            "e4096376 (N722): a failed reload/hot-swap leaves the manager holding "
+            "the newly loaded (invalid) license and demotes the module to free "
+            "tier; _invalidate_license_derived_caches now clears the capability "
+            "cache, feature catalog and launcher/admin capability payload memos "
+            "on the failure path too. A stale staged copy of licensing.py that "
+            "reverts to clearing only on success keeps handing out a stale "
+            "AVAILABLE/grant verdict -- a stale-capability-grant on failed "
+            "reload"
+        ),
+    ),
+    # N681 (9c25e861): a newly loaded license cannot inherit a stale valid verdict.
+    CommittedFixMarker(
+        key="9c25e861-license-stale-validation-reset",
+        path="src/utils/common_utils/utils/licensing/core.py",
+        marker=_LICENSE_STALE_VALIDATION_RESET,
+        why=(
+            "9c25e861 (N681): _parse_license_data resets _validation_result so a "
+            "newly loaded (possibly forged/invalid) license is not answered under "
+            "a previously cached 'valid' verdict; without the reset lazy "
+            "entitlement getters grant full capabilities from the new license's "
+            "data under the OLD verdict. A stale staged copy of core.py that "
+            "drops the reset reopens that full-entitlement bypass"
+        ),
+    ),
 )
 
 
@@ -1488,6 +1544,17 @@ ALIAS_AUTOMOD_PIN_KEYS: frozenset[str] = frozenset(
     {
         "627accb2-alias-automod-enforcement",
         "627accb2-alias-automod-send-call",
+    }
+)
+
+
+# e4096376 (N722) and 9c25e861 (N681) license fail-closed pins. Kept explicit
+# so neither pin can be dropped silently; non-vacuity comes from the
+# parametrized synthetic-removal test plus the live-HEAD tie below.
+LICENSE_FIX_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "e4096376-license-derived-caches-invalidated",
+        "9c25e861-license-stale-validation-reset",
     }
 )
 
@@ -2178,3 +2245,46 @@ def test_role_assignment_toctou_pins_live_at_head_and_non_vacuous(
         assert not present, f"synthetic assign_role revert of {key} not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+def test_license_fix_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """Both license fail-closed pins are registered, live and falsifiable.
+
+    Each key resolves to a real committed blob carrying its distinctive marker,
+    points at the expected file, and is rejected by a synthetic stale blob with
+    the fix erased. Per-entry synthetic-removal coverage is also provided by
+    ``test_synthetic_reverted_blob_is_flagged``.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert LICENSE_FIX_PIN_KEYS <= set(keys), (
+        "license fix key set references keys missing from the registry: "
+        f"{sorted(LICENSE_FIX_PIN_KEYS - set(keys))}"
+    )
+    assert len(LICENSE_FIX_PIN_KEYS) == 2
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "e4096376-license-derived-caches-invalidated": (
+            "src/api/routes/admin/licensing.py"
+        ),
+        "9c25e861-license-stale-validation-reset": (
+            "src/utils/common_utils/utils/licensing/core.py"
+        ),
+    }
+    for key in sorted(LICENSE_FIX_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_license_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# license fix erased\n"
+
+        present, detail = _evaluate(record, stale_license_blob)
+        assert not present, f"synthetic stale license revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
