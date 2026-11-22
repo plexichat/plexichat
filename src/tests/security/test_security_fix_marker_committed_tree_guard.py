@@ -751,6 +751,14 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="8acaaadd-admin-artifact-keyset-cursor",
+        path="src/api/routes/admin/artifacts.py",
+        marker='def _parse_before_cursor(value):',
+        why=(
+            '8acaaadd is a perf change landed via the private index: the admin artifact list gained an additive keyset cursor parser; pinned by the distinctive helper it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
