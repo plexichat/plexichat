@@ -360,10 +360,28 @@ class CommandRegistry:
             params.append(self._current_time())
             params.append(command_id)
 
-            self._db.execute(
-                f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",
-                tuple(params),
-            )
+            try:
+                self._db.execute(
+                    f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",
+                    tuple(params),
+                )
+            except Exception as exc:
+                # The duplicate-name SELECT above is advisory: two concurrent
+                # renames (or a rename racing a create) can both see the name as
+                # free, and the loser's UPDATE violates the authoritative
+                # UNIQUE(application_id, name, server_id) constraint. Roll back
+                # and translate to the same CommandValidationError the create
+                # path surfaces so a lost race stays a clean domain error instead
+                # of leaking a raw IntegrityError (HTTP 500). Any other DB error
+                # propagates unchanged.
+                self._db.rollback()
+                msg = str(exc).lower()
+                if "unique" in msg or "duplicate" in msg:
+                    raise CommandValidationError(
+                        "Command with this name already exists",
+                        ["Duplicate command name"],
+                    ) from exc
+                raise
 
             logger.debug(f"Command updated: {command_id}")
 
