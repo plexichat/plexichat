@@ -368,8 +368,195 @@ def _has_sequential_wildcard_redos_risk(pattern_str: str) -> bool:
     return False
 
 
+# Single-character atom descriptors used by the flat-chain check below. A
+# "broad" atom (dot, negated class, \w/\S/\W/\D) can consume any separator, a
+# digit/space class only its own kind, and a literal or positive class only
+# the listed characters.
+_ATOM_BROAD = ("broad",)
+_ATOM_DIGIT = ("digit",)
+_ATOM_SPACE = ("space",)
+
+
+def _char_in_atom(ch: str, descriptor: tuple) -> bool:
+    """Whether character ``ch`` is matchable by a non-broad atom descriptor."""
+    kind = descriptor[0]
+    if kind == "digit":
+        return ch in "0123456789"
+    if kind == "space":
+        return ch.isspace()
+    if kind == "class":
+        return ch in descriptor[1]
+    return False
+
+
+def _atoms_overlap(a: Optional[tuple], b: Optional[tuple]) -> bool:
+    """True when two atom descriptors can consume the same character.
+
+    Two adjacent unbounded quantifiers only create backtracking ambiguity when
+    their atoms can match the same input. ``a*a*a*`` (all ``a``) is ambiguous;
+    ``ab*ab*`` (the ``b*`` are pinned apart by the mandatory ``a``) is not.
+    """
+    if a is None or b is None:
+        return False
+    if a[0] == "broad" or b[0] == "broad":
+        return True
+    if a[0] == "lit" and b[0] == "lit":
+        return a[1] == b[1]
+    if a[0] == "class" and b[0] == "class":
+        return bool(a[1] & b[1])
+    if a[0] == "lit":
+        return _char_in_atom(a[1], b)
+    if b[0] == "lit":
+        return _char_in_atom(b[1], a)
+    if a[0] in ("digit", "space") and b[0] in ("digit", "space"):
+        return a[0] == b[0]
+    return False
+
+
+def _flat_atom_descriptor(pattern_str: str, i: int) -> Optional[tuple]:
+    """Descriptor and length of the atom at ``i`` (None if not a simple atom).
+
+    Returns ``(descriptor, consumed)``. Parentheses are intentionally not
+    handled here: the caller skips them so grouped siblings (``(a*)(a*)(a*)``)
+    are seen as the same flat chain as ``a*a*a*``.
+    """
+    ch = pattern_str[i]
+    if ch == "\\" and i + 1 < len(pattern_str):
+        nxt = pattern_str[i + 1]
+        if nxt in "wWsSD":
+            return _ATOM_BROAD, 2
+        if nxt == "d":
+            return _ATOM_DIGIT, 2
+        if nxt == "s":
+            return _ATOM_SPACE, 2
+        if nxt.isalpha():
+            # Anchors/boundaries (\\b, \\A, \\Z, ...) consume no characters.
+            return None, 2
+        return ("lit", nxt), 2
+    if ch == ".":
+        return _ATOM_BROAD, 1
+    if ch == "[":
+        j = i + 1
+        negated = False
+        if j < len(pattern_str) and pattern_str[j] == "^":
+            negated = True
+            j += 1
+        if j < len(pattern_str) and pattern_str[j] == "]":
+            j += 1
+        chars = set()
+        has_range = False
+        while j < len(pattern_str) and pattern_str[j] != "]":
+            if pattern_str[j] == "\\" and j + 1 < len(pattern_str):
+                chars.add(pattern_str[j + 1])
+                j += 2
+                continue
+            if (
+                j + 2 < len(pattern_str)
+                and pattern_str[j + 1] == "-"
+                and pattern_str[j + 2] != "]"
+            ):
+                has_range = True
+            chars.add(pattern_str[j])
+            j += 1
+        if negated or has_range:
+            return _ATOM_BROAD, j - i + 1
+        return ("class", frozenset(chars)), j - i + 1
+    if ch.isalnum():
+        return ("lit", ch), 1
+    return None, 1
+
+
+def _has_flat_quantifier_chain_redos_risk(pattern_str: str) -> bool:
+    """Detect sibling chains of overlapping unbounded quantifiers.
+
+    ``_has_sequential_wildcard_redos_risk`` only counts *broad* atoms (dot,
+    negated classes, wide shorthands), so it misses the same catastrophic shape
+    built from narrow atoms: ``a*a*a*a*a*b``, ``\\d*\\d*\\d*x``, ``[a]*[a]*...``,
+    ``a{1,}a{1,}...`` and their grouped forms ``(a*)(a*)(a*)b`` all pass the
+    other checks yet stall the backtracking engine on a few dozen characters.
+    Parentheses are transparent to this scan, so grouped siblings are caught.
+
+    Three overlapping unbounded quantifiers is the same threshold used for
+    broad chains; two stay cheap. Non-quantified atoms pinned between two
+    quantifiers (``-`` in ``\\d+-\\d+-\\d+``, ``a`` in ``ab*ab*``) break the
+    ambiguity and keep those patterns accepted.
+    """
+    chain = 0
+    chain_atom: Optional[tuple] = None
+    last_atom: Optional[tuple] = None
+    # An atom extends the run only when it both follows a quantifier and is
+    # itself quantified. A bare literal between two quantifiers (the ``a`` in
+    # ``ab*ab*``, the ``-`` in ``\d+-\d+``) is a mandatory separator that pins
+    # them apart and therefore breaks the ambiguity.
+    adjacent_quantified = False
+    i = 0
+    n = len(pattern_str)
+
+    while i < n:
+        ch = pattern_str[i]
+
+        # Group syntax is transparent: (a*)(a*)(a*) is the same shape as a*a*a.
+        if ch in "()":
+            i += 1
+            continue
+
+        # Anchors and alternation split the ambiguous run.
+        if ch in "|^$":
+            chain = 0
+            chain_atom = None
+            adjacent_quantified = False
+            i += 1
+            continue
+
+        q_len = _match_quantifier(pattern_str, i)
+        if q_len:
+            bounds = _quantifier_bounds(pattern_str, i)
+            unbounded = bounds is not None and bounds[1] == _UNBOUNDED
+            if unbounded:
+                if (
+                    adjacent_quantified
+                    and chain_atom is not None
+                    and _atoms_overlap(chain_atom, last_atom)
+                ):
+                    chain += 1
+                else:
+                    chain = 1
+                chain_atom = last_atom
+                if chain >= MAX_SEQUENTIAL_WILDCARDS:
+                    return True
+            else:
+                chain = 0
+                chain_atom = None
+            adjacent_quantified = False
+            i += q_len
+            continue
+
+        descriptor, consumed = _flat_atom_descriptor(pattern_str, i)
+        if descriptor is None:
+            # Zero-width escape or punctuation separator: break the run.
+            chain = 0
+            chain_atom = None
+            adjacent_quantified = False
+        else:
+            quantified = _match_quantifier(pattern_str, i + consumed) is not None
+            if not quantified:
+                # Mandatory unquantified literal: a separator, not part of a
+                # run of overlapping repeats.
+                chain = 0
+                chain_atom = None
+                adjacent_quantified = False
+            else:
+                adjacent_quantified = (
+                    chain_atom is not None and _atoms_overlap(chain_atom, descriptor)
+                )
+            last_atom = descriptor
+        i += consumed
+
+    return False
+
+
 def _has_redos_risk(pattern_str: str) -> bool:
-    """Static analysis for ReDoS-prone constructs in fallback patterns.
+    r"""Static analysis for ReDoS-prone constructs in fallback patterns.
 
     Flags:
       - nested quantifiers: a quantified group whose inner atom is itself
@@ -395,11 +582,15 @@ def _has_redos_risk(pattern_str: str) -> bool:
     also catastrophic but live outside the group analysis below, so they are
     caught by :func:`_has_backreference_redos_risk` first. Flat chains of
     wildcards (``.*a.*a.*b``) are caught by
-    :func:`_has_sequential_wildcard_redos_risk`.
+    :func:`_has_sequential_wildcard_redos_risk`; flat chains built from narrow
+    atoms (``a*a*a*b``, ``\d*\d*\d*x``, ``(a*)(a*)(a*)b``) are caught by
+    :func:`_has_flat_quantifier_chain_redos_risk`.
     """
     if _has_backreference_redos_risk(pattern_str):
         return True
     if _has_sequential_wildcard_redos_risk(pattern_str):
+        return True
+    if _has_flat_quantifier_chain_redos_risk(pattern_str):
         return True
 
     # Stack frames:

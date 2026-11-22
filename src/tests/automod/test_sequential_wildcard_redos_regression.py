@@ -149,3 +149,96 @@ class TestSequentialWildcardRedos:
         assert not invite_rule.check(_PAYLOAD_TEXT, 1, 1).matched
         elapsed = time.monotonic() - started
         assert elapsed < 1.5, f"check took {elapsed:.3f}s"
+
+
+# A second, distinct shape the sequential-wildcard check misses: siblings of
+# unbounded quantifiers over NARROW atoms that can all consume the same input.
+# Measured before this fix (bounded probe): ``a*a*a*a*a*b`` took ~0.5s on 120
+# characters and timed out (>3s) at 160. ``InviteLinkRule`` uses stdlib ``re``
+# for custom patterns on every engine path, so this reached production even
+# with RE2 installed.
+_FLAT_PAYLOAD = r"a*a*a*a*a*b"
+_FLAT_PAYLOAD_TEXT = "a" * 120
+
+
+@pytest.mark.automod
+class TestFlatQuantifierChainRedos:
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            _FLAT_PAYLOAD,
+            r"a+a+a+a+b",  # '+' instead of '*'
+            r"\d*\d*\d*\d*x",  # digit shorthands overlap each other
+            r"[a]*[a]*[a]*b",  # positive classes overlap each other
+            r"a{1,}a{1,}a{1,}b",  # unbounded {n,} form
+            r"(a*)(a*)(a*)(a*)b",  # grouped siblings are still flat
+            r"a*a*a*b",  # minimum: three overlapping quantifiers
+        ],
+    )
+    def test_pathological_flat_chain_is_flagged(self, pattern):
+        assert _has_redos_risk(pattern), pattern
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            r"ab*ab*ab*ab*b",  # b* pinned apart by mandatory 'a' separators
+            r"\d+-\d+-\d+",  # '-' separators are not consumable by \d
+            r".*a.*b",  # only two wildcards stay cheap
+            r"a?a?a?a?b",  # bounded quantifiers, no ambiguity
+            r"\s*\d*x",  # disjoint atoms cannot share input
+            r"(\d{1,3}\.){3}\d{1,3}",  # IPv4 shape
+        ],
+    )
+    def test_non_overlapping_or_short_chains_remain_accepted(self, pattern):
+        assert not _has_redos_risk(pattern), pattern
+        assert re.compile(pattern) is not None
+
+    def test_regex_rule_never_compiles_flat_chain(self, fallback_engine):
+        rule = RegexRule(
+            _rule(
+                RuleType.REGEX,
+                {"patterns": [{"pattern": _FLAT_PAYLOAD, "name": "spam"}]},
+            )
+        )
+        assert rule._compiled_patterns == []
+
+    def test_regex_rule_validate_config_rejects_flat_chain(self, fallback_engine):
+        ok, issues = RegexRule.validate_config(
+            {"patterns": [{"pattern": _FLAT_PAYLOAD, "name": "spam"}]}
+        )
+        assert not ok
+        assert any("rejected" in issue for issue in issues)
+
+    def test_invite_rule_falls_back_to_safe_default(self):
+        # InviteLinkRule compiles custom patterns with stdlib re even when RE2
+        # is installed, so rejecting the flat chain here matters in prod.
+        rule = InviteLinkRule(_rule(RuleType.INVITE_LINKS, {"pattern": _FLAT_PAYLOAD}))
+        assert rule._pattern is InviteLinkRule.DEFAULT_INVITE_PATTERN
+        assert rule._pattern.findall("join AbCdEfGh here") == ["AbCdEfGh"]
+
+    def test_legitimate_regex_rule_still_matches(self, fallback_engine):
+        rule = RegexRule(
+            _rule(
+                RuleType.REGEX,
+                {"patterns": [{"pattern": r"\d+-\d+-\d+", "name": "dashed"}]},
+            )
+        )
+        assert len(rule._compiled_patterns) == 1
+        assert rule.check("order 12-34-56", 1, 1).matched is True
+
+    def test_check_is_bounded_on_pathological_input(self, fallback_engine):
+        regex_rule = RegexRule(
+            _rule(
+                RuleType.REGEX,
+                {"patterns": [{"pattern": _FLAT_PAYLOAD, "name": "spam"}]},
+            )
+        )
+        invite_rule = InviteLinkRule(
+            _rule(RuleType.INVITE_LINKS, {"pattern": _FLAT_PAYLOAD})
+        )
+
+        started = time.monotonic()
+        assert not regex_rule.check(_FLAT_PAYLOAD_TEXT, 1, 1).matched
+        assert not invite_rule.check(_FLAT_PAYLOAD_TEXT, 1, 1).matched
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.5, f"check took {elapsed:.3f}s"
