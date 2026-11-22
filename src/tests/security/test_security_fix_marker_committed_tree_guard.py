@@ -740,6 +740,24 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "and reopens the log-forging leak"
         ),
     ),
+    # 46e545f2: move_role's CAS update carries the caller-observed position in
+    # the WHERE clause and raises on a zero-row update. The MAIN working tree's
+    # copy of roles/crud.py is stale (pre-fix, no position predicate); a peer
+    # staging that whole file would silently drop the CAS and restore the
+    # lost-update race where two concurrent moves clobber each other's reorder.
+    CommittedFixMarker(
+        key="46e545f2-move-role-stale-position-cas",
+        path="src/core/servers/handlers/roles/crud.py",
+        marker="Role changed concurrently, retry",
+        why=(
+            "46e545f2: move_role guards against stale-position TOCTOU with a "
+            "position-scoped CAS update that raises when zero rows change; a "
+            "stale working-tree copy of roles/crud.py restores the unchecked "
+            "UPDATE and lets a concurrent move silently revert another's "
+            "reordering, bypassing the hierarchy revalidation performed "
+            "against the outdated position"
+        ),
+    ),
 )
 
 
