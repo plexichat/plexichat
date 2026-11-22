@@ -56,7 +56,15 @@ _SRC_ROOT = Path(__file__).resolve().parents[2]
 _QUOTA_LOCKS = {
     "invite": ("core/servers/handlers/members/invites.py", {1, 2}),
     "emoji": ("core/reactions/manager/emojis.py", {100, 101}),
-    "sticker": ("core/stickers/manager.py", {102}),
+    # Sticker manager owns three exclusive bands: 102 serialises per-pack
+    # sticker adds, 121 serialises per-server pack creates and 122 serialises
+    # per-user (personal) pack creates. N890 added 121/122 but left them out
+    # of this registry; because they are assigned to the function-local
+    # ``lock_ns`` variable rather than an inline constant, the old extractor
+    # could not see them and a collision with soundboard (120), reaction (103)
+    # or any other quota would pass the guard silently. All three are now
+    # registered so the distinctness/stability check below fails closed.
+    "sticker": ("core/stickers/manager.py", {102, 121, 122}),
     # Reaction add-quota lock. Uses 103, not 102: 102 belongs to stickers and
     # sharing it would over-serialise two unrelated quotas (see the
     # non-vacuity test below, which rejects a synthetic reaction=102 share).
@@ -137,17 +145,29 @@ def _arg_count(sql_node):
     return sql_node.value.count("?")
 
 
-def _const_int(tree, name):
-    """Resolve a module-level integer constant assignment by name."""
-    for node in tree.body:
+def _const_ints(tree, name):
+    """All integer constant assignments to ``name`` in a module.
+
+    Unlike the old module-body-only lookup, this walks the whole tree so a
+    lock namespace assigned to a *function-local* variable (as the sticker
+    pack quotas do with ``lock_ns = 121`` / ``lock_ns = 122``) is resolved
+    too. Otherwise those namespaces are invisible to the guard and a
+    collision with another quota would pass silently.
+    """
+    values = set()
+    for node in ast.walk(tree):
+        targets = []
         if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == name:
-                    if isinstance(node.value, ast.Constant) and isinstance(
-                        node.value.value, int
-                    ):
-                        return node.value.value
-    return None
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        if not any(
+            isinstance(target, ast.Name) and target.id == name for target in targets
+        ):
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, int):
+            values.add(node.value.value)
+    return values
 
 
 def _namespace_from_expr(tree, expr):
@@ -160,8 +180,7 @@ def _namespace_from_expr(tree, expr):
         if isinstance(left, ast.Constant) and isinstance(left.value, int):
             return {left.value, left.value + 1}
     if isinstance(expr, ast.Name):
-        value = _const_int(tree, expr.id)
-        return {value} if value is not None else set()
+        return _const_ints(tree, expr.id)
     return set()
 
 
@@ -275,9 +294,7 @@ def test_quota_collision_guard_flags_synthetic_102_share():
     real 103/102 split must pass -- so a checker that silently passes every
     namespace cannot keep this suite green.
     """
-    collided = _first_quota_namespace_collision(
-        {"sticker": {102}, "reaction": {102}}
-    )
+    collided = _first_quota_namespace_collision({"sticker": {102}, "reaction": {102}})
     assert collided is not None, "collision checker passed a synthetic 102 share"
     assert set(collided[2]) == {102} and {collided[0], collided[1]} == {
         "sticker",
@@ -287,6 +304,51 @@ def test_quota_collision_guard_flags_synthetic_102_share():
         {"sticker": {102}, "reaction": {103}}
     )
     assert distinct is None, "collision checker flagged distinct namespaces"
+
+
+def test_pack_namespace_collision_guard_flags_synthetic_120_share():
+    """Non-vacuity: a pack lock colliding with soundboard's 120 is flagged.
+
+    N890 introduced the pack namespaces (121 server / 122 user) as values of a
+    function-local ``lock_ns`` variable. The previous extractor only resolved
+    module-level constants, so these names were invisible to the guard. Feed a
+    synthetic ``lock_ns = 120`` through the very same extractor used by the
+    production stability test: it must resolve to {120} and the collision
+    checker must reject it, while the real 121/122 values stay distinct from
+    the soundboard (120) band. A checker that cannot see local assignments
+    would return an empty set here and keep the suite green vacuously.
+    """
+    collided_src = """
+def create_pack(db, server_id):
+    lock_ns = 120
+    db.execute(
+        "SELECT pg_advisory_xact_lock(?, ?)",
+        (lock_ns, int(server_id) & 0x3FFFFFFF),
+    )
+"""
+    collided_ns = _namespaces_for(ast.parse(collided_src))
+    assert collided_ns == {120}, (
+        f"synthetic local lock_ns=120 not extracted: {sorted(collided_ns)}; "
+        "the pack-namespace guard would be vacuous"
+    )
+    collision = _first_quota_namespace_collision(
+        {"soundboard": {120}, "sticker-pack": collided_ns}
+    )
+    assert collision is not None, "collision checker passed a synthetic 120 share"
+    assert set(collision[2]) == {120} and {collision[0], collision[1]} == {
+        "soundboard",
+        "sticker-pack",
+    }
+
+    # The real pack namespaces must stay distinct from 120 and from each other.
+    real = {
+        "soundboard": {120},
+        "sticker-server-pack": {121},
+        "sticker-user-pack": {122},
+    }
+    assert _first_quota_namespace_collision(real) is None, (
+        "collision checker flagged the real, distinct pack namespaces"
+    )
 
 
 def test_role_and_scheduled_event_still_have_distinct_namespaces():
