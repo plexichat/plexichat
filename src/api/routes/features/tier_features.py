@@ -200,6 +200,33 @@ def _check_admin(token_info: TokenInfo) -> None:
         )
 
 
+def _require_config_read_scope(token_info: TokenInfo) -> None:
+    """Require a concrete ``config.read`` grant for admin config-catalog reads.
+
+    ``get_admin_access`` synthesises ``administrator``/``admin.*`` for *any*
+    valid admin session, and ``_check_admin`` only tests that wildcard. Without
+    a concrete scope check, a narrowly-scoped admin (e.g. tickets-only support)
+    can read the tier-limit and badge catalogs even though its role grants none
+    of the configuration scopes. Fail closed when the DB or permission subsystem
+    cannot resolve the caller's role grants.
+    """
+    import src.api as api
+
+    from src.core.admin.permissions import check_admin_permission
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    if not check_admin_permission(token_info.user_id, "config.read", db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Insufficient permissions"}},
+        )
+
+
 def _user_exists(user_id: int) -> bool:
     """Check if user exists."""
     auth = _get_auth_module()
@@ -448,6 +475,9 @@ async def get_available_tiers(
     Get all available rate limit tiers (admin only).
     """
     _check_admin(current_user)
+    # Bare admin membership is not authority to read feature configuration.
+    # Require the declared config.read scope before touching the tier catalog.
+    _require_config_read_scope(current_user)
 
     features = _get_features_module()
     if not features:
@@ -496,6 +526,9 @@ async def get_available_badges(
     Get all available badges (admin only).
     """
     _check_admin(current_user)
+    # Bare admin membership is not authority to read feature configuration.
+    # Require the declared config.read scope before touching the badge catalog.
+    _require_config_read_scope(current_user)
 
     features = _get_features_module()
     if not features:

@@ -13,22 +13,51 @@ the auth/authorization gates were traded away for the cache.
 
 import asyncio
 import copy
+import json
 
 import pytest
 from fastapi import HTTPException
 
+import src.api as api
 import utils.config as config
 from src.api.routes.features.tier_features import get_available_tiers as tiers_handler
 from src.api.schemas.features import TierLimitsResponse, TiersResponse
 from src.core import features
+from src.core.admin.request_roles import clear_session_roles
+
+_ADMIN_ID = 951
 
 
 class _Admin:
     permissions = {"administrator": True}
+    user_id = _ADMIN_ID
 
 
 class _NonAdmin:
     permissions = {}
+    user_id = _ADMIN_ID + 1
+
+
+class _ScopeDB:
+    """Minimal DB double granting exactly the admin config-read scope."""
+
+    def fetch_all(self, sql, params=()):
+        if "admin_roles" in sql and "admin_role_assignments" in sql:
+            return [
+                {
+                    "id": 1,
+                    "name": "config-reader",
+                    "description": "",
+                    "permissions": json.dumps({"config.read": True}),
+                    "created_at": 0,
+                    "created_by": 0,
+                    "is_system": 0,
+                }
+            ]
+        return []
+
+    def fetch_one(self, sql, params=()):
+        return None
 
 
 def _call_handler(user):
@@ -36,11 +65,14 @@ def _call_handler(user):
 
 
 @pytest.fixture(autouse=True)
-def _fresh_tier_cache():
-    """Each test starts from an empty tier table."""
+def _fresh_tier_cache(monkeypatch):
+    """Each test starts from an empty tier table and a scoped admin session."""
     features.invalidate_tier_configuration_cache()
+    monkeypatch.setattr(api, "get_db", lambda: _ScopeDB())
+    clear_session_roles()
     yield
     features.invalidate_tier_configuration_cache()
+    clear_session_roles()
 
 
 def test_response_matches_fresh_computation(monkeypatch):
