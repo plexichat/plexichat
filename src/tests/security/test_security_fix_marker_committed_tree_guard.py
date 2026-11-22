@@ -559,6 +559,38 @@ _N773_VIOLATION_BODY_MATCHED_REDACTED = '        matched_content=violation.match
 _N773_VIOLATION_BODY_METADATA_REDACTED = '        metadata=(violation.metadata or {}) if can_read else {},'
 
 
+# N884 (bulk presence visibility): get_visible_presences_bulk used a one-way
+# get_blocked_user_ids fallback when the authoritative two-way
+# get_all_blocked_ids lookup failed. A user who blocked the viewer was absent
+# from the one-way set, so their real status/custom status/last_seen were
+# rendered to the viewer they blocked; when both lookups failed an empty set
+# silently disabled the whole gate. Pin the fail-closed flag block, the
+# resulting per-target gate, and the ABSENCE of the one-way fallback call so a
+# stale staged copy that restores the fail-open leak is caught by name.
+_VISIBILITY_BLOCK_LOOKUP_FAIL_CLOSED = (
+    "                # FAIL CLOSED: ``get_all_blocked_ids`` is the authoritative\n"
+    "                # two-way block set (users the viewer blocked UNION users who\n"
+    "                # blocked the viewer). Without it we cannot prove ANY target is\n"
+    "                # safe to render. The old fallback to ``get_blocked_user_ids``\n"
+    "                # was NOT safe: it is the one-way set, so a user who blocked the\n"
+    "                # viewer (but whom the viewer did not block) was absent from it\n"
+    "                # and had their real status, custom status and last_seen leaked\n"
+    "                # back to the viewer they blocked. When both lookups failed the\n"
+    '                # empty set silently degraded the gate to "no blocks at all".\n'
+    "                # Withhold every non-self target as blank offline instead, the\n"
+    "                # same fail-closed rule the event fan-out and typing filters\n"
+    "                # use. Self-view is preserved below because it is never a\n"
+    "                # cross-user disclosure.\n"
+    "                block_lookup_failed = True"
+)
+_VISIBILITY_BLOCK_LOOKUP_GATE = (
+    "            is_blocked = block_lookup_failed or target_id in blocked_ids"
+)
+_VISIBILITY_ONE_WAY_FALLBACK_ABSENT = (
+    "for uid in self._relationships.get_blocked_user_ids(viewer_id)"
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     # --- Test-only private-index guard commits (coordination noise) ---
     # These three commits landed through the private index but change ONLY
@@ -2076,6 +2108,43 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         why=(
             "edacde4c (N773): content-bearing metadata is blanked alongside matched_content, so a stale staged copy cannot leak the body via metadata.examples"
         ),
+    ),
+    # 7c5f8fa6 (N884): the bulk presence read gate must fail closed when the
+    # authoritative two-way block set is unavailable. Pin both behaviour anchors
+    # and the absence of the unsafe one-way fallback call.
+    CommittedFixMarker(
+        key="7c5f8fa6-n884-bulk-visibility-block-lookup-fail-closed",
+        path="src/core/presence/manager/visibility.py",
+        marker=_VISIBILITY_BLOCK_LOOKUP_FAIL_CLOSED,
+        why=(
+            "N884: on a get_all_blocked_ids failure the bulk presence gate sets "
+            "block_lookup_failed and withholds every non-self target as blank "
+            "offline; a stale staged copy restores the one-way fallback and "
+            "leaks a blocker's real status/custom status/last_seen back to the "
+            "viewer they blocked"
+        ),
+    ),
+    CommittedFixMarker(
+        key="7c5f8fa6-n884-bulk-visibility-fail-closed-gate",
+        path="src/core/presence/manager/visibility.py",
+        marker=_VISIBILITY_BLOCK_LOOKUP_GATE,
+        why=(
+            "N884: every non-self target must be withheld when the two-way "
+            "block lookup failed; a stale staged copy drops the "
+            "block_lookup_failed arm and renders unsafe targets online"
+        ),
+    ),
+    CommittedFixMarker(
+        key="7c5f8fa6-n884-bulk-visibility-no-one-way-fallback",
+        path="src/core/presence/manager/visibility.py",
+        marker=_VISIBILITY_ONE_WAY_FALLBACK_ABSENT,
+        why=(
+            "N884: get_blocked_user_ids is the one-way set and must never be "
+            "used as a fallback for the authoritative two-way block lookup; "
+            "an absent-marker catches a stale staged copy reintroducing the "
+            "call that reopens the presence leak"
+        ),
+        absent=True,
     ),
 )
 
@@ -3615,3 +3684,58 @@ def test_n773_audit_body_gate_pins_live_at_head_and_non_vacuous(
         assert "_violation_response(" in body, (
             f"the {handler} automod violation read no longer uses the gated serializer"
         )
+
+
+# 7c5f8fa6 (N884) bulk presence fail-closed pins. Held as an explicit set so
+# none of the three anchors can vanish from the registry silently. The generic
+# parametrized tests cover presence at HEAD and synthetic revert falsifiability;
+# this live-HEAD tie additionally proves the gate text and the absence of the
+# one-way fallback call in the committed blob.
+N884_BULK_VISIBILITY_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "7c5f8fa6-n884-bulk-visibility-block-lookup-fail-closed",
+        "7c5f8fa6-n884-bulk-visibility-fail-closed-gate",
+        "7c5f8fa6-n884-bulk-visibility-no-one-way-fallback",
+    }
+)
+
+
+def test_n884_bulk_visibility_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """N884 pins are registered, live at HEAD, and falsifiable in both polarities."""
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert N884_BULK_VISIBILITY_PIN_KEYS <= set(keys), (
+        "N884 key set references keys missing from COMMITTED_FIX_MARKERS: "
+        f"{sorted(N884_BULK_VISIBILITY_PIN_KEYS - set(keys))}"
+    )
+    assert len(N884_BULK_VISIBILITY_PIN_KEYS) == 3
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    for key in sorted(N884_BULK_VISIBILITY_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == "src/core/presence/manager/visibility.py", f"{key} points at {record.path!r}"
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+        if record.absent:
+            def reintroduced(path: str) -> str:
+                return f"# reintroduced vulnerable call\n{record.marker}\n"
+
+            present, detail = _evaluate(record, reintroduced)
+            assert not present, f"synthetic N884 fallback reintroduction not caught: {key}"
+            assert "REINTRODUCED" in detail
+        else:
+            def stale_blob(path: str) -> str:
+                return f"# stale staged copy of {path}\n# fail-closed gate erased\n"
+
+            present, detail = _evaluate(record, stale_blob)
+            assert not present, f"synthetic N884 revert of {key} was not caught"
+            assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+    # Live-HEAD semantics: the withheld-by-flag gate is real and the unsafe
+    # one-way fallback call is genuinely absent from the committed blob.
+    gate = by_key["7c5f8fa6-n884-bulk-visibility-fail-closed-gate"].marker
+    assert "block_lookup_failed or target_id in blocked_ids" in gate
+    vis_blob = reader("src/core/presence/manager/visibility.py")
+    assert vis_blob.count("get_all_blocked_ids(viewer_id)") >= 1
+    assert "for uid in self._relationships.get_blocked_user_ids(viewer_id)" not in vis_blob
