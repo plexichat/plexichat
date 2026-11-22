@@ -560,8 +560,6 @@ class StickerManager(StickerUsageDiscoveryMixin):
         )
         self._db.execute("DELETE FROM sticker_stickers WHERE pack_id = ?", (pack_id,))
         self._db.execute("DELETE FROM sticker_packs WHERE id = ?", (pack_id,))
-        # Drop the resolved pack ids of every sticker that just disappeared.
-        self._sticker_pack_id_cache().invalidate_pack(pack_id)
         for row in sticker_rows:
             self._purge_sticker_media(user_id, row["url"])
         return True
@@ -772,8 +770,6 @@ class StickerManager(StickerUsageDiscoveryMixin):
         elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only remove stickers from own packs")
         self._db.execute("DELETE FROM sticker_stickers WHERE id = ?", (sticker_id,))
-        # Evict the warm verdict before any caller can reuse the deleted id.
-        self._sticker_pack_id_cache().invalidate_sticker(sticker_id)
         self._db.execute(
             "UPDATE sticker_packs SET updated_at = ? WHERE id = ?",
             (self._get_timestamp(), pack.id),
