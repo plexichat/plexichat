@@ -176,11 +176,11 @@ def render_swagger_ui_page(
     )
 
     html = html.replace(
-        "<body>", '<body class="plexi-openapi-page plexi-swagger-page">'
+        "<body>", '<body class="plexi-openapi-page plexi-swagger-page"><a class="skip-link" href="#main-content">Skip to content</a>'
     )
     html = html.replace(
         '<div id="swagger-ui">',
-        f'<div class="docs-layout">{sidebar_html}<main class="docs-main"><div class="docs-content">{shell_header}<div class="content-container"><div id="swagger-ui">',
+        f'<div class="docs-layout">{sidebar_html}<main class="docs-main" id="main-content"><div class="docs-content">{shell_header}<div class="content-container"><div id="swagger-ui">',
     )
     html = html.replace(
         "</body>", f"</div></div>{footer_html}</div></main></div></body>"
@@ -245,10 +245,10 @@ def render_redoc_page(request: Request, title: str, openapi_url: str) -> HTMLRes
         "Searchable REST reference for every /api/v1 endpoint, grouped by tag.",
     )
 
-    html = html.replace("<body>", '<body class="plexi-openapi-page plexi-redoc-page">')
+    html = html.replace("<body>", '<body class="plexi-openapi-page plexi-redoc-page"><a class="skip-link" href="#main-content">Skip to content</a>')
     html = html.replace(
         f'<redoc spec-url="{openapi_url}"></redoc>',
-        f'<div class="docs-layout">{sidebar_html}<main class="docs-main"><div class="docs-content">{shell_header}<div class="content-container"><redoc spec-url="{openapi_url}"></redoc>',
+        f'<div class="docs-layout">{sidebar_html}<main class="docs-main" id="main-content"><div class="docs-content">{shell_header}<div class="content-container"><redoc spec-url="{openapi_url}"></redoc>',
     )
     html = html.replace("</body>", f"</div>{footer_html}</div></main></div></body>")
     html = html.replace("</head>", f"<style>{build_brand_styles(conf)}</style></head>")
