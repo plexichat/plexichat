@@ -618,6 +618,37 @@ class LifecycleMixin(AuthManagerProtocol):
                 row["user_id"], session_id, "Session revoked"
             )
 
+    def _refresh_binding_ok(self, row, ip_address, user_agent) -> bool:
+        """Fail-closed IP/UA binding check shared by refresh rotation and by
+        the replay-revocation branch. Both paths consume a presented bearer and
+        both must reject a valid-secret-but-wrong-context credential before it
+        can change state; keeping one implementation prevents them drifting
+        (the recurring mirror-parity theme in this codebase).
+
+        Missing/corrupt binding material fails closed just as it does in the
+        live verifier -- never silently skip the comparison when binding is on.
+        """
+        if not self._config.get("security", {}).get("token_binding", False):
+            return True
+        if not ip_address:
+            return False
+        stored_ip_index = row.get("ip_index") if row else None
+        if not isinstance(stored_ip_index, str) or not stored_ip_index:
+            return False
+        if not hmac.compare_digest(
+            stored_ip_index, self.crypto.fast_blind_index(ip_address, "ip_address")
+        ):
+            return False
+        if not user_agent:
+            return False
+        stored_ua_index = row.get("ua_index") if row else None
+        if not isinstance(stored_ua_index, str) or not stored_ua_index:
+            return False
+        current_ua_index = self._ua_index(user_agent)
+        if not isinstance(current_ua_index, str) or not current_ua_index:
+            return False
+        return hmac.compare_digest(stored_ua_index, current_ua_index)
+
     def refresh_session(
         self,
         token: str,
@@ -633,8 +664,18 @@ class LifecycleMixin(AuthManagerProtocol):
         # Replay guard: a token that was already rotated away must never be
         # accepted a second time. Reuse means the pre-rotation bearer leaked,
         # so revoke the whole session instead of silently returning None.
+        # N720 follow-up: this branch sits BEFORE the normal secret/context
+        # checks (a rotated token's secret no longer matches the live row), so
+        # it must re-verify the presented IP/UA itself. Previously it revoked on
+        # a valid-secret-but-wrong-context bearer without ever checking the
+        # binding, i.e. the same stale-context availability DoS N720 closed in
+        # logout(). Replay from the bound context still revokes (leak detection
+        # is intact); a wrong-context or unbound attempt fails closed and
+        # changes nothing.
         rotated_key = f"refresh:{parsed['id']}:{hash_token(parsed['secret'])}"
         if refresh_replay_guard.contains(rotated_key):
+            if not self._refresh_binding_ok(row, ip_address, user_agent):
+                return None
             self._revoke_for_refresh_replay(parsed["id"], row)
             return None
         # The session secret must be verified, not just the (enumerable) ID,
@@ -657,27 +698,9 @@ class LifecycleMixin(AuthManagerProtocol):
         # revocation (availability) even though the attacker could not use the
         # new token from that host. Deny BEFORE consume() so a stolen-context
         # attempt changes nothing and leaves the victim's session intact.
-        # Missing/corrupt binding material fails closed just as it does in the
-        # verifier -- never silently skip the comparison when binding is on.
-        if self._config.get("security", {}).get("token_binding", False):
-            if not ip_address:
-                return None
-            stored_ip_index = row.get("ip_index")
-            if not isinstance(stored_ip_index, str) or not stored_ip_index:
-                return None
-            current_ip_index = self.crypto.fast_blind_index(
-                ip_address, "ip_address"
-            )
-            if not hmac.compare_digest(stored_ip_index, current_ip_index):
-                return None
-            if not user_agent:
-                return None
-            stored_ua_index = row.get("ua_index")
-            if not isinstance(stored_ua_index, str) or not stored_ua_index:
-                return None
-            current_ua_index = self._ua_index(user_agent)
-            if not hmac.compare_digest(stored_ua_index, current_ua_index):
-                return None
+        # Shared with the replay-revocation branch above via _refresh_binding_ok.
+        if not self._refresh_binding_ok(row, ip_address, user_agent):
+            return None
         # Atomically claim the still-current token. ``contains`` above detects
         # already-rotated tokens whose hash no longer matches the live row;
         # this consume closes the check-then-add race where two concurrent
