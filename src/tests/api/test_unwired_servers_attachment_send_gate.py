@@ -2,20 +2,16 @@
 
 ``_require_attachment_send_access`` in ``api/routes/channels/attachments.py``
 guards attachment uploads addressed by a server channel's linked
-``conversation_id`` (an alias ``get_channel`` cannot resolve as a channel id).
-It reverse-resolves the alias and requires a live view, timeout and
-``messages.send`` grant. When the servers module is unwired that reverse lookup
-cannot be evaluated, but the ``srv_channels.conversation_id`` row still exists
-in the DB, so skipping the gate let any participant upload into a private
-channel whose grants were never checked.
+``conversation_id``. The route also accepts a bare conversation id as a URL
+alias, and conversation *participation* is seeded for every server member
+independent of ``messages.send``. Without this gate a member of a private
+channel could upload an attachment "to" it through the alias, consuming
+storage quota and planting content without a send grant.
 
-Invariant (same as ``test_unwired_dependency_fails_closed``):
-
-    A check that cannot be evaluated because its dependency is unwired must
-    DENY, not skip.
-
-The wired controls keep this non-vacuous: fail-closed must not become a
-blanket denial of genuine DM/group uploads.
+The gate used to ``return`` (allow) when the servers module was unwired, even
+though a backing private-channel alias can exist in the DB independently of
+that module. Deny in that case; a wired store whose reverse lookup finds no
+backing channel still allows a genuine DM upload below.
 
 Run with::
 
@@ -29,46 +25,43 @@ from src.api.routes.channels.attachments import _require_attachment_send_access
 pytestmark = [pytest.mark.unit, pytest.mark.security]
 
 USER = 42
-ADDR = 6000  # conversation-id alias in the URL
-CHANNEL = 7000
-SERVER = 8000
+ADDR = 7000
+CHANNEL = 7100
+SERVER = 7200
 
 
-class _WiredGenuineDM:
-    """Wired store with no backing channel: a genuine DM/group."""
+class _NoBackingChannel:
+    """Wired store: no server-channel signal at all -> genuine DM/group."""
 
     def get_channel_by_conversation(self, conversation_id):
         return None
 
 
 class _WiredPrivateChannelNoSend:
-    """Wired store whose alias maps to a real channel without a send grant."""
+    """Wired store: alias resolves to a channel with no send grant."""
 
     def get_channel_by_conversation(self, conversation_id):
         return {"id": CHANNEL, "server_id": SERVER}
 
     def get_channel(self, channel_id, user_id):
-        return object()  # view grant present
+        return object() if channel_id == CHANNEL else None
 
     def is_timed_out(self, user_id, server_id):
         return False
 
     def has_permission(self, user_id, server_id, permission, channel_id):
-        return False  # messages.send denied -> fail closed
+        return False
 
 
 def test_unwired_denies_attachment_send_gate():
-    """An unwired servers module must deny, not skip, the send gate."""
     with pytest.raises(PermissionError):
         _require_attachment_send_access(None, USER, ADDR)
 
 
 def test_wired_genuine_dm_still_allowed():
-    """Control: a wired store with no backing channel still allows a DM."""
-    _require_attachment_send_access(_WiredGenuineDM(), USER, ADDR)  # no raise
+    _require_attachment_send_access(_NoBackingChannel(), USER, ADDR)  # no raise
 
 
-def test_wired_private_channel_without_send_grant_denies():
-    """Control: a wired alias still fails closed without messages.send."""
+def test_wired_private_channel_no_send_denies():
     with pytest.raises(PermissionError):
         _require_attachment_send_access(_WiredPrivateChannelNoSend(), USER, ADDR)
