@@ -237,6 +237,22 @@ DOCUMENTED_MISMATCHES = {
         "message channel; intentional per-channel check."
     ),
     (
+        "core/automod/actions/alert.py",
+        "_moderator_can_view_channel",
+        "has_permission",
+        "channels.view",
+        _CHANNEL,
+    ): (
+        "Alert fan-out gates attaching the private offending-message body on "
+        "whether the moderator can view the SPECIFIC private channel the "
+        "violation occurred in -- the same per-channel visibility pattern as "
+        "notifications _filter_recipients_by_channel_view (documented above). "
+        "This is a read-only privacy check that fails closed on an unwired "
+        "store, missing channel, or any lookup error, and authorizes no "
+        "server-level write; channel scope is required to honour view grants/"
+        "denials and avoid leaking private content to a denied-view moderator."
+    ),
+    (
         "core/servers/manager/base.py",
         "get_channel",
         "has_permission",
