@@ -205,6 +205,13 @@ class EditHistoryService(BaseService):
         if not msg_row:
             raise MessageNotFoundError("Message not found")
 
+        # A soft-delete blanks the live content but leaves the prior versions
+        # in msg_edit_history. Treat a deleted message as nonexistent so the
+        # tombstone cannot be bypassed to recover redacted text. Mirrors the
+        # fail-closed guard in record_edit.
+        if msg_row.get("deleted"):
+            raise MessageNotFoundError("Message not found")
+
         conversation_id = msg_row["conversation_id"]
 
         # Verify participant
@@ -268,6 +275,11 @@ class EditHistoryService(BaseService):
         """
         msg_row = self._message_repo.get_by_id(message_id)
         if not msg_row:
+            raise MessageNotFoundError("Message not found")
+
+        # Mirror get_edit_history: a deleted message is a tombstone and its
+        # prior version count must not be observable either.
+        if msg_row.get("deleted"):
             raise MessageNotFoundError("Message not found")
 
         conversation_id = msg_row["conversation_id"]
