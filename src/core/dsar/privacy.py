@@ -59,21 +59,51 @@ INTERNAL_EXPORT_FIELDS: FrozenSet[str] = frozenset(
         "external_id_encrypted",
         "old_content_encrypted",
         "url_encrypted",
+        # Residual ciphertext reachable through ``SELECT *`` collectors that
+        # the original denylist missed: notification previews are encrypted
+        # with a deterministic KEK, and poll questions may be stored ONLY as
+        # ciphertext (the plaintext column is blank when at-rest encryption
+        # is enabled). Both were shipped raw in JSON and ZIP artifacts.
+        "content_preview_encrypted",
+        "question_encrypted",
+        "text_encrypted",
+        "option_encrypted",
+        "content_encrypted",
     }
 )
+
+# Fail-closed suffix rule: a future collector that projects a new
+# secret/ciphertext column via ``SELECT *`` must not leak it just because
+# nobody remembered to add the literal name to the denylist above. These
+# suffixes only ever mark internal secret/ciphertext material in this schema;
+# ordinary metadata (checksums, indexes, fingerprints, ids) is unaffected.
+INTERNAL_EXPORT_FIELD_SUFFIXES: Tuple[str, ...] = (
+    "_encrypted",
+    "_hash",
+    "_salt",
+    "_nonce",
+)
+
+
+def _is_internal_export_field(key: Any) -> bool:
+    """Whether a mapping key names an internal-only secret/path field."""
+    return key in INTERNAL_EXPORT_FIELDS or (
+        isinstance(key, str) and key.endswith(INTERNAL_EXPORT_FIELD_SUFFIXES)
+    )
 
 
 def redact_internal_fields(value: Any) -> Any:
     """Recursively drop internal-only secret/path fields from an export payload.
 
     The input is never mutated: a new structure of the same shape is returned
-    with every :data:`INTERNAL_EXPORT_FIELDS` key removed at any nesting depth.
+    with every :data:`INTERNAL_EXPORT_FIELDS` key (and any key carrying a
+    secret/ciphertext suffix) removed at any nesting depth.
     """
     if isinstance(value, dict):
         return {
             key: redact_internal_fields(child)
             for key, child in value.items()
-            if key not in INTERNAL_EXPORT_FIELDS
+            if not _is_internal_export_field(key)
         }
     if isinstance(value, list):
         return [redact_internal_fields(child) for child in value]
@@ -447,6 +477,7 @@ __all__ = [
     "REDACTED",
     "THIRD_PARTY_PII_FIELDS",
     "INTERNAL_EXPORT_FIELDS",
+    "INTERNAL_EXPORT_FIELD_SUFFIXES",
     "redact_internal_fields",
     "ExportScopeViolation",
     "SUBJECT_ID_FIELDS",
