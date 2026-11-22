@@ -157,7 +157,7 @@ An invalid or unrecognized emoji returns `400 Invalid emoji` on this route, matc
 
 ## Remove all reactions of one emoji
 
-Removes every reaction of a specific emoji from a message. This is a moderation action that requires the `manage messages` permission. The server emits a `MESSAGE_REACTION_REMOVE_EMOJI` event so clients can update reaction counts live.
+Removes every reaction of a specific emoji from a message. This is a moderation action that requires the `messages.manage` permission. The server emits a `MESSAGE_REACTION_REMOVE_EMOJI` event so clients can update reaction counts live.
 
 ```
 DELETE /api/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/all
@@ -205,7 +205,7 @@ curl -X DELETE https://api.plexichat.com/api/v1/channels/123456789012345678/mess
 
 ## Clear all reactions
 
-Removes all reactions from a message. Requires the `manage messages` permission. The server emits a `MESSAGE_REACTION_REMOVE_ALL` event.
+Removes all reactions from a message. Requires the `messages.manage` permission. The server emits a `MESSAGE_REACTION_REMOVE_ALL` event.
 
 ```
 DELETE /api/v1/channels/{channel_id}/messages/{message_id}/reactions
