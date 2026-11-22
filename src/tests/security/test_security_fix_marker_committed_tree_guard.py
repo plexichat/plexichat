@@ -478,6 +478,57 @@ _REPLAY_SCOPE_DUAL_VIEW_RECHECK_BLOCK = (
 )
 
 
+# N757 (459f1a32): the LIVE dispatch gate is the final choke point that
+# re-checks a socket's CURRENT channel/DM access at send time, symmetric with
+# the RESUME replay gate. The producer's ``user_ids`` audience is resolved
+# (and often memoized) before the send, so a viewer removed from the channel
+# or conversation between resolution and dispatch still received the private
+# frame on their open socket. Pin the definition, the fail-closed denial arms,
+# and BOTH application sites independently so a stale staged copy of
+# dispatcher.py that drops either call (or guts the denial) is caught by name.
+_N757_LIVE_GATE_DEF = (
+    "    @staticmethod\n"
+    "    def _live_dispatch_authorized(\n"
+    "        user_id: Optional[int], scope: Optional[tuple]\n"
+    "    ) -> bool:\n"
+    '        """Authoritative per-dispatch re-check for a LIVE connection.'
+)
+_N757_LIVE_GATE_FANOUT_CALL = (
+    "            if not self._live_dispatch_authorized(\n"
+    '                getattr(connection, "user_id", None), live_scope\n'
+    "            ):\n"
+    "                logger.debug(\n"
+    '                    f"Dropping live {event.event_type.value} for connection "\n'
+    '                    f"{connection.connection_id}: no longer authorized for its scope"\n'
+    "                )\n"
+    "                continue"
+)
+_N757_LIVE_GATE_SINGLE_CALL = (
+    "        # Same authoritative per-dispatch gate as the fan-out path: a LIVE\n"
+    "        # socket must not receive a private channel/DM event after the viewer\n"
+    "        # lost access, even when this single-target helper is used.\n"
+    "        if not self._live_dispatch_authorized(\n"
+    '            getattr(connection, "user_id", None), _event_replay_scope(event)\n'
+    "        ):\n"
+    "            return False"
+)
+_N757_LIVE_GATE_CHANNEL_DENIAL = (
+    "            try:\n"
+    "                return bool(get_channel(channel_id, user_id))\n"
+    "            except Exception as e:\n"
+    "                logger.debug(\n"
+    '                    f"Live dispatch channel re-auth failed for user {user_id}: {e}"\n'
+    "                )\n"
+    "                return True"
+)
+_N757_LIVE_GATE_DM_DENIAL = (
+    "        # DM / payload-derived scope: accept only on a positive verdict.\n"
+    "        # Track whether any authoritative source actually returned a verdict so\n"
+    "        # an entirely unavailable source does not fail every event closed.\n"
+    "        verified = False"
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -1603,6 +1654,68 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "that keeps only one view (or returns early) replays private "
             "frames to a viewer whose DM participation or channel view was "
             "revoked while the socket was gone"
+        ),
+    ),
+    # N757 (459f1a32): the LIVE dispatch gate must remain applied in BOTH
+    # dispatch_event (fan-out) and dispatch_to_connection (single target), and
+    # must keep its verified-denial arms. Each marker is distinctive to the
+    # repaired dispatcher.py blob, so a stale staged copy dropping a call or
+    # the fail-closed verdict is caught by name.
+    CommittedFixMarker(
+        key="459f1a32-live-dispatch-gate-definition",
+        path="src/api/websocket/dispatcher.py",
+        marker=_N757_LIVE_GATE_DEF,
+        why=(
+            "459f1a32: GatewayDispatcher._live_dispatch_authorized re-checks "
+            "current channel/DM access at the final live-send choke point; a "
+            "stale staged copy of dispatcher.py drops the helper entirely and "
+            "restores the leak where a viewer removed after audience resolution "
+            "still receives private frames on the open socket"
+        ),
+    ),
+    CommittedFixMarker(
+        key="459f1a32-live-dispatch-gate-fanout-call",
+        path="src/api/websocket/dispatcher.py",
+        marker=_N757_LIVE_GATE_FANOUT_CALL,
+        why=(
+            "459f1a32: dispatch_event applies the live gate to every recipient "
+            "after resolving the authoritative scope; a stale staged copy "
+            "drops this call and the fan-out trusts the producer's pre-resolved "
+            "audience, leaking private events to removed viewers"
+        ),
+    ),
+    CommittedFixMarker(
+        key="459f1a32-live-dispatch-gate-single-target-call",
+        path="src/api/websocket/dispatcher.py",
+        marker=_N757_LIVE_GATE_SINGLE_CALL,
+        why=(
+            "459f1a32: dispatch_to_connection applies the same live gate; a "
+            "stale staged copy leaves this single-target helper unguarded so a "
+            "kicked viewer/removed DM participant still receives private frames"
+        ),
+    ),
+    CommittedFixMarker(
+        key="459f1a32-live-dispatch-gate-channel-verified-denial",
+        path="src/api/websocket/dispatcher.py",
+        marker=_N757_LIVE_GATE_CHANNEL_DENIAL,
+        why=(
+            "459f1a32: a known server channel whose get_channel verdict is "
+            "falsy is a verified denial and must withhold the frame; a stale "
+            "staged copy that returns True here (or drops the existence probe) "
+            "delivers private channel content to a viewer who lost channels.view"
+        ),
+    ),
+    CommittedFixMarker(
+        key="459f1a32-live-dispatch-gate-dm-verified-denial",
+        path="src/api/websocket/dispatcher.py",
+        marker=_N757_LIVE_GATE_DM_DENIAL,
+        why=(
+            "459f1a32: the DM/payload-derived branch tracks whether an "
+            "authoritative source positively answered before returning the "
+            "verdict, so a verified denial fails closed while an entirely "
+            "unwired source does not silence all events; a stale staged copy "
+            "drops the tracking and either fails open on denial or fails every "
+            "event closed"
         ),
     ),
     # 578cf7c6: feature-route bot-token owner guard. User-scoped feature routes
@@ -3113,5 +3226,57 @@ def test_admin_migration_read_scope_pins_live_at_head_and_non_vacuous(
         assert not present, (
             f"synthetic stale migration read-scope revert of {key} was not caught"
         )
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+# N757 (459f1a32) LIVE dispatch gate pins. Kept explicit so none of the five
+# anchors can be dropped from the registry silently. All are positive markers;
+# non-vacuity comes from the parametrized
+# test_synthetic_reverted_blob_is_flagged plus the live-HEAD tie below.
+N757_LIVE_DISPATCH_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "459f1a32-live-dispatch-gate-definition",
+        "459f1a32-live-dispatch-gate-fanout-call",
+        "459f1a32-live-dispatch-gate-single-target-call",
+        "459f1a32-live-dispatch-gate-channel-verified-denial",
+        "459f1a32-live-dispatch-gate-dm-verified-denial",
+    }
+)
+
+
+def test_n757_live_dispatch_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The N757 live-dispatch gate pins are registered, live and falsifiable.
+
+    Each key resolves to a real committed blob carrying its distinctive anchor,
+    points at dispatcher.py, and is rejected by a synthetic stale blob with the
+    fix erased. This ties definition + both application sites + verified-denial
+    arms together so dropping any one of them (or letting a stale staged copy of
+    dispatcher.py revert the fix) fails here as well as in the parametrized
+    synthetic-removal test.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert N757_LIVE_DISPATCH_PIN_KEYS <= set(keys), (
+        "N757 live-dispatch key set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(N757_LIVE_DISPATCH_PIN_KEYS - set(keys))}"
+    )
+    assert len(N757_LIVE_DISPATCH_PIN_KEYS) == 5
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    for key in sorted(N757_LIVE_DISPATCH_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == "src/api/websocket/dispatcher.py", (
+            f"{key} points at {record.path!r}, expected dispatcher.py"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_dispatcher_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# live dispatch gate erased\n"
+
+        present, detail = _evaluate(record, stale_dispatcher_blob)
+        assert not present, f"synthetic N757 revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
