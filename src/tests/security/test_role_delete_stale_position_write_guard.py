@@ -29,7 +29,8 @@ def test_delete_role_rejects_role_promoted_between_check_and_write(
     servers.assign_role(owner.id, server.id, moderator.id, mod_role.id)
 
     target = servers.create_role(owner.id, server.id, "target", permissions={})
-    servers.move_role(owner.id, target.id, 5)
+    original_position = 5
+    servers.move_role(owner.id, target.id, original_position)
 
     db = servers.role_handler.db
     original_execute = db.execute
@@ -58,5 +59,9 @@ def test_delete_role_rejects_role_promoted_between_check_and_write(
         "SELECT position, deleted FROM srv_roles WHERE id = ?", (target.id,)
     )
     assert row is not None
-    assert row["position"] == 20
+    # The CAS guard rejects the stale write with RoleHierarchyError, and
+    # delete_role's except block rolls the transaction back. That rollback
+    # also undoes the injected promotion, so the role ends up back at its
+    # original position -- not at 20 -- and must still be present.
+    assert row["position"] == original_position
     assert row["deleted"] == 0
