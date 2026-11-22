@@ -41,6 +41,7 @@ def _invalidate_unread_after_delete() -> None:
     except Exception as e:
         logger.debug(f"Failed to invalidate unread aggregate cache on delete: {e}")
 
+
 # A single bulk request must never be able to grow without bound. Both the
 # delete and archive paths draw from the same cap so one cannot silently
 # drift past the other (the archive path previously had no cap at all).
@@ -326,9 +327,7 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
             timeout_checker = getattr(servers, "is_timed_out", None)
             if callable(timeout_checker):
                 try:
-                    timed_out = bool(
-                        timeout_checker(user_id, authoritative_server_id)
-                    )
+                    timed_out = bool(timeout_checker(user_id, authoritative_server_id))
                 except Exception:
                     timed_out = True  # unproven -> fail closed
                 if timed_out:
