@@ -181,8 +181,8 @@ _REVERTS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "no-dm-participant-import",
-        "            clear_dm_participant_cache,\n",
-        "",
+        "from src.core.events.router import clear_presence_audience_cache, clear_dm_participant_cache",
+        "from src.core.events.router import clear_presence_audience_cache",
     ),
     (
         "no-channel-recipient-import",
