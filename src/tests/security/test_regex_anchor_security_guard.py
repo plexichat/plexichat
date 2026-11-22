@@ -44,9 +44,9 @@ ROOT = Path(__file__).resolve().parents[3]
 # Test/self-test trees and console entry points are not request-path validators.
 EXCLUDED_PATH_COMPONENTS = frozenset({"tests", "selftest", "cli"})
 
-# Neutralization signals that make a trailing newline harmless in the enclosing
-# function. Kept deliberately concrete: a broad "whitespace" guess would let a
-# new validator pass because of an unrelated strip elsewhere in the module.
+# Descriptive vocabulary of neutralization signals (the detector below is
+# name-aware and does NOT accept a bare substring: ``_name_aware_mitigation``
+# requires the marker to be applied to the value actually matched).
 _CONTROL_SIGNALS = (
     "reject_control_characters",
     "CONTROL_CHARACTERS",
@@ -253,6 +253,94 @@ DOCUMENTED_SAFE: tuple[tuple[str, str, str, str], ...] = (
         "and verification fails closed on mismatch. Not a user-controlled "
         "authorization gate.",
     ),
+    # ---- previously masked by a whole-function marker substring ------------
+    # Each of these was suppressed only by an unrelated `.strip()`/control/allowlist
+    # marker elsewhere in its function. Reviewed individually below; all are
+    # genuinely neutralized upstream, none is a path/DB/authz sink.
+    (
+        "src/core/automod/rules/links.py",
+        "_extract_host",
+        r"^\d{1,3}(?:\.\d{1,3}){3}$",
+        "The host is derived from a token produced by `_TOKEN_SPLIT = "
+        "re.compile(r'\\s+')`, so it cannot contain a trailing newline; the "
+        "strict digit/dot class excludes NUL. Automod link/domain filtering "
+        "only; no newline-bearing value reaches the sink.",
+    ),
+    (
+        "src/core/automod/schema.py",
+        "create_tables",
+        r"^[a-zA-Z0-9_]+$",
+        "One-shot migration over a hardcoded column-name list "
+        "(`['id', 'server_id', ...]`), not user input. The strict identifier "
+        "class is a belt-and-braces filter before DDL interpolation and no "
+        "list entry carries a control byte.",
+    ),
+    (
+        "src/core/reactions/manager/validation.py",
+        "_is_valid_unicode_emoji",
+        r"^[#*0-9]\uFE0F?\u20E3$",
+        "The only production caller (_validate_emoji) .strip()s the emoji before "
+        "dispatch; the method's per-codepoint scan rejects C0 (0x20 and below), "
+        "DEL and rejected unicode for every non-keycap input, and the keycap "
+        "class itself captures no control byte.",
+    ),
+    (
+        "src/core/suite/stash/stash_manager_base.py",
+        "_is_public_http_host",
+        r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+        "`normalized = str(host).strip().rstrip('.').lower()` strips the whole "
+        "value before `normalized.split('.')`; each label derives from that "
+        "stripped string, so no trailing newline can reach the label match.",
+    ),
+    (
+        "src/core/telemetry/__init__.py",
+        "_normalize_endpoint_uncached",
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        "Folds a high-cardinality route segment into an analytics label only; "
+        "`part` comes from an already-split route and never gates a security "
+        "decision, so a trailing newline cannot change a canonical label.",
+    ),
+    (
+        "src/core/telemetry/__init__.py",
+        "_normalize_endpoint_uncached",
+        r"^[A-Za-z0-9_\-]{16,}$",
+        "Same telemetry-label rationale as the UUID pattern above; the match "
+        "only selects a placeholder for an analytics label.",
+    ),
+    (
+        "src/core/tls/config_validation.py",
+        "validate_hostname",
+        r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$",
+        "`cap_config_string` calls `reject_control_characters` and `.strip()` "
+        "is applied before dot-splitting; each label is matched against a "
+        "strict DNS class, so no control byte reaches the returned hostname.",
+    ),
+    (
+        "src/core/tls/config_validation.py",
+        "validate_fingerprint",
+        r"^[0-9a-fA-F]{64}$",
+        "`cap_config_string` rejects control characters; the value is "
+        "stripped/lowercased and the strict 64-hex class is matched on the "
+        "colon-compacted value, so NUL/newline cannot reach the stored pin.",
+    ),
+    (
+        "src/core/tls/ssl_settings.py",
+        "validate_cipher_string",
+        r"(?:^|[-+_])SHA1?(?:$|[-+_])",
+        "A weak-cipher detector, not a validator returning a value: tokens come "
+        "from `re.split(r'[\\s,:]+', text)` plus `token.strip()`, so no "
+        "whitespace survives into `upper`; a trailing newline cannot hide a "
+        "SHA-1 token.",
+    ),
+    (
+        "src/core/voice/signaling/sdp.py",
+        "set_bitrate",
+        r"^(a=fmtp:\d+\s+)(.*)$",
+        "The caller validates the offer with `validate_sdp()` first "
+        "(SDPParser line splitting + control-byte rejection) and this rewrite "
+        "is SDP media formatting, not a path/DB/authz sink; `line` comes from "
+        "`sdp.split('\\n')`.",
+    ),
 )
 
 
@@ -265,6 +353,10 @@ class RegexCall:
     pattern: str
     arg: str
     func_source: str
+    # Name-aware neutralization: populated at extraction time so a bare
+    # substring elsewhere in the function can never neutralize this call.
+    value_names: frozenset[str] = frozenset()
+    mitigation: str | None = None
 
     @property
     def location(self) -> str:
@@ -386,6 +478,131 @@ def _enclosing_function(tree: ast.AST, node: ast.AST):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Name-aware mitigation: a marker only counts when it reaches the matched value
+# ---------------------------------------------------------------------------
+
+# Calls whose argument is genuinely protected from a trailing NUL/newline.
+_SANITIZER_CALLS = frozenset(
+    {
+        "reject_control_characters",
+        "strip_control_characters",
+        "is_valid_control",
+        "is_control_character",
+        "cap_config_string",
+    }
+)
+_CONTROL_CONTAINERS = frozenset({"CONTROL_CHARACTERS", "_SDP_UNICODE_CONTROL_CHARS"})
+_CONTROL_CONTAINER_METHODS = frozenset({"search", "match", "fullmatch", "findall", "sub"})
+_STRIP_METHODS = frozenset({"strip", "lstrip", "rstrip"})
+_CONTROL_ORDINALS = frozenset({0x1F, 0x20, 0x7F})
+
+
+def _call_name(call: ast.Call) -> str:
+    func = call.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return ""
+
+
+def _names_in(node: ast.AST | None) -> set[str]:
+    out: set[str] = set()
+    if node is not None:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Name):
+                out.add(sub.id)
+    return out
+
+
+def _names_in_args(call: ast.Call) -> set[str]:
+    out: set[str] = set()
+    for arg in call.args:
+        out |= _names_in(arg)
+    return out
+
+
+def _has_strip_call(node: ast.AST) -> bool:
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call) and _call_name(sub) in _STRIP_METHODS:
+            return True
+    return False
+
+
+def _literal_int(node: ast.AST) -> int | None:
+    try:
+        value = ast.literal_eval(node)
+    except Exception:
+        return None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _name_aware_mitigation(fn: ast.AST | None, value_node: ast.AST | None) -> str | None:
+    """Neutralization reason only when a marker reaches the matched value.
+
+    A marker on a DIFFERENT variable (``y = x.strip()`` followed by
+    ``match(x)``, ``reject_control_characters(other)``, a dead ``fullmatch``
+    local, or an allowlist check on another name) must NOT neutralize a call.
+    """
+    if fn is None or value_node is None:
+        return None
+    value_names = _names_in(value_node)
+    if not value_names:
+        return None
+    # Inline mitigation on the matched expression itself: re.match(p, x.strip()).
+    if _has_strip_call(value_node):
+        return "value strip (.strip()"
+
+    reasons: list[tuple[set[str], str]] = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and node.value is not None:
+            targets: set[str] = set()
+            for target in node.targets:
+                targets |= _names_in(target)
+            if targets and _has_strip_call(node.value):
+                reasons.append((targets, "value strip (.strip()"))
+        if isinstance(node, ast.Call):
+            cname = _call_name(node)
+            if cname in _SANITIZER_CALLS or cname.startswith("_reject_sdp_control"):
+                args = _names_in_args(node)
+                if args:
+                    reasons.append((args, f"control-char rejection ({cname})"))
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id in _CONTROL_CONTAINERS
+                and func.attr in _CONTROL_CONTAINER_METHODS
+            ):
+                args = _names_in_args(node)
+                if args:
+                    reasons.append((args, f"control-char rejection ({func.value.id})"))
+        if isinstance(node, ast.Compare):
+            left = _names_in(node.left)
+            for op, comp in zip(node.ops, node.comparators):
+                if isinstance(op, (ast.In, ast.NotIn)) and left:
+                    allowlist = isinstance(
+                        comp, (ast.Set, ast.List, ast.Tuple, ast.Dict)
+                    ) or (
+                        isinstance(comp, ast.Name)
+                        and (comp.id.isupper() or comp.id in _CONTROL_CONTAINERS)
+                    )
+                    if allowlist:
+                        reasons.append((left, "allowlist membership"))
+                if (
+                    isinstance(node.left, ast.Call)
+                    and _call_name(node.left) == "ord"
+                    and isinstance(op, (ast.Lt, ast.LtE, ast.Eq, ast.Gt, ast.GtE))
+                    and _literal_int(comp) in _CONTROL_ORDINALS
+                ):
+                    reasons.append((left, "control-char rejection (ord)"))
+    for protected, reason in reasons:
+        if value_names <= protected:
+            return reason
+    return None
+
+
 def _compiled_anchor_patterns(tree: ast.AST) -> dict[str, str]:
     out: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -422,14 +639,17 @@ def _extract_calls(source: str, path: str) -> list[RegexCall]:
 
         pattern: object = None
         arg = ""
+        value_node: ast.AST | None = None
         if receiver == "re":
             pattern = _literal(node.args[0]) if node.args else None
             if len(node.args) > 1:
                 arg = ast.unparse(node.args[1])
+                value_node = node.args[1]
         elif receiver in compiled:
             pattern = compiled[receiver]
             if node.args:
                 arg = ast.unparse(node.args[0])
+                value_node = node.args[0]
         if not isinstance(pattern, str) or not _has_end_anchor(pattern):
             continue
 
@@ -449,6 +669,8 @@ def _extract_calls(source: str, path: str) -> list[RegexCall]:
                 pattern=pattern,
                 arg=arg,
                 func_source=func_source,
+                value_names=frozenset(_names_in(value_node)),
+                mitigation=_name_aware_mitigation(owner, value_node),
             )
         )
     return calls
@@ -475,17 +697,13 @@ def _safe_by_construction(call: RegexCall) -> bool:
 
 
 def _neutralization(call: RegexCall) -> str | None:
-    src = call.func_source
-    low = src.lower()
-    for token in _CONTROL_SIGNALS:
-        if token.lower() in low:
-            return f"control-char rejection ({token})"
-    for token in _STRIP_SIGNALS:
-        if token in src:
-            return f"value strip ({token})"
-    if _ALLOWLIST_RE.search(src):
-        return "allowlist membership"
-    return None
+    """Mitigation reason, only when the marker reaches the matched value.
+
+    Previously this was a whole-function substring test, so a dead ``.strip()``
+    or a control check on another variable neutralized the call vacuously. The
+    reason is now computed by ``_name_aware_mitigation`` at extraction time.
+    """
+    return call.mitigation
 
 
 def _documented_reason(call: RegexCall, documented=DOCUMENTED_SAFE) -> str | None:
@@ -592,6 +810,62 @@ def test_self_test_accepts_neutralized_forms():
         "allowlist membership",
     }
     assert _offenders(calls) == []
+
+
+def test_self_test_dead_mitigation_markers_do_not_suppress_finding():
+    """A marker on a different value must not neutralize an end-anchored call.
+
+    Regression for the vacuity: the old whole-function substring check accepted
+    a ``.strip()`` on ``other``, a control check on ``other``, a dead local named
+    ``fullmatch``, and an allowlist check on ``other`` while ``match(user)``
+    stayed unguarded. Every such call must remain an offender.
+    """
+    source = """
+    import re
+    from src.core.security.hardening import reject_control_characters
+
+    def stripped_wrong_var(user):
+        other = user.strip()
+        return bool(re.match(r"^ok$", user))
+
+    def control_wrong_var(user):
+        reject_control_characters(other)
+        return bool(re.match(r"^ok$", user))
+
+    def dead_fullmatch_name(user):
+        fullmatch = 1
+        return bool(re.match(r"^ok$", user))
+
+    def allowlist_wrong_var(user):
+        return other in ALLOWED_USERS and bool(re.match(r"^ok$", user))
+    """
+    calls = _synthetic_calls(source)
+    assert len(calls) == 4
+    assert all(_neutralization(c) is None for c in calls), [
+        (c.func, _neutralization(c)) for c in calls
+    ]
+    assert len(_offenders(calls)) == 4
+
+    # Positive control: the same markers applied to the matched value neutralize.
+    live = """
+    import re
+    from src.core.security.hardening import reject_control_characters
+
+    def stripped(user):
+        user = user.strip()
+        return bool(re.match(r"^ok$", user))
+
+    def control(user):
+        reject_control_characters(user)
+        return bool(re.match(r"^ok$", user))
+
+    def allowlist(user):
+        return user in ALLOWED_USERS and bool(re.match(r"^ok$", user))
+    """
+    live_calls = _synthetic_calls(live)
+    assert len(live_calls) == 3
+    assert all(_neutralization(c) is not None for c in live_calls)
+    assert _offenders(live_calls) == []
 
 
 def test_self_test_dollar_inside_character_class_is_not_an_anchor():
