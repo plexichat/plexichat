@@ -64,7 +64,7 @@ SELECT ?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?, ?, ?
 WHERE (
     SELECT COUNT(*) FROM media_upload_sessions
     WHERE user_id = ? AND expires_at > ?
-      AND status NOT IN ('completed', 'expired')
+      AND status NOT IN ('completed', 'expired', 'redeeming')
 ) < ?
 """
 
@@ -75,6 +75,10 @@ class UploadSessionStatus(Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    # Terminal, single-use state set by the atomic CAS in
+    # ``complete_session_stream``. A session in this state has been handed to
+    # the durable-upload step and must never be redeemable (or writable) again.
+    REDEEMING = "redeeming"
     FAILED = "failed"
     EXPIRED = "expired"
 
@@ -298,7 +302,7 @@ class ChunkedUploadManager:
         # Cap concurrent active sessions per user to stop temp-file hoarding.
         active = self._db.fetch_one(
             """SELECT COUNT(*) AS cnt FROM media_upload_sessions
-               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired')""",
+               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired', 'redeeming')""",
             (user_id, int(time.time() * 1000)),
         )
         max_active_sessions = int(self._config.get("max_active_sessions_per_user", 5))
@@ -631,6 +635,27 @@ class ChunkedUploadManager:
                 error="Session expired",
             )
 
+        # Fail closed: once a session is COMPLETED (or has been handed to the
+        # single-use redemption CAS as REDEEMING) it must not accept more chunk
+        # writes. Otherwise a post-completion re-upload would run
+        # ``_record_chunk_progress`` again and reset the status to
+        # ``completed``/``in_progress``, re-opening the redeem path after it
+        # had already been consumed by a concurrent caller.
+        if session.status in (
+            UploadSessionStatus.COMPLETED,
+            UploadSessionStatus.REDEEMING,
+        ):
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error="Session is not accepting chunks",
+            )
+
         # Validate chunk index
         if chunk_index < 0 or chunk_index >= session.total_chunks:
             return ChunkUploadResult(
@@ -774,6 +799,25 @@ class ChunkedUploadManager:
                 progress_percent=0,
                 is_complete=False,
                 error="Session expired",
+            )
+
+        # Fail closed on a consumed session (see the identical guard in
+        # ``upload_chunk``): after completion/redemption no more bytes may be
+        # written, or ``_record_chunk_progress`` could reset REDEEMING back to
+        # COMPLETED and allow a second redemption.
+        if session.status in (
+            UploadSessionStatus.COMPLETED,
+            UploadSessionStatus.REDEEMING,
+        ):
+            return ChunkUploadResult(
+                success=False,
+                session_id=session_id,
+                chunk_index=chunk_index,
+                uploaded_chunks=session.uploaded_chunks,
+                total_chunks=session.total_chunks,
+                progress_percent=(session.uploaded_chunks / session.total_chunks) * 100,
+                is_complete=False,
+                error="Session is not accepting chunks",
             )
 
         if chunk_index < 0 or chunk_index >= session.total_chunks:
@@ -974,12 +1018,37 @@ class ChunkedUploadManager:
             logger.error(f"Refusing unsafe upload session temp path: {exc}")
             return None
 
+        # Single-use, owner-bound redemption. ``complete_session_stream`` used
+        # to be a pure read: two callers could both observe COMPLETED and both
+        # hand the same assembled temp file to the durable-upload pipeline,
+        # reserving storage quota twice for one upload (and racing read vs.
+        # write on the temp file). Flip the row COMPLETED -> REDEEMING with an
+        # atomic compare-and-set keyed on the owner and the last-seen
+        # ``updated_at``; exactly one caller wins and every other fails closed
+        # with ``None``. The route still cancels the row/temp file after the
+        # durable upload, and ``cancel_session`` works for any status.
+        now = int(time.time() * 1000)
+        cursor = self._db.execute(
+            """UPDATE media_upload_sessions
+               SET status = 'redeeming', updated_at = ?
+               WHERE id = ? AND user_id = ? AND status = 'completed'
+                 AND updated_at = ?""",
+            (now, session_id, user_id, session.updated_at),
+        )
+        if getattr(cursor, "rowcount", 1) == 0:
+            logger.warning(
+                f"Refusing duplicate redemption of upload session {session_id} "
+                f"for user {user_id}"
+            )
+            return None
+
         # Callers open ``session.temp_path`` verbatim to hand the assembled file
         # to the upload pipeline. Return the confined/resolved path rather than
         # the raw DB value so the confinement check cannot be bypassed by a
         # caller that trusts the returned session, or by a path swap between
         # validation and use.
         session.temp_path = confined_path
+        session.status = UploadSessionStatus.REDEEMING
         return session
 
     def cancel_session(self, session_id: str, user_id: int) -> bool:
@@ -1089,7 +1158,7 @@ class ChunkedUploadManager:
                       total_chunks, uploaded_chunks, uploaded_bytes, status,
                       created_at, updated_at, expires_at, temp_path, checksum
                FROM media_upload_sessions
-               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired')
+               WHERE user_id = ? AND expires_at > ? AND status NOT IN ('completed', 'expired', 'redeeming')
                ORDER BY created_at DESC LIMIT ?""",
             (user_id, now, safe_limit),
         )
