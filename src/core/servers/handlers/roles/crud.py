@@ -238,13 +238,21 @@ class RoleCrudMixin(RoleHandlerProtocol):
         if role.is_default and not is_owner:
             raise DefaultRoleError("Only the server owner may modify the default role")
 
+        # The hierarchy decision and the grantability guard ask the same
+        # request-invariant question: the editor's server-scoped permission set
+        # for this server. No role/membership write happens between them, so
+        # resolve the cache lookup once and share the authoritative result
+        # instead of building the same permission dict twice. Fail-closed
+        # semantics are unchanged: an empty/unreadable dict grants nothing to
+        # either gate, exactly as two separate lookups did.
+        editor_perms = self.get_permissions(user_id, role.server_id)
         # The hierarchy rule is a Decision now, so a refusal carries which rule
         # fired (capability_missing / rank_too_low) instead of one generic error.
         decision = role_edit_decision(
             user_id=user_id,
             user_roles=user_roles,
             target_position=role.position,
-            permissions=self.get_permissions(user_id, role.server_id),
+            permissions=editor_perms,
             is_owner=is_owner,
         )
         if not decision:
@@ -254,7 +262,6 @@ class RoleCrudMixin(RoleHandlerProtocol):
 
         if permissions is not None:
             validate_permission_dict(permissions)
-            editor_perms = self.get_permissions(user_id, role.server_id)
             check_permissions_grantable(editor_perms, permissions)
 
         if position is not None and position != role.position:
