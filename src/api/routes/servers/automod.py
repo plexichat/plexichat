@@ -20,6 +20,64 @@ from ..exception_mapping import raise_mapped
 router = APIRouter()
 
 
+# A violation's ``matched_content`` (and content-bearing ``metadata`` such as
+# regex/repeated examples) quotes the offending message body.  ``server.automod``
+# alone is not authority to read it: a moderator can hold that server-wide bit
+# while a channel override denies view/read on the specific private channel the
+# violation occurred in -- the audience N711/N749 already exclude from the
+# alert's notification and channel alert.  The audit-log read endpoints are a
+# third destination for the same body, so apply the same per-channel gate here.
+_VIOLATION_BODY_PERMISSIONS = ("channels.view", "messages.read")
+
+
+def _viewer_can_read_violation_body(
+    servers_mod, viewer_id, server_id, channel_id
+) -> bool:
+    """Whether ``viewer_id`` may see a violation's offending body/metadata.
+
+    Fail closed: an unwired store, a missing/unparseable channel id, or any
+    error from the permission lookup all strip the content.
+    """
+    if not channel_id:
+        return False
+    try:
+        cid = int(channel_id)
+    except (TypeError, ValueError):
+        return False
+    if not cid:
+        return False
+    for permission in _VIOLATION_BODY_PERMISSIONS:
+        try:
+            if not servers_mod.has_permission(viewer_id, server_id, permission, cid):
+                return False
+        except Exception:
+            return False
+    return True
+
+
+def _violation_response(violation, *, viewer_id, servers_mod, server_id):
+    """Serialize a violation, redacting the body when the viewer cannot read it."""
+    can_read = _viewer_can_read_violation_body(
+        servers_mod, viewer_id, server_id, violation.channel_id
+    )
+    rule_type = violation.rule_type
+    severity = violation.severity
+    return AutomodViolationResponse(
+        id=SnowflakeID(violation.id),
+        user_id=SnowflakeID(violation.user_id),
+        channel_id=SnowflakeID(violation.channel_id),
+        rule_id=SnowflakeID(violation.rule_id),
+        rule_type=rule_type.value if hasattr(rule_type, "value") else str(rule_type),
+        matched_content=violation.matched_content if can_read else "",
+        severity=severity.value if hasattr(severity, "value") else str(severity),
+        actions_taken=[
+            a.value if hasattr(a, "value") else str(a) for a in violation.actions_taken
+        ],
+        created_at=violation.created_at,
+        metadata=(violation.metadata or {}) if can_read else {},
+    )
+
+
 def _parse_id(value: object, label: str) -> int:
     """Parse an untrusted route/query id with the shared ASCII snowflake gate.
 
@@ -303,23 +361,11 @@ async def get_server_automod_violations(
         )
 
         return [
-            AutomodViolationResponse(
-                id=SnowflakeID(v.id),
-                user_id=SnowflakeID(v.user_id),
-                channel_id=SnowflakeID(v.channel_id),
-                rule_id=SnowflakeID(v.rule_id),
-                rule_type=v.rule_type.value
-                if hasattr(v.rule_type, "value")
-                else str(v.rule_type),
-                matched_content=v.matched_content,
-                severity=v.severity.value
-                if hasattr(v.severity, "value")
-                else str(v.severity),
-                actions_taken=[
-                    a.value if hasattr(a, "value") else str(a) for a in v.actions_taken
-                ],
-                created_at=v.created_at,
-                metadata=v.metadata or {},
+            _violation_response(
+                v,
+                viewer_id=current_user.user_id,
+                servers_mod=servers_mod,
+                server_id=sid,
             )
             for v in violations
         ]
@@ -363,24 +409,11 @@ async def get_server_automod_violation(
         if violation is None:
             raise HTTPException(status_code=404, detail="Violation not found")
 
-        return AutomodViolationResponse(
-            id=SnowflakeID(violation.id),
-            user_id=SnowflakeID(violation.user_id),
-            channel_id=SnowflakeID(violation.channel_id),
-            rule_id=SnowflakeID(violation.rule_id),
-            rule_type=violation.rule_type.value
-            if hasattr(violation.rule_type, "value")
-            else str(violation.rule_type),
-            matched_content=violation.matched_content,
-            severity=violation.severity.value
-            if hasattr(violation.severity, "value")
-            else str(violation.severity),
-            actions_taken=[
-                a.value if hasattr(a, "value") else str(a)
-                for a in violation.actions_taken
-            ],
-            created_at=violation.created_at,
-            metadata=violation.metadata or {},
+        return _violation_response(
+            violation,
+            viewer_id=current_user.user_id,
+            servers_mod=servers_mod,
+            server_id=sid,
         )
     except HTTPException:
         raise
