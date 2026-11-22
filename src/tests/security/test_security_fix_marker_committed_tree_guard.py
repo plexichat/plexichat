@@ -752,6 +752,14 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="2eedd2c6-plexisum-segment-range-acl-fix",
+        path="src/core/suite/sum/manager_workbooks.py",
+        marker='The viewport renders a merged view: sum_cells rows plus',
+        why=(
+            '2eedd2c6 is a genuine security fix landed via the private index: the whole-file replacement range-ACL check now builds its before/after protected-cell maps from the merged viewport view (sum_column_segments gap-fillers plus sparse sum_cells) so a forged segment at an empty protected coordinate cannot bypass read_only bands. Pinned by the distinctive merged-view comment it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
