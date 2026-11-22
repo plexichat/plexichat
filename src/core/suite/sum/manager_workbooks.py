@@ -612,6 +612,120 @@ class SumManagerWorkbooks(SumManagerProtocol):
             "size": len(db_bytes),
         }
 
+    def _check_replacement_range_permissions(
+        self,
+        workbook: Dict[str, Any],
+        user_id: int,
+        current_bytes: bytes,
+        replacement_bytes: bytes,
+    ) -> None:
+        """Fail closed when a whole-file write would rewrite protected cells.
+
+        ``upload_file`` and ``restore_snapshot`` publish an arbitrary workbook
+        blob instead of going through ``apply_operation``. Range permissions
+        live in the main database, not in that blob, so without this check an
+        ``edit`` grantee could download the file, edit a cell inside an
+        owner-created ``read_only`` range, and upload the forgery back. Only
+        changed coordinates are compared: an untouched protected cell or a
+        legitimate upload that edits elsewhere stays allowed.
+        """
+        # Use the authoritative row already fetched for authorization. Do not
+        # re-read sum_workbooks here, and do not coerce a malformed-but-int-like
+        # owner_id into ownership (type() also rejects bool).
+        owner_id = workbook["owner_id"]
+        if type(owner_id) is int and owner_id == int(user_id):
+            return
+        read_only = self._db.fetch_all(
+            "SELECT sheet_id, row_start, row_end, column_start, column_end "
+            "FROM sum_range_permissions WHERE workbook_id = ? AND permission = 'read_only'",
+            (int(workbook["id"]),),
+        )
+        if not read_only:
+            return
+        bands: Dict[str, List[Tuple[int, int, int, int]]] = {}
+        for band in read_only:
+            bands.setdefault(str(band["sheet_id"]), []).append(
+                (
+                    int(band["row_start"]),
+                    int(band["row_end"]),
+                    int(band["column_start"]),
+                    int(band["column_end"]),
+                )
+            )
+
+        current_connection: Optional[sqlite3.Connection] = None
+        replacement_connection: Optional[sqlite3.Connection] = None
+        current_path = ""
+        replacement_path = ""
+        try:
+            current_connection, current_path = self._open_sqlite(current_bytes)
+            replacement_connection, replacement_path = self._open_sqlite(
+                replacement_bytes
+            )
+            current_conn = current_connection
+            replacement_conn = replacement_connection
+            if current_conn is None or replacement_conn is None:
+                raise SumStorageError("Workbook file could not be compared")
+            # Range permissions are keyed by sheet_id in the main database. A
+            # non-owner must not sidestep them by remapping/renaming sheets in
+            # the replacement file.
+            current_sheets = {
+                str(row["id"])
+                for row in current_conn.execute("SELECT id FROM sum_sheets").fetchall()
+            }
+            replacement_sheets = {
+                str(row["id"])
+                for row in replacement_conn.execute(
+                    "SELECT id FROM sum_sheets"
+                ).fetchall()
+            }
+            if current_sheets != replacement_sheets:
+                raise SumPermissionError(
+                    "Cannot change workbook sheets through a file replacement"
+                )
+
+            def protected_cells(
+                connection: sqlite3.Connection,
+            ) -> Dict[Tuple[str, int, int], Tuple[Any, Any, Any, Any]]:
+                cells: Dict[Tuple[str, int, int], Tuple[Any, Any, Any, Any]] = {}
+                for row in connection.execute(
+                    "SELECT sheet_id, row_index, column_index, value_type, "
+                    "value_json, formula, style_json FROM sum_cells"
+                ):
+                    sheet_id = str(row["sheet_id"])
+                    sheet_bands = bands.get(sheet_id)
+                    if not sheet_bands:
+                        continue
+                    row_index = int(row["row_index"])
+                    column_index = int(row["column_index"])
+                    if not any(
+                        row_start <= row_index < row_end
+                        and column_start <= column_index < column_end
+                        for row_start, row_end, column_start, column_end in sheet_bands
+                    ):
+                        continue
+                    cells[(sheet_id, row_index, column_index)] = (
+                        row["value_type"],
+                        row["value_json"],
+                        row["formula"],
+                        row["style_json"],
+                    )
+                return cells
+
+            before = protected_cells(current_conn)
+            after = protected_cells(replacement_conn)
+        except sqlite3.Error as exc:
+            raise SumValidationError("Workbook file could not be compared") from exc
+        finally:
+            if replacement_connection is not None:
+                self._close_sqlite(replacement_connection, replacement_path)
+            if current_connection is not None:
+                self._close_sqlite(current_connection, current_path)
+
+        # A changed, added, or removed protected cell is a write to that range.
+        if before != after:
+            raise SumPermissionError("Cannot change cells inside a protected range")
+
     def upload_file(
         self,
         user_id: int,
@@ -633,6 +747,12 @@ class SumManagerWorkbooks(SumManagerProtocol):
             db_bytes, _, _ = decode_container(data)
         else:
             db_bytes = data
+        # A whole-file upload replaces every cell at once, so it cannot rely on
+        # the per-cell apply_operation gate. Compare it with the materialized
+        # file first and refuse any non-owner rewrite of a protected cell.
+        self._check_replacement_range_permissions(
+            workbook, user_id, self._file_bytes(int(workbook_id)), db_bytes
+        )
         # Reuse the row fetched for authorization; the promotion below is the
         # only writer and performs its own compare-and-swap on the revision.
         base = workbook["current_revision"]

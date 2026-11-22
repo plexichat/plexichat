@@ -76,6 +76,9 @@ class SumManagerProtocol:
     def _check_structural_permission(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
+    def _check_replacement_range_permissions(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
     def _close_sqlite(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 

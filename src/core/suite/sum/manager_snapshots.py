@@ -196,6 +196,11 @@ class SumManagerSnapshots(SumManagerProtocol):
             actual = hashlib.sha256(db_bytes).hexdigest()
             if actual != row["checksum"]:
                 raise SumValidationError("Snapshot checksum mismatch")
+        # Restoring publishes a whole workbook blob, bypassing the per-cell
+        # apply_operation gate. Apply the same protected-range check as upload.
+        self._check_replacement_range_permissions(
+            workbook, user_id, self._file_bytes(int(workbook_id)), db_bytes
+        )
         # ``workbook`` was already fetched for authorization and carries the
         # current revision; the blob promotion below is the only writer.
         base_revision = int(workbook["current_revision"])
