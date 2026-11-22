@@ -109,6 +109,28 @@ def build_brand_styles(conf: DocsConfig) -> str:
             outline-offset: 2px;
         }
 
+        /* Keyboard skip link: the docs sidebar carries 100+ links before the
+           main content, so keyboard users need a way to bypass it on every
+           page load. Off-screen until focused, then pinned top-left above the
+           layout. Mirrors the app shell's .skip-link pattern. */
+        .skip-link {
+            position: fixed;
+            top: var(--spacing-md);
+            left: var(--spacing-md);
+            z-index: 10000;
+            padding: 8px 14px;
+            border-radius: var(--radius-md);
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--accent);
+            transform: translateY(-200%);
+        }
+
+        .skip-link:focus,
+        .skip-link:focus-visible {
+            transform: translateY(0);
+        }
+
         .docs-layout {
             display: grid;
             grid-template-columns: var(--sidebar-width) 1fr;
