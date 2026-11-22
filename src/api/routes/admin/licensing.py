@@ -147,6 +147,39 @@ def clear_license_feature_catalog_cache() -> None:
         _feature_catalog_cache = None
 
 
+def _invalidate_license_derived_caches() -> None:
+    """Drop every process-local verdict derived from the license document.
+
+    A reload/hot-swap can change the effective entitlements on *every* path,
+    including a failed reload (``reload_license`` leaves the manager holding the
+    newly loaded, invalid license and demotes the module to free tier). Any
+    cached AVAILABLE/granted verdict from the previous license must therefore be
+    discarded even when the operation reports failure, or the capability gates
+    keep handing out an entitlement the instance no longer holds. Local imports
+    avoid import cycles with the route modules that consume these caches.
+    """
+    from src.core.artifacts.capabilities import clear_capability_cache
+
+    clear_capability_cache()
+    clear_license_feature_catalog_cache()
+    # The launcher/admin capability *payload* caches are separate single-entry
+    # memos built on top of the core verdicts; they must not outlive a swap.
+    try:
+        from src.api.routes.capabilities import clear_capabilities_payload_cache
+
+        clear_capabilities_payload_cache()
+    except Exception:
+        pass
+    try:
+        from src.api.routes.admin.capabilities import (
+            clear_admin_capabilities_payload_cache,
+        )
+
+        clear_admin_capabilities_payload_cache()
+    except Exception:
+        pass
+
+
 def warm_license_feature_catalog_cache() -> None:
     """Prime the matrix off the request path (best-effort, never fatal).
 
@@ -464,13 +497,9 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     after_expiry = licensing_module.get_expiry_timestamp()
     after_features = after_state.get("features", {})
     after_limits = after_state.get("limits", {})
-    # Feature/capability availability is derived from the license, so drop any
-    # memoized capability verdicts before the audit trail records the swap.
-    from src.core.artifacts.capabilities import clear_capability_cache
-
-    clear_capability_cache()
-    # Derived state: the cached feature matrix must not outlive the swap.
-    clear_license_feature_catalog_cache()
+    # Feature/capability availability is derived from the license, so drop every
+    # memoized verdict before the audit trail records the swap.
+    _invalidate_license_derived_caches()
     _audit_license_action(
         request,
         _admin_id,
@@ -534,6 +563,11 @@ async def force_validate_license(request: Request):
 
     _ = licensing_module.is_valid()
     success = licensing_module.reload_license()
+    # A failed reload is still a state change: the manager now holds the newly
+    # loaded (invalid) license and the module is demoted to free tier. Invalidate
+    # derived verdicts on *every* path so no cached AVAILABLE/grant survives the
+    # reload, otherwise the capability gates keep granting a revoked entitlement.
+    _invalidate_license_derived_caches()
     if not success:
         _audit_license_action(
             request,
@@ -547,11 +581,6 @@ async def force_validate_license(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="License validation failed",
         )
-    from src.core.artifacts.capabilities import clear_capability_cache
-
-    clear_capability_cache()
-    # Derived state: the cached feature matrix must not outlive the swap.
-    clear_license_feature_catalog_cache()
     after_instance = licensing_module.get_instance_id()
     _audit_license_action(
         request,
