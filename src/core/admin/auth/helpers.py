@@ -5,7 +5,6 @@ Private helper functions for admin authentication.
 import hashlib
 import os
 import secrets
-import string
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -181,9 +180,24 @@ def _consume_otp_challenge(challenge_token: str) -> None:
 
 
 def _generate_password(length: int = 24) -> str:
-    """Generate a secure random password."""
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    """Generate a CSPRNG password that always satisfies the shared policy.
+
+    The old implementation drew each character independently from
+    ``string.ascii_letters + string.digits + "!@#$%^&*"``. With 24 draws it
+    omitted a special character ~5.4% of the time and a digit ~2.5% of the
+    time, so ~8% of first-boot / reset admin credentials failed the very
+    character-class policy every other credential-setting path enforces.
+    Delegate to the policy-compliant generator: every required class is
+    guaranteed deterministically while the full CSPRNG strength is kept.
+    """
+    from src.core.auth.passwords import generate_policy_compliant_password
+
+    # token_urlsafe(n) yields ~4n/3 base64url characters (~6 bits each). Ask
+    # for at least 32 bytes (>=256 bits) and never fewer bytes than the
+    # requested length needs, so the entropy is preserved (in fact raised well
+    # above the old ~147-bit draw) for every caller.
+    token_bytes = max(32, (int(length) * 3 + 3) // 4)
+    return generate_policy_compliant_password(token_bytes=token_bytes)
 
 
 def _verify_admin_password(
