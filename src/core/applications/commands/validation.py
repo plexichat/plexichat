@@ -3,6 +3,7 @@ Command validation - Name and structure validation.
 """
 
 import re
+import unicodedata
 from typing import Dict, Any, Tuple, List
 
 from ..models import CommandType
@@ -10,8 +11,25 @@ from ..oauth.scopes import validate_permission_string
 from src.core.security.hardening import HardeningViolation
 
 
-COMMAND_NAME_PATTERN = re.compile(r"^[\w-]{1,32}$")
-CONTEXT_MENU_NAME_PATTERN = re.compile(r"^[\w\s-]{1,32}$")
+# ASCII-only, fullmatch patterns. Python's ``\w`` matches every Unicode word
+# character (fullwidth letters, Cyrillic lookalikes, dotless i, ...), which let
+# a confusable be stored verbatim and rendered as a different ASCII name by a
+# NFKC-normalizing client. Command names are an ASCII contract, so reject the
+# lookalikes outright instead of trying to canonicalize them.
+COMMAND_NAME_PATTERN = re.compile(r"[a-z0-9_-]{1,32}")
+CONTEXT_MENU_NAME_PATTERN = re.compile(r"[A-Za-z0-9_ -]{1,32}")
+
+
+def _is_confusable_safe(name: str) -> bool:
+    """True when ``name`` is ASCII-only and stable under NFKC normalization.
+
+    Compatibility characters (fullwidth forms, the Kelvin sign, ligatures),
+    non-Latin homoglyphs and invisible/bidi format characters all fail one of
+    these checks, so no stored command name can spoof a different one.
+    """
+    return name.isascii() and unicodedata.normalize("NFKC", name) == name
+
+
 MAX_COMMAND_NAME_LENGTH = 32
 MAX_COMMAND_DESCRIPTION_LENGTH = 100
 MAX_OPTIONS_PER_COMMAND = 25
@@ -40,17 +58,19 @@ def validate_command_name(
         issues.append(f"Command name exceeds {MAX_COMMAND_NAME_LENGTH} characters")
 
     if command_type == CommandType.CHAT_INPUT:
-        if not COMMAND_NAME_PATTERN.match(name):
+        if not COMMAND_NAME_PATTERN.fullmatch(name) or not _is_confusable_safe(name):
             issues.append(
-                "Chat command name must be lowercase and contain only letters, numbers, hyphens, and underscores"
+                "Chat command name must be lowercase ASCII letters, numbers, hyphens, and underscores"
             )
 
         if name != name.lower():
             issues.append("Chat command name must be lowercase")
     else:
-        if not CONTEXT_MENU_NAME_PATTERN.match(name):
+        if not CONTEXT_MENU_NAME_PATTERN.fullmatch(name) or not _is_confusable_safe(
+            name
+        ):
             issues.append(
-                "Context menu command name can only contain letters, numbers, hyphens, underscores, and spaces"
+                "Context menu command name can only contain ASCII letters, numbers, hyphens, underscores, and spaces"
             )
 
     return len(issues) == 0, issues

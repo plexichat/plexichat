@@ -3,12 +3,22 @@ Command options - Option building and validation.
 """
 
 import re
+import unicodedata
 from typing import List, Dict, Any, Tuple, Optional
 
 from ..models import CommandOption, CommandOptionType
 
 
-OPTION_NAME_PATTERN = re.compile(r"^[\w-]{1,32}$")
+# ASCII-only and fullmatch: ``\w`` also matches Unicode lookalikes (fullwidth
+# letters, Cyrillic homoglyphs, ...), which could be stored verbatim and render
+# as a different option name. See the command-name validator for the rationale.
+OPTION_NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,32}")
+
+
+def _is_confusable_safe(name: str) -> bool:
+    return name.isascii() and unicodedata.normalize("NFKC", name) == name
+
+
 MAX_CHOICES = 25
 MAX_OPTIONS = 25
 MAX_OPTION_NAME_LENGTH = 32
@@ -94,7 +104,7 @@ def validate_option(option: Dict[str, Any], depth: int = 0) -> Tuple[bool, List[
         issues.append("Option name is required")
     elif len(name) > MAX_OPTION_NAME_LENGTH:
         issues.append(f"Option name exceeds {MAX_OPTION_NAME_LENGTH} characters")
-    elif not OPTION_NAME_PATTERN.match(name):
+    elif not OPTION_NAME_PATTERN.fullmatch(name) or not _is_confusable_safe(name):
         issues.append(f"Option name '{name}' contains invalid characters")
 
     description = option.get("description", "")
