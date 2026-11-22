@@ -39,7 +39,7 @@ The version pin policies are defined in `src/config_defaults.py` and `src/static
 └── ...
 ```
 
-The install directory defaults to `~/.plexichat/client` (`src/config_defaults.py`). The loader in `src/static_client/config.py` expands `~` and falls back to that path when the configured value is not absolute. The backend retains only the active version and prunes older installs.
+The install directory defaults to `~/.plexichat/client` (`src/config_defaults.py`). The loader in `src/static_client/config.py` expands `~` and falls back to that path when the configured value is not absolute. The backend keeps the active version plus up to four of the most recent installed versions (five total) so an older build remains available for rollback, and prunes anything beyond that (`src/static_client/fetcher.py`).
 
 ## Configuration
 
