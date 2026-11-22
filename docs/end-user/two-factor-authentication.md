@@ -112,7 +112,7 @@ Use `regenerate_backup_codes(user_id, password)` (exposed to authenticated calle
 
 Sessions are controlled by `authentication.sessions`:
 
-- `expire_hours` — default 720 hours (30 days).
+- `expire_hours` — default 168 hours (7 days). Sessions on a device you explicitly marked trusted use `authentication.sessions.trusted_expire_hours` (default 720 hours / 30 days) instead.
 - `extend_on_activity` — default `true`.
 - `extend_threshold_hours` — default 24 hours. The server extends `expires_at` when you are within this window of expiry, or on every activity if set to `0`.
 - `max_per_user` — default 10 concurrent sessions.

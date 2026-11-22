@@ -210,8 +210,9 @@ authentication:
 * `token_cache_ttl` (30) - Seconds to cache verified tokens before
   re-verification.
 * `token_verify_rate_limit` (100) - Token verifications per minute.
-* `token_binding` (false) - When `true`, binds tokens to the client IP.
-  Keep disabled for users with rotating IPs.
+* `token_binding` (false) - When `true`, binds tokens to both the client
+  IP and the User-Agent. Keep disabled for users with rotating IPs or
+  changing user agents.
 * `session_cookie_secure` (true) - HttpOnly session cookie Secure flag.
   Set to `false` only for plain-HTTP localhost development.
 

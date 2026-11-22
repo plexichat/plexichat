@@ -76,7 +76,7 @@ authentication:
 
 *   Use `max_failed_attempts` (not `max_login_attempts`) and `lockout_duration_minutes` (not `lockout_duration_seconds`).
 *   `lockout_min_distinct_ips` requires failures from at least 2 distinct IPs within the window, which prevents a single host from denying service to a known username.
-*   `token_binding` — When `true`, sessions are bound to the client IP. This prevents token theft from a different network but breaks for users with rotating IPs (mobile, VPNs). Enable only on controlled networks.
+*   `token_binding` — When `true`, sessions are bound to both the client IP and the User-Agent. This prevents token theft from a different network or browser but breaks for users with rotating IPs or changing user agents (mobile, VPNs). Enable only on controlled networks.
 *   `token_cache_ttl` — How long verified tokens stay cached. Lower values improve security but add database load. `30` seconds is a good balance.
 
 ### Bootstrap administrator credentials
