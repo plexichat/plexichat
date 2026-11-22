@@ -245,7 +245,15 @@ class RolePermissionMixin(RoleHandlerProtocol):
 
         return result
 
-    @cached(ttl=10, prefix="has_perm")
+    # Role/permission mutations invalidate the whole ``has_perm:*`` verdict
+    # namespace at once, and this verdict is queried from many request threads
+    # simultaneously (message/poll hydration, audience + notification fan-out).
+    # Without coalescing, that mass invalidation makes every thread re-run the
+    # DB-backed ``get_permissions`` resolver for the same cold key -- a
+    # thundering-herd availability spike. Collapse concurrent cold misses to a
+    # single authoritative computation. Authorization semantics are unchanged:
+    # single-flight shares one verified verdict, keyed by the full call identity.
+    @cached(ttl=10, prefix="has_perm", single_flight=True)
     def _compute_has_permission(
         self,
         user_id: SnowflakeID,
@@ -280,9 +288,7 @@ class RolePermissionMixin(RoleHandlerProtocol):
         decides grant-vs-deny: a broken memo can never synthesize a grant.
         """
         if channel_id is None:
-            return self._compute_has_permission(
-                user_id, server_id, permission, None
-            )
+            return self._compute_has_permission(user_id, server_id, permission, None)
 
         cache = get_channel_access_cache()
         try:
@@ -296,9 +302,7 @@ class RolePermissionMixin(RoleHandlerProtocol):
             pass
 
         decision = bool(
-            self._compute_has_permission(
-                user_id, server_id, permission, channel_id
-            )
+            self._compute_has_permission(user_id, server_id, permission, channel_id)
         )
         try:
             cache.put(
