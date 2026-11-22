@@ -23,11 +23,13 @@ class TestBlockEnforcedOnWrite:
             fresh_users_with_dm_and_relationships
         )
         # user2 blocks user1; user1 must not be able to react to a message
-        # authored by user2.
-        rel_manager.block_user(user2.id, user1.id)
+        # authored by user2. Author the message BEFORE the block: DM sends now
+        # fail closed on a two-way block, so a post-block send would raise
+        # ConversationAccessDeniedError before the reaction gate is reached.
         authored = messaging_manager.send_message(
             user_id=user2.id, conversation_id=dm.id, content="from user2"
         )
+        rel_manager.block_user(user2.id, user1.id)
         with pytest.raises(UserBlockedError):
             reaction_manager.add_reaction(user1.id, authored.id, ":fire:")
 

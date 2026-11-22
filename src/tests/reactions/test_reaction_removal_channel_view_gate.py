@@ -120,16 +120,43 @@ async def test_removal_denied_when_wired_channel_lookup_raises(endpoint):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", _ENDPOINTS)
-async def test_removal_defers_when_servers_module_unwired(endpoint):
-    """With no reverse-lookup API available, defer to the manager's gate."""
+async def test_removal_denies_when_servers_module_unwired(endpoint):
+    """An unwired servers module must FAIL CLOSED, not defer to the manager.
+
+    A private-channel conversation_id alias can exist independently of the
+    servers module, so skipping the view bit here would let a member denied
+    messages.read remove/clear reactions in a channel they cannot see.
+    """
     from src.api.routes import reactions as routes
 
     reactions, _unused = _stubs(can_view=False)
     request, current_user = _ctx()
     with ExitStack() as stack:
-        # `None` means there is genuinely no servers module / no channel to
-        # check; the gate must not block and the manager still decides.
+        # `None` means the reverse lookup cannot be evaluated at all.
         for patcher in _patches(reactions, None):
+            stack.enter_context(patcher)
+        with pytest.raises(HTTPException) as exc:
+            await _call(routes, endpoint, request, current_user)
+
+    assert exc.value.status_code == 403
+    getattr(reactions, _MANAGER_METHOD[endpoint]).assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", _ENDPOINTS)
+async def test_removal_defers_when_wired_stub_lacks_reverse_lookup(endpoint):
+    """A wired manager stub without the reverse-lookup API still defers.
+
+    This is the narrow pre-existing control: no channel view bit exists to
+    check, so the manager's own fail-closed checks decide. Unwired (`None`)
+    is deliberately NOT part of this exception -- see the deny test above.
+    """
+    from src.api.routes import reactions as routes
+
+    reactions, _unused = _stubs(can_view=False)
+    request, current_user = _ctx()
+    with ExitStack() as stack:
+        for patcher in _patches(reactions, object()):
             stack.enter_context(patcher)
         response = await _call(routes, endpoint, request, current_user)
 

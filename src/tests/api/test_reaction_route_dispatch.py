@@ -25,9 +25,17 @@ class _RecorderReactions:
 
     def __init__(self):
         self.calls = []
+        self.conversation_lookups = []
 
     def resolve_message_channel(self, message_id):
         return {"channel_id": 42}
+
+    def get_conversation_id_from_message(self, message_id):
+        # The removal/clear routes run the channel-view gate first. This fake
+        # has no server-channel alias (a genuine DM), so the gate defers to the
+        # manager after recording that it ran.
+        self.conversation_lookups.append(message_id)
+        return None
 
     def remove_all_reactions_for_emoji(self, user_id, message_id, emoji):
         self.calls.append(("remove_all_for_emoji", user_id, message_id, emoji))
@@ -63,6 +71,14 @@ def dispatch_env(monkeypatch):
     recorder = _RecorderReactions()
     monkeypatch.setattr(reactions_routes.api, "get_reactions", lambda: recorder)
 
+    # Wire a servers store with no channel alias so the removal/clear view
+    # gate passes deterministically (it fails closed when unwired).
+    class _Servers:
+        def get_channel_by_conversation(self, conversation_id):
+            return None
+
+    monkeypatch.setattr(reactions_routes.api, "get_servers", lambda: _Servers())
+
     async def _allow_rate_limit(**kwargs):
         return _RateLimitResult()
 
@@ -93,6 +109,7 @@ def test_moderator_emoji_wipe_route_fires(dispatch_env):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["message"] == "Removed 3 reactions"
+    assert recorder.conversation_lookups[0] == 99  # view gate ran before the write
     assert ("remove_all_for_emoji", 7, 99, ":sob:") in recorder.calls
     assert not any(c[0] == "remove_reaction" for c in recorder.calls)
 
@@ -104,6 +121,7 @@ def test_single_user_remove_route_still_fires(dispatch_env):
     resp = client.delete("/channels/42/messages/99/reactions/:sob:")
 
     assert resp.status_code == 200, resp.text
+    assert recorder.conversation_lookups[0] == 99  # view gate ran before the write
     assert ("remove_reaction", 7, 99, ":sob:") in recorder.calls
     assert not any(c[0] == "remove_all_for_emoji" for c in recorder.calls)
 

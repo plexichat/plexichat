@@ -58,6 +58,7 @@ class _FakeReactions:
         self.detail_calls: list[tuple[int, int]] = []
         self.access_calls: list[tuple[int, int]] = []
         self.deleted: list[tuple[int, int]] = []
+        self.bound_calls: list[int] = []
         self.pills = [(CUSTOM, 2, False)]
 
     def can_access_message(self, user_id: int, message_id: int) -> bool:
@@ -81,6 +82,12 @@ class _FakeReactions:
                 for emoji, count, me in self.pills
             ],
         )
+
+    def get_custom_emoji(self, emoji_id: int):
+        # delete_emoji checks URL-server binding before mutating: the fake
+        # must expose the same lookup as the real manager.
+        self.bound_calls.append(emoji_id)
+        return SimpleNamespace(server_id=SERVER_ID)
 
     def delete_custom_emoji(self, user_id: int, emoji_id: int) -> bool:
         self.deleted.append((user_id, emoji_id))
@@ -115,6 +122,8 @@ async def test_deleting_custom_emoji_drops_cached_reaction_body():
 
         resp = await delete_emoji(str(SERVER_ID), str(EMOJI_ID), current_user=token)
         assert resp.success is True
+        # The URL-server binding check must run before the deletion.
+        assert fake.bound_calls == [EMOJI_ID]
         assert fake.deleted == [(42, EMOJI_ID)]
 
         # The deleted emoji's reactions must not be served from the warm body.

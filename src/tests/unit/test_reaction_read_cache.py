@@ -75,6 +75,7 @@ class _FakeReactions:
         self.access_calls: list[tuple[int, int]] = []
         self.detail_calls: list[tuple[int, int]] = []
         self.mutations: list[str] = []
+        self.conversation_lookups: list[int] = []
         # Per-viewer pill data: ``me`` and even the count are viewer-specific
         # (blocked-user filtering), so a cross-credential hit is observable.
         self.pills: dict[int, list[tuple[str, int, bool]]] = {}
@@ -103,6 +104,12 @@ class _FakeReactions:
 
     def resolve_message_channel(self, message_id: int):
         return {"channel_id": CHANNEL_ID}
+
+    def get_conversation_id_from_message(self, message_id: int):
+        # The write routes run the channel-view gate before mutating. No server
+        # channel backs this message, so the gate defers to the manager.
+        self.conversation_lookups.append(message_id)
+        return None
 
     def add_reaction(self, user_id, message_id, emoji):
         self.mutations.append("add")
@@ -135,13 +142,20 @@ def fake_reactions():
 def mutation_env():
     """Stub the rate limiter, server lookup and fire-and-forget dispatch so
     the real mutation route bodies can run without a live app/loop."""
+    # The write routes fail closed when the servers module is unwired; wire a
+    # store with no server-channel alias so the view gate passes and the cache
+    # invalidation under test is actually reached.
+    class _Servers:
+        def get_channel_by_conversation(self, conversation_id):
+            return None
+
     with (
         patch.object(
             reactions_routes.ratelimit,
             "acheck_rate_limit",
             side_effect=lambda **kwargs: _RateLimitResult(),
         ),
-        patch.object(api, "get_servers", return_value=None),
+        patch.object(api, "get_servers", return_value=_Servers()),
         patch.object(
             reactions_routes.asyncio,
             "create_task",
@@ -281,6 +295,8 @@ async def test_mutations_invalidate_cached_reads(
     fake_reactions.pills[42] = [(EMOJI, 9, True)]
     await route(*args, request=mutation_env, current_user=token)
     assert len(fake_reactions.mutations) == 1
+    # Every write route runs the channel-view gate before mutating.
+    assert fake_reactions.conversation_lookups == [MSG_ID]
 
     # The warm body is gone: the next read re-hydrates and sees the new count.
     after = await get_reactions(str(CHANNEL_ID), str(MSG_ID), current_user=token)

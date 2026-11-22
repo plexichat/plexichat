@@ -21,6 +21,16 @@ def _ctx(monkeypatch_ctx=None):
     return request, current_user
 
 
+def _view_ok_servers():
+    """Wired store with no server-channel alias so the view gate passes.
+
+    The reaction route fails closed when the servers module is unwired; these
+    tests are about the InvalidEmojiError -> 400 mapping, so wire a store that
+    lets the request reach that mapping instead of stopping at the gate.
+    """
+    return SimpleNamespace(get_channel_by_conversation=lambda conversation_id: None)
+
+
 class TestM5RemoveReactionStatus:
     """M5: DELETE/remove with invalid emoji must be 400, not 500."""
 
@@ -33,7 +43,7 @@ class TestM5RemoveReactionStatus:
         request, current_user = _ctx()
         with (
             patch("src.api.get_reactions", return_value=fake),
-            patch("src.api.get_servers", return_value=None),
+            patch("src.api.get_servers", return_value=_view_ok_servers()),
             patch(
                 "src.api.routes.reactions.ratelimit.acheck_rate_limit",
                 new=AsyncMock(return_value=SimpleNamespace(allowed=True)),
@@ -58,7 +68,7 @@ class TestM5RemoveReactionStatus:
         request, current_user = _ctx()
         with (
             patch("src.api.get_reactions", return_value=fake),
-            patch("src.api.get_servers", return_value=None),
+            patch("src.api.get_servers", return_value=_view_ok_servers()),
             patch(
                 "src.api.routes.reactions.ratelimit.acheck_rate_limit",
                 new=AsyncMock(return_value=SimpleNamespace(allowed=True)),
