@@ -28,6 +28,7 @@ from src.core.applications.exceptions import (
     InteractionAlreadyRespondedError,
     InteractionValidationError,
 )
+from src.core.auth.exceptions import BotLimitExceededError, UserExistsError
 
 
 logger = logging.getLogger(__name__)
@@ -519,6 +520,8 @@ async def delete_application(
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {"model": ErrorResponse, "description": "Access denied"},
         404: {"model": ErrorResponse, "description": "Application not found"},
+        409: {"model": ErrorResponse, "description": "Bot username already taken"},
+        429: {"model": ErrorResponse, "description": "Bot limit exceeded"},
     },
 )
 async def create_bot(
@@ -553,6 +556,32 @@ async def create_bot(
                 "error": {
                     "code": 400,
                     "message": "A bot already exists for this application. Use the settings page to manage it.",
+                }
+            },
+        )
+    except UserExistsError:
+        # auth.create_bot rejects a duplicate bot username. Without this arm it
+        # fell through to the generic 500 handler, so a client could not tell a
+        # name collision from a server fault. Static message: str(exc) can carry
+        # the requested (internal) bot name and must never reach the caller.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Bot username already taken",
+                }
+            },
+        )
+    except BotLimitExceededError:
+        # The owner's bot quota is full — a client-actionable throttle, not a
+        # fault. Static message keeps the configured limit out of the response.
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Bot limit exceeded",
                 }
             },
         )
