@@ -1443,7 +1443,7 @@ def test_ws_ticket_binding_pins_are_registered_and_non_vacuous(
 # a security marker; documenting them here keeps the reflog enumeration test
 # exhaustive rather than silently ignoring them.
 PRIVATE_INDEX_NON_SECURITY_SHAS: frozenset[str] = frozenset(
-    {"05908b2d", "8e32e6b9", "d9099f91", "e53e9526"}
+    {"05908b2d", "8e32e6b9", "d9099f91", "e53e9526", "db7a4143"}
 )
 
 # Early private-index markers use descriptive keys that do not embed their
