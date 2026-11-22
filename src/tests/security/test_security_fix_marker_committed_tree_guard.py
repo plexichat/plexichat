@@ -720,6 +720,17 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "distinctive fresh_owner_id strict-int check it introduced."
         ),
     ),
+    # --- N987 self-pin: the CAS commit that added the pins above ---
+    CommittedFixMarker(
+        key="93e3a1f9-n987-cas-pin-commit",
+        path='src/tests/security/test_security_fix_marker_committed_tree_guard.py',
+        marker="N987_REFLOG_PIN_SHAS: dict[str, str] = {",
+        why=(
+            "93e3a1f9 is the CAS-landed N987 pin commit; its own empty "
+            "reflog message would otherwise be flagged by the enumeration. "
+            "Pinned by the N987_REFLOG_PIN_SHAS registry it introduced."
+        ),
+    ),
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
