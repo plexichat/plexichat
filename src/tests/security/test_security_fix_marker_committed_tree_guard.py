@@ -909,6 +909,23 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "against the outdated position"
         ),
     ),
+    # 2FA atomic counter (332e722c): the Valkey-backed 2FA attempt limiter
+    # fuses INCR and the first-hit EXPIRE into one Lua script. The MAIN working
+    # tree's copy of twofactor.py is contested/stale (a staged diff reverts the
+    # atomic script, gateway socket revocation, and re-adds a debug print), so
+    # a whole-file stage on top of HEAD would silently drop the atomic script
+    # and restore the no-TTL window / permanent 2FA lockout. aed91be5 dropped
+    # this pin; restore it so a stale staged copy cannot drop the fix.
+    CommittedFixMarker(
+        key="2fa-attempt-counter-atomic-incr-expire",
+        path="src/core/auth/managers/twofactor.py",
+        marker="_2FA_INCR_EXPIRE_SCRIPT",
+        why=(
+            "332e722c: atomic INCR + first-hit EXPIRE for the 2FA attempt "
+            "counter; the contested/stale working-tree copy of twofactor.py "
+            "would restore the no-TTL window and permanent 2FA lockout"
+        ),
+    ),
     # N663 (4986e8a9): recipient DM privacy is re-checked at send time. Every
     # user-facing send path (REST, forward, scheduled dispatch, reaction
     # mentions) funnels through send_message, so a stale working-tree copy of
