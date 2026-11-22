@@ -15,7 +15,7 @@ fails when it finds any of:
   including a dict variable splatted as ``**opts``) — the subprocess
   equivalent of ``os.system()``.
 * ``pickle.load()`` / ``pickle.loads()`` — deserialization of untrusted data,
-  including aliased imports and zero-argument ``pickle.Unpickler(f).load()``.
+  incl. aliased imports, ``_pickle`` accelerator and zero-arg ``Unpickler(f).load()``.
 * a hardcoded credential token (AWS/GitHub/GitLab/Slack/Stripe/OpenAI key,
   JWT, PEM private key) embedded as a string literal. Detector *regexes* such
   as ``re.compile(r"...PRIVATE KEY...")`` are deliberately not findings.
@@ -108,7 +108,7 @@ PREFILTER = re.compile(
     # spelled indirectly would be skipped before it is ever examined. May
     # over-match; must never miss.
     r"\beval\b|\bexec\b|\bsystem\b|\bshell\b|\bgetattr\s*\(|\b__import__\s*\(|"
-    r"\bimport_module\s*\(|__dict__|\bpickle\b|\bexcept\s*:|"
+    r"\bimport_module\s*\(|__dict__|\bpickle\b|_pickle|\bUnpickler\b|\bexcept\s*:|"
     r"AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|AGPA|gh[pousr]_|github_pat_|glpat-|"
     r"xox[baprs]-|(?:sk|rk)_(?:live|test)_|sk-[A-Za-z0-9_-]{32}|"
     r"eyJ[A-Za-z0-9_-]{8,}\.|"
@@ -314,8 +314,9 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
     # this to a single pass matters: parsing dominates the scan's cost.
     parents: dict[ast.AST, ast.AST] = {}
     os_aliases = {"os"}
-    pickle_aliases = {"pickle"}
+    pickle_aliases = {"pickle", "_pickle"}
     pickle_loaded_names: set[str] = set()
+    pickle_unpickler_names: set[str] = set()
     # Names bound to a dict literal holding ``shell=...``, and names bound to
     # the eval/exec builtins. Both are one-hop aliases a bypass can hide behind
     # (``opts = {"shell": True}; run(cmd, **opts)`` / ``f = exec; f(code)``).
@@ -329,16 +330,21 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
             for alias in parent.names:
                 if alias.name == "os":
                     os_aliases.add(alias.asname or "os")
-                if alias.name == "pickle":
-                    pickle_aliases.add(alias.asname or "pickle")
+                if alias.name in ("pickle", "_pickle"):
+                    pickle_aliases.add(alias.asname or alias.name)
         elif isinstance(parent, ast.ImportFrom) and parent.module == "os":
             for alias in parent.names:
                 if alias.name == "system":
                     os_aliases.add(alias.asname or "system")
-        elif isinstance(parent, ast.ImportFrom) and parent.module == "pickle":
+        elif isinstance(parent, ast.ImportFrom) and parent.module in (
+            "pickle",
+            "_pickle",
+        ):
             for alias in parent.names:
                 if alias.name in ("load", "loads"):
                     pickle_loaded_names.add(alias.asname or alias.name)
+                elif alias.name == "Unpickler":
+                    pickle_unpickler_names.add(alias.asname or alias.name)
         elif isinstance(parent, (ast.Assign, ast.AnnAssign)):
             value = parent.value
             if value is None:  # pragma: no cover - bare annotation
@@ -442,7 +448,13 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
                 isinstance(func, ast.Attribute)
                 and func.attr in ("load", "loads")
                 and isinstance(func.value, ast.Call)
-                and _dynamic_call_name(func.value.func) == "Unpickler"
+                and (
+                    _dynamic_call_name(func.value.func) == "Unpickler"
+                    or (
+                        isinstance(func.value.func, ast.Name)
+                        and func.value.func.id in pickle_unpickler_names
+                    )
+                )
             ):
                 add(
                     node,

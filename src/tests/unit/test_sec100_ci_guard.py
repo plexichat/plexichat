@@ -237,6 +237,27 @@ def test_pickle_unpickler_load_zero_arg_is_flagged(tmp_path: Path) -> None:
     assert _kinds(guard.find_patterns(root)).count("pickle_load") == 2
 
 
+def test_pickle_c_accelerator_and_unpickler_alias_are_flagged(tmp_path: Path) -> None:
+    """Non-vacuous: the ``_pickle`` C accelerator and an aliased ``Unpickler``
+    from-import are the same RCE sink as ``pickle.loads`` but were missed — the
+    prefilter's ``\\bpickle\\b`` did not even match ``_pickle`` and the Unpickler
+    alias was never tracked. Both must pass the prefilter and be reported.
+    """
+    guard = _guard()
+    snippets = [
+        "import _pickle\n_pickle.loads(payload)\n",
+        "import _pickle\n_pickle.load(f)\n",
+        "import _pickle as p\np.loads(payload)\n",
+        "import _pickle\n_pickle.Unpickler(f).load()\n",
+        "from pickle import Unpickler as U\nU(f).load()\n",
+    ]
+    assert all(guard.PREFILTER.search(s) for s in snippets)
+    files = {f"c{i}.py": s for i, s in enumerate(snippets)}
+    files["clean.py"] = "import json\njson.loads(payload)\n"
+    root = _tree(tmp_path, files)
+    assert _kinds(guard.find_patterns(root)).count("pickle_load") == len(snippets)
+
+
 def test_hardcoded_token_is_flagged(tmp_path: Path) -> None:
     root = _tree(
         tmp_path, {"a.py": 'TOKEN = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\n'}
