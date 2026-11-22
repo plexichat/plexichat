@@ -156,7 +156,7 @@ Store these values in a `.env` file, add `.env` to `.gitignore`, and set `chmod 
 
 On first startup, Plexichat inspects `config/config.yaml` and generates any per-installation secrets that still use placeholder defaults:
 
-- `media.signing_key` - If the value is still `CHANGE_THIS_SIGNING_KEY` or empty, the server generates a 32-byte secret with `secrets.token_hex(32)`, writes it to the `media:` section, and reuses it on later starts. Treat it as a production secret. Rotate it with `python main.py rotate-secrets --secret media-signing-key` if it is disclosed.
+- `media.signing_key` - If the value is still `CHANGE_THIS_SIGNING_KEY` or empty, the server generates a 32-byte secret with `secrets.token_hex(32)`, writes it to the `media:` section, and reuses it on later starts. Treat it as a production secret. To rotate it, set a new `media.signing_key` value in `config/config.yaml` before restarting; `python main.py rotate-secrets` only rotates `applications.webhook_signature_secret`, not this key.
 - `applications.webhook_signature_secret` - Generated with the same pattern during `initializer.initialize_modules`.
 
 To supply your own value, set `media.signing_key` in `config/config.yaml` before the first run. The server skips generation when the key is already set.
