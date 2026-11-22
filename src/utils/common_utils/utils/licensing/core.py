@@ -340,6 +340,18 @@ class LicenseManager:
             raw = {k: v for k, v in data.items() if k != "signature"}
             self._raw_license_data = raw
             self._license = license_obj
+            # A newly loaded license has not been validated yet. Drop any
+            # verdict cached for a previously loaded license: entitlement
+            # getters (has_feature/get_feature_config/get_feature_limit) rely
+            # on lazy validation via ``_ensure_validated()``, which skips
+            # revalidation while a "valid" verdict is still cached. Without
+            # this reset, loading a forged/invalid license (e.g. a tampered
+            # features map with a bad signature and no expiry) right after a
+            # valid one made every feature gate answer from the new license's
+            # data under the OLD valid verdict -- a full entitlement bypass.
+            # ``validate()`` (or the module-level apply/reload helpers, which
+            # call it) repopulates this on the next authoritative check.
+            self._validation_result = None
             return license_obj
         except (TypeError, KeyError) as e:
             raise InvalidLicenseError(f"Invalid license structure: {e}")
