@@ -40,15 +40,43 @@ class MentionValidationMixin(NotificationProtocol):
         # cross-server / non-mentionable checks still run against the same row.
         roles_by_id: Dict[SnowflakeID, Optional[dict]] = {}
 
-        # SECURITY: an explicit ``@everyone``/``@here`` AND a mention of the
-        # CURRENT channel (``<#this-channel>``) both fan out to every member
-        # who can view the channel (see NotificationCreatorMixin.create_notifications).
-        # A self-channel mention is therefore an @everyone-equivalent mass ping
-        # and must clear the SAME fail-closed permission gate. Compute that
-        # verdict once from the existing gate (keeping a single audited call
-        # site) and apply it to both mention types. Without this, a member who
-        # lacks messages.mention_everyone can mass-ping the whole channel just
-        # by writing ``<#the-channel-they-are-in>``.
+        def _role_row(role_id: SnowflakeID) -> Optional[dict]:
+            if role_id not in roles_by_id:
+                roles_by_id[role_id] = get_role(self._db, role_id)
+            return roles_by_id[role_id]
+
+        def _is_everyone_role(mention) -> bool:
+            """Whether a ROLE mention targets this server's default @everyone role.
+
+            Every member holds the default (``is_default = 1``) role, so a
+            ``<@&default_role_id>`` mention fans out to the entire server -- an
+            @everyone-equivalent mass ping. Restrict the verdict to a role that
+            exists, belongs to this server and is flagged as the default role.
+            The role row is memoised by ``_role_row`` (the validation loop below
+            needs it too), so this adds no extra query.
+            """
+            if server_id is None or mention.mention_type != MentionType.ROLE:
+                return False
+            if mention.target_id is None:
+                return False
+            role = _role_row(mention.target_id)
+            return bool(
+                role
+                and role.get("is_default")
+                and role.get("server_id") == server_id
+            )
+
+        # SECURITY: an explicit ``@everyone``/``@here``, a mention of the
+        # CURRENT channel (``<#this-channel>``), AND a mention of the server's
+        # default ``@everyone`` role (``<@&default_role_id>``) all fan out to
+        # every member who can view the channel (see
+        # NotificationCreatorMixin.create_notifications). Each is therefore an
+        # @everyone-equivalent mass ping and must clear the SAME fail-closed
+        # permission gate. Compute that verdict once from the existing gate
+        # (keeping a single audited call site) and apply it to all such mentions.
+        # Without this, a member who lacks messages.mention_everyone can
+        # mass-ping the whole channel/server by writing
+        # ``<#the-channel-they-are-in>`` or ``<@&the-everyone-role>``.
         # Only messages that actually carry a mass mention pay the gate, so a
         # plain user/role/channel-link message keeps its existing query budget.
         needs_mass_mention_gate = any(
@@ -58,6 +86,7 @@ class MentionValidationMixin(NotificationProtocol):
                 and channel_id is not None
                 and m.target_id == channel_id
             )
+            or _is_everyone_role(m)
             for m in mentions
         )
         mass_mention_error: Optional[str] = None
@@ -95,11 +124,6 @@ class MentionValidationMixin(NotificationProtocol):
                     mass_mention_error = "No permission to mention everyone"
             else:
                 mass_mention_error = "Cannot use @everyone/@here in DMs"
-
-        def _role_row(role_id: SnowflakeID) -> Optional[dict]:
-            if role_id not in roles_by_id:
-                roles_by_id[role_id] = get_role(self._db, role_id)
-            return roles_by_id[role_id]
 
         for mention in mentions:
             m = Mention(
@@ -143,6 +167,14 @@ class MentionValidationMixin(NotificationProtocol):
                     elif role["server_id"] != server_id:
                         m.valid = False
                         m.error = "Role not in this server"
+                    elif role.get("is_default") and mass_mention_error is not None:
+                        # Mentioning the default (@everyone) role pings every
+                        # member -- an @everyone-equivalent mass ping. Gate it
+                        # with the SAME fail-closed permission as @everyone/@here
+                        # and a self-channel mention, even when the role is
+                        # marked mentionable or the author holds roles.manage.
+                        m.valid = False
+                        m.error = mass_mention_error
                     elif not bool(role["mentionable"]):
                         # roles.manage is a SERVER-scoped permission. Resolving
                         # it with a channel_id applies per-channel overrides,
