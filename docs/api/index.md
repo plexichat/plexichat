@@ -22,15 +22,50 @@ only under `/api/v1`, and a request to the bare root returns `404`.
 
 ## Authentication
 
-Most endpoints require authentication. Include your session token in the
-`Authorization` header:
+Most endpoints require a session token in the `Authorization` header. Obtain
+one through the [Authentication](authentication.md) flows (login and session
+creation):
 
 ```
-Authorization: Bearer <token>
+Authorization: Bearer <session-token>
 ```
 
-If you receive `401`, your token is missing, invalid, or expired. Some
-server policies also require an additional API access token.
+`Authorization` also accepts `Bot <bot-token>` for bot credentials. This token
+identifies the caller making the request.
+
+### API access token (additional gate)
+
+Some deployments add a second, deployment-wide credential. When
+`api.access_token_required` is enabled (advertised as `access_token_required`
+by `GET /api/v1/capabilities`), API product endpoints must also carry a
+permanent API access token in a separate header:
+
+```
+Authorization: Bearer <session-token>
+X-API-Access-Token: <api-access-token>
+```
+
+`X-API-Access-Token` is distinct from the bearer session token: the session
+token identifies the user or bot, while the API access token is a separate
+server-generated credential checked before bearer verification. Public
+utility routes, avatar routes, and admin routes (which manage their own
+sessions) are exempt from this gate. A missing header returns
+`401 {"error": {"code": 401, "message": "API access token required"}}`; an
+invalid one returns
+`401 {"error": {"code": 401, "message": "Invalid API access token"}}`.
+Supplying `X-API-Access-Token` does not replace `Authorization` — protected
+endpoints still require a valid session or bot token.
+
+API access tokens are created and scoped by administrators through the Admin
+API: `POST <admin-base>/security/access-tokens` creates one (the value is
+generated server-side), and `POST <admin-base>/security/access-tokens/{token_id}/scopes`
+adds IP/CIDR scope rules. The default `<admin-base>` is `/api/v1/admin`, and
+these routes require the `admin.security.tokens` permission — see
+[Admin](admin.md#security-controls). There is no self-service token-creation
+endpoint for ordinary users.
+
+If you receive `401`, check which credential is missing or expired: the bearer
+token may be invalid, or the server may require a valid `X-API-Access-Token`.
 
 ## Public utility endpoints
 
@@ -98,8 +133,9 @@ These endpoints do not require authentication unless noted:
 
 ## Notes
 
-*   Some endpoints require normal authentication plus an API access token
-    depending on server policy.
+*   When server policy enables the gate, API product endpoints require a
+    session token plus an administrator-issued token in the
+    `X-API-Access-Token` header (see [Authentication](#authentication)).
 *   The public narrative docs intentionally avoid private infrastructure and
     operator-only procedures.
 *   Administrative routes are mounted at a configurable root path (default
