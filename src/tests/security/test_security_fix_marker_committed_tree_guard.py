@@ -743,6 +743,14 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="cf25e0fd-docs-shell-header",
+        path="src/api/routes/docs/openapi.py",
+        marker='from .navigation import (',
+        why=(
+            'cf25e0fd is a docs-only change landed via the private index: the API Explorer/ReDoc shell now imports a shared navigation builder; pinned by that introduced import.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
