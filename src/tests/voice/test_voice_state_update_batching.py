@@ -3,7 +3,8 @@
 BEFORE: ``update_voice_state`` built one UPDATE per requested field, so a
 client that sent mute+deaf+stream+video in one call issued five writes (each
 touching ``last_activity``). AFTER: one scoped UPDATE covers every field, with
-repeated columns collapsed to the value the old sequential writes ended on.
+repeated columns collapsed to one assignment (deafen still forces mute over an
+explicit unmute, preserving the security invariant).
 """
 
 import pytest
@@ -65,17 +66,20 @@ def test_multi_field_update_is_one_scoped_write():
 
 
 @pytest.mark.unit
-def test_repeated_column_keeps_the_old_final_value():
-    # self_deaf=True forces mute on; an explicit self_mute=False must still win,
-    # exactly as it did when the two columns were written by separate UPDATEs.
+def test_deafen_forces_mute_over_explicit_unmute():
+    # Deafen implies mute: a client sending self_deaf=True with an explicit
+    # self_mute=False in one frame must not end up deafened-but-unmuted (the
+    # peer broadcast would say the user cannot hear while their mic is live).
+    # The single scoped UPDATE therefore carries one self_mute assignment whose
+    # value is the forced 1, not the attacker-supplied 0.
     fake = _FakeVoice()
     _update(fake, self_deaf=True, self_mute=False)
 
     assert len(fake._db.calls) == 1
     sql, params = fake._db.calls[0]
     assert sql.count("self_mute = ?") == 1
-    assert params[0] == 1
-    assert params[1] == 0
+    assert params[0] == 1  # self_deaf
+    assert params[1] == 1  # self_mute forced on by deafen
 
 
 @pytest.mark.unit
