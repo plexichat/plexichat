@@ -532,9 +532,15 @@ class TestCookieAndOauthHttp:
             },
         )
         assert r_cb2.status_code == 400, r_cb2.text
-        assert "state cookie" in r_cb2.json()["error"]["message"], r_cb2.json()[
-            "error"
-        ]["message"]
+        # The cookie-binding gate still fails closed, but the reason is no
+        # longer echoed to the caller: revealing "state cookie missing/mismatch"
+        # to an unauthenticated callback is an existence oracle. Every state /
+        # state-cookie failure now returns the SAME static refusal, with the
+        # detailed reason kept only in the server log.
+        refusal = r_cb2.json()["error"]["message"]
+        assert refusal == "Security verification failed", refusal
+        for leaked in ("state cookie", "missing", "mismatch", "forged"):
+            assert leaked not in refusal.lower(), (leaked, refusal)
 
     def test_oauth_login_rejects_code_verifier(self, test_client, monkeypatch):
         """RFC 7636: code_verifier is a client secret and must not be sent to
