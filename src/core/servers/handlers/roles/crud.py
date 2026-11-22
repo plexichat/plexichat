@@ -226,6 +226,18 @@ class RoleCrudMixin(RoleHandlerProtocol):
         server = self.manager.get_server(role.server_id, user_id)
         is_owner = server is not None and server.owner_id == user_id
 
+        # Every member holds the default (@everyone) role, so rewriting its
+        # permission bits hands the capability to the whole server. The
+        # ``check_permissions_grantable`` check below only requires that the
+        # editor *possesses* each bit, so a moderator holding ``roles.manage``
+        # could otherwise grant it (or any bit they hold) to everyone and
+        # escalate every member. Rename/move/delete are already owner-only for
+        # this role; the remaining editable fields (permissions, color, hoist,
+        # mentionable) must be too. Fail closed: a missing/malformed owner row
+        # cannot prove the actor is the owner, so the edit is refused.
+        if role.is_default and not is_owner:
+            raise DefaultRoleError("Only the server owner may modify the default role")
+
         # The hierarchy rule is a Decision now, so a refusal carries which rule
         # fired (capability_missing / rank_too_low) instead of one generic error.
         decision = role_edit_decision(
