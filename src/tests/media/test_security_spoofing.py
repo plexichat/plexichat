@@ -67,16 +67,17 @@ class TestSecuritySpoofing:
         assert data == b'<svg onload="alert(1)"></svg>'
 
     def test_double_extension_traversal(self, media_manager, test_user):
-        """Test that double extensions are sanitized."""
-        result = media_manager.upload_file(
-            user_id=test_user.id,
-            file_data=MINI_PNG,
-            filename="test.exe.png",
-            content_type="image/png",
-        )
-        # Should be sanitized: accepted with a safe image extension
-        assert result is not None
-        assert result.filename.endswith(".png")
+        """Blocked executable extensions hidden behind a benign suffix are rejected."""
+        # ``test.exe.png`` used to be silently sanitized to ``test.png`` and
+        # accepted. The upload gate now inspects every suffix and fails closed
+        # on any blocked executable/script extension, so this must be rejected.
+        with pytest.raises(FileTypeError):
+            media_manager.upload_file(
+                user_id=test_user.id,
+                file_data=MINI_PNG,
+                filename="test.exe.png",
+                content_type="image/png",
+            )
 
     def test_magic_bytes_validation_for_jpeg(self, media_manager):
         """Test magic byte validation for JPEG."""
