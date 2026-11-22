@@ -20,8 +20,8 @@ the last three returns `404`.
 | `POST` | `/api/v1/reports/messages` | Report a message. |
 | `POST` | `/api/v1/reports/users` | Report a user. |
 | `POST` | `/api/v1/features/reports/enhanced` | Report a message or user with a priority and evidence URLs. |
-| `PATCH` | `/api/v1/features/reports/{report_id}/status` | Move a report through its lifecycle (admin only). |
-| `GET` | `/api/v1/features/reports/{report_id}` | Read a single report (reporter or admin). |
+| `PATCH` | `/api/v1/features/reports/{report_id}/status` | Move a report through its lifecycle (admin with `reports.action`). |
+| `GET` | `/api/v1/features/reports/{report_id}` | Read a single report (reporter, or admin with `reports.read`). |
 
 ## Rate limiting and privacy
 
@@ -245,7 +245,7 @@ Duplicate protection is enforced by a partial unique database index on `(reporte
 
 ## Update report status (admin only)
 
-Update the lifecycle status of a report. Only admins can call this endpoint.
+Update the lifecycle status of a report. You must be an admin with the `reports.action` permission; admin membership alone returns `403`.
 
 ```
 PATCH /api/v1/features/reports/{report_id}/status
@@ -303,12 +303,12 @@ curl -X PATCH https://api.plexichat.com/api/v1/features/reports/1234567890123456
 | --- | --- |
 | `400` | Invalid report ID or status. |
 | `401` | Not authenticated. |
-| `403` | Admin access required. |
+| `403` | Admin access with the `reports.action` permission required. |
 | `500` | Database not available or internal error. |
 
 ## Get report details
 
-Get details for a single report. You can view a report if you are the reporter or an admin. Reporters receive a safe projection that omits internal moderation fields.
+Get details for a single report. You can view a report if you are its reporter or if you are an admin with the `reports.read` permission. Reporter access (including an admin acting as reporter without that permission) receives a safe projection that omits internal moderation fields.
 
 ```
 GET /api/v1/features/reports/{report_id}
@@ -346,14 +346,14 @@ curl -X GET https://api.plexichat.com/api/v1/features/reports/123456789012345681
 }
 ```
 
-Reporters do not receive admin-only fields such as `admin_notes`, `reviewed_by`, `reviewed_at`, `action_taken`, `resolution`, `resolved_by`, `assigned_to`, or `escalated_at`. Admins receive the full record.
+Reporters do not receive admin-only fields such as `admin_notes`, `reviewed_by`, `reviewed_at`, `action_taken`, `resolution`, `resolved_by`, `assigned_to`, or `escalated_at`. Admins with `reports.read` receive the full record.
 
 ### Errors
 
 | Status | Description |
 | --- | --- |
 | `401` | Not authenticated. |
-| `403` | You are not the reporter and you are not an admin. |
+| `403` | You are not the reporter and you are not an admin with the `reports.read` permission. |
 | `404` | Report not found. |
 
 ## Related endpoints
