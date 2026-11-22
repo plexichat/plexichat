@@ -49,6 +49,21 @@ _REFERRER_SAFE = frozenset(
 )
 _FRAME_SAFE = frozenset({b"sameorigin", b"deny"})
 
+# ``canonical_security_headers`` is on the per-request response path (every
+# HTTP response is stamped via SecurityHeadersMiddleware ->
+# enforce_response_policy -> merge_security_headers). The header set is
+# immutable, so build the tuples once at import time instead of allocating a
+# fresh list plus 4-5 tuples on every request.
+_CANONICAL_HEADERS_TUPLE: tuple[Header, ...] = (
+    (b"X-Content-Type-Options", b"nosniff"),
+    (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
+    (b"X-Permitted-Cross-Domain-Policies", b"none"),
+    (b"X-XSS-Protection", b"1; mode=block"),
+)
+_CANONICAL_HEADERS_WITH_FRAME: tuple[Header, ...] = _CANONICAL_HEADERS_TUPLE + (
+    (b"X-Frame-Options", b"SAMEORIGIN"),
+)
+
 
 def is_weakened(name: bytes, value: bytes) -> bool:
     """Whether a header value weakens a security decision."""
@@ -72,17 +87,13 @@ def is_weakened(name: bytes, value: bytes) -> bool:
     return False
 
 
-def canonical_security_headers(*, include_frame: bool = True) -> List[Header]:
-    """Return the full set of canonical security headers."""
-    headers: List[Header] = [
-        (b"X-Content-Type-Options", b"nosniff"),
-        (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
-        (b"X-Permitted-Cross-Domain-Policies", b"none"),
-        (b"X-XSS-Protection", b"1; mode=block"),
-    ]
-    if include_frame:
-        headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
-    return headers
+def canonical_security_headers(*, include_frame: bool = True) -> tuple[Header, ...]:
+    """Return the frozen module-level set of canonical security headers.
+
+    The returned tuple is shared process-wide; callers must not mutate it
+    (the tuple type enforces this).
+    """
+    return _CANONICAL_HEADERS_WITH_FRAME if include_frame else _CANONICAL_HEADERS_TUPLE
 
 
 def merge_security_headers(
