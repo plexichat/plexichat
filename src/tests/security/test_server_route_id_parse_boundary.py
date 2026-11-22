@@ -9,9 +9,11 @@ polls, suite, ...) already parses boundary IDs through
 a server route but rejected everywhere else -- a parser differential between
 validation and consumption.
 
-This suite ratchets the server route adopters: a refactor cannot silently bring
-back a bare ``int()`` on an incoming ID/cursor parameter, and the shared gate is
-proven to reject the exact inputs ``int`` used to let through.
+This suite walks EVERY shipped server route module (not a curated file list):
+a refactor cannot silently bring back a bare ``int()`` on an incoming
+ID/cursor parameter, even in a new module under a novel name, and the shared
+gate is proven to reject the exact inputs ``int`` used to let through. The
+original adopters are kept only as a non-vacuity floor.
 """
 
 import ast
@@ -24,16 +26,23 @@ pytestmark = [pytest.mark.security, pytest.mark.unit]
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# Server route modules that now adopt the shared parse_id boundary helper.
-HARDENED_SERVER_ID_MODULES = (
-    "src/api/routes/servers/roles.py",
-    "src/api/routes/servers/channels.py",
-    "src/api/routes/servers/members.py",
-    "src/api/routes/servers/misc.py",
-    "src/api/routes/servers/audit_log.py",
-    "src/api/routes/servers/webhooks.py",
-    "src/api/routes/servers/icon_upload.py",
+# Floor pins only: server route modules that originally converted a string ID
+# with bare int(). They are a floor, NOT the bound of the sweep: the detector
+# below walks the whole ``routes/servers`` package, so a new module under a name
+# that appears in no list is still checked.
+_KNOWN_SERVER_ID_MODULES = frozenset(
+    {
+        "src/api/routes/servers/roles.py",
+        "src/api/routes/servers/channels.py",
+        "src/api/routes/servers/members.py",
+        "src/api/routes/servers/misc.py",
+        "src/api/routes/servers/audit_log.py",
+        "src/api/routes/servers/webhooks.py",
+        "src/api/routes/servers/icon_upload.py",
+    }
 )
+
+_SERVER_ROUTES_DIR = ROOT / "src/api/routes/servers"
 
 HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 
@@ -110,12 +119,44 @@ def _parse_id_calls(tree) -> int:
     )
 
 
-def _scan_tree():
+def _iter_server_modules(base: Path | None = None):
+    """Every shipped server route module, discovered structurally.
+
+    The old ratchet iterated a hand-curated tuple of 7 paths. A new route
+    module -- under any name -- that converts a string ID/cursor parameter with
+    a bare ``int()`` was never examined and the guard passed silently. Walking
+    the whole ``routes/servers`` package makes the sweep name-agnostic: no
+    enumeration of known filenames bounds what gets checked.
+    """
+    base = base if base is not None else _SERVER_ROUTES_DIR
+    for path in sorted(base.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        yield path
+
+
+def _scan_paths(paths, root: Path | None = None):
+    """Scan route-module paths, labelling them relative to ``root``.
+
+    Shared by the real tree walk and the novel-module self-test so the latter
+    exercises the exact same discovery + detector pipeline, not a mock.
+    """
+    root = root if root is not None else ROOT
     scanned = []
-    for relative in HARDENED_SERVER_ID_MODULES:
-        tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-        scanned.append((relative, _bare_int_on_param_violations(tree), _parse_id_calls(tree)))
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        scanned.append(
+            (
+                path.relative_to(root).as_posix(),
+                _bare_int_on_param_violations(tree),
+                _parse_id_calls(tree),
+            )
+        )
     return scanned
+
+
+def _scan_tree():
+    return _scan_paths(_iter_server_modules())
 
 
 _SCAN = _scan_tree()
@@ -144,8 +185,25 @@ def test_detector_flags_bare_int_but_accepts_parse_id():
 
 
 def test_server_route_modules_use_parse_id_and_scan_is_not_vacuous():
-    assert len(_SCAN) == len(HARDENED_SERVER_ID_MODULES)
-    missing = [rel for rel, _, calls in _SCAN if calls == 0]
+    scanned = {rel for rel, *_ in _SCAN}
+    assert all(rel.startswith("src/api/routes/servers/") for rel in scanned)
+    # The curated adopters are a floor, not the scan bound: the structural walk
+    # must reach every one of them and then some, so reverting to a fixed list
+    # fails non-vacuously.
+    assert _KNOWN_SERVER_ID_MODULES <= scanned, (
+        "server sweep is missing known modules: "
+        f"{sorted(_KNOWN_SERVER_ID_MODULES - scanned)}"
+    )
+    assert scanned - _KNOWN_SERVER_ID_MODULES, (
+        "server sweep regressed to the old hand-curated module list"
+    )
+    # Every known adopter still calls the helper, and the scan really covers
+    # route handlers -- otherwise the "no bare int()" assertion is vacuous.
+    missing = [
+        rel
+        for rel, _, calls in _SCAN
+        if rel in _KNOWN_SERVER_ID_MODULES and calls == 0
+    ]
     assert not missing, f"parse_id missing from: {missing}"
     assert sum(calls for _, _, calls in _SCAN) >= 15
 
@@ -160,6 +218,50 @@ def test_no_server_route_converts_a_boundary_id_with_bare_int():
         "Bare int() on a string ID/cursor server-route parameter reintroduced:\n  "
         + "\n  ".join(sorted(offenders))
     )
+
+
+def test_novel_server_module_with_bare_int_is_flagged(tmp_path):
+    """Non-vacuity: the structural sweep flags a brand-new, novel-named module.
+
+    The old detector iterated a fixed list of 7 server paths, so a route module
+    under any other name was invisible to the guard. This writes a never-before-
+    seen module under a novel package name and proves the same discovery + scan
+    pipeline the real guard uses reports its bare-int boundary conversion --
+    with no advance knowledge of the file or handler name.
+    """
+    routes = tmp_path / "src/api/routes/servers/brand_new_subsystem"
+    routes.mkdir(parents=True)
+    module = routes / "future_server_export.py"
+
+    def _scan_novel(source: str):
+        module.write_text(textwrap.dedent(source), encoding="utf-8")
+        return _scan_paths(
+            _iter_server_modules(tmp_path / "src/api/routes/servers"), root=tmp_path
+        )
+
+    scanned = _scan_novel(
+        """\
+        @router.get("/future")
+        def future_server_export(server_id: str):
+            return int(server_id)
+        """
+    )
+    assert len(scanned) == 1
+    relative, violations, _ = scanned[0]
+    assert relative == (
+        "src/api/routes/servers/brand_new_subsystem/future_server_export.py"
+    )
+    assert violations, "novel server module's bare int() was not detected"
+
+    # The same novel module using the shared gate is classified as clean.
+    scanned = _scan_novel(
+        """\
+        @router.get("/future")
+        def future_server_export(server_id: str):
+            return parse_id(server_id, "server_id")
+        """
+    )
+    assert scanned[0][1] == []
 
 
 @pytest.mark.parametrize(
