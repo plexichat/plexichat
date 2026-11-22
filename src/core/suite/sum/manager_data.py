@@ -65,6 +65,36 @@ class SumManagerData(SumManagerProtocol):
         if direction not in ("asc", "desc"):
             raise SumValidationError("direction must be asc or desc")
 
+        # SECURITY (N788): a sort deletes and re-inserts every cell in the
+        # affected row band, so it can rewrite cells inside a read_only
+        # protected range -- the same write an ``edit`` grantee is denied
+        # through apply_operation/set_cell. Gate it with the same range ACL
+        # check before touching the file, fail closed for any non-owner whose
+        # band intersects a protected rectangle. Check the whole band, not only
+        # the currently-populated coordinates: the sort permutes cells across
+        # the band, so a protected coordinate that starts empty can still
+        # receive a different value. One representative cell per overlapping
+        # read_only range is enough for _check_range_permissions to detect the
+        # overlap, and leaves the owner's authority short-circuit intact so
+        # owners may still sort locked bands.
+        read_only = self._db.fetch_all(
+            "SELECT row_start, row_end, column_start, column_end FROM sum_range_permissions WHERE workbook_id = ? AND sheet_id = ? AND permission = 'read_only'",
+            (int(workbook_id), int(sheet_id)),
+        )
+        guard_cells: List[Dict[str, Any]] = []
+        for rng in read_only:
+            overlap_start = max(int(rng["row_start"]), start_row)
+            overlap_end = min(int(rng["row_end"]), end_row)
+            if overlap_start >= overlap_end:
+                continue
+            column_start = int(rng["column_start"])
+            if column_start < int(rng["column_end"]):
+                guard_cells.append({"row": overlap_start, "column": column_start})
+        if guard_cells:
+            self._check_range_permissions(
+                int(workbook_id), int(sheet_id), guard_cells, user_id
+            )
+
         data = self._file_bytes(workbook_id)
         now = int(time.time() * 1000)
         connection, path = self._open_sqlite(data)
