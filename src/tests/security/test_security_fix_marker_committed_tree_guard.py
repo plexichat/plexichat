@@ -890,8 +890,11 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-bulk-revoke-session-socket-close",
         path="src/core/auth/managers/session/lifecycle.py",
         marker=(
-            "for row in now_revoked:\n"
-            "                close_session_gateway_connections("
+            "            # Close them one by one by auth-session id rather than blanket\n"
+            "            # closing the user: with except_session_id the surviving current\n"
+            "            # session (and its socket) must remain usable.\n"
+            "            for sid in revoked_ids:\n"
+            '                close_session_gateway_connections(user_id, sid, "Session revoked")'
         ),
         why=(
             "dc3b481e: revoke_sessions_bulk closes each revoked session's "
