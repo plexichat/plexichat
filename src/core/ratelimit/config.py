@@ -754,20 +754,32 @@ def get_route_config(route: str) -> Optional[RateLimitConfig]:
     return DEFAULT_ROUTE_LIMITS.get(route)
 
 
+# The default policy is a pure invariant -- every field is a literal. It is
+# consulted on every request whose route is not in ``DEFAULT_ROUTE_LIMITS``
+# (the bounded "unknown route" bucket), so constructing it inside
+# ``get_default_config()`` allocated a fresh dataclass on that hot path. Build
+# it once at import time instead. The object is a shared, immutable-by-
+# convention constant: no production caller mutates a config in place, and
+# callers that need a different limit use ``RateLimitConfig.with_multiplier``,
+# which returns a fresh object. Keeping one instance also preserves fail-closed
+# values and bucket-key scoping -- only the identity of the config changes.
+_DEFAULT_CONFIG = RateLimitConfig(
+    requests=60,
+    window_seconds=30.0,
+    burst=10,
+    algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
+    scope=BucketType.ROUTE,
+)
+
+
 def get_default_config() -> RateLimitConfig:
     """
     Get default rate limit configuration for unspecified routes.
 
     Returns:
-        Default RateLimitConfig.
+        The precomputed shared default RateLimitConfig (module constant).
     """
-    return RateLimitConfig(
-        requests=60,
-        window_seconds=30.0,
-        burst=10,
-        algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
-        scope=BucketType.ROUTE,
-    )
+    return _DEFAULT_CONFIG
 
 
 def is_bot_higher_limit_route(route: str) -> bool:
