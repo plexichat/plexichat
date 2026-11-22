@@ -94,6 +94,18 @@ class InviteLinkRule(BaseRule):
         re.IGNORECASE,
     )
 
+    # Invite codes are bearer credentials minted with ``token_urlsafe(16)``:
+    # 22 characters from ``[A-Za-z0-9_-]``. The configurable ``_pattern``
+    # (default ``[a-zA-Z0-9]{8}``) cannot match them, so extracting candidates
+    # from that pattern alone made a real 22-char code invisible to BOTH the
+    # "confirmed invite" and the "invite-shaped URL" branches: a live invite
+    # link could be posted in chat without moderation noticing. Collect
+    # urlsafe-shaped candidates independently of the configured pattern so any
+    # current or future code length is handled. These are only *candidates*;
+    # aggressive blocking still requires confirmation or an invite URL shape,
+    # so ordinary words are not mass-blocked (fail closed, no false positives).
+    _URLSAFE_CODE_RE = re.compile(r"[A-Za-z0-9_-]{4,64}")
+
     def __init__(self, rule: Rule):
         super().__init__(rule)
         self._block_all: bool = self.config.get("block_all", True)
@@ -146,6 +158,12 @@ class InviteLinkRule(BaseRule):
                     self._pattern = re.compile(custom_pattern)
             except re.error:
                 self._pattern = self.DEFAULT_INVITE_PATTERN
+        elif custom_pattern:
+            # A malformed stored value (list/int/...) must fall back to the
+            # canonical compiled pattern, not a freshly compiled lookalike:
+            # consumers rely on identity to detect the fallback.
+            logger.warning("InviteLinkRule custom pattern rejected: not a string")
+            self._pattern = self.DEFAULT_INVITE_PATTERN
         else:
             self._pattern = re.compile(rf"\b([a-zA-Z0-9]{{{self._code_length}}})\b")
 
@@ -170,13 +188,21 @@ class InviteLinkRule(BaseRule):
         # spliced in the middle.
         potential_codes: List[str] = []
         shaped_lower: Set[str] = set()
-        for view in (_fold_link_text(content), _separate_invisible(content)):
-            for code in self._pattern.findall(view):
+
+        def _add(candidates) -> None:
+            for code in candidates:
                 if code not in potential_codes:
                     potential_codes.append(code)
-            shaped_lower.update(
-                code.lower() for code in self._INVITE_SHAPE_RE.findall(view)
-            )
+
+        for view in (_fold_link_text(content), _separate_invisible(content)):
+            # The configured pattern is kept for admin-tuned detections (and
+            # existing deployments), but it is no longer the ONLY source of
+            # candidates: a fresh 22-char invite code would be missed by it.
+            _add(self._pattern.findall(view))
+            _add(self._URLSAFE_CODE_RE.findall(view))
+            shaped = self._INVITE_SHAPE_RE.findall(view)
+            _add(shaped)
+            shaped_lower.update(code.lower() for code in shaped)
 
         confirmed = [
             code
