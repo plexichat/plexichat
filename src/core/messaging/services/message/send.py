@@ -429,12 +429,20 @@ class SendMixin(BaseService, MessageServiceProtocol):
     def _enforce_dm_block_rules(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> None:
-        """Reject sends into a DM whose participants block each other.
+        """Reject sends into a DM/group DM whose participants block each other.
 
-        Keeps legacy DM channels (created before a block) from remaining
-        writable by either blocked party. Fails closed: when the optional
-        relationships module is unavailable the authoritative ``rel_blocked``
-        table is consulted directly, and a failed lookup denies the send.
+        Keeps conversations created before a block (DMs and group DMs alike)
+        from remaining writable by either blocked party. Group DMs are
+        ``GROUP`` rows; peers close their *insertion* against blocked pairs,
+        but a pair already co-resident before the block could otherwise keep
+        delivering messages into the same group DM because this gate used to
+        return early for every non-``DM`` type. Server-channel conversations
+        are also ``GROUP`` rows, but they are governed by server membership
+        and channel permissions rather than DM privacy, so they stay exempt
+        (mirrors ``ConversationService.enforce_conversation_dm_privacy``).
+        Fails closed: when the optional relationships module is unavailable
+        the authoritative ``rel_blocked`` table is consulted directly, and a
+        failed lookup denies the send.
         """
         conv_row = self._conversation_repo.get_by_id(conversation_id)
         if not conv_row or conv_row.get("deleted"):
@@ -446,7 +454,18 @@ class SendMixin(BaseService, MessageServiceProtocol):
         else:
             conv_type = getattr(conv_type, "value", conv_type)
 
-        if conv_type != ConversationType.DM.value:
+        if conv_type == ConversationType.DM.value:
+            pass
+        elif conv_type == ConversationType.GROUP.value:
+            # A GROUP row carrying a server_id is a server channel, not a
+            # group DM: blocks are not a send boundary there. Anything else
+            # GROUP-shaped is treated as a group DM, including rows with
+            # unreadable metadata, so a malformed row cannot downgrade the
+            # check.
+            metadata = self._conversation_repo._json_loads(conv_row.get("metadata"))
+            if isinstance(metadata, dict) and metadata.get("server_id"):
+                return
+        else:
             return
 
         relationships = _get_relationships_module()
