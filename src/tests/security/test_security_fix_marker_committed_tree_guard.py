@@ -173,21 +173,16 @@ _ROLE_ASSIGNMENT_RANK_RECHECK = (
 
 # ded43f8e (N644): refresh_session re-checks the PRESENTED refresh credential's
 # IP/UA against the session's stored blind indexes in constant time before the
-# atomic consume. These two single-line compare_digest calls (with the
-# `return None` fail-closed arms) are distinctive to refresh_session -- the
-# WS-ticket verifier compares use the multi-line form with TokenInvalidError --
-# so a stale staged copy of lifecycle.py that drops the binding is caught by name.
+# atomic consume. 9215ff01 refactored the inline compare_digest block into the
+# shared _refresh_binding_ok() helper; the distinctive pre-consume call site
+# (comment + call + `return None` fail-closed arm) is unique to refresh_session
+# -- the replay-revocation branch calls the same helper without this comment and
+# the WS-ticket verifier uses the multi-line raise form -- so a stale staged copy
+# of lifecycle.py that drops the binding gate is caught by name.
 _REFRESH_SESSION_CONTEXT_BINDING = (
-    "            if not hmac.compare_digest(stored_ip_index, current_ip_index):\n"
-    "                return None\n"
-    "            if not user_agent:\n"
-    "                return None\n"
-    '            stored_ua_index = row.get("ua_index")\n'
-    "            if not isinstance(stored_ua_index, str) or not stored_ua_index:\n"
-    "                return None\n"
-    "            current_ua_index = self._ua_index(user_agent)\n"
-    "            if not hmac.compare_digest(stored_ua_index, current_ua_index):\n"
-    "                return None"
+    "        # Shared with the replay-revocation branch above via _refresh_binding_ok.\n"
+    "        if not self._refresh_binding_ok(row, ip_address, user_agent):\n"
+    "            return None"
 )
 
 
