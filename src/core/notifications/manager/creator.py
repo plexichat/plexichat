@@ -150,6 +150,14 @@ class NotificationCreatorMixin(NotificationProtocol):
         # preference gate does not treat as a mass mention, so track them
         # explicitly here.
         mass_ping_recipients = set()
+        # SECURITY: likewise, every member reached by a role mention must
+        # honour ``suppress_roles`` even if a *different* mention in the same
+        # message wins the recipient de-duplication and assigns them a
+        # CHANNEL/EVERYONE/HERE/USER MentionType. ``_should_notify_user_optimized``
+        # consults ``suppress_roles`` only for the literal ROLE spelling, so
+        # tracking the audience semantically (rather than by the raw stored
+        # type) is the only way to fail closed. See the ROLE branch below.
+        role_ping_recipients = set()
 
         blocked_users = get_blocked_user_ids(self._relationships, self._db, author_id)
 
@@ -234,6 +242,12 @@ class NotificationCreatorMixin(NotificationProtocol):
                 )
                 for member_id in role_members:
                     if member_id != author_id and member_id not in blocked_users:
+                        # Record every role-ping audience member regardless of
+                        # the de-dup outcome: if an earlier @everyone/self-channel
+                        # mention already claimed this recipient, ``mention_type``
+                        # will not be ROLE and the type-based suppress_roles gate
+                        # would otherwise let the content preview through.
+                        role_ping_recipients.add(member_id)
                         if member_id not in mention_types:
                             users_to_notify.add(member_id)
                             mention_types[member_id] = MentionType.ROLE
@@ -353,6 +367,18 @@ class NotificationCreatorMixin(NotificationProtocol):
                 user_id in mass_ping_recipients
                 and settings
                 and settings.suppress_everyone
+            ):
+                continue
+
+            # A recipient reached by a role mention opted out via
+            # ``suppress_roles`` must not receive the notification (or its
+            # content preview) just because another mention in the message
+            # retyped them as CHANNEL/EVERYONE/HERE/USER. Apply the preference
+            # to the semantic role-ping audience, not the raw MentionType.
+            if (
+                user_id in role_ping_recipients
+                and settings
+                and settings.suppress_roles
             ):
                 continue
 
