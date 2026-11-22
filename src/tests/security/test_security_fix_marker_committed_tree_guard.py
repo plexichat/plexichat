@@ -727,6 +727,14 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="2033f017-docs-copy-button-renderer",
+        path="src/api/routes/docs/renderer.py",
+        marker='from mistune.renderers.html import escape_text, safe_entity',
+        why=(
+            '2033f017 is a docs-navigation change landed via the private index: the mistune path emits copy buttons via a dedicated renderer; pinned by the distinctive import it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
