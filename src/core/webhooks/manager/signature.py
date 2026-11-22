@@ -7,6 +7,8 @@ import hashlib
 import hmac
 import threading
 import time
+from collections import OrderedDict
+from contextlib import contextmanager
 from typing import Dict, Any, Optional
 
 from cryptography.exceptions import InvalidSignature
@@ -56,6 +58,7 @@ _REPLAY_CACHE_TTL_SECONDS = (
 ED25519_SIGNATURE_LENGTH = 64
 _REPLAY_MARKER = "1"
 
+
 # cache_get() / cache_set() are two separate, non-atomic operations. Without a
 # guard, two threads handling the SAME captured (signature, timestamp) pair can
 # both observe a cache miss, both verify successfully, and both be accepted
@@ -70,7 +73,59 @@ _REPLAY_MARKER = "1"
 # not enough: a rotation committing between the fetch and the verify would let
 # a signature made with the RETIRED key be accepted after the key had already
 # changed. Holding the lock from fetch through verification closes that TOCTOU.
-_signature_lock = threading.RLock()
+#
+# The guard is PER WEBHOOK, not process-global. Verification holds the lock
+# across two Valkey round trips (replay lookup + claim/write) and an Ed25519
+# verify; a single global mutex made every inbound delivery in the process wait
+# behind the slowest delivery for an unrelated webhook. A rotation only swaps
+# one webhook's key and a verification only reads one webhook's key, so keying
+# by webhook_id preserves the fetch/check/verify/consume atomicity exactly while
+# letting independent webhooks be verified concurrently. The registry is bounded
+# and refcounted so idle locks are reclaimed but a lock with a live guard is
+# never evicted (evicting it would let a second thread use a different mutex).
+class _WebhookSignatureLock:
+    __slots__ = ("lock", "refs")
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.refs = 0
+
+
+_SIGNATURE_LOCKS_GUARD = threading.Lock()
+_SIGNATURE_LOCKS: "OrderedDict[int, _WebhookSignatureLock]" = OrderedDict()
+_SIGNATURE_LOCKS_MAX = 1024
+
+
+def _prune_signature_locks_locked() -> None:
+    """Evict idle LRU entries; never evict a lock that has a live guard."""
+    while len(_SIGNATURE_LOCKS) > _SIGNATURE_LOCKS_MAX:
+        for key, entry in _SIGNATURE_LOCKS.items():
+            if entry.refs == 0:
+                del _SIGNATURE_LOCKS[key]
+                break
+        else:
+            break  # every retained lock is in use
+
+
+@contextmanager
+def _signature_lock_for(webhook_id: SnowflakeID):
+    """Yield the per-webhook mutex guarding key swap + verification."""
+    key = int(webhook_id)
+    with _SIGNATURE_LOCKS_GUARD:
+        entry = _SIGNATURE_LOCKS.get(key)
+        if entry is None:
+            entry = _WebhookSignatureLock()
+            _SIGNATURE_LOCKS[key] = entry
+        else:
+            _SIGNATURE_LOCKS.move_to_end(key)
+        entry.refs += 1
+        _prune_signature_locks_locked()
+    try:
+        with entry.lock:
+            yield entry.lock
+    finally:
+        with _SIGNATURE_LOCKS_GUARD:
+            entry.refs -= 1
 
 
 def _signature_length_is_valid(signature: bytes) -> bool:
@@ -270,7 +325,7 @@ class SignatureMixin(WebhookManagerTrait):
         # a verification that fetched the old key just before the UPDATE could
         # still accept a retired-key signature afterwards. Under the shared
         # lock a delivery observes either the old key in full or the new one.
-        with _signature_lock:
+        with _signature_lock_for(webhook_id):
             self._db.execute(
                 """UPDATE webhook_webhooks
                    SET signing_key_public = ?, signing_key_private_encrypted = ?,
@@ -402,7 +457,7 @@ class SignatureMixin(WebhookManagerTrait):
         # a rotation committing mid-verification could swap in a new key after
         # the old one was fetched. Holding the lock for all of them makes a
         # delivery observe a single consistent key + replay state.
-        with _signature_lock:
+        with _signature_lock_for(webhook_id):
             row = self._db.fetch_one(
                 "SELECT signing_key_public FROM webhook_webhooks WHERE id = ?",
                 (webhook_id,),
