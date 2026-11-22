@@ -47,6 +47,15 @@ class _BoundedSafeLoader(yaml.SafeLoader):
         self._config_nodes = 0
 
     def compose_node(self, parent, index):
+        # An alias reuses an already-composed node instead of composing a new
+        # one, so it does not advance the nesting counter. A short chain (or a
+        # cycle) of aliases can therefore build a graph thousands of levels
+        # deep while the size/depth/node caps all still pass; construction and
+        # interpolation then blow the Python stack with a RecursionError, which
+        # is not a yaml.YAMLError and escapes the fail-closed handler. Config
+        # files have no need for YAML anchors, so refuse aliases outright.
+        if self.check_event(yaml.events.AliasEvent):
+            raise ConfigParseError("Config YAML aliases are not allowed")
         self._config_nodes += 1
         if self._config_nodes > MAX_CONFIG_NODES:
             raise ConfigParseError(

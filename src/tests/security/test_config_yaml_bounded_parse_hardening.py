@@ -81,6 +81,44 @@ def test_bounded_loader_api_rejects_bomb_and_accepts_normal_yaml():
     assert safe_load_bounded(b"api:\n  title: ok\n") == {"api": {"title": "ok"}}
 
 
+def test_yaml_aliases_cannot_bypass_the_depth_cap(tmp_path):
+    """Aliases must not re-open the RecursionError escape the caps close.
+
+    A chain of aliases keeps the parser's nesting depth at ~2 and uses only a
+    few thousand nodes, so all three caps pass; without the alias guard the
+    resulting deep graph makes interpolation raise a RecursionError that is
+    not a yaml.YAMLError and escapes the malformed-config handler entirely
+    (even for the non-crashing IGNORE action).
+    """
+    import src.utils.common_utils.utils.config.core as core
+
+    lines = ["a0: &a0 [x]"]
+    for i in range(1, 1200):
+        lines.append(f"a{i}: &a{i} [*a{i-1}]")
+    path = tmp_path / "config.yaml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        core.ConfigLoader(str(path), default_config={"root": []})
+    message = str(exc.value).lower()
+    assert "config file is malformed" in message
+    assert "alias" in message
+
+    # Non-crash actions must fail closed too, not leak a RecursionError.
+    loader = core.ConfigLoader(
+        str(path),
+        default_config={"root": []},
+        malformed_action=core.MalformedConfigAction.IGNORE,
+    )
+    assert loader.get("root") == []
+
+    # The bounded helper rejects cyclic aliases directly as well.
+    with pytest.raises(core.ConfigParseError):
+        core.safe_load_bounded(b"a: &a [*a]\n")
+    with pytest.raises(core.ConfigParseError):
+        core.safe_load_bounded(b"a: &a {b: *a}\n")
+
+
 def test_legitimate_config_still_loads(tmp_path):
     """Non-vacuity: a normal config with an explicit security allowlist works."""
     from src.utils.common_utils.utils.config.core import ConfigLoader
