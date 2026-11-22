@@ -11,6 +11,7 @@ from ..boundaries import (
     bound_import_text,
     bound_workspace_json,
 )
+from .container import MAX_DECOMPRESSED_SIZE
 from .formulas import FormulaEvaluator, is_error
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
@@ -475,6 +476,16 @@ class SumManagerData(SumManagerProtocol):
             raise SumStorageError("Workbook file could not be updated") from exc
         finally:
             self._close_sqlite(connection, path)
+
+        # The container is compressed on write but decompressed under a hard
+        # ceiling on every subsequent read (downloads, exports, viewport
+        # materialization). A chunked import is the only write path that can
+        # add up to ~1M cells in one request; without this check a bounded CSV
+        # can inflate the raw SQLite blob past that ceiling, publish it, and
+        # leave the workbook permanently unreadable. Refuse before publishing
+        # so the revision is not bumped and the previous blob stays live.
+        if len(updated) > MAX_DECOMPRESSED_SIZE:
+            raise SumValidationError("Import would exceed the workbook size limit")
 
         new_path, size, checksum = self._publish_revision(
             int(workbook_id),

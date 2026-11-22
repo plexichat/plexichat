@@ -105,6 +105,14 @@ def encode_container(
         payload = len(db_bytes).to_bytes(4, "big") + db_bytes + wal_bytes
     else:
         payload = db_bytes
+    # Never create a container that decode_container would refuse: every read
+    # decompresses under this ceiling, so an oversized encode produces a
+    # workbook that is written successfully and then cannot be opened at all.
+    if len(payload) > MAX_DECOMPRESSED_SIZE:
+        raise ValueError(
+            f"Workbook payload exceeds size limit "
+            f"({len(payload)} > {MAX_DECOMPRESSED_SIZE})"
+        )
     checksum = hashlib.sha256(payload).digest()
 
     flags = FLAG_WAL if wal_bytes else 0
