@@ -1,7 +1,6 @@
 """Server invites: minting, quotas, redemption and revocation."""
 
 import secrets
-import string
 import threading
 import time
 from typing import Any, Optional
@@ -151,12 +150,30 @@ class MemberInviteMixin:
         """Provided by :class:`MemberCrudMixin` on the composed handler."""
         ...
 
+    # An invite code is a bearer credential: whoever holds it can join the
+    # server. The old scheme (``secrets.choice`` over 62 alphanumeric chars,
+    # 8-12 chars long) carried only 47.6-71.5 bits and was online-brute-
+    # forceable. Draw at least 16 bytes (128 bits) from the CSPRNG; urlsafe
+    # base64 encodes that as 22 characters in the ``[A-Za-z0-9_-]`` alphabet
+    # accepted by the join/invite validators. A larger configured byte count
+    # is honoured, but legacy short ``invite_code_length`` values can no longer
+    # weaken the floor.
+    _MIN_INVITE_CODE_BYTES = 16
+
     def generate_invite_code(self) -> str:
-        """Generate a unique invite code."""
-        length = self.manager._config.get("invite_code_length", 8)
-        chars = string.ascii_letters + string.digits
+        """Generate a unique, cryptographically strong invite code.
+
+        Uses ``secrets.token_urlsafe`` so every code has at least 128 bits of
+        entropy (22 urlsafe characters), never a short/sequential/id-derived
+        value. The DB collision loop preserves the UNIQUE(code) contract.
+        """
+        configured = self.manager._config.get("invite_code_length", 8)
+        try:
+            num_bytes = max(self._MIN_INVITE_CODE_BYTES, int(configured))
+        except (TypeError, ValueError):
+            num_bytes = self._MIN_INVITE_CODE_BYTES
         while True:
-            code = "".join(secrets.choice(chars) for _ in range(length))
+            code = secrets.token_urlsafe(num_bytes)
             existing = self.db.fetch_one(
                 "SELECT 1 FROM srv_invites WHERE code = ?", (code,)
             )

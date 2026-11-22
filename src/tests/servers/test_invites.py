@@ -16,7 +16,8 @@ class TestCreateInvite:
 
         assert invite is not None
         assert invite.code is not None
-        assert len(invite.code) == 8
+        # 128-bit CSPRNG floor: token_urlsafe(16) -> 22 urlsafe characters.
+        assert len(invite.code) >= 22
         assert invite.server_id == server.id
         assert invite.channel_id == general.id
 
