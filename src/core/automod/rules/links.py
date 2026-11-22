@@ -200,11 +200,19 @@ class InviteLinkRule(BaseRule):
         # into an unrecognisable token, while splitting alone would break a code
         # spliced in the middle.
         potential_codes: List[str] = []
+        # De-duplication used to scan ``potential_codes`` for every candidate.
+        # That is O(n**2) on a message with n URL-safe tokens: automod runs
+        # this rule on every posted message, so a long post with many links
+        # made moderation latency grow quadratically. Keep the list (its
+        # first-occurrence order is observable in the reported invite codes)
+        # and use a companion set for the membership test.
+        seen_codes: Set[str] = set()
         shaped_lower: Set[str] = set()
 
         def _add(candidates) -> None:
             for code in candidates:
-                if code not in potential_codes:
+                if code not in seen_codes:
+                    seen_codes.add(code)
                     potential_codes.append(code)
 
         for view in (_fold_link_text(content), _separate_invisible(content)):
@@ -570,7 +578,20 @@ class ExternalLinkRule(BaseRule):
             host = _canonicalize_host(host)
             if any(
                 sep in host
-                for sep in ("/", "\\", "?", "#", "@", ":", "[", "]", " ", "\t", "\r", "\n")
+                for sep in (
+                    "/",
+                    "\\",
+                    "?",
+                    "#",
+                    "@",
+                    ":",
+                    "[",
+                    "]",
+                    " ",
+                    "\t",
+                    "\r",
+                    "\n",
+                )
             ):
                 return None
             if not host:
