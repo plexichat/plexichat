@@ -110,11 +110,21 @@ def get_cached_grants(
     """
     key = _make_key(db, credential, subject)
     now = time.monotonic()
-    with _LOCK:
-        entry = _ENTRIES.get(key)
-        if entry is not None and entry[0] > now:
-            return entry[1]
 
+    # Phase 1 - fast, unlocked read on the hot path. Stored values are immutable
+    # (expiry, frozenset) tuples; the only mutations are the bounded refill
+    # below and an atomic ``clear()`` on invalidation, both under ``_LOCK``. A
+    # read can therefore only observe a complete, still-live entry: it never
+    # widens a grant, and a call that starts after invalidation sees the empty
+    # (or new) store and reloads fail-closed. Keeping the global lock off hits
+    # stops every concurrent authorization reader from queueing behind it.
+    entry = _ENTRIES.get(key)
+    if entry is not None and entry[0] > now:
+        return entry[1]
+
+    # Phase 2 - miss (or expired): load outside the lock, then take the lock
+    # only for the bounded refill. Re-check under the lock so a value another
+    # caller stored while we loaded wins instead of being overwritten.
     value = loader()
     if not isinstance(value, frozenset):
         # Never cache a non-immutable value: a caller could mutate it into a
@@ -122,6 +132,9 @@ def get_cached_grants(
         value = frozenset()
 
     with _LOCK:
+        entry = _ENTRIES.get(key)
+        if entry is not None and entry[0] > now:
+            return entry[1]
         if len(_ENTRIES) >= _MAX_ENTRIES:
             for stale in [k for k, (exp, _) in _ENTRIES.items() if exp <= now]:
                 _ENTRIES.pop(stale, None)
