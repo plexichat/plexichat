@@ -32,13 +32,24 @@ class _GeneratorStream(io.RawIOBase):
             for chunk in self._gen:
                 chunks.append(chunk)
             return b"".join(chunks)
-        while len(self._buffer) < n:
+        # Accumulate chunks in a list and join once.  Repeated
+        # ``self._buffer += chunk`` is quadratic in CPython: the attribute
+        # target keeps a live reference, so every append reallocates and
+        # copies the whole buffer.  A single join keeps this linear while
+        # producing byte-for-byte identical output.
+        chunks = []
+        remaining = n - len(self._buffer)
+        buffered = self._buffer
+        while remaining > 0:
             try:
                 chunk = next(self._gen)
             except StopIteration:
                 break
-            else:
-                self._buffer += chunk
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if chunks:
+            chunks.insert(0, buffered)
+            self._buffer = b"".join(chunks)
         result = self._buffer[:n]
         self._buffer = self._buffer[n:]
         return result
