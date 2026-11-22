@@ -89,8 +89,13 @@ class InviteLinkRule(BaseRule):
 
     # Invite-shaped candidates: a code embedded in an invite URL. Any host
     # with an ``/invite/<code>`` path plus the bare discord.gg short form.
+    # A trailing DNS-root dot (``discord.gg./``) resolves to the same host and
+    # is already tolerated by the ``[A-Za-z0-9.-]+/invite/`` branch; allow it on
+    # the short form too so ``discord.gg./<code>`` cannot evade moderation.
+    # The dot is optional and must be immediately followed by ``/``, so a
+    # different host (``discord.gg.evil.example``) is never mistaken for it.
     _INVITE_SHAPE_RE = re.compile(
-        r"(?:[A-Za-z0-9.-]+/invite/|discord\.gg/)([A-Za-z0-9_-]{4,})",
+        r"(?:[A-Za-z0-9.-]+/invite/|discord\.gg\.?/)([A-Za-z0-9_-]{4,})",
         re.IGNORECASE,
     )
 
