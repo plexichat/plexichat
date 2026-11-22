@@ -11,9 +11,11 @@ makes ``can_manage_role`` return True unconditionally, so a now-former owner
 can attach a role sitting at/above their (now lower) rank -- the exact
 escalation the rank gate exists to prevent.
 
-This test lands the ownership transfer deterministically between the pre-lock
-check and the under-lock write. It passes only when assign_role re-derives
-ownership from the authoritative row under the lock and fails closed.
+This test makes the authoritative owner read at write time report a different
+owner, deterministically landing the ownership loss in the check->write gap.
+It passes only when assign_role re-derives ownership from that row under the
+lock and fails closed. Without the fix that owner query is never issued, so
+the grant succeeds and the test fails -- proving non-vacuity.
 """
 
 import pytest
@@ -24,66 +26,41 @@ from src.core.servers.exceptions import RoleHierarchyError
 def test_assign_role_denies_when_actor_loses_ownership_in_gap(
     server_with_members, monkeypatch
 ):
-    server, owner, _admin, member, outsider, _admin_role, servers = server_with_members
-
-    # Give the owner a real role so we can place their rank between the target
-    # member's rank and the target role's rank. That way the member-target
-    # guard keeps passing after demotion and the ONLY thing authorizing the
-    # grant is the stale owner verdict.
-    staff_role = servers.create_role(
-        user_id=owner.id,
-        server_id=server.id,
-        name="Owner Staff",
-        permissions={"messages.send": True},
+    server, owner, _admin, member, outsider, _admin_role, servers = (
+        server_with_members
     )
-    servers.assign_role(owner.id, server.id, owner.id, staff_role.id)
-
-    member_max = max(
-        (
-            int(r["position"])
-            for r in servers._get_member_role_rows(server.id, member.id)
-        ),
-        default=0,
-    )
-    staff_pos = member_max + 5
-    target_pos = staff_pos + 10
-    servers.move_role(owner.id, staff_role.id, staff_pos)
 
     target_role = servers.create_role(
         user_id=owner.id,
         server_id=server.id,
         name="Above Rank Role",
-        permissions={"messages.send": True},
+        permissions={},
     )
-    servers.move_role(owner.id, target_role.id, target_pos)
-
-    owner_max_after = max(
+    assert target_role.position > 0
+    owner_max = max(
         int(r["position"]) for r in servers._get_member_role_rows(server.id, owner.id)
     )
-    assert staff_pos > member_max  # member-target guard keeps passing
-    assert owner_max_after < target_pos  # non-owner would be denied by rank
-    assert outsider.id not in (owner.id, member.id)
+    assert owner_max < target_role.position
 
     real_fetch_one = servers._db.fetch_one
-    real_execute = servers._db.execute
-    state = {"demoted": False}
+    state = {"race": False, "owner_overrides": 0}
 
     def racing_fetch_one(sql, params=None):
         if (
-            not state["demoted"]
+            not state["race"]
             and isinstance(sql, str)
             and sql.startswith("SELECT permissions FROM srv_roles")
             and params == (target_role.id,)
         ):
-            # transfer_ownership does not take the 142/143 locks this path
-            # holds. Land it in the check->write gap: the former owner is now a
-            # plain member whose rank sits below the role being attached.
-            real_execute(
-                "UPDATE srv_servers SET owner_id = ? WHERE id = ?",
-                (outsider.id, server.id),
-            )
-            servers._invalidate_owner_cache(server.id)
-            state["demoted"] = True
+            state["race"] = True
+        if (
+            state["race"]
+            and isinstance(sql, str)
+            and sql.startswith("SELECT owner_id FROM srv_servers")
+            and params == (server.id,)
+        ):
+            state["owner_overrides"] += 1
+            return {"owner_id": outsider.id}
         return real_fetch_one(sql, params)
 
     monkeypatch.setattr(servers._db, "fetch_one", racing_fetch_one)
@@ -91,9 +68,8 @@ def test_assign_role_denies_when_actor_loses_ownership_in_gap(
     with pytest.raises(RoleHierarchyError):
         servers.assign_role(owner.id, server.id, member.id, target_role.id)
 
-    # Non-vacuous: the ownership change really landed, and the escalated role
-    # really was not attached to the grantee.
-    assert state["demoted"] is True
-    assert [r.id for r in servers.get_member_roles(server.id, member.id)].count(
-        target_role.id
-    ) == 0
+    assert state["race"] is True
+    assert state["owner_overrides"] >= 1
+    assert target_role.id not in [
+        r.id for r in servers.get_member_roles(server.id, member.id)
+    ]

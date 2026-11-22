@@ -206,11 +206,34 @@ class RoleAssignmentMixin(RoleHandlerProtocol):
             )
             if not fresh_position:
                 raise RoleNotFoundError("Role not found")
+            # N840 follow-up: ``is_owner`` above was captured before these
+            # locks were taken. ``transfer_ownership`` is CAS-guarded but does
+            # NOT take the 142 -> 143 advisory locks, so the actor can lose
+            # ownership in the check->write gap and the pre-lock verdict goes
+            # stale. Re-derive ownership from the authoritative row under the
+            # lock; a stale ``is_owner=True`` makes can_manage_role return True
+            # unconditionally and would let a now-former owner attach a role
+            # at/above their (now lower) rank. Fail closed on a missing or
+            # malformed owner row -- neither proves the actor is still owner.
+            fresh_owner = self.db.fetch_one(
+                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
+                (server_id,),
+            )
+            if not fresh_owner:
+                raise RoleHierarchyError(
+                    "Cannot manage roles: server not found at write time"
+                )
+            fresh_owner_id = fresh_owner["owner_id"]
+            if type(fresh_owner_id) is not int:
+                raise RoleHierarchyError(
+                    "Cannot manage roles: malformed server owner row"
+                )
+            fresh_is_owner = fresh_owner_id == int(user_id)
             current_user_roles = self.manager._get_member_role_rows(server_id, user_id)
             if not can_manage_role(
                 current_user_roles,
                 {"position": fresh_position["position"]},
-                is_owner,
+                fresh_is_owner,
             ):
                 raise RoleHierarchyError(
                     "Cannot assign a role at or above your highest role"
