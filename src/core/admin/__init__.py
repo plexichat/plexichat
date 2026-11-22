@@ -3,7 +3,10 @@ Admin module - Administrative functions for Plexichat server.
 Modularized implementation delegating to sub-modules.
 """
 
+import ipaddress
 from typing import Optional, List, Dict, Any, Tuple
+
+from src.core.bounded_lru import BoundedLRU
 
 # Import types and classes for public API
 from .auth import AdminLoginResult
@@ -116,6 +119,73 @@ def get_ticket_counts() -> Dict[str, int]:
     return tickets.get_ticket_counts(_get_db())
 
 
+#: Loopback spellings the old implementation special-cased. Hoisted to a
+#: module constant so the per-call set literal disappears from the hot path.
+_LOCALHOST_VARIANTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+# ``check_host_restriction`` runs on every admin route. The allowlist is
+# config-derived, shared, public data; parsing each CIDR/IP string into an
+# ``ipaddress`` object on every request was a fixed CPU cost on that hot path.
+# Memoize the *compiled allowlist* (never the verdict: that still depends on
+# the per-request client IP and is recomputed every call) in a small bounded
+# TTL cache keyed by the allowlist contents. A content key means a config
+# change is observed immediately via a cache miss, with no explicit hook; the
+# TTL and entry cap only bound memory held for superseded allowlists.
+_HOST_RULES_CACHE_MAX_ENTRIES = 64
+_HOST_RULES_CACHE_MAX_BYTES = 64 * 1024
+_HOST_RULES_CACHE_TTL_SECONDS = 5.0
+
+_host_rules_cache = BoundedLRU(
+    max_entries=_HOST_RULES_CACHE_MAX_ENTRIES,
+    max_bytes=_HOST_RULES_CACHE_MAX_BYTES,
+    ttl_seconds=_HOST_RULES_CACHE_TTL_SECONDS,
+)
+
+
+def invalidate_host_rules_cache() -> None:
+    """Drop compiled allowlists (config reload / tests). TTL already bounds them."""
+    _host_rules_cache.clear()
+
+
+def get_host_rules_cache_stats() -> dict:
+    """Cache bounds/counters snapshot (observability and regression tests)."""
+    stats = dict(_host_rules_cache.stats())
+    stats["ttl_seconds"] = _HOST_RULES_CACHE_TTL_SECONDS
+    return dict(stats)
+
+
+def _compile_host_rules(allowed_hosts):
+    """Parse an allowlist into ipaddress objects exactly once.
+
+    The three returned values mirror the three decisions the original loop
+    made per entry: pre-parsed network/address rules, the raw literal set (for
+    malformed client IPs and malformed entries), and whether any entry was a
+    loopback spelling (for the loopback peer short-circuit).
+    """
+    rules = []
+    literals = set()
+    has_loopback = False
+    for allowed in allowed_hosts:
+        literals.add(allowed)
+        if allowed in _LOCALHOST_VARIANTS:
+            has_loopback = True
+        if "/" in allowed:
+            try:
+                rules.append((0, ipaddress.ip_network(allowed, strict=False)))
+                continue
+            except ValueError:
+                pass
+        else:
+            try:
+                rules.append((1, ipaddress.ip_address(allowed)))
+                continue
+            except ValueError:
+                pass
+        # Malformed entry: the original fell back to a literal string compare.
+        rules.append((2, allowed))
+    return tuple(rules), frozenset(literals), has_loopback
+
+
 def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
     """Verify if the client IP is allowed based on host restrictions.
 
@@ -126,29 +196,41 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
     """
     if not allowed_hosts:
         return False
-    localhost_variants = {"127.0.0.1", "localhost", "::1"}
-    if client_ip in localhost_variants:
-        return any(
-            allowed in localhost_variants and client_ip in localhost_variants
-            for allowed in allowed_hosts
-        )
+
+    # Cache only public, config-derived string allowlists. Any unusual input
+    # (e.g. non-string entries) takes the same uncompiled path, preserving the
+    # original behaviour for those callers.
+    if isinstance(allowed_hosts, (list, tuple)) and all(
+        isinstance(entry, str) for entry in allowed_hosts
+    ):
+        key = tuple(allowed_hosts)
+        compiled = _host_rules_cache.get(key)
+        if compiled is None:
+            compiled = _compile_host_rules(allowed_hosts)
+            _host_rules_cache.set(key, compiled)
+    else:
+        compiled = _compile_host_rules(allowed_hosts)
+    rules, literals, has_loopback = compiled
+
+    if client_ip in _LOCALHOST_VARIANTS:
+        # Original: any loopback spelling in the allowlist admits a loopback
+        # peer. Preserved verbatim (incl. its loose, non-matching semantics).
+        return has_loopback
 
     try:
-        import ipaddress
-
         client = ipaddress.ip_address(client_ip)
     except ValueError:
-        return client_ip in allowed_hosts
+        return client_ip in literals
 
-    for allowed in allowed_hosts:
-        try:
-            if "/" in allowed:
-                if client in ipaddress.ip_network(allowed, strict=False):
-                    return True
-            elif client == ipaddress.ip_address(allowed):
+    for kind, value in rules:
+        if kind == 0:  # parsed CIDR
+            if client in value:
                 return True
-        except ValueError:
-            if client_ip == allowed:
+        elif kind == 1:  # parsed exact address
+            if client == value:
+                return True
+        else:  # malformed entry -> literal compare
+            if client_ip == value:
                 return True
     return False
 
@@ -410,6 +492,8 @@ __all__ = [
     "get_ticket_notes",
     "get_ticket_counts",
     "check_host_restriction",
+    "invalidate_host_rules_cache",
+    "get_host_rules_cache_stats",
     "FeedbackTicket",
     "AdminNote",
     "AdminLoginResult",
