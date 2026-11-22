@@ -121,6 +121,56 @@ _WS_TICKET_UA_BINDING_COMPARE = (
     '                raise TokenInvalidError("User-Agent Binding Mismatch")'
 )
 
+# cdeda33b (N700 rank re-check + N642 grantability re-check): assign_role
+# re-reads the authoritative role row under the 142 -> 143 advisory locks and
+# re-runs BOTH the grantability and rank/hierarchy decisions before the insert.
+# Each block pins the soft-delete predicate, the explicit fail-closed raise on a
+# missing row, and the re-decision call itself, so a stale copy that drops either
+# re-check under the lock is caught by name.
+_ROLE_ASSIGNMENT_GRANTABILITY_RECHECK = (
+    '            fresh_row = self.db.fetch_one('
+    '                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",'
+    '                (role_id,),'
+    '            )'
+    '            if not fresh_row:'
+    '                raise RoleNotFoundError("Role not found")'
+    '            fresh_permissions = fresh_row["permissions"]'
+    '            if isinstance(fresh_permissions, str):'
+    '                try:'
+    '                    fresh_permissions = json.loads(fresh_permissions)'
+    '                except (TypeError, ValueError):'
+    '                    raise InvalidPermissionKeyError('
+    '                        "Role permissions are unreadable"'
+    '                    )'
+    '            if not isinstance(fresh_permissions, dict):'
+    '                raise InvalidPermissionKeyError("Role permissions are unreadable")'
+    '            validate_permission_dict(fresh_permissions)'
+    '            check_permissions_grantable('
+    '                self.get_permissions(user_id, server_id), fresh_permissions'
+    '            )'
+)
+
+_ROLE_ASSIGNMENT_RANK_RECHECK = (
+    '            fresh_position = self.db.fetch_one('
+    '                "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",'
+    '                (role_id,),'
+    '            )'
+    '            if not fresh_position:'
+    '                raise RoleNotFoundError("Role not found")'
+    '            current_user_roles = self.manager._get_member_role_rows('
+    '                server_id, user_id'
+    '            )'
+    '            if not can_manage_role('
+    '                current_user_roles,'
+    '                {"position": fresh_position["position"]},'
+    '                is_owner,'
+    '            ):'
+    '                raise RoleHierarchyError('
+    '                    "Cannot assign a role at or above your highest role"'
+    '                )'
+    '            self._guard_member_target(user_id, server_id, member_user_id)'
+)
+
 # ded43f8e (N644): refresh_session re-checks the PRESENTED refresh credential's
 # IP/UA against the session's stored blind indexes in constant time before the
 # atomic consume. These two single-line compare_digest calls (with the
@@ -1146,6 +1196,34 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "the require_user_token gate and reopens the owner-confusion"
         ),
     ),
+    # cdeda33b carried both fixes in one commit (commit --only stages whole
+    # paths): N700's under-lock rank/position re-assert and N642's under-lock
+    # grantability/permission re-check. Pin them independently so dropping
+    # either one from the committed assignments.py blob fails the guard.
+    CommittedFixMarker(
+        key="cdeda33b-role-assignment-grantability-recheck",
+        path="src/core/servers/handlers/roles/assignments.py",
+        marker=_ROLE_ASSIGNMENT_GRANTABILITY_RECHECK,
+        why=(
+            "N642: assign_role re-reads the role permission payload under the "
+            "142 -> 143 locks (deleted = 0) and re-runs validate_permission_dict "
+            "+ check_permissions_grantable before the insert, failing closed on "
+            "a missing/malformed row; a stale copy drops the re-check and lets a "
+            "widened role (administrator) be granted on a stale pre-lock decision"
+        ),
+    ),
+    CommittedFixMarker(
+        key="cdeda33b-role-assignment-rank-recheck",
+        path="src/core/servers/handlers/roles/assignments.py",
+        marker=_ROLE_ASSIGNMENT_RANK_RECHECK,
+        why=(
+            "N700: assign_role re-reads the role position under the same locks "
+            "(deleted = 0) and re-asserts can_manage_role + _guard_member_target, "
+            "failing closed on a missing row; a stale copy drops the re-check so "
+            "a role promoted in the check->write gap is attached at/above the "
+            "editor's rank and lifts the grantee"
+        ),
+    ),
 )
 
 
@@ -1928,3 +2006,45 @@ def test_alias_automod_pins_live_at_head_and_non_vacuous(
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
+# cdeda33b N700/N642: companion key set for the two assign_role re-check pins,
+# kept explicit so neither can be dropped from the registry silently.
+ROLE_ASSIGNMENT_TOCTOU_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "cdeda33b-role-assignment-grantability-recheck",
+        "cdeda33b-role-assignment-rank-recheck",
+    }
+)
+
+
+def test_role_assignment_toctou_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """Both under-lock assign_role re-checks are pinned at HEAD and falsifiable.
+
+    Each key resolves to a real committed blob whose exact text carries the
+    re-read + fail-closed raise + re-decision, points at assignments.py, and is
+    rejected by a synthetic stale blob with the fix erased. Per-entry parametrized
+    synthetic-removal coverage is already provided by
+    ``test_synthetic_reverted_blob_is_flagged``.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert ROLE_ASSIGNMENT_TOCTOU_PIN_KEYS <= set(keys), (
+        "assign_role pin set references keys missing from the registry: "
+        f"{sorted(ROLE_ASSIGNMENT_TOCTOU_PIN_KEYS - set(keys))}"
+    )
+    assert len(ROLE_ASSIGNMENT_TOCTOU_PIN_KEYS) == 2
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    for key in sorted(ROLE_ASSIGNMENT_TOCTOU_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == "src/core/servers/handlers/roles/assignments.py"
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_assignments_blob(path: str) -> str:
+            return f"# stale copy of {path}\n# under-lock re-check erased\n"
+
+        present, detail = _evaluate(record, stale_assignments_blob)
+        assert not present, f"synthetic assign_role revert of {key} not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
