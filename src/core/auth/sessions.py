@@ -68,9 +68,19 @@ def create_session_for_user(
     )
 
 
-def logout(token: str) -> bool:
-    """Logout and invalidate a session token."""
-    return _get_auth_manager().get_instance().logout(token)
+def logout(
+    token: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> bool:
+    """Logout and invalidate a session token.
+
+    ``ip_address``/``user_agent`` are threaded through so the manager can
+    re-verify the presented credential's context when ``token_binding`` is on,
+    matching :func:`refresh_session`. A stale-context bearer cannot revoke a
+    session it could not authenticate with.
+    """
+    return _get_auth_manager().get_instance().logout(token, ip_address, user_agent)
 
 
 def logout_all(user_id: int, except_token: Optional[str] = None) -> int:

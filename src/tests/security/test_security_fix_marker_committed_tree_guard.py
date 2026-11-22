@@ -121,6 +121,25 @@ _WS_TICKET_UA_BINDING_COMPARE = (
     '                raise TokenInvalidError("User-Agent Binding Mismatch")'
 )
 
+# ded43f8e (N644): refresh_session re-checks the PRESENTED refresh credential's
+# IP/UA against the session's stored blind indexes in constant time before the
+# atomic consume. These two single-line compare_digest calls (with the
+# `return None` fail-closed arms) are distinctive to refresh_session -- the
+# WS-ticket verifier compares use the multi-line form with TokenInvalidError --
+# so a stale staged copy of lifecycle.py that drops the binding is caught by name.
+_REFRESH_SESSION_CONTEXT_BINDING = (
+    "            if not hmac.compare_digest(stored_ip_index, current_ip_index):\n"
+    "                return None\n"
+    "            if not user_agent:\n"
+    "                return None\n"
+    '            stored_ua_index = row.get("ua_index")\n'
+    "            if not isinstance(stored_ua_index, str) or not stored_ua_index:\n"
+    "                return None\n"
+    "            current_ua_index = self._ua_index(user_agent)\n"
+    "            if not hmac.compare_digest(stored_ua_index, current_ua_index):\n"
+    "                return None"
+)
+
 
 # --- OAuth invariant anchors (e85eab23 / N654 / N689) ---
 # The state cookie clear must mirror issuance in every protective attribute,
@@ -577,6 +596,26 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "33cf9e7d: refresh-token replay revocation closes the single socket "
             "bound to the replayed session; a stale staged copy revokes the row "
             "but leaves the authenticated socket live server-side"
+        ),
+    ),
+    # ded43f8e (N644, empty-reflog/CAS landing): refresh_session now re-checks
+    # the presented refresh bearer's IP/UA context against the session's stored
+    # blind indexes in constant time and fails closed BEFORE the atomic consume.
+    # lifecycle.py is MM (stale pre-fix staged copy) in peers' working trees, so
+    # a whole-file stage would silently drop this gate and let a stolen refresh
+    # bearer used from another host force rotation and trip replay revocation
+    # for the victim. The distinctive refresh_session compare pins that fix.
+    CommittedFixMarker(
+        key="ded43f8e-refresh-session-ip-ua-context-binding",
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=_REFRESH_SESSION_CONTEXT_BINDING,
+        why=(
+            "ded43f8e: refresh_session's constant-time IP/UA context check "
+            "fails closed before the atomic consume, so a refresh bearer "
+            "stolen and presented from another host cannot force rotation and "
+            "retire the victim's current credential via replay revocation; a "
+            "stale staged copy of lifecycle.py drops the compares and reopens "
+            "the cross-host refresh-rotation availability attack"
         ),
     ),
     # bb824009 (private-index repair): the REST logout/revoke-all and 2FA-enable
@@ -1104,6 +1143,7 @@ PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
         "8cdcddb0-twofactor-no-debug-print",
         "b71b0d64-targeted-session-socket-close-method",
         "33cf9e7d-refresh-replay-session-socket-close",
+        "ded43f8e-refresh-session-ip-ua-context-binding",
         "bb824009-logout-closes-user-sockets",
         "bb824009-revoke-all-closes-user-sockets",
         "bb824009-2fa-enable-closes-user-sockets",
@@ -1350,7 +1390,7 @@ def test_private_index_pinned_keys_are_registered() -> None:
         "private-index key set references keys missing from COMMITTED_FIX_MARKERS: "
         f"{sorted(PRIVATE_INDEX_PINNED_KEYS - set(keys))}"
     )
-    assert len(PRIVATE_INDEX_PINNED_KEYS) == 29
+    assert len(PRIVATE_INDEX_PINNED_KEYS) == 30
     for key in PRIVATE_INDEX_PINNED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path.startswith("src/"), f"bad path for {key!r}"

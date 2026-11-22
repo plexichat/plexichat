@@ -699,17 +699,51 @@ class LifecycleMixin(AuthManagerProtocol):
         invalidate_pattern("token_verify:*")
         return new_token
 
-    def logout(self, token: str) -> bool:
+    def logout(
+        self,
+        token: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
         parsed = parse_token(token)
         if parsed and parsed["token_type"] == "session":
             row = self._db.fetch_one(
-                "SELECT user_id, token_hash FROM auth_sessions WHERE id = ?",
+                "SELECT user_id, token_hash, ip_index, ua_index FROM auth_sessions WHERE id = ?",
                 (parsed["id"],),
             )
             # The session secret must be verified, not just the (enumerable)
             # ID, otherwise anyone who learns a session ID can revoke that
             # session without ever holding its token. Mirrors refresh_session.
             if row and verify_token_hash(parsed["secret"], row["token_hash"]):
+                # N644 follow-up: a session bearer that is cryptographically
+                # valid but presented from the wrong host/user-agent must not be
+                # able to revoke the victim's session. With binding enabled the
+                # live verifier rejects such a bearer, so allowing it to drive
+                # this token-consuming write is the same stale-context
+                # availability DoS refresh_session was hardened against. Fail
+                # closed before the revoke on a mismatch OR missing/corrupt
+                # binding material, matching _verify_session_token.
+                if self._config.get("security", {}).get("token_binding", False):
+                    if not ip_address:
+                        return False
+                    stored_ip_index = row.get("ip_index")
+                    if not isinstance(stored_ip_index, str) or not stored_ip_index:
+                        return False
+                    current_ip_index = self.crypto.fast_blind_index(
+                        ip_address, "ip_address"
+                    )
+                    if not hmac.compare_digest(stored_ip_index, current_ip_index):
+                        return False
+                    if not user_agent:
+                        return False
+                    stored_ua_index = row.get("ua_index")
+                    if not isinstance(stored_ua_index, str) or not stored_ua_index:
+                        return False
+                    current_ua_index = self._ua_index(user_agent)
+                    if not isinstance(current_ua_index, str) or not current_ua_index:
+                        return False
+                    if not hmac.compare_digest(stored_ua_index, current_ua_index):
+                        return False
                 self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
                 )
