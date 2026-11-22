@@ -58,7 +58,14 @@ EXCLUDED_PATH_COMPONENTS = frozenset({"tests", "selftest", "cli"})
 RE2_RECEIVERS = frozenset({"re2", "re2_module", "re2_mod", "google_re2"})
 COMPILE_RECEIVERS = frozenset({"re", "_safe_regex"}) | RE2_RECEIVERS
 FN_MATCH_FUNCS = frozenset({"fnmatch", "fnmatchcase"})
-VETTING_FUNCS = ("_has_redos_risk", "_has_sequential_wildcard_redos_risk")
+VETTING_FUNCS = (
+    "_has_redos_risk",
+    "_has_sequential_wildcard_redos_risk",
+    # Stored DM filter globs are vetted by a *glob*-specific check: two or more
+    # ``*`` groups are routed to a linear matcher instead of fnmatch's `.*`
+    # chain (see the detector entry in DOCUMENTED_SITES below).
+    "_has_glob_redos_risk",
+)
 
 
 # (path, enclosing function, method, pattern expression) -> reviewed reason.
@@ -69,17 +76,33 @@ VETTING_FUNCS = ("_has_redos_risk", "_has_sequential_wildcard_redos_risk")
 DOCUMENTED_SITES: dict[tuple[str, str, str, str], str] = {
     (
         "src/core/antispam/detector.py",
-        "_check_message",
+        "_safe_fnmatchcase",
         "fnmatch.fnmatchcase",
-        "canonical_pattern",
+        "pattern",
     ): (
-        "TRACKED pre-existing sink: recipient-stored dm_spam_filters glob. At "
-        "this HEAD it still uses fnmatch.fnmatchcase, whose glob->`.*` "
-        "translation backtracks exponentially on `*a` chains. A linear-time "
-        "`_safe_fnmatchcase` replacement is in flight (see "
-        "src/tests/antispam/test_stored_config_redos_hardening.py); pattern "
-        "length is capped at 512 and canonical content at 10k bytes. This "
-        "entry exists only so the guard can fail closed on NEW sites."
+        "FIXED/VETTED (was the unvetted detector.py:703 sink): "
+        "recipient-stored dm_spam_filters globs now go through "
+        "_safe_fnmatchcase, which vets the pattern with "
+        "_has_glob_redos_risk(pattern) and routes any shape with two or more "
+        "`*` groups to the linear two-pointer _linear_glob_match instead of "
+        "fnmatch's backtracking `.*` chain. Only 0/1-`*` patterns -- where a "
+        "single `.*` backtracks at most linearly -- reach this stdlib call. "
+        "Pattern length is capped at 512 and canonical content at 10k bytes. "
+        "Evidence: src/tests/antispam/test_stored_dm_filter_linear_glob.py "
+        "and test_stored_glob_sink_is_fixed_and_vetted below."
+    ),
+    (
+        "src/core/antispam/detector.py",
+        "_linear_glob_match",
+        "re.compile",
+        "translated",
+    ): (
+        "BOUNDED: `translated` is fnmatch.translate() of one `*`-free segment "
+        "of a capped stored glob. A star-free segment contains only literals, "
+        "`?` and `[seq]` single-character classes -- no `.*` quantifier -- so "
+        "the compiled segment match is linear-time. Segments are aligned by a "
+        "greedy two-pointer scan over fixed-width matches, never as a "
+        "backtracking quantifier chain."
     ),
     (
         "src/core/auth/blacklist.py",
@@ -157,9 +180,7 @@ DOCUMENTED_SITES: dict[tuple[str, str, str, str], str] = {
         "validate_config",
         "re2_module.compile",
         "pattern_str",
-    ): (
-        "RE2-backed: config-validation probe using the same linear engine."
-    ),
+    ): ("RE2-backed: config-validation probe using the same linear engine."),
     (
         "src/core/automod/rules/regex.py",
         "validate_config",
@@ -370,9 +391,7 @@ def _extract_sites(source: str, path: str) -> list[CompileSite]:
             continue
 
         # A literal string is a static pattern, not a user/admin-controlled one.
-        if isinstance(pattern_arg, ast.Constant) and isinstance(
-            pattern_arg.value, str
-        ):
+        if isinstance(pattern_arg, ast.Constant) and isinstance(pattern_arg.value, str):
             continue
 
         owner = _enclosing_function(tree, node)
@@ -656,9 +675,7 @@ REDOS_PINNED_FIXES = (
 )
 
 
-def _assert_pinned_redos_fix(
-    blob: str, func: str, markers: tuple[str, ...]
-) -> None:
+def _assert_pinned_redos_fix(blob: str, func: str, markers: tuple[str, ...]) -> None:
     """A committed ReDoS fix is present, has its markers, and is wired in."""
     assert f"def {func}(" in blob, f"{func} definition missing from HEAD blob"
     for marker in markers:
@@ -708,9 +725,7 @@ def test_self_test_redos_pin_detects_a_reverted_fix():
         with pytest.raises(AssertionError):
             _assert_pinned_redos_fix(unwired, func, markers)
         no_def = "\n".join(
-            line
-            for line in unwired.splitlines()
-            if not line.startswith(f"def {func}(")
+            line for line in unwired.splitlines() if not line.startswith(f"def {func}(")
         )
         with pytest.raises(AssertionError):
             _assert_pinned_redos_fix(no_def, func, markers)
@@ -729,3 +744,45 @@ def test_no_undocumented_user_pattern_compile(commit_sha):
         "User/admin-controlled regex compiles without vetting/RE2/bounds:\n  "
         + "\n  ".join(sorted(offenders))
     )
+
+
+def test_stored_glob_sink_is_fixed_and_vetted(commit_sha):
+    """The detector.py:703 sink must stay fixed, not merely re-documented.
+
+    Reads the committed detector blob and checks the fix structurally: the
+    raw ``fnmatch.fnmatchcase`` call is gone from ``_check_message`` and the
+    only remaining fnmatch site is the vetted branch of ``_safe_fnmatchcase``.
+    A stale allowlist entry would silently mask a future regression, so the
+    registry is also required to name a live site.
+    """
+    path = "src/core/antispam/detector.py"
+    detector = _read_blobs(commit_sha, (path,))[path]
+    tree = ast.parse(detector)
+
+    def body_of(name: str) -> str:
+        fn = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        return "\n".join(
+            detector.splitlines()[fn.lineno - 1 : fn.end_lineno or fn.lineno]
+        )
+
+    check_message = body_of("_check_message")
+    assert "fnmatch.fnmatchcase(" not in check_message
+    assert "_safe_fnmatchcase(canonical, canonical_pattern)" in check_message
+    for helper in ("_safe_fnmatchcase", "_has_glob_redos_risk", "_linear_glob_match"):
+        assert f"def {helper}(" in detector, f"{helper} missing from committed blob"
+
+    sites = _collect_sites(commit_sha)
+    fnmatch_sites = [
+        s for s in sites if s.path == path and s.method == "fnmatch.fnmatchcase"
+    ]
+    assert len(fnmatch_sites) == 1
+    assert fnmatch_sites[0].func == "_safe_fnmatchcase"
+    assert _vetted(fnmatch_sites[0]), "stored glob fnmatch branch is no longer vetted"
+
+    keys = {s.key for s in sites}
+    stale = set(DOCUMENTED_SITES) - keys
+    assert not stale, f"stale documented sites (fixed sinks must be unlisted): {stale}"

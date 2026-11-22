@@ -82,6 +82,133 @@ def _bounded_filter_int(value, field, minimum, maximum, default):
         return default
 
 
+def _has_glob_redos_risk(pattern: str) -> bool:
+    """Flag stored globs whose ``fnmatch`` translation backtracks super-linearly.
+
+    ``fnmatch`` turns every ``*`` into a greedy ``.*``. A single quantifier can
+    only backtrack linearly, but two or more form a chain whose split count is
+    exponential in the number of ``*`` groups: ``*a*a*...*b`` on a run of
+    ``a`` characters with no ``b`` is the classic case. Those shapes are routed
+    to the linear matcher below; the rest keep the stdlib's exact semantics.
+    """
+    return pattern.count("*") >= 2
+
+
+def _glob_segments(pattern: str) -> list[str]:
+    """Split a glob on ``*`` wildcards that are outside ``[seq]`` classes.
+
+    ``*`` is a literal member inside a bracket expression (``[*]``), so a
+    plain ``pattern.split('*')`` would corrupt both the class and the wildcard
+    layout. The class-boundary scan mirrors ``fnmatch._translate``: an optional
+    leading ``!`` and ``]`` are members, and an unclosed ``[`` is a literal.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    index = 0
+    length = len(pattern)
+    while index < length:
+        char = pattern[index]
+        if char == "*":
+            parts.append("".join(current))
+            current = []
+            index += 1
+            continue
+        if char == "[":
+            end = index + 1
+            if end < length and pattern[end] == "!":
+                end += 1
+            if end < length and pattern[end] == "]":
+                end += 1
+            while end < length and pattern[end] != "]":
+                end += 1
+            if end >= length:  # unclosed class: fnmatch treats '[' literally
+                current.append("[")
+                index += 1
+            else:
+                current.append(pattern[index : end + 1])
+                index = end + 1
+            continue
+        current.append(char)
+        index += 1
+    parts.append("".join(current))
+    return parts
+
+
+def _linear_glob_match(name: str, pattern: str) -> bool:
+    """Match a glob in linear time without a backtracking quantifier chain.
+
+    The pattern is split into ``*``-separated fixed-width segments. Each
+    segment is validated with ``fnmatch``'s own translation, which for a
+    ``*``-free segment contains only literals, ``?`` and ``[seq]`` single
+    character classes -- no ``.*`` -- so matching one segment is linear.
+    Segments are then aligned with the classic greedy two-pointer wildcard
+    algorithm: on a mismatch only the most recent ``*`` is advanced, so a
+    stored pattern of up to ``MAX_FILTER_PATTERN_LENGTH`` chars against a
+    bounded canonical message cannot blow up exponentially.
+    """
+    tokens: list[Any] = []
+    for index, part in enumerate(_glob_segments(pattern)):
+        # Consecutive ``*`` collapse, exactly as fnmatch's translate does.
+        if index:
+            tokens.append(None)  # a single ``*`` wildcard
+        if part:
+            # Drop fnmatch's trailing ``\Z`` so a segment can be matched at an
+            # arbitrary offset; ``Match.end()`` then reports exactly how many
+            # characters the segment consumed (a ``[seq]`` class or ``?``
+            # consumes one character, not its raw source length).
+            translated = fnmatch.translate(part)
+            # 3.14 emits ``\z``; older releases emit ``\Z``.
+            translated = translated.removesuffix(r"\z").removesuffix(r"\Z")
+            tokens.append(re.compile(translated))
+
+    token_i = 0
+    name_i = 0
+    star_token = -1
+    star_name = 0
+    token_count = len(tokens)
+    name_len = len(name)
+
+    while name_i < name_len:
+        if token_i < token_count and tokens[token_i] is not None:
+            segment = tokens[token_i].match(name, name_i)
+            if segment is not None:
+                token_i += 1
+                name_i = segment.end()
+                continue
+        elif token_i < token_count:  # a ``*``: remember the best split point
+            star_token = token_i
+            star_name = name_i
+            token_i += 1
+            continue
+        # Mismatch or tokens exhausted: advance the last ``*`` by one char.
+        if star_token >= 0:
+            token_i = star_token + 1
+            star_name += 1
+            name_i = star_name
+        else:
+            return False
+
+    # Trailing ``*`` wildcards may absorb nothing.
+    while token_i < token_count and tokens[token_i] is None:
+        token_i += 1
+    return token_i == token_count
+
+
+def _safe_fnmatchcase(name: str, pattern: str) -> bool:
+    """fnmatch-equivalent glob matching with a hard bound on backtracking.
+
+    Recipient-stored DM filters are attacker-controlled and reloaded on every
+    worker start, so they must never reach a matcher whose cost depends on
+    how a long message can be partitioned around ``*`` wildcards.
+    """
+    if len(pattern) > MAX_FILTER_PATTERN_LENGTH:
+        return False
+    if _has_glob_redos_risk(pattern):
+        return _linear_glob_match(name, pattern)
+    # Zero or one ``*``: fnmatch's single ``.*`` backtracks at most linearly.
+    return fnmatch.fnmatchcase(name, pattern)
+
+
 # H6: canonicalization for all user-controlled matching/hashing/counting.
 # Strict ``==``/exact-byte comparisons let trivial variants (trailing space,
 # case change, fullwidth Unicode, zero-width joiners) evade blocking, so every
@@ -696,11 +823,12 @@ class DMSpamDetector:
             if not canonical_pattern:
                 continue
             try:
-                # Case-insensitive fnmatch via fnmatchcase on canonical
-                # (casefolded) strings: deterministic on every OS
-                # (fnmatch() alone defers to os.path.normcase, which differs
-                # per platform).
-                matched = fnmatch.fnmatchcase(canonical, canonical_pattern)
+                # Case-insensitive glob matching on canonical (casefolded)
+                # strings: deterministic on every OS (fnmatch() alone defers
+                # to os.path.normcase, which differs per platform). The
+                # recipient-controlled pattern goes through the linear-time
+                # _safe_fnmatchcase, never a raw backtracking `.*` chain.
+                matched = _safe_fnmatchcase(canonical, canonical_pattern)
             except Exception as e:
                 logger.debug(f"Invalid DM spam pattern skipped: {e}")
                 continue
