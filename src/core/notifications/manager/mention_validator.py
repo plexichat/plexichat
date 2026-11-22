@@ -40,6 +40,62 @@ class MentionValidationMixin(NotificationProtocol):
         # cross-server / non-mentionable checks still run against the same row.
         roles_by_id: Dict[SnowflakeID, Optional[dict]] = {}
 
+        # SECURITY: an explicit ``@everyone``/``@here`` AND a mention of the
+        # CURRENT channel (``<#this-channel>``) both fan out to every member
+        # who can view the channel (see NotificationCreatorMixin.create_notifications).
+        # A self-channel mention is therefore an @everyone-equivalent mass ping
+        # and must clear the SAME fail-closed permission gate. Compute that
+        # verdict once from the existing gate (keeping a single audited call
+        # site) and apply it to both mention types. Without this, a member who
+        # lacks messages.mention_everyone can mass-ping the whole channel just
+        # by writing ``<#the-channel-they-are-in>``.
+        # Only messages that actually carry a mass mention pay the gate, so a
+        # plain user/role/channel-link message keeps its existing query budget.
+        needs_mass_mention_gate = any(
+            m.mention_type in (MentionType.EVERYONE, MentionType.HERE)
+            or (
+                m.mention_type == MentionType.CHANNEL
+                and channel_id is not None
+                and m.target_id == channel_id
+            )
+            for m in mentions
+        )
+        mass_mention_error: Optional[str] = None
+        if needs_mass_mention_gate:
+            if not self._servers:
+                # Server context but the servers module is not loaded: consult
+                # the configurable opt-in (default FALSE). No server_id is a
+                # DM, where mass mentions are always denied.
+                if server_id:
+                    allow_missing = False
+                    try:
+                        cfg = _mention_config.get("notifications", {}) or {}
+                        allow_missing = bool(
+                            cfg.get("allow_everyone_when_servers_missing", False)
+                        )
+                    except Exception:
+                        allow_missing = False
+                    if not allow_missing:
+                        mass_mention_error = (
+                            "Servers module not loaded and "
+                            "notifications.allow_everyone_when_servers_missing=false; "
+                            "@everyone/@here denied"
+                        )
+                else:
+                    mass_mention_error = "Cannot use @everyone/@here in DMs"
+            elif server_id and channel_id:
+                if not has_mention_everyone_permission(
+                    self._servers, user_id, server_id, channel_id
+                ):
+                    mass_mention_error = "No permission to mention everyone"
+            elif server_id:
+                if not self._servers.has_permission(
+                    user_id, server_id, "messages.mention_everyone"
+                ):
+                    mass_mention_error = "No permission to mention everyone"
+            else:
+                mass_mention_error = "Cannot use @everyone/@here in DMs"
+
         def _role_row(role_id: SnowflakeID) -> Optional[dict]:
             if role_id not in roles_by_id:
                 roles_by_id[role_id] = get_role(self._db, role_id)
@@ -107,59 +163,20 @@ class MentionValidationMixin(NotificationProtocol):
                 ):
                     m.valid = False
                     m.error = "Channel not found"
+                elif channel_id and mention.target_id == channel_id:
+                    # Mentioning the channel the message was posted in pings
+                    # every viewer -- an @everyone-equivalent mass ping. Gate
+                    # it with the same permission as @everyone/@here.
+                    if mass_mention_error is not None:
+                        m.valid = False
+                        m.error = mass_mention_error
 
             elif mention.mention_type in (MentionType.EVERYONE, MentionType.HERE):
-                # SECURITY: when the ``servers`` module is not
-                # present, prior code short-circuited any absence of a
-                # permission check to allow. We now consult the
-                # configurable tag
-                # ``notifications.allow_everyone_when_servers_missing``
-                # (default FALSE) so a deployment that hasn't fully
-                # wired the servers module cannot accidentally spam
-                # everyone. Operators with a legitimate reason to
-                # opt in (rare; e.g. a stripped test environment) do
-                # so via config.
-                if not self._servers:
-                    # If we have a server_id, the message is in a server context
-                    # but the servers module isn't loaded. Check config for fallback.
-                    if server_id:
-                        allow_missing = False
-                        try:
-                            cfg = _mention_config.get("notifications", {}) or {}
-                            allow_missing = bool(
-                                cfg.get(
-                                    "allow_everyone_when_servers_missing",
-                                    False,
-                                )
-                            )
-                        except Exception:
-                            allow_missing = False
-                        if not allow_missing:
-                            m.valid = False
-                            m.error = (
-                                "Servers module not loaded and "
-                                "notifications.allow_everyone_when_servers_missing=false; "
-                                "@everyone/@here denied"
-                            )
-                    else:
-                        # No server_id means DM context - @everyone/@here not allowed in DMs
-                        m.valid = False
-                        m.error = "Cannot use @everyone/@here in DMs"
-                elif server_id and channel_id:
-                    if not has_mention_everyone_permission(
-                        self._servers, user_id, server_id, channel_id
-                    ):
-                        m.valid = False
-                        m.error = "No permission to mention everyone"
-                elif server_id:
-                    if not self._servers.has_permission(
-                        user_id, server_id, "messages.mention_everyone"
-                    ):
-                        m.valid = False
-                        m.error = "No permission to mention everyone"
-                else:
+                # SECURITY: the fail-closed mass-mention verdict is computed
+                # once above (single audited permission-check call site).
+                if mass_mention_error is not None:
                     m.valid = False
-                    m.error = "Cannot use @everyone/@here in DMs"
+                    m.error = mass_mention_error
 
             validated.append(m)
 
