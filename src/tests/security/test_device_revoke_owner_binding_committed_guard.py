@@ -39,7 +39,7 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_head_sha_resolves() -> str:
+def _head_sha() -> str:
     proc = _git("rev-parse", "HEAD")
     assert proc.returncode == 0, f"cannot resolve HEAD: {proc.stderr.strip()}"
     sha = proc.stdout.strip()
@@ -60,7 +60,7 @@ def _binding_present(text: str) -> bool:
 
 
 def test_owner_binding_present_in_committed_tree() -> None:
-    sha = test_head_sha_resolves()
+    sha = _head_sha()
     blob = _committed_blob(sha, _FIX_PATH)
     assert _binding_present(blob), (
         "device-revoke session owner binding missing from committed "
