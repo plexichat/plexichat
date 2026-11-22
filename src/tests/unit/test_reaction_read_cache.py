@@ -142,6 +142,7 @@ def fake_reactions():
 def mutation_env():
     """Stub the rate limiter, server lookup and fire-and-forget dispatch so
     the real mutation route bodies can run without a live app/loop."""
+
     # The write routes fail closed when the servers module is unwired; wire a
     # store with no server-channel alias so the view gate passes and the cache
     # invalidation under test is actually reached.
