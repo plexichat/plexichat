@@ -30,10 +30,18 @@ ratchet (no app import/config/DB) with four halves:
    ``"static"`` (no user-controlled data in its log calls -- with a written
    reason) or ``"proxy"`` (records reach the sanitized AppLogger proxy).
 2. A whole-tree sweep flags any NEW plain module logger not in the registry and
-   any interpolation of a user/request/DB-derived value in an unfiltered,
-   unreviewed log call. The only suppressed sites are the four filtered sinks
-   plus four documented local-path/DB-id review keys (covering seven call
-   sites, each with a reason). A novel module or value name fails closed.
+   any interpolation of a value whose *name* is in ``USER_DATA_HINTS`` in an
+   unfiltered, unreviewed log call. The only suppressed sites are the four
+   filtered sinks plus four documented local-path/DB-id review keys (covering
+   seven call sites, each with a reason). A novel module fails closed (it is
+   absent from the registry). A novel *value* name fails OPEN by design: this
+   is a fixed-vocabulary name heuristic, NOT data-flow/taint tracking, so
+   caller-controlled data copied into an arbitrarily named local (e.g.
+   ``evil = request.query_params["q"]; logger.info("x %s", evil)``) is not
+   detected. That residual risk is characterized in
+   ``test_known_limitation_novel_value_name_is_not_detected`` and is covered
+   by human review of the enumerated loggers, not by this detector. Keeping the
+   vocabulary narrow also avoids flagging every innocent ``%s`` interpolation.
 3. Blobs are read from COMMITTED HEAD (``git show HEAD:<path>``), never the
    working tree: many production files are contested by parallel agents whose
    stale copies could mislead a working-tree scan, and a whole-file commit
@@ -754,6 +762,48 @@ def test_self_test_unregistered_plain_logger_fails_closed():
     _, offenders = _evaluate_module(source, "src/api/_brand_new.py", {}, SAFE_HITS)
     assert len(offenders) == 1, offenders
     assert "payload" in offenders[0].hints
+
+
+def test_known_limitation_novel_value_name_is_not_detected() -> None:
+    """Characterize the name-heuristic limit (a KNOWN GAP, not an endorsement).
+
+    ``USER_DATA_HINTS`` is a fixed vocabulary, so user-controlled request data
+    copied into a local whose name is absent from it is invisible to the AST
+    sweep -- even though the same expression interpolated inline (with the
+    ``request`` hint present) *is* flagged. This guard is a name-based ratchet,
+    not taint tracking; the enumerated-logger registry and human review are
+    what cover such a sink. The test records the verified probe behaviour so
+    the limitation is explicit rather than silently assumed away; it is not a
+    claim that the renamed form is safe. The narrow vocabulary is intentional:
+    broadening it to every ``%s`` would drown the signal in false positives.
+    """
+    renamed = textwrap.dedent(
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        def handle(request):
+            evil = request.query_params.get("q")
+            logger.info("x %s", evil)
+        """
+    )
+    inline = textwrap.dedent(
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        def handle(request):
+            logger.info("x %s", request.query_params.get("q"))
+        """
+    )
+    _, renamed_offenders = _evaluate_module(
+        renamed, "src/api/_synthetic.py", {}, SAFE_HITS
+    )
+    _, inline_offenders = _evaluate_module(
+        inline, "src/api/_synthetic.py", {}, SAFE_HITS
+    )
+    assert renamed_offenders == [], "vocabulary/taint behaviour changed: revisit this note"
+    assert inline_offenders, "the inline request expression must still be detectable"
 
 
 # ---------------------------------------------------------------------------
