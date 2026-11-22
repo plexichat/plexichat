@@ -657,6 +657,55 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "copy restores the homoglyph replay and mints a second admin session"
         ),
     ),
+    # --- Stale-staged MM audit: committed fixes dropped by staged (index) copies ---
+    # These three files are MM in a peer's working tree. Their staged blobs are
+    # pre-fix while HEAD carries the fix; their working-tree copies re-add it.
+    # A whole-index commit would therefore silently revert each repair. None of
+    # these paths was pinned by any earlier committed-tree marker.
+    CommittedFixMarker(
+        key="6e80af56-audit-log-read-bot-token-owner-gate",
+        path="src/api/routes/servers/audit_log.py",
+        marker="    require_user_token(current_user)",
+        why=(
+            "6e80af56: the server audit-log read rejects bot credentials before "
+            "the core audit read treats the bot owner's id as the acting "
+            "moderator; a stale staged copy drops the require_user_token gate "
+            "and lets a narrow-scope bot read any server's moderation history"
+        ),
+    ),
+    CommittedFixMarker(
+        key="9f6efef0-poll-update-guild-message-intent-gate",
+        path="src/core/events/router.py",
+        marker="    EventType.POLL_UPDATE: GatewayIntent.GUILD_MESSAGES,",
+        why=(
+            "9f6efef0: guild-scoped POLL_UPDATE is mapped to the message intent; "
+            "a stale staged copy drops the map entry and the router's "
+            "default-allow delivers poll activity to sockets with no messaging "
+            "intent"
+        ),
+    ),
+    CommittedFixMarker(
+        key="9f6efef0-poll-update-dm-direct-message-intent-gate",
+        path="src/core/events/router.py",
+        marker="    EventType.POLL_UPDATE: GatewayIntent.DIRECT_MESSAGES,",
+        why=(
+            "9f6efef0: emit_poll_update stamps only a channel_id, so every poll "
+            "update is DM-classified; a stale staged copy drops the DM map entry "
+            "and discloses a private conversation's poll/message activity to "
+            "connections that never requested DIRECT_MESSAGES"
+        ),
+    ),
+    CommittedFixMarker(
+        key="70cd4627-presence-audience-eviction-on-relationship-change",
+        path="src/core/relationships/manager/helpers.py",
+        marker="from src.core.events.router import clear_presence_audience_cache",
+        why=(
+            "70cd4627: relationship changes eagerly evict the EventRouter "
+            "presence-audience cache; a stale staged copy drops the evict so a "
+            "just-blocked user keeps receiving the blocker's real presence "
+            "until the cache TTL lapses"
+        ),
+    ),
 )
 
 
@@ -724,6 +773,19 @@ PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
         "da39776a-tier-limits-verdict-deepcopy",
         "ee7bab02-attachment-image-decode-size-ceiling",
         "fbc4a7be-admin-otp-ascii-canonicalization",
+    }
+)
+
+# Stale-staged MM audit (this guard-hardening lane): committed security fixes
+# that a peer's staged (index) copy of an MM file drops while the working tree
+# still carries them. Kept as an explicit set so dropping any one of these
+# entries without updating the companion non-vacuity test fails loudly.
+STALE_STAGED_REVERT_KEYS: frozenset[str] = frozenset(
+    {
+        "6e80af56-audit-log-read-bot-token-owner-gate",
+        "9f6efef0-poll-update-guild-message-intent-gate",
+        "9f6efef0-poll-update-dm-direct-message-intent-gate",
+        "70cd4627-presence-audience-eviction-on-relationship-change",
     }
 )
 
@@ -910,6 +972,37 @@ def test_private_index_pinned_keys_are_registered() -> None:
     for key in PRIVATE_INDEX_PINNED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path.startswith("src/"), f"bad path for {key!r}"
+
+
+def test_stale_staged_revert_markers_are_registered_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The stale-staged MM pins are live at HEAD and catch their own revert.
+
+    Each key names a committed security fix whose staged (index) copy in an
+    MM file is the pre-fix version.  This proves both sides: the marker is in
+    the real committed blob, and a synthetic stale blob with the fix erased is
+    rejected by the exact same evaluator (never a vacuous pass).
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert STALE_STAGED_REVERT_KEYS <= set(keys), (
+        "stale-staged pin set references keys missing from COMMITTED_FIX_MARKERS: "
+        f"{sorted(STALE_STAGED_REVERT_KEYS - set(keys))}"
+    )
+    assert len(STALE_STAGED_REVERT_KEYS) == 4
+    reader = _make_blob_reader(commit_sha)
+    for key in sorted(STALE_STAGED_REVERT_KEYS):
+        record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_staged_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# fix marker erased\n"
+
+        present, detail = _evaluate(record, stale_staged_blob)
+        assert not present, f"synthetic stale staged revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
 
 # Private-index commits identified by the external audit lane as NON-security
