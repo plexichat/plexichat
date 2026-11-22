@@ -11,6 +11,7 @@ cannot reach config or licensing get a best-effort `MISCONFIGURED`/`DISABLED`
 state rather than an exception.
 """
 
+import threading
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -523,13 +524,82 @@ _capability_cache = BoundedLRU(
 )
 
 
+# Cold misses of the bounded LRU used to each re-run the authoritative evaluator
+# independently. For ``voice_transcription`` that means importing the provider
+# and probing backend availability; a burst of concurrent misses (startup,
+# TTL rollover, or a ``clear_capability_cache()`` license hot-swap) therefore
+# paid the probe N times for the same feature. Coalesce those misses per feature
+# key. The key is the feature name only -- the verdict is a global
+# config/license decision, never credential-keyed, so sharing one in-flight
+# authoritative read across callers of the same feature cannot cross users.
+# Every flight is removed when its compute finishes, so this map is bounded by
+# live concurrency; no caller can mutate the shared result (copies are handed
+# out). All mutation is under ``_capability_flight_lock``.
+class _CapabilityFlight:
+    """One in-flight authoritative evaluation shared by all waiters on a key."""
+
+    __slots__ = ("done", "result", "error")
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.result: Optional[CapabilityInfo] = None
+        self.error: Optional[BaseException] = None
+
+
+_capability_flight_lock = threading.Lock()
+_capability_inflight: Dict[str, _CapabilityFlight] = {}
+# Bumped on full invalidation. A leader that captured an older generation must
+# not write its pre-invalidation verdict into the freshly cleared cache.
+_capability_generation = 0
+
+
 def clear_capability_cache() -> None:
     """Drop memoized capability results (call after a license/config change).
 
     This is a full invalidation: after a hot-swap no cached AVAILABLE verdict
-    may gate a feature that the new license has disabled.
+    may gate a feature that the new license has disabled. In-flight flights are
+    dropped and the generation bumped so a compute that started before the
+    hot-swap cannot repopulate the cache with the old verdict.
     """
+    global _capability_generation
+    with _capability_flight_lock:
+        _capability_generation += 1
+        _capability_inflight.clear()
     _capability_cache.clear()
+
+
+def _evaluate_capability(
+    feature: str, config: Optional[Dict[str, Any]]
+) -> CapabilityInfo:
+    """Run the authoritative evaluator for ``feature``. Never raises."""
+    try:
+        artifacts = _load_config(config)
+        evaluator = _evaluators().get(feature)
+        if evaluator is None:
+            return CapabilityInfo(
+                feature=feature,
+                state=CapabilityState.MISCONFIGURED,
+                message=f"Unknown capability feature: '{feature}'.",
+                details={},
+            )
+        return evaluator(artifacts)
+    except Exception:
+        return CapabilityInfo(
+            feature=feature,
+            state=CapabilityState.MISCONFIGURED,
+            message="Unable to evaluate the requested capability.",
+            details={},
+        )
+
+
+def _fail_closed(feature: str) -> CapabilityInfo:
+    """Last-resort verdict if an in-flight authoritative read fails outright."""
+    return CapabilityInfo(
+        feature=feature,
+        state=CapabilityState.MISCONFIGURED,
+        message="Unable to evaluate the requested capability.",
+        details={},
+    )
 
 
 def get_capability(
@@ -544,36 +614,48 @@ def get_capability(
     ``MISCONFIGURED`` state with a helpful message. Never raises.
 
     When ``config`` is omitted the result is memoized for a few seconds
-    (see ``_CAPABILITY_CACHE_TTL_SECONDS``); explicit configs bypass the
-    cache so callers and tests always get a freshly-evaluated result.
+    (see ``_CAPABILITY_CACHE_TTL_SECONDS``) and concurrent cold misses for the
+    same feature are coalesced into one authoritative evaluation. An explicit
+    config bypasses both the cache and the coalescing, so callers and tests
+    always get a freshly-evaluated result.
     """
-    if config is None:
-        cached = _capability_cache.get(feature)
-        if cached is not None:
-            return _copy_capability_info(cached)
-    try:
-        artifacts = _load_config(config)
-        evaluator = _evaluators().get(feature)
-        if evaluator is None:
-            info = CapabilityInfo(
-                feature=feature,
-                state=CapabilityState.MISCONFIGURED,
-                message=f"Unknown capability feature: '{feature}'.",
-                details={},
-            )
-        else:
-            info = evaluator(artifacts)
-    except Exception:
-        info = CapabilityInfo(
-            feature=feature,
-            state=CapabilityState.MISCONFIGURED,
-            message="Unable to evaluate the requested capability.",
-            details={},
-        )
-    if config is None:
-        _capability_cache.set(feature, info)
-        return _copy_capability_info(info)
-    return info
+    if config is not None:
+        return _evaluate_capability(feature, config)
+
+    cached = _capability_cache.get(feature)
+    if cached is not None:
+        return _copy_capability_info(cached)
+
+    with _capability_flight_lock:
+        gen = _capability_generation
+        flight = _capability_inflight.get(feature)
+        leader = flight is None
+        if leader:
+            flight = _CapabilityFlight()
+            _capability_inflight[feature] = flight
+    assert flight is not None  # set on every path above
+
+    if leader:
+        try:
+            info = _evaluate_capability(feature, None)
+            with _capability_flight_lock:
+                valid = gen == _capability_generation
+            if valid:
+                _capability_cache.set(feature, info)
+            flight.result = info
+        except BaseException as exc:  # noqa: BLE001 - release waiters, stay fail-closed
+            flight.error = exc
+        finally:
+            flight.done.set()
+            with _capability_flight_lock:
+                if _capability_inflight.get(feature) is flight:
+                    _capability_inflight.pop(feature, None)
+    else:
+        flight.done.wait()
+
+    if flight.error is not None or flight.result is None:
+        return _fail_closed(feature)
+    return _copy_capability_info(flight.result)
 
 
 def capability_to_dict(info: CapabilityInfo) -> Dict[str, Any]:
