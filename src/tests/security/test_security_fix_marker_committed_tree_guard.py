@@ -759,6 +759,15 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             '2eedd2c6 is a genuine security fix landed via the private index: the whole-file replacement range-ACL check now builds its before/after protected-cell maps from the merged viewport view (sum_column_segments gap-fillers plus sparse sum_cells) so a forged segment at an empty protected coordinate cannot bypass read_only bands. Pinned by the distinctive merged-view comment it introduced.'
         ),
     ),
+    # --- N987 reflog audit: SHA-specific pins for empty-reflog commits ---
+    CommittedFixMarker(
+        key='27708237-auto-monkeypatch',
+        path='src/tests/security/test_admin_migration_read_scope_e2e.py',
+        marker='    monkeypatch.setattr(migrations_routes, "check_host_restriction", lambda r: None)',
+        why=(
+            '27708237 auto-pinned by the N987 reflog audit (test(security): pin admin migration read scope end-to-end with real gate); distinctive committed text it introduced, keyed to its SHA.'
+        ),
+    ),
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
