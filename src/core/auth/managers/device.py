@@ -139,12 +139,17 @@ class DeviceMixin(AuthManagerProtocol):
         # Capture the sessions this device owns before revoking them so their
         # sockets can be closed individually. A blanket user-wide close would
         # also kill the user's other, still-valid devices.
+        # SECURITY: bind the session writes to the device owner as well as the
+        # device id. A stale/mis-bound session row pointing at this device must
+        # never be revoked by another account's device revoke; untrust_device
+        # applies the same owner predicate to its equivalent session write.
         owned = self._db.fetch_all(
-            "SELECT id FROM auth_sessions WHERE device_id = ? AND revoked = 0",
-            (device_id,),
+            "SELECT id FROM auth_sessions WHERE device_id = ? AND user_id = ? AND revoked = 0",
+            (device_id, user_id),
         )
         self._db.execute(
-            "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ?", (device_id,)
+            "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ? AND user_id = ?",
+            (device_id, user_id),
         )
         # Invalidate AFTER the write, exactly as logout/revoke_session/
         # disable_2fa do: ``verify_token`` is cached for 10s, so a session
