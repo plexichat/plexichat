@@ -455,28 +455,58 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
             else:
                 final_content = encrypt_message(final_content, message_id)
 
-        # Record the PRIOR content in the edit history before it is
-        # overwritten (parity #2). The history service encrypts the prior
-        # content at rest when encryption is enabled; failures are
-        # best-effort and never block the edit itself.
+        # Capture the exact prior content and the revision validated from the
+        # row read above. A concurrent edit must not make us record its
+        # content as ours, nor let a stale revision pass the check twice.
         try:
-            from ..edit_history import EditHistoryService
-
-            history_svc = EditHistoryService(
-                self._db,
-                self._participant_svc,
-                encryption_enabled=get_encrypt_messages_default(),
-            )
-            prior_row = self._repo.get_by_id(message_id)
-            if prior_row is not None:
-                prior_content = self._repo.row_to_model(prior_row).content
-                history_svc.record_edit(user_id, message_id, prior_content)
-        except Exception as exc:
-            logger.debug(f"Failed to record edit history for {message_id}: {exc}")
-
-        self._repo.update_content(
-            message_id, final_content, now, content_index=content_idx
+            prior_content = self._repo.row_to_model(msg_row).content
+        except Exception:
+            prior_content = None
+        expected_revision = int(
+            msg_row.get("edited_at") or msg_row.get("updated_at") or 0
         )
+
+        # Compare-and-swap: the no-op check above is read-then-write (TOCTOU),
+        # so two concurrent applications of the SAME edit can both see the old
+        # content index and both proceed. The revision predicate lives in the
+        # single UPDATE, so only one can advance the message; the loser fails
+        # closed (409) before recording history, touching search/cache state,
+        # or returning success to a caller that would broadcast a second
+        # MESSAGE_UPDATE. Repos without the CAS API keep last-write-wins.
+        _cas = getattr(self._repo, "update_content_if_revision", None)
+        if callable(_cas):
+            applied = _cas(
+                message_id,
+                expected_revision,
+                final_content,
+                now,
+                content_index=content_idx,
+            )
+            if not applied:
+                raise MessageConflictError(
+                    "Message was modified by another request; refresh and retry",
+                    expected=expected_revision,
+                    actual=None,
+                )
+        else:
+            self._repo.update_content(
+                message_id, final_content, now, content_index=content_idx
+            )
+
+        # Record the PRIOR content only for the edit that actually landed, so
+        # a replayed/concurrent edit cannot append a duplicate history row.
+        if prior_content is not None:
+            try:
+                from ..edit_history import EditHistoryService
+
+                history_svc = EditHistoryService(
+                    self._db,
+                    self._participant_svc,
+                    encryption_enabled=get_encrypt_messages_default(),
+                )
+                history_svc.record_edit(user_id, message_id, prior_content)
+            except Exception as exc:
+                logger.debug(f"Failed to record edit history for {message_id}: {exc}")
         # Rebuild the per-word search blind indexes for the new plaintext so
         # substring search keeps working after edits (see send path).
         try:

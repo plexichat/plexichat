@@ -421,6 +421,73 @@ class MessageRepository(BaseRepository[Message]):
             self.invalidate_conversation_cache(cid)
         return content_changed
 
+    def update_content_if_revision(
+        self,
+        msg_id: SnowflakeID,
+        expected_revision: int,
+        content: str,
+        updated_at: int,
+        content_index: Optional[str] = None,
+        mark_edited: bool = True,
+    ) -> bool:
+        """Atomically apply an edit only while the stored revision is unchanged.
+
+        Compare-and-swap counterpart of :meth:`update_content`. The revision
+        predicate is part of the single UPDATE, so two concurrent applications
+        of the same edit cannot both win: the first advances the revision and
+        the second fails the WHERE, failing closed before recording history or
+        emitting a second MESSAGE_UPDATE.
+        """
+        existing = self._fetch_one(
+            "SELECT content, updated_at, edited_at FROM msg_messages WHERE id = ?",
+            (msg_id,),
+        )
+        if existing is None:
+            return False
+        content_changed = existing["content"] != content
+        prior_revision = max(
+            int(existing.get("updated_at") or 0),
+            int(existing.get("edited_at") or 0),
+        )
+        if updated_at <= prior_revision:
+            updated_at = prior_revision + 1
+        raise_edited = 1 if (content_changed and mark_edited) else 0
+        cursor = self._db.execute(
+            """UPDATE msg_messages
+               SET content = ?,
+                   content_encrypted = CASE WHEN ? THEN NULL ELSE content_encrypted END,
+                   content_index = ?,
+                   updated_at = ?,
+                   edited = CASE WHEN ? THEN 1 ELSE edited END,
+                   edited_at = CASE WHEN ? THEN ? ELSE edited_at END
+               WHERE id = ?
+                 AND COALESCE(NULLIF(edited_at, 0), updated_at) = ?
+                 AND COALESCE(deleted, 0) = 0""",
+            (
+                content,
+                raise_edited,
+                content_index,
+                updated_at,
+                raise_edited,
+                raise_edited,
+                updated_at,
+                msg_id,
+                int(expected_revision),
+            ),
+        )
+        try:
+            changed = int(getattr(cursor, "rowcount", 0) or 0)
+        finally:
+            close = getattr(cursor, "close", None)
+            if callable(close):
+                close()
+        if changed > 0:
+            cid = self._get_conv_id(msg_id)
+            if cid:
+                self.invalidate_conversation_cache(cid)
+            return True
+        return False
+
     def update_metadata(
         self,
         msg_id: SnowflakeID,
