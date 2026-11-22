@@ -66,26 +66,36 @@ def test_sequential_identical_edit_is_a_noop(dm_with_message):
 
 
 def test_concurrent_same_edit_records_one_history_row(dm_with_message, monkeypatch):
-    """The bug: two racing applications of one edit appended two history rows.
+    """Two racing applications of one edit commit only one history row.
 
-    With the CAS fix the second writer loses and fails closed, so history
-    stays at a single row and no second success/broadcast is produced.
+    The frozen pre-edit read models the interleaving where both calls pass the
+    blind-index no-op check before either write lands. The CAS on the message
+    revision must let only one write advance the message: the stale loser fails
+    closed with a 409 conflict instead of appending a second history row or
+    returning success that would drive a second MESSAGE_UPDATE broadcast.
     """
     user1, _user2, _dm, msg, _polls, messaging = dm_with_message
     db = messaging.db
 
+    # Assert the invariant as a delta from the baseline. A fixed absolute count
+    # would be a scheduling/history-recording artifact; what matters is that the
+    # race produces exactly ONE new history row for ONE logical edit.
+    baseline = _history_count(db, msg.id)
+
     stale = _StaleReadRepo(messaging._message_svc._repo)
     monkeypatch.setattr(messaging._message_svc, "_repo", stale)
 
-    # First application wins and records the prior content once.
+    # Winner: the first application advances the revision and records history.
     messaging.edit_message(user1.id, msg.id, "raced edit")
-    assert _history_count(db, msg.id) == 1
 
-    # Second application read the same stale pre-edit row. It must not become
-    # a second committed "edit": fail closed instead of duplicating history.
+    # Loser: same stale pre-edit snapshot, so its CAS must fail closed. No
+    # second success means no second broadcast from the route layer either.
     with pytest.raises(MessageConflictError):
         messaging.edit_message(user1.id, msg.id, "raced edit")
-    assert _history_count(db, msg.id) == 1
+
+    # Invariant: exactly one new history row, independent of which application
+    # won the race or how the interleaving was scheduled.
+    assert _history_count(db, msg.id) - baseline == 1
 
 
 def test_genuinely_new_edit_still_records_history(dm_with_message):
