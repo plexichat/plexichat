@@ -1,9 +1,15 @@
 """Bridge synchronous auth revocation to server-side gateway socket closure.
 
 The gateway authenticates a WebSocket only at IDENTIFY/RESUME. A
-``SECURITY_ALERT`` / ``SECURITY_LOGOUT`` dispatch is a *client-side* hint; until
-the socket is actually closed it stays authenticated and usable server-side.
-The admin force-logout/lock routes close that socket directly, but ordinary
+``SECURITY_ALERT`` / ``SECURITY_LOGOUT`` *frame* is still a client-side hint,
+but the corresponding cross-worker event now also closes the receiving worker's
+local sockets server-side (see ``GatewayDispatcher.dispatch_remote_event``).
+Closure is always worker-local -- the dispatcher only knows sockets in its own
+process -- so the revocation event is consumed on every worker to close each
+one's local sockets. This is what makes a revoked/banned user's already-open
+socket fail closed on a multi-worker deployment instead of depending on the
+client honouring a hint. The admin force-logout/lock routes close that socket
+directly, but ordinary
 revocation lives in synchronous core code (password change/reset, mass logout,
 the account reaper) and in FastAPI worker threads, so it cannot simply
 ``await`` the dispatcher.
@@ -51,15 +57,15 @@ def close_user_gateway_connections(
     socket.
 
     Closure is worker-local: the dispatcher only knows about sockets in this
-    process. There is NO cross-worker socket-closure handler. On a multi-worker
-    deployment the ``SECURITY_LOGOUT`` / ``SECURITY_ALERT`` events fanned out to
-    sibling workers are *client-side hints* only -- they ask a well-behaved
-    client to disconnect but do not close the server-side socket. An
-    already-open socket on another worker therefore stays authenticated and
-    usable until the client honours the hint or the socket otherwise drops.
-    Re-authentication is blocked on every worker because revocation deletes the
-    persisted sessions and invalidates the shared ``token_verify`` cache, so a
-    fresh socket cannot authenticate as the revoked principal.
+    process. On a multi-worker deployment the revocation event is published to
+    every worker, and each worker's ``dispatch_remote_event`` closes its own
+    matching local sockets, so an already-open socket on a sibling worker no
+    longer stays authenticated after the client-side hint. When the emitter
+    supplies revoked session ids the close is bound to those exact sessions,
+    making it idempotent and safe against replay (a socket created under a
+    newer session id cannot be closed by an old event). Re-authentication is
+    independently blocked on every worker because revocation deletes the
+    persisted sessions and invalidates the shared ``token_verify`` cache.
     """
     loop = _gateway_loop()
     if loop is None or loop.is_closed():
@@ -105,7 +111,10 @@ def close_session_gateway_connections(
     Non-raising and callable from a synchronous context on or off the serving
     loop, like :func:`close_user_gateway_connections`. Matching is done by the
     dispatcher on the verified ``TokenInfo.session_id`` recorded on each socket
-    at IDENTIFY/RESUME, so a sibling session on the same user is left open.
+    at IDENTIFY/RESUME, so a sibling session on the same user is left open. The
+    revocation event carries that same session id from the authoritative
+    revocation helper, so sibling workers close only this session's sockets
+    server-side instead of relying on a client-side hint.
     """
     loop = _gateway_loop()
     if loop is None or loop.is_closed():

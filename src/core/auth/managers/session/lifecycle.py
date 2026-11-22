@@ -845,10 +845,11 @@ class LifecycleMixin(AuthManagerProtocol):
                     )
 
         if except_session_id is not None:
-            count_row = self._db.fetch_one(
-                "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND id != ? AND revoked = 0",
+            revoked_rows = self._db.fetch_all(
+                "SELECT id FROM auth_sessions WHERE user_id = ? AND id != ? AND revoked = 0",
                 (user_id, except_session_id),
             )
+            revoked_ids = [int(r["id"]) for r in revoked_rows]
             self._db.execute(
                 "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ? AND id != ?",
                 (user_id, except_session_id),
@@ -859,7 +860,15 @@ class LifecycleMixin(AuthManagerProtocol):
             try:
                 from src.core.events.gateway_emit import emit_security_alert
 
-                emit_security_alert(user_id, "session_revoked")
+                # Carry the revoked session ids so every worker can close the
+                # exact sockets server-side, not merely push a client hint.
+                # Targeting by id also makes a replay of this event harmless to
+                # a session established after the revocation.
+                emit_security_alert(
+                    user_id,
+                    "session_revoked",
+                    detail={"revoke": True, "session_ids": revoked_ids},
+                )
             except Exception as exc:
                 # Sessions are already revoked; the alert is advisory.
                 logger.debug(f"session_revoked alert not emitted: {exc}")
@@ -867,11 +876,12 @@ class LifecycleMixin(AuthManagerProtocol):
             # live socket server-side too (fail closed for every caller of
             # logout_all -- lock/disable, force-logout, deletion, reaper).
             close_user_gateway_connections(user_id, "All sessions revoked")
-            return count_row["cnt"] if count_row else 0
-        count_row = self._db.fetch_one(
-            "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND revoked = 0",
+            return len(revoked_ids)
+        revoked_rows = self._db.fetch_all(
+            "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 0",
             (user_id,),
         )
+        revoked_ids = [int(r["id"]) for r in revoked_rows]
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (user_id,)
         )
@@ -881,13 +891,17 @@ class LifecycleMixin(AuthManagerProtocol):
         try:
             from src.core.events.gateway_emit import emit_security_alert
 
-            emit_security_alert(user_id, "session_revoked")
+            emit_security_alert(
+                user_id,
+                "session_revoked",
+                detail={"revoke": True, "session_ids": revoked_ids},
+            )
         except Exception as exc:
             logger.debug(f"session_revoked alert not emitted: {exc}")
         # See the except-branch above: the frame is a hint, the close is the
         # guarantee. Covers the account-level revocation callers of logout_all.
         close_user_gateway_connections(user_id, "All sessions revoked")
-        return count_row["cnt"] if count_row else 0
+        return len(revoked_ids)
 
     def logout_all_users(self) -> int:
         self._db.execute("UPDATE auth_sessions SET revoked = 1 WHERE revoked = 0")
@@ -979,7 +993,14 @@ class LifecycleMixin(AuthManagerProtocol):
             try:
                 from src.core.events.gateway_emit import emit_security_alert
 
-                emit_security_alert(user_id, "session_revoked")
+                # Authoritative subject + exact revoked session id, so sibling
+                # workers close only this socket instead of hinting and leaving
+                # a revoked session authenticated server-side.
+                emit_security_alert(
+                    user_id,
+                    "session_revoked",
+                    detail={"revoke": True, "session_ids": [session_id]},
+                )
             except Exception as exc:
                 logger.debug(f"session_revoked alert not emitted: {exc}")
             # A SECURITY_ALERT is only a client-side hint. Close the live socket(s)
@@ -1043,25 +1064,29 @@ class LifecycleMixin(AuthManagerProtocol):
                 True,
                 details={"revoked_count": revoked},
             )
-            try:
-                from src.core.events.gateway_emit import emit_security_alert
-
-                emit_security_alert(user_id, "session_revoked")
-            except Exception as exc:
-                logger.debug(f"session_revoked alert not emitted: {exc}")
-            # A SECURITY_ALERT is only a client-side hint; the sockets of the
-            # revoked sessions stay authenticated server-side unless closed.
-            # Close them one by one by auth-session id rather than blanket
-            # closing the user: with except_session_id the surviving current
-            # session (and its socket) must remain usable. Only sessions that
-            # are now actually revoked are targeted.
+            # Only sessions that are now actually revoked are targeted. Resolve
+            # them once: the ids drive both the local socket closure and the
+            # cross-worker revocation payload, so a sibling worker closes the
+            # exact same sockets server-side instead of relying on a hint.
             now_revoked = self._db.fetch_all(
                 "SELECT id FROM auth_sessions WHERE user_id = ? AND revoked = 1 "
                 f"AND id IN ({placeholders})",
                 (user_id, *targets),
             )
-            for row in now_revoked:
-                close_session_gateway_connections(
-                    user_id, int(row["id"]), "Session revoked"
+            revoked_ids = [int(row["id"]) for row in now_revoked]
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(
+                    user_id,
+                    "session_revoked",
+                    detail={"revoke": True, "session_ids": revoked_ids},
                 )
+            except Exception as exc:
+                logger.debug(f"session_revoked alert not emitted: {exc}")
+            # Close them one by one by auth-session id rather than blanket
+            # closing the user: with except_session_id the surviving current
+            # session (and its socket) must remain usable.
+            for sid in revoked_ids:
+                close_session_gateway_connections(user_id, sid, "Session revoked")
         return revoked

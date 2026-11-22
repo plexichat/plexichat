@@ -46,6 +46,21 @@ _SCOPE_UNSET = object()
 #: malformed one (both fail closed, but only the latter is logged as tampering).
 _MISSING = object()
 
+#: ``SECURITY_ALERT`` actions that actually revoke the principal's sessions.
+#: These events arrive from sibling workers over the trusted Valkey event bus
+#: (never from a gateway client) and must therefore close the receiving
+#: worker's local sockets server-side, not just push a client-side hint.
+#: Informational security alerts (2FA enabled, API-token audit notices, ...)
+#: are deliberately absent so they keep their normal hint-only behaviour.
+_SESSION_REVOKING_ALERT_ACTIONS = frozenset(
+    {"session_revoked", "password_change", "account_locked", "two_factor_disabled"}
+)
+
+#: Cap on session ids accepted from one remote revocation event. Bounds the
+#: close loop against a buggy/compromised publishing worker; revocations of a
+#: single user never legitimately touch this many sessions in one event.
+_MAX_REMOTE_REVOCATION_SESSIONS = 256
+
 
 def _coerce_envelope_scope_id(value: Any) -> Optional[int]:
     """Coerce one explicit envelope scope id; bools/invalid values -> None."""
@@ -55,6 +70,65 @@ def _coerce_envelope_scope_id(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _cross_worker_revocation_target(
+    event_type: str, event_data: Any
+) -> Optional[tuple]:
+    """Return ``(user_ids, session_ids)`` for a trusted remote revocation.
+
+    ``None`` means the event is not a server-side revocation and must follow
+    the ordinary fan-out path. A revocation is recognised only by:
+
+    * the dedicated ``SECURITY_LOGOUT`` event type (an unambiguous logout
+      signal), or
+    * a ``SECURITY_ALERT`` whose ``action`` is a known session-revoking action
+      or whose payload carries the explicit ``detail.revoke`` marker stamped by
+      the authoritative revocation helpers.
+
+    The target user is taken from ``d.user_id`` (present on every emitter),
+    NOT from the router audience ``u``: an over-broad/malformed audience must
+    never widen socket closure to a bystander. ``session_ids`` come from
+    ``detail.session_ids`` and bound the closure to the exact revoked sessions,
+    so a replayed event cannot close a socket established under a newer
+    session id. An empty list means "close all of the user's sockets" (used for
+    user-wide revocations that do not enumerate sessions).
+
+    Cross-worker events can only be published by trusted workers through
+    ``EventManager._publish_cross_worker``; there is no gateway/client path to
+    the Valkey channel, so this signal cannot be forged by a client.
+    """
+    if not isinstance(event_data, dict):
+        return None
+    detail = event_data.get("detail")
+    detail = detail if isinstance(detail, dict) else {}
+    if event_type == "SECURITY_LOGOUT":
+        is_revocation = True
+    elif event_type == "SECURITY_ALERT":
+        is_revocation = (
+            event_data.get("action") in _SESSION_REVOKING_ALERT_ACTIONS
+            or detail.get("revoke") is True
+        )
+    else:
+        return None
+    if not is_revocation:
+        return None
+
+    uid = _coerce_envelope_scope_id(event_data.get("user_id"))
+    if uid is None:
+        # Fail safe: without an authoritative subject we must not close anyone.
+        return None
+
+    session_ids: List[int] = []
+    raw_ids = detail.get("session_ids")
+    if not isinstance(raw_ids, (list, tuple)):
+        raw_ids = event_data.get("session_ids")
+    if isinstance(raw_ids, (list, tuple)):
+        for raw in raw_ids[:_MAX_REMOTE_REVOCATION_SESSIONS]:
+            sid = _coerce_envelope_scope_id(raw)
+            if sid is not None:
+                session_ids.append(sid)
+    return [uid], session_ids
 
 
 def _event_scope_from_data(event_data: Any) -> tuple:
@@ -383,6 +457,37 @@ class GatewayDispatcher:
                 "Ignoring cross-worker event with unknown type: %s", event_type
             )
             return 0
+
+        # SERVER-SIDE REVOCATION. The cross-worker SECURITY_* event used to be
+        # only a client-side hint: a revoked user's already-open socket on THIS
+        # worker stayed authenticated and usable. Close the local sockets for
+        # the revoked subject on every worker that receives the event. This is
+        # restricted to trusted revocation events (see
+        # _cross_worker_revocation_target) so an informational security alert
+        # keeps its normal fan-out; the close is idempotent and, when the
+        # emitter supplies session ids, bound to those exact sessions so a
+        # replay cannot close a socket created under a newer session id.
+        revocation = _cross_worker_revocation_target(resolved_type.value, event_data)
+        if revocation is not None:
+            target_users, session_ids = revocation
+            closed = 0
+            reason = "Session revoked on sibling worker"
+            for uid in target_users:
+                if session_ids:
+                    for sid in session_ids:
+                        closed += await self.close_session_connections(
+                            uid, sid, reason=reason
+                        )
+                else:
+                    closed += await self.close_user_connections(uid, reason=reason)
+            logger.info(
+                "Closed %d local gateway connection(s) for cross-worker "
+                "revocation of user %s (sessions=%s)",
+                closed,
+                target_users,
+                session_ids or "all",
+            )
+            return closed
 
         # Restore the routing scope for the intent gate. Prefer the explicit
         # envelope scope: payload builders are NOT required to duplicate the
