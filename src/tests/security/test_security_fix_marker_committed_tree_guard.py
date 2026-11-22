@@ -706,6 +706,23 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "until the cache TTL lapses"
         ),
     ),
+    # 42ee85e9 (private-index repair): the federation join manager logs through
+    # a plain stdlib logger, so remote-supplied error text reaches the sink
+    # without AppLogger's control-character filter and can forge extra
+    # disk/SIEM log lines (CWE-117). The sink-level SanitizingFilter install is
+    # the fix; a stale/gutted copy drops it and reopens the log-forging leak.
+    CommittedFixMarker(
+        key="42ee85e9-plexijoin-manager-log-sanitizing-filter",
+        path="src/core/plexijoin/manager.py",
+        marker="logger.addFilter(SanitizingFilter())",
+        why=(
+            "42ee85e9: the federation join manager logs remote-supplied error "
+            "text through a plain logger with no SanitizingFilter, so a U+0085, "
+            "U+2028/U+2029 or bidi control can forge extra disk/SIEM log lines "
+            "(CWE-117); a stale staged copy drops the sink-level filter install "
+            "and reopens the log-forging leak"
+        ),
+    ),
 )
 
 
@@ -773,6 +790,7 @@ PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
         "da39776a-tier-limits-verdict-deepcopy",
         "ee7bab02-attachment-image-decode-size-ceiling",
         "fbc4a7be-admin-otp-ascii-canonicalization",
+        "42ee85e9-plexijoin-manager-log-sanitizing-filter",
     }
 )
 
@@ -968,7 +986,7 @@ def test_private_index_pinned_keys_are_registered() -> None:
         "private-index key set references keys missing from COMMITTED_FIX_MARKERS: "
         f"{sorted(PRIVATE_INDEX_PINNED_KEYS - set(keys))}"
     )
-    assert len(PRIVATE_INDEX_PINNED_KEYS) == 28
+    assert len(PRIVATE_INDEX_PINNED_KEYS) == 29
     for key in PRIVATE_INDEX_PINNED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path.startswith("src/"), f"bad path for {key!r}"
