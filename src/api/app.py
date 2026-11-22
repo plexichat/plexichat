@@ -94,6 +94,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     from .middleware.database import DatabaseMiddleware
     from .middleware.ip_blocking import IPBlockingMiddleware
     from .middleware.logging import LoggingMiddleware
+    from .middleware.request_context import RequestStateMiddleware
 
     config = get_api_config()
     # Debug CORS config
@@ -610,6 +611,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     # M1: request logging middleware was dead code - never registered. Added
     # outermost so timing covers the full stack (CORS preflights included).
     app.add_middleware(LoggingMiddleware)
+
+    # ASGI servers are supposed to copy their lifespan ``state`` into every
+    # request scope, but uvicorn 0.51 passes the lifespan dict itself. Detach
+    # each request before a single middleware can write to it, otherwise the
+    # user and cached auth facts of one authenticated request stay in
+    # process-wide storage and authenticate every later anonymous request.
+    # Registered last so it is the outermost layer.
+    app.add_middleware(RequestStateMiddleware)
 
     setup_exception_handlers(app)
 

@@ -482,3 +482,144 @@ class TestDatabaseMiddlewareObservability:
 
         assert warnings, "cleanup failure must be logged"
         assert "disk I/O error" in warnings[0]
+
+
+class TestSharedServerStateIsolation:
+    """uvicorn 0.51 hands every request the lifespan state dict itself.
+
+    ASGI says the server copies that dict per request. Because it does not,
+    anything the auth middleware recorded in ``scope["state"]`` used to survive
+    the response: after one login, a request that sent no credentials at all was
+    served as that user.
+    """
+
+    HEADERS = [(b"host", b"testserver")]
+
+    def _scope(self, state, headers=None):
+        return {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/v1/users/@me",
+            "headers": self.HEADERS if headers is None else headers,
+            "query_string": b"",
+            "client": ("testclient", 50000),
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "state": state,
+        }
+
+    def _run(self, shared, headers=None, inner_app=None):
+        from src.api.middleware.authentication import AuthenticationMiddleware
+        from src.api.middleware.request_context import RequestStateMiddleware
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            return None
+
+        async def default_inner(scope, receive_, send_):
+            await send_({"type": "http.response.start", "status": 200, "headers": []})
+            await send_({"type": "http.response.body", "body": b"ok"})
+
+        fake_auth = MagicMock()
+        fake_auth.verify_token.return_value = SimpleNamespace(
+            user_id=7, expires_at=None
+        )
+        fake_auth.is_api_access_token_required.return_value = False
+
+        scope = self._scope(shared, headers)
+        with (
+            patch("src.api.is_self_test_request", return_value=False),
+            patch("src.api.get_auth", return_value=fake_auth),
+            patch("src.api.get_db", return_value=None),
+        ):
+            import asyncio
+
+            asyncio.run(
+                RequestStateMiddleware(
+                    AuthenticationMiddleware(inner_app or default_inner)
+                )(scope, receive, send)
+            )
+        return scope
+
+    def test_stale_shared_facts_are_not_visible_to_a_new_request(self):
+        from src.api.middleware.request_context import (
+            RequestContext,
+            get_request_context,
+            get_request_user,
+        )
+
+        leaked_user = SimpleNamespace(user_id=7)
+        leaked_ctx = RequestContext(user=leaked_user, user_resolved=True)
+        shared = {
+            "user": leaked_user,
+            "auth_error": "stale",
+            "cookie_auth": True,
+            "_plexichat_request_context": leaked_ctx,
+            "db": "lifespan-handle",
+        }
+        seen = {}
+
+        async def inner(scope, receive_, send_):
+            seen["user"] = get_request_user(scope)
+            seen["ctx"] = get_request_context(scope)
+            seen["state"] = scope["state"]
+
+        self._run(shared, inner_app=inner)
+
+        assert seen["user"] is None
+        assert seen["ctx"] is not leaked_ctx
+        assert seen["ctx"].user_resolved is False
+        assert "user" not in seen["state"]
+        assert "auth_error" not in seen["state"]
+        # The server's dict is never mutated: its stale facts stay put.
+        assert shared["user"] is leaked_user
+        assert shared["_plexichat_request_context"] is leaked_ctx
+        # Non-request lifespan data survives the detach.
+        assert seen["state"]["db"] == "lifespan-handle"
+
+    def test_authenticated_request_does_not_write_identity_back(self):
+        from src.api.middleware.request_context import get_request_user
+
+        shared = {}
+        seen = {}
+
+        async def inner(scope, receive_, send_):
+            seen["user"] = get_request_user(scope)
+            seen["state"] = scope["state"]
+
+        headers = self.HEADERS + [(b"cookie", b"plexichat_token=abc")]
+        scope = self._run(shared, headers=headers, inner_app=inner)
+
+        assert seen["user"] is not None and seen["user"].user_id == 7
+        assert seen["state"]["cookie_auth"] is True
+        assert shared == {}, "request facts leaked into the server's state dict"
+        assert scope["state"] is not shared
+
+    def test_second_request_without_credentials_stays_anonymous(self):
+        from src.api.middleware.request_context import get_request_user
+
+        shared = {}
+        seen = []
+
+        async def inner(scope, receive_, send_):
+            seen.append(get_request_user(scope))
+
+        headers = self.HEADERS + [(b"cookie", b"plexichat_token=abc")]
+        self._run(shared, headers=headers, inner_app=inner)
+        self._run(shared, inner_app=inner)
+
+        assert seen[0] is not None and seen[0].user_id == 7
+        assert seen[1] is None
+
+    def test_create_app_installs_it_outermost(self):
+        import inspect
+
+        from src.api import app as app_module
+
+        source = inspect.getsource(app_module.create_app)
+        adds = [
+            line.strip() for line in source.splitlines() if "add_middleware(" in line
+        ]
+        assert adds[-1] == "app.add_middleware(RequestStateMiddleware)"

@@ -9,8 +9,12 @@ every request in the 20-50 ms band.
 
 Everything here lives in ``scope["state"]`` (or a :class:`ContextVar` bound to
 that state for callers that only have a token, such as media signing). Nothing
-crosses the request boundary: a new ASGI scope starts with an empty cache, so
-invalidation is automatic and no TTL is needed.
+crosses the request boundary: :func:`isolate_request_state` gives each request
+its own dict before anything is written to it, so invalidation is automatic and
+no TTL is needed. That detach is load-bearing -- ASGI says the server copies its
+lifespan ``state`` into every request scope, but uvicorn 0.51 passes the lifespan
+dict itself, and a cache (or a ``user``) stored straight into it would then be
+handed to every later request in the process.
 
 The security checks themselves are untouched -- this only memoises their
 *results* within a single request. Mocks that do not expose a real scope dict
@@ -24,6 +28,19 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 _CACHE_KEY = "_plexichat_request_context"
+
+# Keys that hold facts about ONE request. They are never inherited from the
+# server's shared lifespan state, and never written back into it.
+_REQUEST_FACT_KEYS = frozenset(
+    {
+        _CACHE_KEY,
+        "user",
+        "auth_error",
+        "system_error",
+        "cookie_auth",
+        "is_internal",
+    }
+)
 
 
 @dataclass
@@ -71,6 +88,48 @@ def get_request_context(obj: Any) -> Optional[RequestContext]:
         ctx = RequestContext()
         state[_CACHE_KEY] = ctx
     return ctx
+
+
+def isolate_request_state(obj: Any) -> None:
+    """Give this request its own ``scope["state"]`` dict.
+
+    ASGI servers are required to hand each request a *copy* of their lifespan
+    state. uvicorn 0.51 hands every request the lifespan dict itself, so any
+    per-request fact written to ``scope["state"]`` (the cached context, the
+    resolved user, an auth error) survives the response and is then inherited
+    by the next request: one login left every later anonymous request
+    authenticated as that user. Detach the scope here, before this module or
+    the authentication middleware writes anything, and drop request facts a
+    shared dict may already be carrying. Lifespan data (database handles, client
+    config) is kept, and the caller keeps writing through ``scope["state"]``.
+    """
+    target = obj if isinstance(obj, dict) else getattr(obj, "scope", None)
+    if not isinstance(target, dict):
+        return
+    state = target.get("state")
+    if not isinstance(state, dict):
+        return
+    target["state"] = {
+        key: value for key, value in state.items() if key not in _REQUEST_FACT_KEYS
+    }
+
+
+class RequestStateMiddleware:
+    """Give every request a private ``scope["state"]`` before anything runs.
+
+    Registered outermost in :func:`src.api.app.create_app` so no inner
+    middleware or route can observe (or write) the dict another request also
+    holds. This is where the copy the ASGI spec assigns to the server happens,
+    which is what keeps :func:`get_request_context` request-scoped on servers
+    that share their lifespan state.
+    """
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        isolate_request_state(scope)
+        await self.app(scope, receive, send)
 
 
 def bind_current_context(obj: Any):
@@ -213,6 +272,8 @@ __all__ = [
     "current_context",
     "get_request_context",
     "get_request_user",
+    "isolate_request_state",
+    "RequestStateMiddleware",
     "lookup_token_result",
     "remember_token_result",
     "reset_current_context",
