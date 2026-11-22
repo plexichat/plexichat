@@ -742,6 +742,15 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "stale staged copy of the guard that drops the audit is caught."
         ),
     ),
+    # --- N987 reflog audit: SHA-specific pins for empty-reflog commits ---
+    CommittedFixMarker(
+        key='2eedd2c6-auto-test_owner_can_upload_segment_',
+        path='src/tests/suite/test_sum_upload_segment_range_bypass_n902.py',
+        marker='def test_owner_can_upload_segment_inside_protected_band(db, two_users, server_manager):',
+        why=(
+            '2eedd2c6 auto-pinned by the N987 reflog audit (fix(security): close segment gap-filler bypass of PlexiSum range ACL); distinctive committed text it introduced, keyed to its SHA.'
+        ),
+    ),
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
@@ -2838,6 +2847,52 @@ def test_private_index_reflog_enumeration_has_no_unpinned_security_fix() -> None
         f"non-security exemption: {unpinned}. Pin each with a distinctive "
         "marker or document it in PRIVATE_INDEX_NON_SECURITY_SHAS."
     )
+
+
+def test_n987_reflog_pins_are_sha_specific_and_non_vacuous(
+    commit_sha: str, monkeypatch
+) -> None:
+    """N987 pins are real ancestors, keyed by SHA, and non-vacuous.
+
+    Each SHA resolves to a real ancestor and names a live registry entry whose
+    key embeds that exact SHA. A blob omitting the pinned text is still
+    rejected, and a fresh unknown empty-reflog SHA is still rejected by the
+    enumeration, so pinning coordination noise cannot make the audit vacuous.
+    Markers reverted at HEAD by a genuine source revert owned by another lane
+    are intentionally not asserted present here (a true positive already
+    reported by the pre-existing pin for that fix).
+    """
+    import subprocess as _subprocess
+
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    assert set(N987_REFLOG_PIN_SHAS.values()) <= set(by_key)
+    for sha, key in sorted(N987_REFLOG_PIN_SHAS.items()):
+        assert key.startswith(sha + "-"), f"{key} is not keyed to {sha}"
+        anc = _git("merge-base", "--is-ancestor", sha, commit_sha)
+        assert anc.returncode == 0, f"{sha} is not an ancestor of HEAD"
+        record = by_key[key]
+
+        def stale_blob(path: str, _record=record) -> str:
+            return f"# stale staged copy of {path}\n# pinned text erased\n"
+
+        present, detail = _evaluate(record, stale_blob)
+        assert not present, f"{key} accepted a blob without its pinned marker"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+    fake_sha = "feedface" + "0" * 32
+    real_git = globals()["_git"]
+
+    def fake_git(*args, **kwargs):
+        if args and args[0] == "reflog":
+            return _subprocess.CompletedProcess(args, 0, f"{fake_sha}\t\n", "")
+        if args and args[0] == "merge-base":
+            return _subprocess.CompletedProcess(args, 0, "", "")
+        return real_git(*args, **kwargs)
+
+    monkeypatch.setitem(globals(), "_git", fake_git)
+    with pytest.raises(AssertionError, match="feedface"):
+        test_private_index_reflog_enumeration_has_no_unpinned_security_fix()
 
 
 def test_legacy_private_index_shas_keep_their_committed_markers(
