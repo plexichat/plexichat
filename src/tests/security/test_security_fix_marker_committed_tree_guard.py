@@ -1207,6 +1207,24 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "without ever proving friendship)"
         ),
     ),
+    # N667 (b62dad3b): a USER mention in a DM notified any existing user, not
+    # just conversation participants. The channel-view recipient filter is a
+    # no-op for DMs (no channel id), so a caller could mention an unrelated user
+    # in a DM and leak the private message body via content_preview (and the
+    # push payload built from it). Pin the fail-closed conversation-membership
+    # gate so a stale staged copy of creator.py cannot drop it.
+    CommittedFixMarker(
+        key="b62dad3b-dm-mention-conversation-membership-gate",
+        path="src/core/notifications/manager/creator.py",
+        marker="_filter_recipients_by_conversation",
+        why=(
+            "N667: for server-less (DM/group-DM) mentions the notification "
+            "fan-out is gated on actual conversation membership, failing closed "
+            "when participants cannot be resolved; a stale staged copy of "
+            "creator.py drops the gate and lets a caller mention an unrelated "
+            "user in a DM and leak the private content_preview/push payload"
+        ),
+    ),
     # 499bd649: the DM block gate also covers GROUP rows that are group DMs;
     # only server-channel GROUP rows (carrying a server_id) stay exempt. A
     # stale working-tree copy of send.py restores the early return for every
@@ -1681,6 +1699,20 @@ ALIAS_AUTOMOD_PIN_KEYS: frozenset[str] = frozenset(
     {
         "627accb2-alias-automod-enforcement",
         "627accb2-alias-automod-send-call",
+    }
+)
+
+
+# N663 (4986e8a9) send-time DM recipient privacy and N667 (b62dad3b) DM-mention
+# conversation-membership pins. Kept explicit as a pair so neither can be
+# dropped from the registry without this check failing: a stale staged copy of
+# send.py or creator.py must not be able to silently revert either fix. Both are
+# positive markers; non-vacuity comes from the guard's parametrized
+# synthetic-removal test plus the live-HEAD tie below.
+DM_PRIVACY_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "4986e8a9-dm-recipient-privacy-send-gate",
+        "b62dad3b-dm-mention-conversation-membership-gate",
     }
 )
 
@@ -2337,6 +2369,51 @@ def test_alias_automod_pins_live_at_head_and_non_vacuous(
 
         present, detail = _evaluate(record, stale_alias_automod_blob)
         assert not present, f"synthetic stale alias-automod revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+def test_dm_privacy_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """Both DM privacy pins (N663 send-time recipient gate, N667 mention gate)
+    are registered, live and falsifiable.
+
+    Each key resolves to a real committed blob carrying its distinctive marker,
+    points at the expected file, and is rejected by a synthetic stale blob with
+    the fix erased. This ties the two pins together so dropping either one (or
+    letting a stale staged copy of send.py / creator.py drop the underlying
+    gate) fails here as well as in the parametrized synthetic-removal test.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert DM_PRIVACY_PIN_KEYS <= set(keys), (
+        "DM-privacy pin set references keys missing from the registry: "
+        f"{sorted(DM_PRIVACY_PIN_KEYS - set(keys))}"
+    )
+    assert len(DM_PRIVACY_PIN_KEYS) == 2
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "4986e8a9-dm-recipient-privacy-send-gate": (
+            "src/core/messaging/services/message/send.py"
+        ),
+        "b62dad3b-dm-mention-conversation-membership-gate": (
+            "src/core/notifications/manager/creator.py"
+        ),
+    }
+    for key in sorted(DM_PRIVACY_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_dm_privacy_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# DM privacy gate erased\n"
+
+        present, detail = _evaluate(record, stale_dm_privacy_blob)
+        assert not present, f"synthetic stale DM-privacy revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
