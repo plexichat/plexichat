@@ -24,6 +24,36 @@ from .cache import reaction_read_key, _MISS
 from .protocol import ReactionProtocol
 
 
+# One statement re-checks both reaction quotas at the instant of the insert.
+# The old flow read the message-wide and per-user distinct counts in a plain
+# SELECT and only then issued a bare INSERT. Under PostgreSQL READ COMMITTED
+# two concurrent adds can both observe below-cap counts and both insert,
+# pushing the message (or the user) past the configured quota -- the same
+# check-then-insert TOCTOU the custom-emoji quota was hardened against in
+# emojis.py. The guard subqueries see table state *before* the new row exists,
+# so exactly the callers that still fit get a row and rowcount == 0 is an
+# authoritative "limit reached / duplicate" signal. add_reaction() additionally
+# takes an advisory xact lock on Postgres to serialize concurrent adds to the
+# same message; on SQLite the single statement is serialized by the write lock.
+# A subquery table alias keeps these guards distinct from the early grouped
+# quota probe's text (which callers/tests rely on for the fast path).
+_ATOMIC_REACTION_INSERT_SQL = """
+INSERT INTO react_reactions
+    (id, message_id, user_id, emoji, is_custom, custom_emoji_id, created_at)
+SELECT ?, ?, ?, ?, ?, ?, ?
+WHERE NOT EXISTS (
+    SELECT 1 FROM react_reactions
+    WHERE message_id = ? AND user_id = ? AND emoji = ?
+)
+AND (
+    EXISTS (SELECT 1 FROM react_reactions rr WHERE rr.message_id = ? AND rr.emoji = ?)
+    OR (SELECT COUNT(DISTINCT rr.emoji) FROM react_reactions rr WHERE rr.message_id = ?) < ?
+)
+AND (SELECT COUNT(DISTINCT CASE WHEN rr.user_id = ? THEN rr.emoji END)
+     FROM react_reactions rr WHERE rr.message_id = ?) < ?
+"""
+
+
 class ReactionOpsMixin(ReactionProtocol):
     def add_reaction(
         self, user_id: SnowflakeID, message_id: SnowflakeID, emoji: str
@@ -121,6 +151,17 @@ class ReactionOpsMixin(ReactionProtocol):
         try:
             self._db.begin_transaction()
 
+            if getattr(self._db, "type", "") == "postgres":
+                # PostgreSQL READ COMMITTED would let two concurrent adds both
+                # pass the quota probe below. Serialize per message with an
+                # advisory xact lock; namespace 102 stays clear of the emoji
+                # (100/101) and invite (1/2) lock namespaces, and masking to 30
+                # bits keeps the key in signed int4 range.
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (102, int(message_id) & 0x3FFFFFFF),
+                )
+
             existing = self._db.fetch_one(
                 "SELECT 1 FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
                 (message_id, user_id, normalized_emoji),
@@ -177,10 +218,15 @@ class ReactionOpsMixin(ReactionProtocol):
             now = self._get_timestamp()
             reaction_id = self._generate_id()
 
-            self._db.execute(
-                """INSERT INTO react_reactions 
-                   (id, message_id, user_id, emoji, is_custom, custom_emoji_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            # Authoritative, race-safe insert: the quota guards above are only
+            # advisory feedback (a concurrent add can commit between them and
+            # this statement). This single statement re-checks the duplicate and
+            # both quotas against live table state at insert time. rowcount == 0
+            # means the guard refused the row — a racer either created this
+            # exact reaction first or consumed the last quota slot — so fail
+            # closed and map the refusal to the usual error.
+            cursor = self._db.execute(
+                _ATOMIC_REACTION_INSERT_SQL,
                 (
                     reaction_id,
                     message_id,
@@ -189,8 +235,32 @@ class ReactionOpsMixin(ReactionProtocol):
                     1 if is_custom else 0,
                     custom_emoji_id,
                     now,
+                    message_id,
+                    user_id,
+                    normalized_emoji,
+                    message_id,
+                    normalized_emoji,
+                    message_id,
+                    max_reactions,
+                    user_id,
+                    message_id,
+                    max_user_reactions,
                 ),
             )
+
+            if getattr(cursor, "rowcount", 0) == 0:
+                duplicate = self._db.fetch_one(
+                    "SELECT id FROM react_reactions "
+                    "WHERE message_id = ? AND user_id = ? AND emoji = ? LIMIT 1",
+                    (message_id, user_id, normalized_emoji),
+                )
+                if duplicate:
+                    raise ReactionExistsError("You have already reacted with this emoji")
+                raise ReactionLimitError(
+                    "Reaction quota reached while adding reaction",
+                    max_reactions,
+                    0,
+                )
 
             self._db.commit()
             # A committed write invalidates every viewer's cached aggregation:
