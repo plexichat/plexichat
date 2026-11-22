@@ -327,6 +327,34 @@ _FEATURE_FORWARD_BOT_TOKEN_OWNER_GUARD = (
 )
 
 
+# e91a5bf3 (private-index, empty-reflog security fix): the message-search
+# community supports addressing a server channel by its linked conversation-id
+# alias, which get_channel()/channel_exists() cannot see as a channel. Both the
+# REST route and the service layer must reverse-resolve that alias to the REAL
+# backing channel and enforce messages.read on the authoritative server scope,
+# failing closed when the scope cannot be proven. Without it a member denied
+# messages.read can read a private channel's messages simply by searching with
+# the alias. The two anchors below are distinctive to the repaired blobs, so a
+# stale/gutted staged copy of either file is caught by name.
+_E91A5BF3_AUTHORITATIVE_SCOPE_HELPER = (
+    "def _resolve_authoritative_server_scope(conversation_id) -> Optional[tuple]:\n"
+    '    """Resolve ``(channel_id, server_id)`` from a SERVER conversation id.'
+)
+_E91A5BF3_AUTHORITATIVE_SCOPE_ENFORCEMENT = (
+    "        authoritative_scope = _resolve_authoritative_server_scope(conversation_id)\n"
+    "        if authoritative_scope is not None:\n"
+    "            channel_id, server_id = authoritative_scope"
+)
+_E91A5BF3_ROUTE_ALIAS_REVERSE_RESOLUTION = (
+    "        alias_channel_id = None\n"
+    "        if channel is None and servers_mod:\n"
+    '            reverse = getattr(servers_mod, "get_channel_by_conversation", None)\n'
+)
+_E91A5BF3_ROUTE_ALIAS_GATE_ID = (
+    "            gate_channel_id = alias_channel_id if alias_channel_id is not None else cid"
+)
+
+
 # be19f4ca (N644 follow-up): logout re-checks the presented session bearer's
 # IP/UA against the session's blind indexes before the revoking write. The
 # `return False` fail-closed arms and the ip_index/ua_index SELECT distinguish
@@ -1653,6 +1681,58 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "drops the helper call reopens it"
         ),
     ),
+    # e91a5bf3 (private-index security fix, landed via commit-tree/CAS): both
+    # the service-layer authoritative-scope derivation and the route's alias
+    # reverse-resolution must stay in the committed tree. Pin the helper, its
+    # enforcement call, the route reverse lookup and the gated-id selection
+    # independently so a stale staged copy of either file that drops one of
+    # them is caught by name.
+    CommittedFixMarker(
+        key="e91a5bf3-search-authoritative-scope-helper",
+        path="src/core/messaging/services/message/retrieval.py",
+        marker=_E91A5BF3_AUTHORITATIVE_SCOPE_HELPER,
+        why=(
+            "e91a5bf3: _resolve_authoritative_server_scope derives (channel_id, "
+            "server_id) from the authoritative conversation id the server stored "
+            "via get_channel_by_conversation, which a caller cannot spoof; a "
+            "stale staged copy of retrieval.py drops the helper and lets a "
+            "service-layer search caller address a private channel by its "
+            "conversation-id alias and skip the messages.read gate"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e91a5bf3-search-authoritative-scope-enforcement",
+        path="src/core/messaging/services/message/retrieval.py",
+        marker=_E91A5BF3_AUTHORITATIVE_SCOPE_ENFORCEMENT,
+        why=(
+            "e91a5bf3: the retrieval search path enforces messages.read against "
+            "the authoritative scope and fails closed when the check is "
+            "unproven; a stale staged copy drops the call and reopens the "
+            "alias-based messages.read bypass for service callers"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e91a5bf3-search-route-alias-reverse-resolution",
+        path="src/api/routes/messages/search.py",
+        marker=_E91A5BF3_ROUTE_ALIAS_REVERSE_RESOLUTION,
+        why=(
+            "e91a5bf3: the search route reverse-resolves a conversation-id alias "
+            "to its backing channel via get_channel_by_conversation so the live "
+            "messages.read gate runs before a cached read; a stale staged copy "
+            "of search.py treats the alias as a DM and skips the gate"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e91a5bf3-search-route-alias-gate-channel-id",
+        path="src/api/routes/messages/search.py",
+        marker=_E91A5BF3_ROUTE_ALIAS_GATE_ID,
+        why=(
+            "e91a5bf3: the route gates the REAL backing channel id, not the URL "
+            "alias, so the permission lookup targets the id the channel table "
+            "knows; a stale staged copy gates the alias and the lookup misses, "
+            "reopening the private-channel message search leak"
+        ),
+    ),
 )
 
 
@@ -1724,6 +1804,10 @@ PRIVATE_INDEX_PINNED_KEYS: frozenset[str] = frozenset(
         "ee7bab02-attachment-image-decode-size-ceiling",
         "fbc4a7be-admin-otp-ascii-canonicalization",
         "42ee85e9-plexijoin-manager-log-sanitizing-filter",
+        "e91a5bf3-search-authoritative-scope-helper",
+        "e91a5bf3-search-authoritative-scope-enforcement",
+        "e91a5bf3-search-route-alias-reverse-resolution",
+        "e91a5bf3-search-route-alias-gate-channel-id",
     }
 )
 
@@ -2060,7 +2144,7 @@ def test_private_index_pinned_keys_are_registered() -> None:
         "private-index key set references keys missing from COMMITTED_FIX_MARKERS: "
         f"{sorted(PRIVATE_INDEX_PINNED_KEYS - set(keys))}"
     )
-    assert len(PRIVATE_INDEX_PINNED_KEYS) == 32
+    assert len(PRIVATE_INDEX_PINNED_KEYS) == 36
     for key in PRIVATE_INDEX_PINNED_KEYS:
         record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
         assert record.path.startswith("src/"), f"bad path for {key!r}"
@@ -2756,3 +2840,68 @@ def test_refresh_replay_binding_pin_live_at_head_and_non_vacuous(
     assert not present, f"synthetic replay-binding revert of {key} was not caught"
     assert record.key in detail and record.marker in detail
     assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+# e91a5bf3 (private-index security fix): companion key set for the authoritative
+# server-scope pins on the message-search path. Kept explicit so none of the four
+# (two service-layer, two route) pins can be dropped silently. All are positive
+# markers; non-vacuity comes from the parametrized
+# test_synthetic_reverted_blob_is_flagged plus the live-HEAD tie below.
+E91A5BF3_SEARCH_SCOPE_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "e91a5bf3-search-authoritative-scope-helper",
+        "e91a5bf3-search-authoritative-scope-enforcement",
+        "e91a5bf3-search-route-alias-reverse-resolution",
+        "e91a5bf3-search-route-alias-gate-channel-id",
+    }
+)
+
+
+def test_e91a5bf3_search_scope_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """All four e91a5bf3 authoritative-scope pins are registered, live, falsifiable.
+
+    Each key resolves to a real committed blob carrying its distinctive marker,
+    points at the expected file, and is rejected by a synthetic stale blob with
+    the fix erased. This complements the parametrized synthetic-removal test
+    with a live-HEAD tie so a key that was registered but never matched anything
+    fails here.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert E91A5BF3_SEARCH_SCOPE_PIN_KEYS <= set(keys), (
+        "e91a5bf3 search-scope key set references keys missing from "
+        f"COMMITTED_FIX_MARKERS: {sorted(E91A5BF3_SEARCH_SCOPE_PIN_KEYS - set(keys))}"
+    )
+    assert len(E91A5BF3_SEARCH_SCOPE_PIN_KEYS) == 4
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "e91a5bf3-search-authoritative-scope-helper": (
+            "src/core/messaging/services/message/retrieval.py"
+        ),
+        "e91a5bf3-search-authoritative-scope-enforcement": (
+            "src/core/messaging/services/message/retrieval.py"
+        ),
+        "e91a5bf3-search-route-alias-reverse-resolution": (
+            "src/api/routes/messages/search.py"
+        ),
+        "e91a5bf3-search-route-alias-gate-channel-id": (
+            "src/api/routes/messages/search.py"
+        ),
+    }
+    for key in sorted(E91A5BF3_SEARCH_SCOPE_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_scope_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# authoritative scope erased\n"
+
+        present, detail = _evaluate(record, stale_scope_blob)
+        assert not present, f"synthetic stale search-scope revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
