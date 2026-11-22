@@ -732,6 +732,17 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="93e3a1f9-n987-reflog-audit-pins",
+        path="src/tests/security/test_security_fix_marker_committed_tree_guard.py",
+        marker="N987_REFLOG_PIN_SHAS: dict[str, str] = {",
+        why=(
+            "93e3a1f9 is a test-only private-index landing that added the N987 "
+            "SHA-specific reflog audit pins to this guard. Pinned by the "
+            "distinctive N987_REFLOG_PIN_SHAS declaration it introduced, so a "
+            "stale staged copy of the guard that drops the audit is caught."
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
