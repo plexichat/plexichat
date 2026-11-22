@@ -26,6 +26,7 @@ from src.api.schemas.admin import (
     AccessTokenUsagePathResponse,
 )
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam, SuccessResponse
+from src.core.security.hardening import parse_id
 from .utils import (
     check_host_restriction,
     require_admin_permission,
@@ -679,7 +680,13 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
-        uid = int(body.user_id)
+        # SECURITY: bind the caller-supplied target id through the strict
+        # snowflake gate (parse_id) before ANY write. A bare ``int()`` laundered
+        # a non-int-shaped token (True->1, 5.9->5, "٤٢"->42) into a DIFFERENT
+        # user for the session revocation. parse_id is the shared ASCII-only
+        # gate that rejects bools, fractions and homoglyphs with a 400 (via the
+        # ValueError catch below) before the DB write runs -- fail closed.
+        uid = parse_id(body.user_id, "user_id")
         # force-logout revokes every session for its target, disabling that
         # account's access in exactly the same way as lock-user. It shares the
         # admin.security.sessions scope with lock-user/unlock-user, both of
@@ -779,7 +786,10 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
-        uid = int(body.user_id)
+        # SECURITY: strict snowflake gate on the caller-supplied target id
+        # before ANY write; bare ``int()`` laundered bool/float/homoglyph ids
+        # (True->1, 5.9->5) into a DIFFERENT user for the lock write.
+        uid = parse_id(body.user_id, "user_id")
         # Locking sets account_locked = 1 and logs out every session, i.e. it
         # disables the account. When the target is an admin this is an
         # admin-targeting mutation and must honour the same role-position
@@ -882,7 +892,10 @@ async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
-        uid = int(body.user_id)
+        # SECURITY: strict snowflake gate on the caller-supplied target id
+        # before ANY write; bare ``int()`` laundered bool/float/homoglyph ids
+        # (True->1, 5.9->5) into a DIFFERENT user for the unlock write.
+        uid = parse_id(body.user_id, "user_id")
         # Unlocking clears account_locked for the target, making it the direct
         # inverse of lock-user. Every other admin-targeting mutation
         # (lock/update/delete/toggle-status, ban/unban, force-password-change,
