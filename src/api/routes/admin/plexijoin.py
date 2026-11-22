@@ -216,8 +216,19 @@ async def list_connections(
     ),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
+    # Plain default (not Query(...)) so existing direct callers that omit this
+    # additive parameter still see ``None``; FastAPI infers a query param from
+    # the scalar annotation either way. The manager validates the shape.
+    before: Optional[str] = None,
 ):
-    """List all outbound federation connections."""
+    """List all outbound federation connections.
+
+    ``before`` is an optional, additive keyset cursor built from the
+    ``created_at`` and ``id`` already returned on every connection. It seeks
+    the indexed ``(created_at, id)`` tuple so deep pages stay O(page size)
+    instead of walking a large OFFSET. Omitting it keeps the legacy paged
+    contract; the response shape is identical either way.
+    """
     check_host_restriction(request)
     # Scope gate (also closes the IDOR-style read of federation metadata by
     # authenticated admins who lack the federation scope).
@@ -228,7 +239,11 @@ async def list_connections(
         # crypto-service dependency on this hot path.
         manager = _get_plexijoin_manager(request, require_encryption=False)
         result = manager.list_connections(
-            status=status, page=page, per_page=per_page, decrypt_keys=False
+            status=status,
+            page=page,
+            per_page=per_page,
+            before=before,
+            decrypt_keys=False,
         )
 
         connections_data = []
@@ -244,6 +259,13 @@ async def list_connections(
         }
     except HTTPException:
         raise
+    except ValueError:
+        # HardeningViolation (invalid cursor) subclasses ValueError; keep the
+        # route's 400 contract for malformed query parameters.
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         logger.error(f"PlexiJoin list connections error: {e}", exc_info=True)
         raise HTTPException(
