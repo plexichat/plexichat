@@ -618,8 +618,15 @@ class LifecycleMixin(AuthManagerProtocol):
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
                 )
                 # Invalidate after the write so a concurrent verify_token cannot
-                # re-cache the still-valid row in between.
-                invalidate_pattern("token_verify:*")
+                # re-cache the still-valid row in between. Scope the drop to the
+                # credential being revoked: verify verdicts are keyed per token
+                # (``safe_token_cache_key`` + an IP/UA binding suffix), and this
+                # logout revokes exactly one session. The trailing ``*`` clears
+                # every binding variant of that token. Flushing the whole
+                # ``token_verify:*`` keyspace here would drop every other
+                # authenticated user's memoised TokenInfo on one account's
+                # logout, forcing a site-wide DB re-verification thundering herd.
+                invalidate_pattern(f"{safe_token_cache_key(token)}*")
                 self._log_audit(AuditEventType.LOGOUT, row["user_id"], True)
                 # The session is revoked; any socket authenticated under it is
                 # no longer legitimate, even though gateway auth happens only
