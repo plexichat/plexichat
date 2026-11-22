@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 
@@ -276,6 +277,10 @@ MAX_DETAILS_LENGTH = 2000
 MAX_RESOLUTION_LENGTH = 2000
 MAX_EVIDENCE_URLS = 5
 MAX_EVIDENCE_URL_LENGTH = 2048
+# Fixed upper bound of concurrent DNS lookups for evidence-URL validation. The
+# URL count is itself capped by MAX_EVIDENCE_URLS, so the semaphore bounds
+# in-flight work without an unbounded task explosion.
+_EVIDENCE_URL_CONCURRENCY = 4
 # Plaintext preview of the reported message copied into the moderation queue.
 MAX_MESSAGE_CONTENT_PREVIEW = 500
 
@@ -463,14 +468,24 @@ async def submit_enhanced_report(
 
     target_id = parse_id(body.target_id, "target ID")
 
-    # REP-5: evidence URLs must be well-formed http(s) links
+    # REP-5: evidence URLs must be well-formed http(s) links. Each check runs
+    # a DNS lookup in the threadpool; awaiting them one at a time made wall
+    # time scale as N * resolver-latency. Run the independent checks under a
+    # fixed-size semaphore so they overlap while bounding in-flight work.
+    # Fail-closed: any unsafe URL rejects the whole report.
     if body.evidence_urls:
-        for url in body.evidence_urls:
-            if not await _is_safe_url_async(url):
-                # Never reflect the rejected URL into the error body: it is
-                # untrusted input that may later be rendered verbatim in a
-                # moderation UI (reflected-content / XSS sink).
-                raise_bad_request("Invalid evidence URL")
+        sem = asyncio.Semaphore(_EVIDENCE_URL_CONCURRENCY)
+
+        async def _check_url(url: str) -> bool:
+            async with sem:
+                return await _is_safe_url_async(url)
+
+        results = await asyncio.gather(*(_check_url(url) for url in body.evidence_urls))
+        if not all(results):
+            # Never reflect the rejected URL into the error body: it is
+            # untrusted input that may later be rendered verbatim in a
+            # moderation UI (reflected-content / XSS sink).
+            raise_bad_request("Invalid evidence URL")
 
     now = int(time.time() * 1000)
     report_id = generate_snowflake_id()
