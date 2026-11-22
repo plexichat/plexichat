@@ -43,6 +43,23 @@ def _patch_guards(module):
     )
 
 
+def _non_admin_hierarchy_db():
+    """DB double whose hierarchy lookup resolves to an ordinary user.
+
+    The lock-user and force-purge routes now enforce an admin role-position
+    hierarchy before the mutation. Reporting "target not an admin" keeps that
+    gate a no-op so these tests stay focused on the alert payload.
+    """
+    return SimpleNamespace(
+        fetch_one=lambda sql, params=(): {
+            "target_exists": False,
+            "current_pos": 0,
+            "target_pos": 0,
+            "account_locked": 0,
+        }
+    )
+
+
 def _assert_str_id(details: Dict[str, Any], *keys: str):
     for key in keys:
         assert key in details, f"missing {key!r} in {details!r}"
@@ -192,6 +209,7 @@ def test_lock_user_alert_stringifies_actor():
         guard_b,
         patch("src.utils.system_alerts.record_system_alert", capture),
         patch("src.core.admin.lock_user", return_value=None),
+        patch("src.api.get_db", return_value=_non_admin_hierarchy_db()),
     ):
         resp = TestClient(app, raise_server_exceptions=False).post(
             "/api/v1/admin/security/lock-user",
@@ -418,6 +436,8 @@ def test_user_purged_alert_stringifies_actor():
         guard_b,
         patch("src.utils.system_alerts.record_system_alert", capture),
         patch("src.core.auth.force_purge_account", return_value=None),
+        patch("src.api.get_db", return_value=_non_admin_hierarchy_db()),
+        patch.object(lifecycle, "require_approved_request", return_value=None),
     ):
         resp = TestClient(app, raise_server_exceptions=False).post(
             f"/api/v1/admin/users/{BIG_USER}/force-purge"
