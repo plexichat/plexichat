@@ -120,8 +120,26 @@ class AlertModeratorsAction(BaseAction):
     def _send_channel_alert(
         self, channel_id: int, violation: Violation, context: Optional[Dict[str, Any]]
     ):
-        """Send alert message to channel."""
-        content = self._format_alert_message(violation)
+        """Send alert message to channel.
+
+        This is a SECOND content-bearing producer alongside
+        ``_send_notifications``. N711 gated the per-recipient moderator
+        notification but this path posts the raw offending body into the
+        configured alert channel, whose audience is *not* the same as the
+        audience of the private channel the violation occurred in (the alert
+        channel is frequently public). A member who can view the alert channel
+        yet is denied view on the violating channel would otherwise receive
+        the private body here. There is no per-recipient loop to hang a view
+        gate on, so decide once, fail closed: only attach the body when the
+        alert is written back into the very channel the message came from,
+        whose viewers already have access to the original message.
+        """
+        content = self._format_alert_message(
+            violation,
+            include_content=self._channel_alert_can_show_content(
+                channel_id, violation
+            ),
+        )
 
         try:
             bot_user_id = context.get("bot_user_id") if context else None
@@ -307,14 +325,47 @@ class AlertModeratorsAction(BaseAction):
                 return False
         return True
 
-    def _format_alert_message(self, violation: Violation) -> str:
-        """Format the alert message."""
+    @staticmethod
+    def _channel_alert_can_show_content(channel_id, violation) -> bool:
+        """Whether a channel alert may include the raw offending body.
+
+        Only safe when the alert is posted into the violating channel itself:
+        every viewer of that channel can already read the original message, so
+        quoting it there grants nobody new access. A configured alert channel
+        is a different audience and has no per-recipient view gate, so any
+        cross-channel alert must be metadata-only. Fail closed on a
+        missing/unparseable id (manual actions carry no channel at all).
+        """
+        try:
+            alert_channel = int(channel_id)
+            violating_channel = int(violation.channel_id)
+        except (TypeError, ValueError):
+            return False
+        if not alert_channel or not violating_channel:
+            return False
+        return alert_channel == violating_channel
+
+    def _format_alert_message(
+        self, violation: Violation, include_content: bool = True
+    ) -> str:
+        """Format the alert message.
+
+        ``include_content`` defaults to True so the gated per-recipient
+        moderator notification keeps its full preview. Callers posting into a
+        wider audience (the channel alert) pass False to strip the private
+        message body.
+        """
+        content_line = (
+            f"Content: {violation.matched_content[:100]}"
+            if include_content
+            else "Content: [redacted - private channel]"
+        )
         return (
             f"[AutoMod] Violation detected\n"
             f"User: <@{violation.user_id}>\n"
             f"Rule: {violation.rule_type.value}\n"
             f"Severity: {violation.severity.value}\n"
-            f"Content: {violation.matched_content[:100]}"
+            f"{content_line}"
         )
 
     def _log_alert(self, violation: Violation, moderator_ids: List[int]):
