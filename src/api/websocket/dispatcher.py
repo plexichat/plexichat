@@ -289,10 +289,29 @@ class GatewayDispatcher:
         # though the cache then hit on that same key N-1 times.
         data_key = None
 
+        # SECURITY: the producer's audience is a routing hint, not a durable
+        # capability. Channel/conversation audiences are resolved (and often
+        # memoized) before this send, so a viewer can lose `channels.view` / DM
+        # participation between that resolution and the actual dispatch. RESUME
+        # replay re-checks current access (``_replay_scope_authorized``); a LIVE
+        # socket had no equivalent gate and still received the private frame
+        # after being removed from the channel/conversation. Derive the
+        # authoritative scope once and re-check every recipient below.
+        live_scope = _event_replay_scope(event)
+
         for connection in connections:
             if not filter_event_by_intents(event, connection.intents):
                 logger.debug(
                     f"Event filtered by intents for connection {getattr(connection, 'id', None)}"
+                )
+                continue
+
+            if not self._live_dispatch_authorized(
+                getattr(connection, "user_id", None), live_scope
+            ):
+                logger.debug(
+                    f"Dropping live {event.event_type.value} for connection "
+                    f"{connection.connection_id}: no longer authorized for its scope"
                 )
                 continue
 
@@ -411,6 +430,14 @@ class GatewayDispatcher:
             True if sent successfully
         """
         if not filter_event_by_intents(event, connection.intents):
+            return False
+
+        # Same authoritative per-dispatch gate as the fan-out path: a LIVE
+        # socket must not receive a private channel/DM event after the viewer
+        # lost access, even when this single-target helper is used.
+        if not self._live_dispatch_authorized(
+            getattr(connection, "user_id", None), _event_replay_scope(event)
+        ):
             return False
 
         payload = self._build_dispatch_payload(connection, event)
@@ -707,6 +734,99 @@ class GatewayDispatcher:
             except Exception as e:
                 logger.debug(f"Replay channel re-auth failed for user {user_id}: {e}")
         return False
+
+    @staticmethod
+    def _live_dispatch_authorized(
+        user_id: Optional[int], scope: Optional[tuple]
+    ) -> bool:
+        """Authoritative per-dispatch re-check for a LIVE connection.
+
+        Live counterpart of :meth:`_replay_scope_authorized`. The producer's
+        ``user_ids`` audience is resolved (and often memoized) before the send,
+        so a viewer kicked from a channel / DM between resolution and dispatch
+        still received the private frame on their open socket -- a real
+        cross-user leak, asymmetric with the RESUME path. Re-checking here, at
+        the final choke point, closes it regardless of which producer supplied
+        the audience.
+
+        A verified denial withholds the frame: for a server channel the
+        membership-agnostic ``channel_exists`` probe confirms the channel is
+        real, then ``get_channel`` confirms the viewer can no longer see it;
+        for a DM/conversation ``is_participant`` (or ``get_channel``) must
+        positively confirm membership. When the authoritative source cannot be
+        consulted at all (uninitialized module, raising lookup, no source
+        wired), the frame falls back to the primary audience derivation at emit
+        time rather than failing every channel-scoped event closed.
+        Scope-less events (user alerts, READY, status, ...) are unaffected.
+        """
+        if scope is None:
+            return True
+        if not isinstance(scope, (list, tuple)) or len(scope) != 2:
+            return False
+        server_id = _replay_scope_id(scope[0])
+        channel_id = _replay_scope_id(scope[1])
+        if channel_id is None:
+            return True
+        if not isinstance(user_id, int) or isinstance(user_id, bool):
+            return True
+
+        try:
+            import src.api as api
+
+            servers = api.get_servers()
+            messaging = api.get_messaging()
+        except Exception:
+            return True
+
+        get_channel = getattr(servers, "get_channel", None) if servers else None
+        is_participant = (
+            getattr(messaging, "is_participant", None) if messaging else None
+        )
+        if not callable(get_channel) and not callable(is_participant):
+            return True
+
+        if server_id is not None and callable(get_channel):
+            # A membership-agnostic existence probe distinguishes "no such
+            # channel / source unavailable" from "channel exists but this
+            # viewer lost access". Only the latter is a verified denial.
+            channel_exists = getattr(servers, "channel_exists", None)
+            if callable(channel_exists):
+                try:
+                    if not channel_exists(channel_id):
+                        return True
+                except Exception:
+                    return True
+            try:
+                return bool(get_channel(channel_id, user_id))
+            except Exception as e:
+                logger.debug(
+                    f"Live dispatch channel re-auth failed for user {user_id}: {e}"
+                )
+                return True
+
+        # DM / payload-derived scope: accept only on a positive verdict.
+        # Track whether any authoritative source actually returned a verdict so
+        # an entirely unavailable source does not fail every event closed.
+        verified = False
+        if callable(is_participant):
+            try:
+                allowed = is_participant(channel_id, user_id)
+                verified = True
+                if allowed:
+                    return True
+            except Exception as e:
+                logger.debug(f"Live dispatch DM re-auth failed for user {user_id}: {e}")
+        if callable(get_channel):
+            try:
+                allowed = get_channel(channel_id, user_id)
+                verified = True
+                if allowed:
+                    return True
+            except Exception as e:
+                logger.debug(
+                    f"Live dispatch channel re-auth failed for user {user_id}: {e}"
+                )
+        return False if verified else True
 
     def _build_dispatch_payload(
         self,
