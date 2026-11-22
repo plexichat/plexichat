@@ -177,11 +177,29 @@ class _FakeMessaging:
         return [5, 6]
 
 
+class _NoBlocks:
+    """Wired relationships source with no block edges.
+
+    resolve_channel_event_recipients applies the two-way block filter to every
+    audience and fails closed when a wired block source's lookup errors. These
+    tests pin permission/thread/DM scoping, so supply a healthy empty block set
+    rather than letting the real, uninitialized relationships module be
+    mistaken for a failing authoritative source.
+    """
+
+    def get_all_blocked_ids_bulk(self, ids):
+        return {}
+
+    def get_all_blocked_ids(self, uid):
+        return []
+
+
 def _patch_api(monkeypatch, servers, messaging=None):
     import src.api as api
 
     monkeypatch.setattr(api, "get_servers", lambda: servers)
     monkeypatch.setattr(api, "get_messaging", lambda: messaging)
+    monkeypatch.setattr(api, "get_relationships", lambda: _NoBlocks())
 
 
 def test_channel_recipients_filtered_by_permission(monkeypatch):
