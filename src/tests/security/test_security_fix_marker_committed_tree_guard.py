@@ -1224,6 +1224,53 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "editor's rank and lifts the grantee"
         ),
     ),
+    # 627accb2 (N690): a server channel's linked conversation_id used in a send
+    # URL resolves to no channel row, so the REST ``if server_id:`` block -- the
+    # only place that ran automod.check_message_fast -- was skipped entirely: a
+    # moderation bypass reachable by addressing the channel through its alias.
+    # The repair adds _enforce_alias_automod in base.py (reverse-map the alias,
+    # run the same fast gate against the backing channel, fail closed) and calls
+    # it from send.py. Both files are stale-stage prone, so pin the definition
+    # and the call site independently: a peer committing a pre-fix whole-file
+    # copy of either one would silently re-open the alias moderation bypass.
+    CommittedFixMarker(
+        key="627accb2-alias-automod-enforcement",
+        path="src/api/routes/messages/messages_crud/base.py",
+        marker=(
+            "    def _enforce_alias_automod(\n"
+            "        self,\n"
+            "        addressed_id: int,\n"
+            "        content: str,\n"
+        ),
+        why=(
+            "627accb2: MessagesCRUDBase._enforce_alias_automod reverse-maps a "
+            "conversation-id alias to its backing server channel and runs "
+            "automod.check_message_fast there, failing closed when the alias "
+            "cannot be resolved or the gate cannot be evaluated; without it a "
+            "server-channel conversation-id alias skips the only automod gate "
+            "on the REST send route and publishes unchecked content. A stale "
+            "staged copy of base.py drops the method and reopens that "
+            "alias-moderation-bypass."
+        ),
+    ),
+    CommittedFixMarker(
+        key="627accb2-alias-automod-send-call",
+        path="src/api/routes/messages/messages_crud/send.py",
+        marker=(
+            "                self._enforce_alias_automod(\n"
+            "                    cid,\n"
+            "                    automod_content,\n"
+        ),
+        why=(
+            "627accb2: the DM/conversation fallback in send_message calls "
+            "_enforce_alias_automod so a server-channel conversation-id alias "
+            "(which _resolve_server_id cannot see as a channel) still gets the "
+            "fast moderation gate; a genuine DM has no backing channel and is "
+            "left to participation + DM spam protection. A stale staged copy "
+            "of send.py drops the call and silently restores the "
+            "alias-moderation-bypass even though the base.py definition remains."
+        ),
+    ),
 )
 
 
