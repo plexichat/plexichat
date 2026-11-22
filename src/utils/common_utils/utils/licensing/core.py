@@ -32,9 +32,12 @@ feature, requires no Ed25519 signature, and is restricted to ``allowed_hosts``
 (defaulting to localhost). It is never valid for production use.
 """
 
-import json
 import base64
+import hashlib
+import json
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -52,6 +55,52 @@ DEFAULT_TEST_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1
 # A provisional license is unsigned, so any host list it carries is
 # untrusted; only these spellings may ever be used to widen its reach.
 LOOPBACK_HOSTS = frozenset(DEFAULT_TEST_ALLOWED_HOSTS)
+
+
+# Ed25519 verification of a license signature is an *invariant* of three things:
+# the canonical signed payload, the signature bytes, and the verification key.
+# None of them depend on wall-clock time or on the caller, so the verdict
+# "this signature matches this document under this key" can be memoized safely.
+# This matters for ``validate_license_payload`` (the admin /license/validate
+# route): it builds a fresh LicenseManager per request, and an admin panel
+# polling the same payload used to re-run the (import + key parse + verify) on
+# every poll.
+#
+# The cache key is a digest of exactly those three inputs. A license change
+# (edited features/limits/identity) changes the canonical payload, a re-sign
+# changes the signature, and a key rotation changes the public key -- any of
+# which yields a new key and a fresh verification, so a verdict can never be
+# served across a license change. Bounded by entry count with LRU eviction: a
+# hostile stream of distinct payloads cannot grow the process without limit.
+# Only *successful* verifications are memoized; failures still raise every time
+# (fail closed) and are never turned into a cached "valid" verdict.
+_MAX_VERIFY_CACHE_ENTRIES = 64
+_verify_result_cache: "OrderedDict[bytes, bool]" = OrderedDict()
+_verify_cache_lock = threading.Lock()
+
+
+def _signature_cache_key(
+    public_key_bytes: bytes, signature_bytes: bytes, message: bytes
+) -> bytes:
+    """Content key for a signature verdict (length-prefixed to avoid collisions)."""
+    digest = hashlib.sha256()
+    digest.update(len(public_key_bytes).to_bytes(4, "big"))
+    digest.update(public_key_bytes)
+    digest.update(len(signature_bytes).to_bytes(4, "big"))
+    digest.update(signature_bytes)
+    digest.update(message)
+    return digest.digest()
+
+
+def clear_signature_verification_cache() -> None:
+    """Drop memoized signature verdicts (call on key rotation / license swap).
+
+    Content-keying already prevents a stale verdict from surviving a license
+    change; this is an explicit full-invalidation hook for callers that want to
+    force re-verification (and for tests).
+    """
+    with _verify_cache_lock:
+        _verify_result_cache.clear()
 
 
 class LicenseError(Exception):
@@ -453,7 +502,6 @@ class LicenseManager:
             from cryptography.exceptions import InvalidSignature
 
             public_key_bytes = self._get_public_key()
-            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
 
             # Canonical payload shared with ``sign_license`` -- see
             # ``canonical_license_payload``. We rebuild it from the raw
@@ -467,11 +515,28 @@ class LicenseManager:
 
             signature_bytes = base64.b64decode(self._license.signature)
 
+            # Memoize only the content-invariant crypto verdict. Expiry is
+            # evaluated separately by ``validate()`` on every call, so a cached
+            # "signature valid" can never keep an expired license alive.
+            cache_key = _signature_cache_key(
+                public_key_bytes, signature_bytes, message
+            )
+            with _verify_cache_lock:
+                if _verify_result_cache.get(cache_key) is True:
+                    return True
+
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
             try:
                 public_key.verify(signature_bytes, message)
-                return True
             except InvalidSignature:
                 raise SignatureVerificationError("Signature verification failed")
+
+            with _verify_cache_lock:
+                _verify_result_cache[cache_key] = True
+                _verify_result_cache.move_to_end(cache_key)
+                while len(_verify_result_cache) > _MAX_VERIFY_CACHE_ENTRIES:
+                    _verify_result_cache.popitem(last=False)
+            return True
 
         except ImportError:
             raise SignatureVerificationError(
