@@ -5,6 +5,7 @@ import hashlib
 from typing import Optional, List, Dict, Any, Tuple
 
 import utils.logger as logger
+from src.core.auth.ip_canonical import canonicalize_ip_address
 from src.core.bounded_lru import BoundedLRU
 from src.core.database import cached, invalidate_pattern
 
@@ -745,7 +746,9 @@ class ApiTokenMixin(AuthManagerProtocol):
             updates.append("last_used_ip_encrypted = ?")
             params.extend(
                 [
-                    self.crypto.fast_blind_index(ip_address, "ip_address"),
+                    self.crypto.fast_blind_index(
+                        canonicalize_ip_address(ip_address) or ip_address, "ip_address"
+                    ),
                     self.crypto.encrypt_data(ip_address, context=str(token_id)),
                 ]
             )
@@ -864,7 +867,12 @@ class ApiTokenMixin(AuthManagerProtocol):
         ip_index = None
         ip_encrypted = None
         if ip_address:
-            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            # These rows feed COUNT(DISTINCT ip_index) in the token abuse /
+            # usage summary. Without a canonical key, one host rotating XFF
+            # spellings inflates the distinct-IP count and defeats that signal.
+            ip_index = self.crypto.fast_blind_index(
+                canonicalize_ip_address(ip_address) or ip_address, "ip_address"
+            )
             ip_encrypted = self.crypto.encrypt_data(ip_address, context=str(event_id))
 
         ua_index = self._ua_index(user_agent)

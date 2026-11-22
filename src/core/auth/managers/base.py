@@ -5,6 +5,7 @@ from typing import Optional, Any, Dict
 import utils.config as config
 import utils.logger as logger
 
+from src.core.auth.ip_canonical import canonicalize_ip_address
 from src.core.base import BaseManager
 from src.utils.encryption import EncryptionManager
 
@@ -210,7 +211,11 @@ class AuthManager(
         ip_index = None
         ip_encrypted = None
         if ip_address:
-            ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
+            # Audit ip_index feeds distinct-IP security queries; one host must
+            # not be able to split across rows by respelling its address.
+            ip_index = self.crypto.fast_blind_index(
+                canonicalize_ip_address(ip_address) or ip_address, "ip_address"
+            )
             ip_encrypted = self.crypto.encrypt_data(ip_address, context=str(audit_id))
 
         self._db.insert_or_ignore(
@@ -241,7 +246,12 @@ class AuthManager(
 
     def _track_ip(self, user_id: int, ip: str):
         record_id = self._generate_id()
-        ip_index = self.crypto.fast_blind_index(ip, "ip_address")
+        # auth_known_ips is UNIQUE(user_id, ip_index): a raw key lets one host
+        # multiply rows (and inflate distinct-IP counts) by respelling its
+        # address. Canonicalize so every spelling of a host maps to one row.
+        ip_index = self.crypto.fast_blind_index(
+            canonicalize_ip_address(ip) or ip, "ip_address"
+        )
         ip_encrypted = self.crypto.encrypt_data(ip, context=str(record_id))
 
         self._db.insert_or_ignore(
