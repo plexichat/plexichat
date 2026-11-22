@@ -237,6 +237,10 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
         accessible: List[Dict[str, Any]] = []
         for row in rows:
             conv_id = row.get("conversation_id")
+            if conv_id is None:
+                # A row with no conversation id cannot be access-checked, so it
+                # must not be returned.
+                continue
             if conv_id not in participant_cache:
                 try:
                     participant_cache[conv_id] = bool(
@@ -304,15 +308,11 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                         # stays fail-closed (it falls back to individual
                         # cache_get calls on a transport error), so key
                         # scoping and miss handling are unchanged.
-                        bulk = cache_get_many(
-                            [f"msg:obj:{mid}" for mid in cached_ids]
-                        )
+                        bulk = cache_get_many([f"msg:obj:{mid}" for mid in cached_ids])
                         messages = []
                         missing_ids = []
                         for mid in cached_ids:
-                            m_obj = _cached_recent_payload(
-                                bulk.get(f"msg:obj:{mid}")
-                            )
+                            m_obj = _cached_recent_payload(bulk.get(f"msg:obj:{mid}"))
                             if m_obj is not None:
                                 messages.append(m_obj)
                             else:

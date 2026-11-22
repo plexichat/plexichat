@@ -128,14 +128,24 @@ def test_untrust_device_closes_its_sessions_socket_only(
     uid = int(test_user.id)
     _make_device(mgr, uid, "fp-A", trusted=1)
     _make_device(mgr, uid, "fp-B", trusted=1)
-    sx = mgr._create_session(uid, mgr._db.fetch_one(
-        "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?",
-        (uid, "fp-A"),
-    )["id"], None, None)
-    sy = mgr._create_session(uid, mgr._db.fetch_one(
-        "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?",
-        (uid, "fp-B"),
-    )["id"], None, None)
+    sx = mgr._create_session(
+        uid,
+        mgr._db.fetch_one(
+            "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?",
+            (uid, "fp-A"),
+        )["id"],
+        None,
+        None,
+    )
+    sy = mgr._create_session(
+        uid,
+        mgr._db.fetch_one(
+            "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ?",
+            (uid, "fp-B"),
+        )["id"],
+        None,
+        None,
+    )
     cx = _fake_conn(uid, sx.id, "conn-fp-a")
     cy = _fake_conn(uid, sy.id, "conn-fp-b")
     _install_dispatcher(monkeypatch, [cx, cy])

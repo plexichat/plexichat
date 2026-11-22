@@ -66,11 +66,15 @@ CANONICAL_IDS = {
 
 def _patch_admin_boundary(monkeypatch):
     """Bypass auth/host checks; make any domain access fail loudly."""
-    monkeypatch.setattr(artifacts_routes, "check_host_restriction", lambda request: None)
+    monkeypatch.setattr(
+        artifacts_routes, "check_host_restriction", lambda request: None
+    )
     monkeypatch.setattr(
         artifacts_routes, "require_admin_permission", lambda request, scope: 1
     )
-    monkeypatch.setattr(artifacts_routes, "require_approved_request", lambda scope: None)
+    monkeypatch.setattr(
+        artifacts_routes, "require_approved_request", lambda scope: None
+    )
 
     def _must_not_be_called(*args, **kwargs):
         raise AssertionError("domain call made with an unvalidated id")

@@ -13,6 +13,7 @@ invalidated on every membership mutation. These tests pin three properties:
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -57,8 +58,7 @@ class _FakeDB:
         assert "COUNT(*)" in query
         assert "GROUP BY" in query
         return [
-            {"server_id": sid, "c": self.counts.get(sid, 0)}
-            for sid in (params or ())
+            {"server_id": sid, "c": self.counts.get(sid, 0)} for sid in (params or ())
         ]
 
 
@@ -88,11 +88,18 @@ class _SQLSpy:
         self.db.fetch_one = self._orig_one
 
     def member_count_statements(self):
-        return [
-            s
-            for s in self.statements
-            if "srv_members" in s and "COUNT" in s
-        ]
+        # Mentioning srv_members is not the same as counting members: the
+        # listing query itself carries the membership EXISTS (and its own
+        # COUNTs for channels and roles), so matching on those two words
+        # counted the listing too. Once the join was replaced by an EXISTS the
+        # cold listing issued 2 statements and five warm listings issued 5, and
+        # the warm comparison below could never hold. Match only statements
+        # that aggregate srv_members, which is what "recounts members" means.
+        # ``[^()]*`` keeps the match inside one scalar subquery: the listing has
+        # its own ``COUNT(*) FROM srv_channels`` earlier in the same statement,
+        # and a looser span walked from that count to the membership EXISTS.
+        pattern = re.compile(r"COUNT\(\*\)[^()]*FROM\s+srv_members", re.IGNORECASE)
+        return [s for s in self.statements if pattern.search(s)]
 
 
 def _add_members(servers, auth_manager, server_id, n):
@@ -207,7 +214,9 @@ class TestServerListMemberCountCache:
         def count_for_owner():
             _clear_db_query_cache(db)
             invalidate_pattern("user_servers:*")
-            row = next(s for s in server_manager.get_servers(owner.id) if s.id == server_id)
+            row = next(
+                s for s in server_manager.get_servers(owner.id) if s.id == server_id
+            )
             return row.member_count
 
         # Seed the cache: owner is the only member.

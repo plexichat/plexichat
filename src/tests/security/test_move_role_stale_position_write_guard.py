@@ -41,9 +41,8 @@ def test_move_role_rejects_role_promoted_between_check_and_write(
 
     def execute(sql, params=()):
         upper = " ".join(sql.upper().split())
-        if (
-            not promoted["done"]
-            and upper.startswith("UPDATE SRV_ROLES SET POSITION = ?")
+        if not promoted["done"] and upper.startswith(
+            "UPDATE SRV_ROLES SET POSITION = ?"
         ):
             # Promote the role *after* the hierarchy check has passed but
             # before the move lands, exactly as a concurrent owner would.

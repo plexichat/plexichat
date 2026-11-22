@@ -68,7 +68,9 @@ def test_first_request_after_warmup_is_served_from_cache(monkeypatch):
     verdict = features.get_tier_limits("standard")
     assert verdict.multiplier == features._compute_tier_limits("standard").multiplier
     features.get_tier_limits("alpha")
-    assert len(builds) == builds_after_warm, "the first request must not rebuild the table"
+    assert len(builds) == builds_after_warm, (
+        "the first request must not rebuild the table"
+    )
 
 
 def test_warmup_is_non_fatal_on_broken_builders(monkeypatch):

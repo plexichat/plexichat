@@ -50,9 +50,7 @@ _SELFTEST_NEEDLES = ("selftest", "self_test", "self-test", "_selftest")
 
 
 def _request(host: str, headers: dict | None = None) -> SimpleNamespace:
-    return SimpleNamespace(
-        client=SimpleNamespace(host=host), headers=headers or {}
-    )
+    return SimpleNamespace(client=SimpleNamespace(host=host), headers=headers or {})
 
 
 def test_selftest_disabled_by_default() -> None:
@@ -73,9 +71,12 @@ def test_internal_secret_gate_fails_closed(monkeypatch) -> None:
     # Correct peer, no secret header -> not internal.
     assert api.is_self_test_request(_request("127.0.0.1")) is False
     # Correct peer, wrong secret -> not internal.
-    assert api.is_self_test_request(
-        _request("127.0.0.1", {"X-Plexichat-Internal-Secret": "wrong"})
-    ) is False
+    assert (
+        api.is_self_test_request(
+            _request("127.0.0.1", {"X-Plexichat-Internal-Secret": "wrong"})
+        )
+        is False
+    )
     # Only the full signal (localhost + secret) is accepted.
     assert api.is_self_test_request(_request("127.0.0.1", header)) is True
 

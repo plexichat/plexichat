@@ -12,7 +12,6 @@ the authoritative row may attest to ownership or be primed into that cache.
 
 import pytest
 
-from src.core.database import cache_get, cache_set, valkey_available
 from src.core.servers.handlers.members.crud import MemberCrudMixin
 
 pytestmark = pytest.mark.unit
@@ -68,7 +67,9 @@ _MALFORMED = [
 
 
 @pytest.mark.parametrize("owner_value, coerced_id", _MALFORMED)
-def test_malformed_owner_row_does_not_grant_membership(monkeypatch, owner_value, coerced_id):
+def test_malformed_owner_row_does_not_grant_membership(
+    monkeypatch, owner_value, coerced_id
+):
     allowed, _ = _run(monkeypatch, owner_value, coerced_id)
     assert allowed is False, (
         f"malformed owner_id {owner_value!r} was coerced into owner-level "

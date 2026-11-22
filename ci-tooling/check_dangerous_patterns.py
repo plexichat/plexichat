@@ -62,7 +62,7 @@ KIND_DESCRIPTIONS = {
     "os_system": "os.system() call",
     "shell_true": "call with shell=True (literal, variable, or **kwargs)",
     "pickle_load": "pickle.load()/loads() on a possibly untrusted payload",
-    "hardcoded_secret": "hardcoded credential token",
+    "hardcoded_secret": "hardcoded credential token",  # pragma: allowlist secret
     "bare_except_auth": "bare except swallowing errors in auth code",
 }
 
@@ -350,9 +350,7 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
             if value is None:  # pragma: no cover - bare annotation
                 continue
             targets = (
-                parent.targets
-                if isinstance(parent, ast.Assign)
-                else [parent.target]
+                parent.targets if isinstance(parent, ast.Assign) else [parent.target]
             )
             names = {t.id for t in targets if isinstance(t, ast.Name)}
             if isinstance(value, ast.Dict) and _dict_has_truthy_shell(value):
@@ -383,8 +381,10 @@ def _analyse(path: Path, rel: str, source: str) -> list[Finding]:
             name = _dynamic_call_name(func)
             # --- eval / exec with a non-literal argument -------------------
             if (
-                name in EVAL_NAMES or name in eval_exec_aliases
-            ) and node.args and not isinstance(node.args[0], ast.Constant):
+                (name in EVAL_NAMES or name in eval_exec_aliases)
+                and node.args
+                and not isinstance(node.args[0], ast.Constant)
+            ):
                 add(node, "eval_exec", "dynamic eval/exec argument", "eval()")
 
             # --- os.system --------------------------------------------------

@@ -22,8 +22,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _BINDING_PATH = "src/api/routes/admin/artifacts.py"
 _BINDING_MARKER = (
-    'require_approved_request("artifacts.force_delete", '
-    "target_context=(aid, admin_id))"
+    'require_approved_request("artifacts.force_delete", target_context=(aid, admin_id))'
 )
 
 

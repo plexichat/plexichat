@@ -765,7 +765,9 @@ class TestValkeyStorageConcurrency:
 
         # A lock that cannot be acquired must fail closed (raise), never
         # silently return 0 -- that would drop the deduction and under-count.
-        with pytest.raises(RateLimitStoreUnavailable, match="distributed rate-limit lock"):
+        with pytest.raises(
+            RateLimitStoreUnavailable, match="distributed rate-limit lock"
+        ):
             await storage.aincrement("ctr", "count", 1)
         # Fail closed, and never touch the bucket without the lock.
         assert fake.data == {}

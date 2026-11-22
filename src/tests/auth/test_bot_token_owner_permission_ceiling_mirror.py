@@ -74,9 +74,7 @@ def _verify(db):
 def _accept_token_secret(monkeypatch):
     # Isolate the delegation ceiling from the token-hash comparison. Individual
     # tests may override this to prove the ordinary checks still run.
-    monkeypatch.setattr(
-        lifecycle_mod, "verify_token_hash", lambda secret, stored: True
-    )
+    monkeypatch.setattr(lifecycle_mod, "verify_token_hash", lambda secret, stored: True)
 
 
 def test_mirror_clips_delegated_scope_after_owner_demotion():

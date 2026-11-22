@@ -72,7 +72,11 @@ class MentionSpamRule(BaseRule):
         # mass-mention limits. Both views are linear and already bounded
         # (message length / canonical cap), so this adds no unbounded work.
         folded = fold_invisible_for_matching(content)
-        raw = content if isinstance(content, str) else ("" if content is None else str(content))
+        raw = (
+            content
+            if isinstance(content, str)
+            else ("" if content is None else str(content))
+        )
 
         def _counts(text: str):
             users = self.USER_MENTION_PATTERN.findall(text)

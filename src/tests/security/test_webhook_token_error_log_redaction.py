@@ -57,7 +57,9 @@ def test_webhook_token_absent_from_validation_error_log(
     assert response.status_code in (400, 422), response.text
 
     rendered = "\n".join(record.getMessage() for record in caplog.records)
-    validation_lines = [line for line in rendered.splitlines() if "Validation error on" in line]
+    validation_lines = [
+        line for line in rendered.splitlines() if "Validation error on" in line
+    ]
     assert validation_lines, (
         "expected a validation-error log line so the assertion is non-vacuous; "
         f"got: {rendered}"

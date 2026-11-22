@@ -177,9 +177,7 @@ class SqliteEngine(BaseEngine):
         # still captured by the tracking closure.
         created.clear()
         elapsed = time.time() - start_time
-        logger.info(
-            f"SQLite connection pool created successfully in {elapsed:.2f}s"
-        )
+        logger.info(f"SQLite connection pool created successfully in {elapsed:.2f}s")
         self._pool = pool
         return pool
 

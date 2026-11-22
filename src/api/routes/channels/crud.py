@@ -84,7 +84,9 @@ async def _require_channel_access(channel_id: str, user_id: int) -> None:
         logger.error(f"Channel access gate failed for {channel_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": "Failed to verify channel access"}},
+            detail={
+                "error": {"code": 500, "message": "Failed to verify channel access"}
+            },
         ) from e
 
 
@@ -140,7 +142,9 @@ class ChannelCRUDMixin(ChannelBase):
     # representations for up to half a minute after a kick/ban/downgrade.
     # A short TTL keeps the read hot-path benefit while bounding the
     # revocation-staleness window to seconds.
-    @cached(ttl=5, prefix="channel_api", key_builder=authenticated_cache_key("channel_api"))
+    @cached(
+        ttl=5, prefix="channel_api", key_builder=authenticated_cache_key("channel_api")
+    )
     async def _load_channel(
         self, channel_id: str, current_user: TokenInfo
     ) -> ChannelResponse:

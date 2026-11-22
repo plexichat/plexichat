@@ -518,9 +518,7 @@ class LicenseManager:
             # Memoize only the content-invariant crypto verdict. Expiry is
             # evaluated separately by ``validate()`` on every call, so a cached
             # "signature valid" can never keep an expired license alive.
-            cache_key = _signature_cache_key(
-                public_key_bytes, signature_bytes, message
-            )
+            cache_key = _signature_cache_key(public_key_bytes, signature_bytes, message)
             with _verify_cache_lock:
                 if _verify_result_cache.get(cache_key) is True:
                     return True

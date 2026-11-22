@@ -181,7 +181,9 @@ def _kwargs(handler_name, workbook_id, sheet_id):
 @pytest.mark.parametrize("handler_name", sorted(HANDLERS))
 @pytest.mark.parametrize("malformed", MALFORMED_IDS)
 @pytest.mark.parametrize("id_param", ["workbook_id", "sheet_id"])
-def test_malformed_id_is_rejected_before_manager(monkeypatch, handler_name, malformed, id_param):
+def test_malformed_id_is_rejected_before_manager(
+    monkeypatch, handler_name, malformed, id_param
+):
     if id_param not in HANDLERS[handler_name]:
         pytest.skip(f"{handler_name} has no {id_param}")
 

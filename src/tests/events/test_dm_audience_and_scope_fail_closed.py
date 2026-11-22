@@ -113,6 +113,7 @@ def test_unverifiable_server_scope_does_not_rebuild_server_audience(monkeypatch)
 
     monkeypatch.setattr(api, "get_servers", lambda: servers)
     monkeypatch.setattr(api, "get_messaging", lambda: None)
+
     # Server-channel audiences now pass through the two-way block gate. Wire a
     # relationship source with no blocks so this test keeps asserting the
     # permission-filtered audience (the gate itself is tested separately).
@@ -145,6 +146,7 @@ def test_verified_server_channel_still_resolves_viewers(monkeypatch):
 
     monkeypatch.setattr(api, "get_servers", lambda: servers)
     monkeypatch.setattr(api, "get_messaging", lambda: None)
+
     # Server-channel audiences now pass through the two-way block gate. Wire a
     # relationship source with no blocks so this test keeps asserting the
     # permission-filtered audience (the gate itself is tested separately).

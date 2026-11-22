@@ -102,9 +102,7 @@ class TypingWriteCoalescer:
         self._clock = clock or time.monotonic
         # key -> (claimed_at_monotonic, started_at, expires_at, generation)
         # ``generation`` discards stale heap items after a re-claim/invalidate.
-        self._entries: "OrderedDict[Key, Tuple[float, int, int, int]]" = (
-            OrderedDict()
-        )
+        self._entries: "OrderedDict[Key, Tuple[float, int, int, int]]" = OrderedDict()
         # Min-heap of (deadline_monotonic, generation, key). Only the head is
         # inspected on claim, so an unexpired tracker pays O(1), not O(N).
         self._expiries: "list[Tuple[float, int, Key]]" = []
@@ -224,6 +222,11 @@ class TypingWriteCoalescer:
             return
         self._expiries = [
             (claimed_at + self._window, generation, key)
-            for key, (claimed_at, _started, _expires, generation) in self._entries.items()
+            for key, (
+                claimed_at,
+                _started,
+                _expires,
+                generation,
+            ) in self._entries.items()
         ]
         heapq.heapify(self._expiries)

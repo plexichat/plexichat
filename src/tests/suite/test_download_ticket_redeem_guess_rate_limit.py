@@ -30,7 +30,6 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException, Request
 
-import src.api as api
 from src.api.routes.suite.stash import grants as grants_route
 from src.api.routes.suite.stash.grants import redeem_download_ticket
 from src.core.auth.models import AccountType, TokenInfo
@@ -244,7 +243,9 @@ async def test_throttled_refusal_is_uniform_for_all_ticket_states(monkeypatch):
     bodies = []
     for exc in (
         StashPermissionError("never existed"),
-        StashPermissionError("Download ticket is invalid, expired, or already redeemed"),
+        StashPermissionError(
+            "Download ticket is invalid, expired, or already redeemed"
+        ),
         StashPermissionError("Share link was revoked"),
     ):
         fake = _CountingStash(exc)
@@ -289,7 +290,9 @@ async def test_allowed_guess_still_redeems(monkeypatch):
 
     with (
         patch.object(grants_route, "_manager", lambda: Working()),
-        patch.object(grants_route, "get_client_ip", return_value="203.0.113.7", create=True),
+        patch.object(
+            grants_route, "get_client_ip", return_value="203.0.113.7", create=True
+        ),
     ):
         result = await redeem_download_ticket(
             grants_route.StashDownloadRedeemRequest(ticket=TICKET),

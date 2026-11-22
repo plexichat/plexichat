@@ -60,9 +60,7 @@ def _fanout(messaging, notifications, author, channel, server, content):
 
 
 def _body_marker(uid, msg, marker):
-    return any(
-        n.user_id == uid and marker in (n.content_preview or "") for n in msg
-    )
+    return any(n.user_id == uid and marker in (n.content_preview or "") for n in msg)
 
 
 def _make_role(servers, owner, server, *members):
@@ -90,11 +88,17 @@ def test_plain_role_ping_is_suppressed_control(wired):
         messaging,
         notifications,
     ) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_roles=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_roles=True
+    )
     role = _make_role(servers, owner, server, member, member2)
 
     notifs = _fanout(
-        messaging, notifications, owner, channel, server,
+        messaging,
+        notifications,
+        owner,
+        channel,
+        server,
         f"ROLE-MARKER <@&{role.id}>",
     )
     assert not _body_marker(member.id, notifs, "ROLE-MARKER")
@@ -121,7 +125,9 @@ def test_role_ping_retyped_as_channel_bypasses_suppress_roles(wired):
         messaging,
         notifications,
     ) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_roles=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_roles=True
+    )
     role = _make_role(servers, owner, server, member)
 
     content = f"ROLE-BYPASS-MARKER <#{channel.id}> <@&{role.id}>"
@@ -145,7 +151,9 @@ def test_role_ping_retyped_as_everyone_bypasses_suppress_roles(wired):
         messaging,
         notifications,
     ) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_roles=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_roles=True
+    )
     role = _make_role(servers, owner, server, member)
 
     content = f"ROLE-EVERYONE-MARKER @everyone <@&{role.id}>"
@@ -169,7 +177,9 @@ def test_role_ping_retyped_as_user_bypasses_suppress_roles(wired):
         messaging,
         notifications,
     ) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_roles=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_roles=True
+    )
     role = _make_role(servers, owner, server, member)
 
     content = f"ROLE-USER-MARKER <@&{role.id}> <@{member.id}>"

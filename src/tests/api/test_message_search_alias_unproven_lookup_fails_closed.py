@@ -166,7 +166,7 @@ async def test_genuine_dm_still_searched(monkeypatch):
 async def test_valid_backing_honors_read_grant(monkeypatch):
     """Control: the legitimate alias path is still gated and still works."""
     ok = _Good(messages_read=True)
-    entered = _prime_cached_helper(monkeypatch)
+    _prime_cached_helper(monkeypatch)
     _wire(monkeypatch, ok)
     assert await route.search_messages(str(CONV_ID), "hello", 25, _viewer()) == [
         "channel-message-hit"

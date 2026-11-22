@@ -143,7 +143,9 @@ def test_delete_invalidates_checksum_index():
     before = db.fetch_one_calls
     assert storage.delete("image/gone.png") is True
     assert storage.get_by_checksum(checksum) is None
-    assert db.fetch_one_calls > before  # re-queried the DB, not served from a stale cache
+    assert (
+        db.fetch_one_calls > before
+    )  # re-queried the DB, not served from a stale cache
 
 
 def test_overwrite_invalidates_old_checksum_mapping():
@@ -172,7 +174,9 @@ def test_cleanup_orphaned_clears_index():
     storage.cleanup_orphaned(["image/keep.png"])
     assert storage.dedupe_cache_stats()["index_size"] == 0
     # The surviving blob is still discoverable after a fresh DB lookup.
-    assert storage.get_by_checksum(storage._compute_checksum(payload)) == "image/keep.png"
+    assert (
+        storage.get_by_checksum(storage._compute_checksum(payload)) == "image/keep.png"
+    )
 
 
 # ---------------------------------------------------------------------------

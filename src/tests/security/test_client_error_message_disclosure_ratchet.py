@@ -131,7 +131,9 @@ def _exception_names(tree: ast.AST) -> set[str]:
 
 
 def _references_exception(expr: ast.AST, names: set[str]) -> bool:
-    return any(isinstance(node, ast.Name) and node.id in names for node in ast.walk(expr))
+    return any(
+        isinstance(node, ast.Name) and node.id in names for node in ast.walk(expr)
+    )
 
 
 def _dynamic_exception_message(expr: ast.AST, names: set[str]) -> bool:
@@ -227,7 +229,11 @@ def _error_message_values(value: ast.AST):
     """Yield (suffix, message-expression) for a dict body or a bare string."""
     if isinstance(value, ast.Dict):
         for key, val in zip(value.keys, value.values):
-            if isinstance(key, ast.Constant) and key.value == "error" and isinstance(val, ast.Dict):
+            if (
+                isinstance(key, ast.Constant)
+                and key.value == "error"
+                and isinstance(val, ast.Dict)
+            ):
                 for k2, v2 in zip(val.keys, val.values):
                     if isinstance(k2, ast.Constant) and k2.value == "message":
                         yield ".error.message", v2
@@ -293,6 +299,7 @@ def _scan_source(src: str, relpath: str) -> list[Finding]:
     parents = _parent_map(tree)
     param_names = _exception_names(tree)
     exc_names = _sensitive_names(tree, param_names)
+
     # In scope when the body sits in an except block, is built by a shared
     # exception-formatting helper that takes the exception as a param, or uses a
     # name tainted by an exception (which may be assigned/used outside an except).
@@ -315,7 +322,9 @@ def _scan_source(src: str, relpath: str) -> list[Finding]:
                 if detail is not None:
                     status = _status_for(node, parents, src)
                     for suffix, value in _error_message_values(detail):
-                        if _dynamic_exception_message(value, exc_names) and in_scope(node, value):
+                        if _dynamic_exception_message(value, exc_names) and in_scope(
+                            node, value
+                        ):
                             findings.append(
                                 Finding(
                                     relpath,
@@ -333,7 +342,9 @@ def _scan_source(src: str, relpath: str) -> list[Finding]:
                         content = kw.value
                 if content is not None:
                     for suffix, value in _error_message_values(content):
-                        if _dynamic_exception_message(value, exc_names) and in_scope(node, value):
+                        if _dynamic_exception_message(value, exc_names) and in_scope(
+                            node, value
+                        ):
                             findings.append(
                                 Finding(
                                     relpath,
@@ -349,11 +360,17 @@ def _scan_source(src: str, relpath: str) -> list[Finding]:
         # client-visible even though it is not wrapped in an explicit response.
         if isinstance(node, ast.Dict):
             for key, val in zip(node.keys, node.values):
-                if isinstance(key, ast.Constant) and key.value == "error" and isinstance(val, ast.Dict):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "error"
+                    and isinstance(val, ast.Dict)
+                ):
                     status = _status_for(node, parents, src, body_dict=val)
                     for k2, v2 in zip(val.keys, val.values):
                         if isinstance(k2, ast.Constant) and k2.value == "message":
-                            if _dynamic_exception_message(v2, exc_names) and in_scope(node, v2):
+                            if _dynamic_exception_message(v2, exc_names) and in_scope(
+                                node, v2
+                            ):
                                 findings.append(
                                     Finding(
                                         relpath,
@@ -545,6 +562,7 @@ def _undocumented(findings: list[Finding]) -> list[Finding]:
 
 # --- guard ------------------------------------------------------------------
 
+
 def test_no_undocumented_dynamic_error_message_in_routes():
     """Any newly added exception-derived client error body fails the build."""
     offenders = _undocumented(_scan_routes())
@@ -580,7 +598,9 @@ def test_enumeration_is_not_vacuous_and_allowlist_is_documented():
 def test_documented_entry_is_accepted():
     """A real, documented entry is flagged by the detector but accepted by the guard."""
     findings = _scan_routes()
-    documented = [f for f in findings if f.fingerprint in ALLOWED_DYNAMIC_ERROR_MESSAGES]
+    documented = [
+        f for f in findings if f.fingerprint in ALLOWED_DYNAMIC_ERROR_MESSAGES
+    ]
     assert documented, "no documented real site was enumerated"
     sample = documented[0]
     # The detector really flags it (so acceptance is via the allowlist, not
@@ -596,7 +616,7 @@ def test_documented_entry_is_accepted():
 
 # --- self-tests for the detector (run before it is trusted over the tree) ----
 
-_TEMPLATE = '''
+_TEMPLATE = """
 def handler():
     try:
         do_work()
@@ -605,7 +625,7 @@ def handler():
             status_code=400,
             detail={{"error": {{"code": 400, "message": {message}}}}},
         )
-'''
+"""
 
 
 def _synth(exc_type="OSError", name="e", message="str(e)"):
@@ -650,30 +670,30 @@ def test_detector_flags_fstring_repr_and_novel_exception_name():
 
 def test_detector_flags_response_body_and_non_dict_detail():
     """Directly returned bodies bypass middleware sanitizing and are covered too."""
-    response_src = '''
+    response_src = """
 def handler():
     try:
         do_work()
     except Exception as e:
         return PlainTextResponse(f"oops: {e}")
-'''
+"""
     response = _scan_source(response_src, "synthetic.py")
     assert len(response) == 1 and response[0].kind == "PlainTextResponse"
 
-    bare_detail_src = '''
+    bare_detail_src = """
 def handler():
     try:
         do_work()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-'''
+"""
     bare = _scan_source(bare_detail_src, "synthetic.py")
     assert len(bare) == 1 and bare[0].kind == "HTTPException detail"
 
 
 def test_detector_traces_tainted_local_and_exception_param_helper():
     """Non-vacuity for the two indirect shapes found in the route sweep."""
-    tainted_src = '''
+    tainted_src = """
 def handler():
     try:
         do_work()
@@ -684,18 +704,18 @@ def handler():
             status_code=400,
             detail={"error": {"code": 400, "message": error_message}},
         )
-'''
+"""
     tainted = _scan_source(tainted_src, "synthetic.py")
     assert len(tainted) == 1 and tainted[0].expression == "error_message"
     assert _undocumented(tainted)
 
-    helper_src = '''
+    helper_src = """
 def _format_error(exc: ValueError) -> HTTPException:
     return HTTPException(
         status_code=400,
         detail={"error": {"code": 400, "message": str(exc)}},
     )
-'''
+"""
     helper = _scan_source(helper_src, "synthetic.py")
     assert len(helper) == 1 and helper[0].function == "_format_error"
     assert _undocumented(helper)
@@ -711,7 +731,7 @@ def test_fstring_static_param_exclusion_does_not_hide_exception_taint():
     block (a shared mapper or a refactor produces exactly that shape).
     """
     # Taint assigned inside the except, but the client body raised outside it.
-    outside_raise = '''
+    outside_raise = """
 def handler():
     try:
         do_work()
@@ -721,34 +741,34 @@ def handler():
         status_code=400,
         detail={"error": {"code": 400, "message": f"Failed: {msg}"}},
     )
-'''
+"""
     flagged = _scan_source(outside_raise, "synthetic.py")
     assert len(flagged) == 1 and flagged[0].expression == 'f"Failed: {msg}"'
     assert _undocumented(flagged), "a tainted f-string param must fail closed"
 
     # Shared mapper: exception-typed param -> local assigned outside any except.
-    helper_local = '''
+    helper_local = """
 def _format_error(exc: ValueError):
     reason = str(exc)
     raise HTTPException(
         status_code=400,
         detail={"error": {"code": 400, "message": f"Failed: {reason}"}},
     )
-'''
+"""
     flagged2 = _scan_source(helper_local, "synthetic.py")
     assert len(flagged2) == 1 and flagged2[0].expression == 'f"Failed: {reason}"'
     assert _undocumented(flagged2), "a tainted helper f-string param must fail closed"
 
     # Non-vacuity of the exclusion itself: a genuinely static param (a caller
     # status/field, not exception-derived) is still correctly ignored.
-    static = '''
+    static = """
 def handler(status):
     if bad(status):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": f"Approval is {status}"}},
         )
-'''
+"""
     assert _scan_source(static, "synthetic.py") == []
 
 
@@ -760,7 +780,7 @@ def test_detector_traces_container_subscript_and_helper_call_message():
     direct call to a helper that returns ``str(exc)``. Those shapes must fail
     closed too, whether or not the raise sits inside an ``except`` block.
     """
-    errs = '''
+    errs = """
 def handler():
     try:
         do_work()
@@ -770,12 +790,12 @@ def handler():
         status_code=400,
         detail={"error": {"code": 400, "message": errs[0]}},
     )
-'''
+"""
     flagged = _scan_source(errs, "synthetic.py")
     assert len(flagged) == 1 and flagged[0].expression == "errs[0]"
     assert _undocumented(flagged)
 
-    ctx = '''
+    ctx = """
 def handler():
     try:
         do_work()
@@ -785,12 +805,12 @@ def handler():
         status_code=400,
         detail={"error": {"code": 400, "message": ctx["e"]}},
     )
-'''
+"""
     flagged = _scan_source(ctx, "synthetic.py")
     assert len(flagged) == 1 and flagged[0].expression == 'ctx["e"]'
     assert _undocumented(flagged)
 
-    helper_direct = '''
+    helper_direct = """
 def _helper(exc: ValueError):
     return str(exc)
 
@@ -803,14 +823,14 @@ def handler():
         status_code=400,
         detail={"error": {"code": 400, "message": _helper(e)}},
     )
-'''
+"""
     flagged = _scan_source(helper_direct, "synthetic.py")
     assert len(flagged) == 1 and flagged[0].expression == "_helper(e)"
     assert _undocumented(flagged)
 
     # Shared mapper: the helper is called with the exception param, no except
     # block at all. Taint must propagate regardless of lexical context.
-    mapper_direct = '''
+    mapper_direct = """
 def _helper(exc: ValueError):
     return str(exc)
 
@@ -819,19 +839,19 @@ def _format_error(exc: ValueError) -> HTTPException:
         status_code=400,
         detail={"error": {"code": 400, "message": _helper(exc)}},
     )
-'''
+"""
     flagged = _scan_source(mapper_direct, "synthetic.py")
     assert len(flagged) == 1 and flagged[0].expression == "_helper(exc)"
     assert _undocumented(flagged)
 
     # Non-vacuity of the exclusion: a subscript of a genuinely static param is
     # still correctly ignored -- only exception-derived names are flagged.
-    static = '''
+    static = """
 def handler(codes, status):
     if bad(status):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": codes[0]}},
         )
-'''
+"""
     assert _scan_source(static, "synthetic.py") == []

@@ -62,9 +62,7 @@ _MALFORMED = [
 
 
 @pytest.mark.parametrize("owner_value, coerced_id", _MALFORMED)
-def test_malformed_owner_row_does_not_disclose_private_profile(
-    owner_value, coerced_id
-):
+def test_malformed_owner_row_does_not_disclose_private_profile(owner_value, coerced_id):
     assert _profile_visible(owner_value, coerced_id) is False, (
         f"malformed owner_id {owner_value!r} disclosed a private bot profile "
         f"to viewer {coerced_id}"

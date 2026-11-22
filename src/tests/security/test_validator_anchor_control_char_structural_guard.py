@@ -297,7 +297,9 @@ def _matched_value_names(call: ast.Call) -> set[str]:
         return set()
     base = func.value
     # re.match(pattern, value) -> value is the 2nd arg; PAT.match(value) -> 1st.
-    args = call.args[1:] if (isinstance(base, ast.Name) and base.id == "re") else call.args
+    args = (
+        call.args[1:] if (isinstance(base, ast.Name) and base.id == "re") else call.args
+    )
     names: set[str] = set()
     for arg in args:
         for node in ast.walk(arg):
@@ -441,8 +443,7 @@ DOCUMENTED_VALIDATORS: tuple[ValidatorSite, ...] = (
         "DB row + command registration",
         "anchored",
         ("fullmatch", "_is_confusable_safe"),
-        "Same ASCII/fullmatch/confusables contract as command names "
-        "(fix e4bfb4a1).",
+        "Same ASCII/fullmatch/confusables contract as command names (fix e4bfb4a1).",
     ),
     ValidatorSite(
         "username",
@@ -662,13 +663,15 @@ DOCUMENTED_VALIDATORS: tuple[ValidatorSite, ...] = (
         "in-memory version parse",
         "documented-loose",
         ("VERSION_PATTERN", "strip()"),
-        "An explicit `any(c in version_string for c in \"\\r\\n\\x00\")` "
+        'An explicit `any(c in version_string for c in "\\r\\n\\x00")` '
         "rejection plus `.strip().lower()` precede the strict PEP 440 pattern; "
         "a trailing NUL/newline cannot survive. Not a path/DB/authz value.",
     ),
 )
 
-DOCUMENTED_LOOSE = tuple(s for s in DOCUMENTED_VALIDATORS if s.mode == "documented-loose")
+DOCUMENTED_LOOSE = tuple(
+    s for s in DOCUMENTED_VALIDATORS if s.mode == "documented-loose"
+)
 
 
 def _find_function(tree: ast.AST, func: str) -> ast.AST:
@@ -702,7 +705,9 @@ def _assert_validator(site: ValidatorSite, source: str) -> None:
     else:  # pragma: no cover - registry typo guard
         raise AssertionError(f"{site.label}: unknown mode {site.mode!r}")
     for marker in site.markers:
-        assert marker in body, f"{site.label}: marker {marker!r} missing from {site.func}()"
+        assert marker in body, (
+            f"{site.label}: marker {marker!r} missing from {site.func}()"
+        )
     for marker in site.module_markers:
         assert marker in source, f"{site.label}: module marker {marker!r} missing"
 
@@ -755,11 +760,14 @@ def test_self_test_loose_match_validator_is_flagged():
             return re.match(r"^[a-z]+$", value)
         """
     )
-    assert len(
-        _loose_validator_candidates(
-            ast.parse(novel), path="src/api/_synthetic.py", source=novel
+    assert (
+        len(
+            _loose_validator_candidates(
+                ast.parse(novel), path="src/api/_synthetic.py", source=novel
+            )
         )
-    ) == 1
+        == 1
+    )
 
 
 def test_self_test_nul_passing_validator_is_flagged():
@@ -824,9 +832,7 @@ def test_self_test_documented_exception_suppresses_only_its_own_site():
         ),
     )
     assert (
-        _loose_validator_candidates(
-            tree, path=path, source=source, exceptions=allow
-        )
+        _loose_validator_candidates(tree, path=path, source=source, exceptions=allow)
         == []
     )
     other = (
@@ -840,11 +846,14 @@ def test_self_test_documented_exception_suppresses_only_its_own_site():
             "not this site",
         ),
     )
-    assert len(
-        _loose_validator_candidates(
-            tree, path=path, source=source, exceptions=other
+    assert (
+        len(
+            _loose_validator_candidates(
+                tree, path=path, source=source, exceptions=other
+            )
         )
-    ) == 1
+        == 1
+    )
 
 
 def test_self_test_dead_mitigation_markers_do_not_suppress_finding():

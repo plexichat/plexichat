@@ -385,7 +385,9 @@ class AuthenticationMiddleware:
                                 )
                                 scope["state"]["system_error"] = str(e)
                     else:
-                        logger.error(f"Auth: Auth module NOT AVAILABLE for path {log_path}")
+                        logger.error(
+                            f"Auth: Auth module NOT AVAILABLE for path {log_path}"
+                        )
                         scope["state"]["system_error"] = "Auth module not available"
                 else:
                     from utils.logger import mask_string
@@ -753,7 +755,9 @@ async def get_current_user(request: Request) -> TokenInfo:
 
     # Account Deletion check (Hard Freeze)
     if getattr(user, "deletion_status", "active") == "frozen":
-        logger.warning(f"403 deletion_status=frozen for user {user.user_id} at {log_path}")
+        logger.warning(
+            f"403 deletion_status=frozen for user {user.user_id} at {log_path}"
+        )
         raise HTTPException(
             status_code=403,
             detail={

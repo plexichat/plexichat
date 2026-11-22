@@ -71,7 +71,9 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
 @pytest.fixture(scope="module")
 def creator_source() -> str:
     proc = _git("show", f"HEAD:{CREATOR_REL}")
-    assert proc.returncode == 0, f"cannot read {CREATOR_REL} from HEAD: {proc.stderr.strip()}"
+    assert proc.returncode == 0, (
+        f"cannot read {CREATOR_REL} from HEAD: {proc.stderr.strip()}"
+    )
     return proc.stdout
 
 
@@ -194,7 +196,9 @@ def _raw_gate_line(create_fn: ast.AST) -> int:
 def _verify(src: str) -> None:
     fns = _functions(src)
     assert "create_notifications" in fns, "create_notifications missing from module"
-    assert "_should_notify_user_optimized" in fns, "decision function missing from module"
+    assert "_should_notify_user_optimized" in fns, (
+        "decision function missing from module"
+    )
     create_fn = fns["create_notifications"]
     should_fn = fns["_should_notify_user_optimized"]
 
@@ -218,7 +222,9 @@ def _verify(src: str) -> None:
             f"{pref} is applied only via raw mention_type; no semantic-set gate found"
         )
         before = [(set_name, ln) for set_name, ln in entries if ln < raw_line]
-        assert before, f"{pref} semantic-set gate is not applied before the raw-type gate"
+        assert before, (
+            f"{pref} semantic-set gate is not applied before the raw-type gate"
+        )
         for set_name, _ln in before:
             assert set_name in declared and set_name in populated, (
                 f"{pref} semantic gate uses undeclared/unpopulated set {set_name}"
@@ -264,7 +270,7 @@ def test_guard_rejects_new_raw_type_preference_without_semantic_set(creator_sour
 
 def test_guard_rejects_semantic_gate_placed_after_raw_gate():
     """A gate after the raw decision is too late -- the preview already leaked."""
-    src = '''
+    src = """
 from enum import Enum
 
 class MentionType(Enum):
@@ -296,6 +302,6 @@ class Manager:
             if settings.suppress_roles:
                 return False
         return True
-'''
+"""
     with pytest.raises(AssertionError, match="before the raw-type gate"):
         _verify(src)

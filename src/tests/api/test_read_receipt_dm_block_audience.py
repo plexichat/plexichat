@@ -173,7 +173,9 @@ class TestReadReceiptDmBlockAudience:
         await acknowledge_messages("555", message_id=None, current_user=_token(1))
         await _drain_tasks()
 
-        assert recorder.dispatched == [], "a broken block store must not open the audience"
+        assert recorder.dispatched == [], (
+            "a broken block store must not open the audience"
+        )
 
     # --- bulk ack broadcast helper ----------------------------------------
     @pytest.mark.asyncio
@@ -190,4 +192,6 @@ class TestReadReceiptDmBlockAudience:
 
         assert len(recorder.dispatched) == 1
         _event, recipients = recorder.dispatched[0]
-        assert set(recipients) == {2}, "blocked user 3 must not see the bulk read receipt"
+        assert set(recipients) == {2}, (
+            "blocked user 3 must not see the bulk read receipt"
+        )

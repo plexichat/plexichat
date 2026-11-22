@@ -50,7 +50,9 @@ def test_response_time_above_core_ceiling_rejected():
 
 
 def test_legitimate_sample_still_validated():
-    entry = ResponseTimeEntry(**_entry(db_queries=7, db_time_ms=3.5, timestamp=1_700_000_000_000))
+    entry = ResponseTimeEntry(
+        **_entry(db_queries=7, db_time_ms=3.5, timestamp=1_700_000_000_000)
+    )
     assert entry.response_time_ms == 12.5
     assert entry.db_queries == 7
     assert entry.db_time_ms == 3.5

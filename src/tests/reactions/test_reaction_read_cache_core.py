@@ -210,7 +210,9 @@ def test_credential_discriminator_partitions_the_same_viewer(
 
 def test_every_reaction_mutation_invalidates(db, reaction_manager, seeded_messages):
     owner, second, third, msg = seeded_messages
-    count = lambda: reaction_manager.get_reaction_count(msg.id, viewer_id=owner.id)
+
+    def count():
+        return reaction_manager.get_reaction_count(msg.id, viewer_id=owner.id)
 
     assert count() == 2  # warm
 

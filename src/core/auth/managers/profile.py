@@ -187,7 +187,9 @@ class ProfileMixin(AuthManagerProtocol):
                 # account's new recovery identifier. Mirror password change /
                 # reset and 2FA enable: retire remembered devices as part of
                 # the same credential transition.
-                self._invalidate_trusted_devices(user_id)
+                # Defined by PasswordMixin, which AuthManager composes with this
+                # mixin; the attribute lookup keeps that composition explicit.
+                getattr(self, "_invalidate_trusted_devices")(user_id)
                 # OAuth identities are linked to a local account by matching
                 # the asserted provider email (see OAuthMixin.oauth_login and
                 # the Microsoft UPN check in the OAuth callback, which calls
@@ -284,8 +286,7 @@ class ProfileMixin(AuthManagerProtocol):
                 self._db.rollback()
                 msg = str(e).lower()
                 if any(
-                    marker in msg
-                    for marker in ("unique", "duplicate key", "23505")
+                    marker in msg for marker in ("unique", "duplicate key", "23505")
                 ):
                     raise UserExistsError(
                         "Username or email already in use",

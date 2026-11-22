@@ -60,10 +60,16 @@ def _body_marker(uid, msg):
 def test_literal_everyone_is_suppressed_control(wired):
     """Control: a literal @everyone is already suppressed correctly."""
     (owner, member, member2, server, channel, servers, messaging, notifications) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_everyone=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_everyone=True
+    )
 
     notifs = _fanout(
-        messaging, notifications, owner, channel, server,
+        messaging,
+        notifications,
+        owner,
+        channel,
+        server,
         "SUPPRESSED-BODY-MARKER @everyone",
     )
     assert not _body_marker(member.id, notifs)
@@ -73,7 +79,9 @@ def test_literal_everyone_is_suppressed_control(wired):
 def test_self_channel_mass_ping_respects_suppress_everyone(wired):
     """<#this-channel> is an @everyone equivalent; opt-out must still apply."""
     (owner, member, member2, server, channel, servers, messaging, notifications) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_everyone=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_everyone=True
+    )
 
     content = f"SUPPRESSED-BODY-MARKER <#{channel.id}>"
     notifs = _fanout(messaging, notifications, owner, channel, server, content)
@@ -88,7 +96,9 @@ def test_self_channel_mass_ping_respects_suppress_everyone(wired):
 def test_default_role_mass_ping_respects_suppress_everyone(wired):
     """<@&default_role> is an @everyone equivalent; opt-out must still apply."""
     (owner, member, member2, server, channel, servers, messaging, notifications) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_everyone=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_everyone=True
+    )
 
     content = f"SUPPRESSED-BODY-MARKER <@&{server.default_role_id}>"
     notifs = _fanout(messaging, notifications, owner, channel, server, content)
@@ -103,10 +113,15 @@ def test_default_role_mass_ping_respects_suppress_everyone(wired):
 def test_ordinary_role_mention_still_delivered(wired):
     """A non-default mentionable role is NOT an @everyone equivalent."""
     (owner, member, member2, server, channel, servers, messaging, notifications) = wired
-    notifications.update_notification_settings(member.id, server.id, suppress_everyone=True)
+    notifications.update_notification_settings(
+        member.id, server.id, suppress_everyone=True
+    )
     role = servers.create_role(
-        user_id=owner.id, server_id=server.id, name="team",
-        permissions={}, mentionable=True,
+        user_id=owner.id,
+        server_id=server.id,
+        name="team",
+        permissions={},
+        mentionable=True,
     )
     servers.assign_role(owner.id, server.id, member.id, role.id)
 

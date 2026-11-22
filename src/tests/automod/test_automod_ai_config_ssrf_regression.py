@@ -96,7 +96,9 @@ def test_public_urls_accepted_and_preserved(monkeypatch):
         seen.append(url)
         return ("moderation.example", "93.184.216.34")
 
-    monkeypatch.setattr(outbound.URLValidator, "validate_url_for_request", _fake_resolve)
+    monkeypatch.setattr(
+        outbound.URLValidator, "validate_url_for_request", _fake_resolve
+    )
 
     cfg = {
         "custom": {

@@ -48,12 +48,12 @@ _PIN_KEY = "net-trusted-proxies-fail-closed-default"
 # and an empty-list fallback in the except branch. Any of the three collapsing
 # to a permissive value removes this marker and is flagged below.
 FAIL_CLOSED_DEFAULT_MARKER = (
-    '    trusted_proxies: List[str] = []\n'
-    '    try:\n'
+    "    trusted_proxies: List[str] = []\n"
+    "    try:\n"
     '        api_conf = config.get("api", {})\n'
     '        trusted_proxies = api_conf.get("trusted_proxies", []) or []\n'
-    '    except Exception:\n'
-    '        trusted_proxies = []'
+    "    except Exception:\n"
+    "        trusted_proxies = []"
 )
 
 

@@ -65,9 +65,7 @@ async def test_list_artifacts_batches_conversation_metadata(db, monkeypatch):
             (cid, json.dumps({"server_id": sid})),
         )
 
-    artifacts = [
-        _artifact(100_000 + i, cid) for i, cid in enumerate(conv_ids)
-    ]
+    artifacts = [_artifact(100_000 + i, cid) for i, cid in enumerate(conv_ids)]
 
     class _Manager:
         def list_with_filters(self, **kwargs):
@@ -151,8 +149,7 @@ async def test_list_artifacts_batches_conversation_metadata(db, monkeypatch):
     )
     # After: a single bulk read, regardless of page size.
     assert len(after_queries) == 1, (
-        f"expected 1 batched metadata read, got {len(after_queries)}: "
-        f"{after_queries}"
+        f"expected 1 batched metadata read, got {len(after_queries)}: {after_queries}"
     )
     assert " IN (" in after_queries[0], (
         "batched read must use an IN (?, ...) query, not per-id lookups"

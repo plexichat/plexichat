@@ -206,7 +206,9 @@ def _is_model_dump(expr: ast.AST) -> bool:
     )
 
 
-def _data_arg(call: ast.Call, builder: str, tombstones: frozenset[str]) -> ast.AST | None:
+def _data_arg(
+    call: ast.Call, builder: str, tombstones: frozenset[str]
+) -> ast.AST | None:
     if builder in tombstones:
         return None
     if call.args:

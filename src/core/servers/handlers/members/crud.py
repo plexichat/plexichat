@@ -306,7 +306,9 @@ class MemberCrudMixin:
                 raise CannotModifyOwnerError("Cannot moderate the server owner")
             user_roles = self.manager._get_member_role_rows(server_id, user_id)
             target_roles = self.manager._get_member_role_rows(server_id, member_user_id)
-            if not can_manage_member(user_roles, target_roles, owner_id == user_id, False):
+            if not can_manage_member(
+                user_roles, target_roles, owner_id == user_id, False
+            ):
                 raise RoleHierarchyError(
                     "Cannot moderate a member with equal or higher role"
                 )

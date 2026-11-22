@@ -300,9 +300,7 @@ def test_quota_collision_guard_flags_synthetic_102_share():
         "sticker",
         "reaction",
     }
-    distinct = _first_quota_namespace_collision(
-        {"sticker": {102}, "reaction": {103}}
-    )
+    distinct = _first_quota_namespace_collision({"sticker": {102}, "reaction": {103}})
     assert distinct is None, "collision checker flagged distinct namespaces"
 
 

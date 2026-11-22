@@ -215,9 +215,7 @@ def _get_channel_recipients(
                         # sender's exclusion into it would leak their audience
                         # into another user's typing event. Apply the two-way
                         # block filter here too, for the same reason.
-                        audience = [
-                            uid for uid in viewers if int(uid) != int(user_id)
-                        ]
+                        audience = [uid for uid in viewers if int(uid) != int(user_id)]
                         return _exclude_blocked_recipients(user_id, audience), server_id
 
                     # Cold path: resolve the FULL set of users who may view the

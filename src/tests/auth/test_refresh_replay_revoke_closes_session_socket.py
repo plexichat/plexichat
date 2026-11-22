@@ -111,7 +111,9 @@ def test_refresh_replay_revoke_closes_only_compromised_sessions_socket(
     assert replayed is None, "the replayed bearer must be rejected"
 
     # The compromised session is revoked server-side...
-    row_x = mgr._db.fetch_one("SELECT revoked FROM auth_sessions WHERE id = ?", (session_x.id,))
+    row_x = mgr._db.fetch_one(
+        "SELECT revoked FROM auth_sessions WHERE id = ?", (session_x.id,)
+    )
     assert row_x and row_x["revoked"], "replayed session must be revoked"
 
     # ...and so is the socket that authenticated under it (the gap this pins).

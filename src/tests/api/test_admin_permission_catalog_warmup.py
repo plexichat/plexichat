@@ -193,7 +193,9 @@ def test_warmup_primes_cache_so_first_request_is_served_from_it():
 
         assert response.status_code == 200
         assert b"support_admin" in response.body
-        assert _ROLE_DB.fetch_calls == after_warm, "first request must hit the warm cache"
+        assert _ROLE_DB.fetch_calls == after_warm, (
+            "first request must hit the warm cache"
+        )
         assert len(renders) == 1
 
 

@@ -31,9 +31,7 @@ from src.core.admin import permissions as perm_core
 pytestmark = pytest.mark.unit
 
 BENIGN = json.dumps({"admin.read": True, "admin.edit": True})
-WIDENED = json.dumps(
-    {"admin.read": True, "admin.edit": True, "config.security": True}
-)
+WIDENED = json.dumps({"admin.read": True, "admin.edit": True, "config.security": True})
 HELD = frozenset({"admin.read", "admin.edit"})
 
 SCHEMA = """
@@ -153,9 +151,7 @@ def _patchers(db):
         ),
         patch.object(perm_core, "log_admin_action"),
         patch.object(au, "invalidate_privilege_caches"),
-        patch.object(
-            perm_core, "get_admin_granted_permissions", return_value=HELD
-        ),
+        patch.object(perm_core, "get_admin_granted_permissions", return_value=HELD),
     )
 
 

@@ -55,7 +55,9 @@ def _git_show(commit: str, path: str) -> str:
         encoding="utf-8",
         errors="replace",
     )
-    assert proc.returncode == 0, f"cannot read {path!r} from {commit}: {proc.stderr.strip()}"
+    assert proc.returncode == 0, (
+        f"cannot read {path!r} from {commit}: {proc.stderr.strip()}"
+    )
     return proc.stdout
 
 
@@ -161,7 +163,9 @@ def _analyze(text: str) -> list[str]:
                 f"{len(call.args) + len(call.keywords)} arguments"
             )
     if _STRICT_INT_MARKER not in text:
-        problems.append(f"79e83f54 strict-int owner-id guard missing: {_STRICT_INT_MARKER}")
+        problems.append(
+            f"79e83f54 strict-int owner-id guard missing: {_STRICT_INT_MARKER}"
+        )
     return problems
 
 
@@ -190,17 +194,17 @@ def test_server_scope_gate_pinned_in_committed_tree(commit_sha: str) -> None:
     "reverted_line, reason",
     [
         (
-            'self.manager.require_permission(user_id, channel.server_id, '
+            "self.manager.require_permission(user_id, channel.server_id, "
             '"channels.manage", channel_id)',
             "4th positional channel_id",
         ),
         (
-            'self.manager.require_permission(user_id, channel.server_id, '
+            "self.manager.require_permission(user_id, channel.server_id, "
             '"channels.manage", channel_id=channel_id)',
             "channel_id= keyword",
         ),
         (
-            'self.manager.require_permission(user_id, channel.server_id, '
+            "self.manager.require_permission(user_id, channel.server_id, "
             '"channels.manage", cid=channel_id)',
             "cid= keyword",
         ),

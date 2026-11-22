@@ -21,7 +21,9 @@ import pytest
 from src.core.webhooks.exceptions import InvalidWebhookContentError
 
 
-def _insert_thread_channel(db, thread_id, server_id, parent_channel_id, conversation_id, owner_id):
+def _insert_thread_channel(
+    db, thread_id, server_id, parent_channel_id, conversation_id, owner_id
+):
     now = db.fetch_one("SELECT strftime('%s','now') AS n")["n"]
     db.execute(
         """INSERT INTO srv_channels

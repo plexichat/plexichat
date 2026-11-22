@@ -69,8 +69,7 @@ class TestSuggestedFriendsUpperBound:
     ):
         viewer, hub, _other = three_users
         db.execute(
-            "INSERT INTO rel_friends (user_id, friend_id, created_at) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO rel_friends (user_id, friend_id, created_at) VALUES (?, ?, ?)",
             (viewer.id, hub.id, 1),
         )
         base = 2 * 10**7

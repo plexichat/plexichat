@@ -62,13 +62,17 @@ class TestPasswordResetRetiredOnEmailChange:
         assert auth_manager.request_password_reset(email) is True
         (token,) = sender.tokens()
         token_id = int(token.split(".")[1])
-        row = db.fetch_one("SELECT used FROM auth_email_tokens WHERE id = ?", (token_id,))
+        row = db.fetch_one(
+            "SELECT used FROM auth_email_tokens WHERE id = ?", (token_id,)
+        )
         assert row is not None and int(row["used"]) == 0  # live before the switch
 
         new_email = f"moved_{uuid.uuid4().hex[:8]}@test.local"
         auth_manager.update_user(user.id, email=new_email)
 
-        row = db.fetch_one("SELECT used FROM auth_email_tokens WHERE id = ?", (token_id,))
+        row = db.fetch_one(
+            "SELECT used FROM auth_email_tokens WHERE id = ?", (token_id,)
+        )
         assert row is not None and int(row["used"]) == 1  # retired at the switch
 
         with pytest.raises(TokenInvalidError):

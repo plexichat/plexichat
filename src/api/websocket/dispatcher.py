@@ -1222,9 +1222,7 @@ class GatewayDispatcher:
             # ("05"/5.9/True) would keep a non-member connection in the fan-out
             # and leak private ratchet metadata. Fail closed.
             participant_ids = {
-                pid
-                for pid in get_participant_ids(conversation_id)
-                if type(pid) is int
+                pid for pid in get_participant_ids(conversation_id) if type(pid) is int
             }
         except Exception as e:
             logger.warning(
@@ -1398,7 +1396,9 @@ class GatewayDispatcher:
                 conn.set_disconnected()
                 return True
             except Exception as e:
-                logger.debug(f"Error closing session connection {conn.connection_id}: {e}")
+                logger.debug(
+                    f"Error closing session connection {conn.connection_id}: {e}"
+                )
                 return False
 
         results = await asyncio.gather(

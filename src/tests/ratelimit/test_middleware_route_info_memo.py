@@ -114,7 +114,9 @@ class TestMiddlewareUsesMemo:
         ratelimit._manager = None
         ratelimit._setup_complete = False
 
-    def test_each_request_uses_the_memoized_resolver(self, app_with_ratelimit, monkeypatch):
+    def test_each_request_uses_the_memoized_resolver(
+        self, app_with_ratelimit, monkeypatch
+    ):
         """The middleware call site goes through the memoized resolver."""
         calls = []
         real = mw.route_info_for_request

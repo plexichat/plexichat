@@ -26,9 +26,7 @@ def _manager(db, server_manager):
 
 
 def _seed(manager, owner, wb_id, sheet_id, op_id, cells):
-    manager.apply_operation(
-        owner.id, wb_id, sheet_id, op_id, "set_cell", 0, cells
-    )
+    manager.apply_operation(owner.id, wb_id, sheet_id, op_id, "set_cell", 0, cells)
 
 
 def test_edit_grantee_cannot_sort_through_read_only_range(

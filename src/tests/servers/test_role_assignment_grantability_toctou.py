@@ -22,9 +22,7 @@ from src.core.servers.exceptions import PermissionDeniedError
 def test_assign_role_denies_when_role_permissions_escalate_in_gap(
     server_with_members, monkeypatch
 ):
-    server, owner, _admin, member, _outsider, _admin_role, servers = (
-        server_with_members
-    )
+    server, owner, _admin, member, _outsider, _admin_role, servers = server_with_members
 
     # A low-ranked moderator may hand out roles but must not be able to grant
     # permissions it does not itself possess -- especially administrator.
@@ -86,9 +84,7 @@ def test_assign_role_denies_when_role_permissions_escalate_in_gap(
 
 def test_assign_role_still_succeeds_without_escalation(server_with_members):
     """The re-check must not refuse a genuinely grantable assignment."""
-    server, owner, _admin, member, _outsider, _admin_role, servers = (
-        server_with_members
-    )
+    server, owner, _admin, member, _outsider, _admin_role, servers = server_with_members
 
     mod_role = servers.create_role(
         user_id=owner.id,

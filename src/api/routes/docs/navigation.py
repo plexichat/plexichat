@@ -94,7 +94,9 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         ],
     }
 
-    html = ['<aside class="sidebar">']
+    # A labeled <nav> landmark lets assistive tech find the docs navigation;
+    # the surface nav below already uses this pattern.
+    html = ['<nav class="sidebar" aria-label="Documentation">']
     html.append('<div class="sidebar-header">')
     html.append(
         f'<a href="{conf.path}" class="brand-mark">'
@@ -119,13 +121,17 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         )
         html.append('<ul class="nav-list">')
         for item in items:
-            active = "active" if item.path == current_path else ""
+            is_active = item.path == current_path
+            active = "active" if is_active else ""
+            # The visual .active class is not announced: aria-current tells
+            # screen-reader users which section is the current page.
+            aria_current = ' aria-current="page"' if is_active else ""
             html.append(
-                f'<li><a href="{conf.path}{item.path}" class="{active}">{item.label}</a></li>'
+                f'<li><a href="{conf.path}{item.path}" class="{active}"{aria_current}>{item.label}</a></li>'
             )
         html.append("</ul>")
 
-    html.append("</aside>")
+    html.append("</nav>")
     return "\n".join(html)
 
 

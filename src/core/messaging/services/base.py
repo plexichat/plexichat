@@ -162,11 +162,7 @@ class BaseService:
     def _compose_id(self, timestamp: int, counter: int) -> SnowflakeID:
         """Pack a reserved (timestamp, sequence) pair into a snowflake id."""
         # Snowflake format: timestamp (42 bits) | machine_id (10 bits) | sequence (12 bits)
-        return (
-            ((timestamp - 1420070400000) << 22)
-            | (self._machine_id << 12)
-            | counter
-        )
+        return ((timestamp - 1420070400000) << 22) | (self._machine_id << 12) | counter
 
     def _generate_id(self) -> SnowflakeID:
         """Generate a unique Snowflake ID.
@@ -204,11 +200,13 @@ class BaseService:
             if now < self._last_timestamp:
                 raise RuntimeError("Clock moved backwards")
 
-            if self._reserve_cursor is None:
-                self._reserve_cursor = self._id_counter
+            reserve = self._reserve_cursor
+            if reserve is None:
+                reserve = self._id_counter
+                self._reserve_cursor = reserve
 
             if now == self._last_timestamp:
-                counter = self._reserve_cursor + 1
+                counter = reserve + 1
                 if counter > 0xFFF:
                     # Sequence space exhausted: wait for the next millisecond.
                     while now <= self._last_timestamp:

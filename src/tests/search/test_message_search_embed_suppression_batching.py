@@ -64,9 +64,7 @@ class _CountingEmbedsDB:
         rows = []
         for mid in params:
             if int(mid) in self.suppressed_ids:
-                rows.append(
-                    {"message_id": int(mid), "total": 1, "suppressed_count": 1}
-                )
+                rows.append({"message_id": int(mid), "total": 1, "suppressed_count": 1})
         return rows
 
     def are_embeds_suppressed(self, mid) -> bool:

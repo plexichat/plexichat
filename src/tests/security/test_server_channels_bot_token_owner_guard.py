@@ -160,9 +160,7 @@ def test_user_key_matches_invalidation_glob_and_bot_is_partitioned():
     user_key = builder(
         server_id="10", current_user=_OWNER, _channel_list_access_gate=None
     )
-    bot_key = builder(
-        server_id="10", current_user=_BOT, _channel_list_access_gate=None
-    )
+    bot_key = builder(server_id="10", current_user=_BOT, _channel_list_access_gate=None)
 
     # The user token keeps the exact prefix the mutation invalidation globs
     # (``invalidate_pattern("server_channels_api:*")``) clear.

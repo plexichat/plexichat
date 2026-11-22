@@ -40,7 +40,9 @@ class _ScopedIndexer:
 
     def search_users(self, query, limit=25, offset=0):
         return [
-            UserSearchResult(id=self.outsider_id, user_id=self.outsider_id, username="outsider")
+            UserSearchResult(
+                id=self.outsider_id, user_id=self.outsider_id, username="outsider"
+            )
         ]
 
     def search_users_page(self, query, limit=25, cursor=None):
@@ -92,9 +94,7 @@ SERVER_MEMBERS = {100, 200}  # owner + a real member; OUTSIDER_ID is absent
 def test_server_scoped_user_search_excludes_non_member_from_fallback():
     mgr = _ScopedUserSearch(OUTSIDER_ID, SERVER_MEMBERS)
 
-    results = mgr.search_users(
-        user_id=100, query="outsider", server_id=42, limit=10
-    )
+    results = mgr.search_users(user_id=100, query="outsider", server_id=42, limit=10)
 
     assert all(r.user_id != OUTSIDER_ID for r in results), (
         "server-scoped search leaked a user who is not a member of the server"
@@ -113,9 +113,7 @@ def test_unscoped_user_search_still_returns_directory_match():
 def test_server_scoped_user_search_page_excludes_non_member_from_fallback():
     mgr = _ScopedUserSearch(OUTSIDER_ID, SERVER_MEMBERS)
 
-    page = mgr.search_users_page(
-        user_id=100, query="outsider", server_id=42, limit=10
-    )
+    page = mgr.search_users_page(user_id=100, query="outsider", server_id=42, limit=10)
 
     assert all(r.user_id != OUTSIDER_ID for r in page.results)
 

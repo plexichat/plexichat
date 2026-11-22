@@ -48,9 +48,7 @@ def test_normal_limit_within_cap_is_unaffected(populated_thread):
     assert len(threads.get_thread_members(owner.id, thread.id, limit=25)) == 25
     assert (
         len(
-            threads.get_thread_members(
-                owner.id, thread.id, limit=MAX_MEMBERS_PAGE_SIZE
-            )
+            threads.get_thread_members(owner.id, thread.id, limit=MAX_MEMBERS_PAGE_SIZE)
         )
         == MAX_MEMBERS_PAGE_SIZE
     )

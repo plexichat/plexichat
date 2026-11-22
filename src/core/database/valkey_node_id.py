@@ -122,7 +122,7 @@ def _refresher_loop() -> None:
         _refresh_wake.clear()
         with _refresh_lock:
             now = time.monotonic()
-            due = [l for l, t in _live_leases.items() if t <= now]
+            due = [lease_id for lease_id, t in _live_leases.items() if t <= now]
             wait = min((t - now for t in _live_leases.values()), default=None)
 
         for lease in due:

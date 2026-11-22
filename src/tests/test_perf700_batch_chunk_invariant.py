@@ -94,8 +94,10 @@ def _module_constant(tree, name):
 
 
 def _int_literal(node):
-    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(
-        node.value, bool
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, int)
+        and not isinstance(node.value, bool)
     ):
         return node.value
     return None
@@ -166,7 +168,9 @@ def _real_problems(checker, gates):
 
 
 _VALUE_PROBLEMS, _VALUE_SCANNED = _real_problems(_check_gate_source, CHUNK_GATES)
-_STEP_PROBLEMS, _STEP_SCANNED = _real_problems(_check_range_step_source, RANGE_STEP_GATES)
+_STEP_PROBLEMS, _STEP_SCANNED = _real_problems(
+    _check_range_step_source, RANGE_STEP_GATES
+)
 
 
 def test_self_test_detectors_catch_synthetic_violations():
@@ -201,13 +205,20 @@ def test_self_test_detectors_catch_synthetic_violations():
     )
 
     assert _check_gate_source(good, "_BULK_ID_CHUNK_SIZE") == []
-    assert any("> 500" in p for p in _check_gate_source(oversized, "_BULK_ID_CHUNK_SIZE"))
-    assert any("never used" in p for p in _check_gate_source(unwanted, "_BULK_ID_CHUNK_SIZE"))
-    assert any("missing" in p for p in _check_gate_source(missing, "_BULK_ID_CHUNK_SIZE"))
+    assert any(
+        "> 500" in p for p in _check_gate_source(oversized, "_BULK_ID_CHUNK_SIZE")
+    )
+    assert any(
+        "never used" in p for p in _check_gate_source(unwanted, "_BULK_ID_CHUNK_SIZE")
+    )
+    assert any(
+        "missing" in p for p in _check_gate_source(missing, "_BULK_ID_CHUNK_SIZE")
+    )
 
     assert _check_range_step_source(good, "_BULK_ID_CHUNK_SIZE") == []
     assert any(
-        "range step" in p for p in _check_range_step_source(unwired, "_BULK_ID_CHUNK_SIZE")
+        "range step" in p
+        for p in _check_range_step_source(unwired, "_BULK_ID_CHUNK_SIZE")
     )
 
 

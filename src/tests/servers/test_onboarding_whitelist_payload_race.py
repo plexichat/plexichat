@@ -137,5 +137,7 @@ def test_widened_role_between_recheck_and_write_is_rejected(setup, monkeypatch):
     stored = raw["permissions"] if isinstance(raw, dict) else raw[0]
     assert stored == WIDENED
     assert json.loads(stored)["roles.manage"] is True
-    assert pickable.id not in [r.id for r in servers.get_member_roles(server.id, joiner.id)]
+    assert pickable.id not in [
+        r.id for r in servers.get_member_roles(server.id, joiner.id)
+    ]
     assert servers.has_permission(joiner.id, server.id, "roles.manage") is False

@@ -20,7 +20,6 @@ legitimate subject data whose name merely contains a "key"/"nonce" token.
 from __future__ import annotations
 
 import io
-import json
 import time
 import uuid
 import zipfile

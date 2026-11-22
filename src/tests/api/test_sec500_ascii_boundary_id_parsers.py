@@ -116,9 +116,7 @@ def _own_body_call_names(function):
 
 
 def _own_body_loaded_names(function):
-    return {
-        node.id for node in _own_body_nodes(function) if isinstance(node, ast.Name)
-    }
+    return {node.id for node in _own_body_nodes(function) if isinstance(node, ast.Name)}
 
 
 def _has_unicode_digit_check(function) -> bool:

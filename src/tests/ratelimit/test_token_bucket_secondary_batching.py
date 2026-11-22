@@ -289,9 +289,7 @@ class TestFusedFailClosed:
         assert client.data == {}
 
     @pytest.mark.asyncio
-    async def test_backend_error_denies(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_backend_error_denies(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = _CountingValkeyClient(fail_eval=True)
         _wire(monkeypatch, client)
         manager = _valkey_manager(ValkeyStorage())

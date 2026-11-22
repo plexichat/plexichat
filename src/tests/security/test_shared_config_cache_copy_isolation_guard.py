@@ -443,7 +443,6 @@ def _module_cache_names(tree: ast.AST) -> Set[str]:
 
     names: Set[str] = set()
     for stmt in tree.body:
-        target = None
         value = None
         if isinstance(stmt, ast.Assign):
             value = stmt.value
@@ -611,7 +610,7 @@ def test_structural_detector_flags_novel_byref_cache():
     proving the detector is not vacuously rejecting every cache accessor.
     """
     byref = textwrap.dedent(
-        '''
+        """
         _novel_verdict_cache = {}
 
         def verdict_for_account(account_id):
@@ -621,7 +620,7 @@ def test_structural_detector_flags_novel_byref_cache():
             verdict = {"allowed": False, "scopes": []}
             _novel_verdict_cache[account_id] = verdict
             return verdict
-        '''
+        """
     )
     f = _new_cache_findings()
     _classify_cache_module(ast.parse(byref), "<synthetic>", f)

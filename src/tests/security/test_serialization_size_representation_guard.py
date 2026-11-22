@@ -110,9 +110,7 @@ def _production_files(commit: str) -> tuple[str, ...]:
     proc = _git("ls-tree", "-r", "--name-only", commit, "--", "src")
     assert proc.returncode == 0, f"cannot list src: {proc.stderr.strip()}"
     files = tuple(
-        p
-        for p in proc.stdout.splitlines()
-        if p.endswith(".py") and not _is_excluded(p)
+        p for p in proc.stdout.splitlines() if p.endswith(".py") and not _is_excluded(p)
     )
     assert files, "no production python modules found in the committed tree"
     return files
@@ -158,7 +156,9 @@ def _semantic_kwargs(call: ast.Call) -> tuple[tuple[str, str], ...]:
         ):
             first, second = value.elts[0].value, value.elts[1].value
             out["separators"] = (
-                "compact" if (first == "," and second == ":") else f"{first!r}/{second!r}"
+                "compact"
+                if (first == "," and second == ":")
+                else f"{first!r}/{second!r}"
             )
         elif isinstance(value, ast.Constant):
             out[kw.arg] = str(value.value)
@@ -211,9 +211,7 @@ class Measurement:
         return f"{self.path}:{self.function}: {self.call}"
 
 
-def _enclosing_function(
-    node: ast.AST, parents: dict[ast.AST, ast.AST]
-) -> str:
+def _enclosing_function(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
     cur = parents.get(node)
     while cur is not None:
         if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -234,7 +232,11 @@ def _find_measurements(source: str, path: str) -> list[Measurement]:
     # Track simple ``s = json.dumps(...)`` bindings for the two-step idiom.
     stored: dict[str, list[ast.Call]] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _is_serializer(node.value):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and _is_serializer(node.value)
+        ):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     stored.setdefault(target.id, []).append(node.value)
@@ -258,7 +260,11 @@ def _find_measurements(source: str, path: str) -> list[Measurement]:
 
         # Two-step form: s = json.dumps(...); len(s) / len(s.encode(...))
         inner = arg
-        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == "encode":
+        if (
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Attribute)
+            and inner.func.attr == "encode"
+        ):
             inner = inner.func.value
         if isinstance(inner, ast.Name):
             candidates.extend(stored.get(inner.id, []))
@@ -371,69 +377,140 @@ class Site:
 # form is verified against HEAD, with a written justification for each.
 SITE_REGISTRY: dict[tuple[str, str, str], Site] = {
     # -- interaction callback validation: this exact string is the response body
-    ("src/api/routes/applications.py", "_validate_interaction_callback_data", "json.dumps(data)"): Site(
-        (), "self",
+    (
+        "src/api/routes/applications.py",
+        "_validate_interaction_callback_data",
+        "json.dumps(data)",
+    ): Site(
+        (),
+        "self",
         "Callback response is transmitted as this exact default json.dumps(data) string.",
     ),
-    ("src/api/routes/applications.py", "_validate_interaction_callback_data", "json.dumps(value)"): Site(
-        (), "self",
+    (
+        "src/api/routes/applications.py",
+        "_validate_interaction_callback_data",
+        "json.dumps(value)",
+    ): Site(
+        (),
+        "self",
         "Complex callback fields are bounded with the default json.dumps form.",
     ),
     # -- FIXED sites: now measure the persisted/transmitted default form
-    ("src/api/routes/artifacts/routes/crud.py", "update_artifact", "json.dumps(update_fields['payload'])"): Site(
-        (), "artifact_repo_json_dumps",
+    (
+        "src/api/routes/artifacts/routes/crud.py",
+        "update_artifact",
+        "json.dumps(update_fields['payload'])",
+    ): Site(
+        (),
+        "artifact_repo_json_dumps",
         "693f4c2a-class fix: artifact payload is persisted via _json_dumps (default form).",
     ),
-    ("src/api/schemas/artifacts.py", "_validate_payload_size", "json.dumps(value)"): Site(
-        (), "artifact_repo_json_dumps",
+    (
+        "src/api/schemas/artifacts.py",
+        "_validate_payload_size",
+        "json.dumps(value)",
+    ): Site(
+        (),
+        "artifact_repo_json_dumps",
         "693f4c2a-class fix: create-request payload persists via _json_dumps (default form).",
     ),
-    ("src/api/routes/join.py", "send_join_message", "json.dumps(payload, default=str)"): Site(
-        (("default", "str"),), "post_signed_body",
+    (
+        "src/api/routes/join.py",
+        "send_join_message",
+        "json.dumps(payload, default=str)",
+    ): Site(
+        (("default", "str"),),
+        "post_signed_body",
         "Federated payload is sent by _post_signed's default json.dumps; default=str "
         "cannot shrink an already-serializable value.",
     ),
-    ("src/core/applications/interactions/handler.py", "_validate_interaction_data", "json.dumps(data)"): Site(
-        (), "interaction_create_plaintext",
+    (
+        "src/core/applications/interactions/handler.py",
+        "_validate_interaction_data",
+        "json.dumps(data)",
+    ): Site(
+        (),
+        "interaction_create_plaintext",
         "ae6b9936 fix: measures the exact default json.dumps(data) that create_interaction encrypts.",
     ),
-    ("src/core/artifacts/repository.py", "append_artifact_op", "_json_dumps(data)"): Site(
-        (), "artifact_repo_json_dumps",
+    (
+        "src/core/artifacts/repository.py",
+        "append_artifact_op",
+        "_json_dumps(data)",
+    ): Site(
+        (),
+        "artifact_repo_json_dumps",
         "693f4c2a fix: the measured _json_dumps string IS the persisted op-log string.",
     ),
     # -- documented compact-canonical / pretty sinks (same form on both sides)
-    ("src/core/push/manager/delivery.py", "_serialized_value_bytes", "json.dumps(value, sort_keys=True, separators=(',', ':'))"): Site(
-        (("separators", "compact"), ("sort_keys", "True")), "self",
+    (
+        "src/core/push/manager/delivery.py",
+        "_serialized_value_bytes",
+        "json.dumps(value, sort_keys=True, separators=(',', ':'))",
+    ): Site(
+        (("separators", "compact"), ("sort_keys", "True")),
+        "self",
         "Compact canonical push-data encoding; the serialized value is transmitted verbatim.",
     ),
     ("src/core/push/manager/apns.py", "_send_apns", "json.dumps(v)"): Site(
-        (), "self",
+        (),
+        "self",
         "APNs data value is measured as the exact default json.dumps string that is placed in the payload.",
     ),
-    ("src/core/webhooks/delivery.py", "_payload_serialized_size", "json.dumps(payload, sort_keys=True, separators=(',', ':'))"): Site(
-        (("separators", "compact"), ("sort_keys", "True")), "webhook_canonical",
+    (
+        "src/core/webhooks/delivery.py",
+        "_payload_serialized_size",
+        "json.dumps(payload, sort_keys=True, separators=(',', ':'))",
+    ): Site(
+        (("separators", "compact"), ("sort_keys", "True")),
+        "webhook_canonical",
         "Compact canonical webhook bytes (sort_keys + compact separators) are what canonical_payload_bytes signs and sends.",
     ),
-    ("src/core/dsar/privacy.py", "_export_serialized_size", "json.dumps(probe_envelope, indent=2, default=str)"): Site(
-        (("default", "str"), ("indent", "2")), "dsar_export",
+    (
+        "src/core/dsar/privacy.py",
+        "_export_serialized_size",
+        "json.dumps(probe_envelope, indent=2, default=str)",
+    ): Site(
+        (("default", "str"), ("indent", "2")),
+        "dsar_export",
         "DSAR export is pretty-printed with indent=2 on disk; the probe mirrors generate_json.",
     ),
-    ("src/core/suite/boundaries.py", "bound_workspace_json", "json.dumps(value, separators=(',', ':'))"): Site(
-        (("separators", "compact"),), "suite_stash_json",
+    (
+        "src/core/suite/boundaries.py",
+        "bound_workspace_json",
+        "json.dumps(value, separators=(',', ':'))",
+    ): Site(
+        (("separators", "compact"),),
+        "suite_stash_json",
         "Suite workspace JSON is persisted with compact separators by the _json helper.",
     ),
-    ("src/core/suite/stash/stash_manager_base.py", "_bound_metadata", "json.dumps(metadata, separators=(',', ':'))"): Site(
-        (("separators", "compact"),), "suite_stash_json",
+    (
+        "src/core/suite/stash/stash_manager_base.py",
+        "_bound_metadata",
+        "json.dumps(metadata, separators=(',', ':'))",
+    ): Site(
+        (("separators", "compact"),),
+        "suite_stash_json",
         "Stash metadata is persisted by _json with the same compact separators.",
     ),
     # -- gateway transport heuristics (NOT storage caps; divergences documented)
-    ("src/api/websocket/artifacts.py", "cap_snapshot_payload", "json.dumps(payload, ensure_ascii=False)"): Site(
-        (("ensure_ascii", "False"),), "transport",
+    (
+        "src/api/websocket/artifacts.py",
+        "cap_snapshot_payload",
+        "json.dumps(payload, ensure_ascii=False)",
+    ): Site(
+        (("ensure_ascii", "False"),),
+        "transport",
         "Truncation heuristic, not a storage cap: an oversized snapshot is omitted and the client "
         "fetches over REST; the gateway frame byte cap bounds the transmitted frame independently.",
     ),
-    ("src/api/websocket/boundaries.py", "_measure_payload_size", "json.dumps(value, ensure_ascii=False, default=str)"): Site(
-        (("default", "str"), ("ensure_ascii", "False")), "transport",
+    (
+        "src/api/websocket/boundaries.py",
+        "_measure_payload_size",
+        "json.dumps(value, ensure_ascii=False, default=str)",
+    ): Site(
+        (("default", "str"), ("ensure_ascii", "False")),
+        "transport",
         "Inbound gateway frame guard: measures attacker JSON node cost; the actual frame byte cap "
         "is enforced separately at the transport boundary. Value is not persisted in this form.",
     ),
@@ -465,7 +542,9 @@ def _assert_representation_matches(
 
 def test_self_test_mismatch_is_flagged():
     """Synthetic compact measurement + default persist must be flagged."""
-    measured = _form((("ensure_ascii", "False"),))  # len(json.dumps(x, ensure_ascii=False))
+    measured = _form(
+        (("ensure_ascii", "False"),)
+    )  # len(json.dumps(x, ensure_ascii=False))
     persisted = _form(())  # json.dumps(x)
     with pytest.raises(AssertionError, match="does not match"):
         _assert_representation_matches(measured, persisted, "synthetic")
@@ -506,9 +585,13 @@ def test_self_test_detector_handles_two_step_and_typed_kwargs():
         "    other = json.dumps(v)\n"
         "    return len(other.encode('utf-8'))\n"
     )
-    found = {(m.call, m.kwargs) for m in _find_measurements(source, "src/_synthetic.py")}
-    assert ("json.dumps(v, sort_keys=True, separators=(',', ':'))",
-            (("separators", "compact"), ("sort_keys", "True"))) in found, found
+    found = {
+        (m.call, m.kwargs) for m in _find_measurements(source, "src/_synthetic.py")
+    }
+    assert (
+        "json.dumps(v, sort_keys=True, separators=(',', ':'))",
+        (("separators", "compact"), ("sort_keys", "True")),
+    ) in found, found
     assert ("json.dumps(v)", ()) in found, found
 
 
@@ -516,7 +599,9 @@ def test_self_test_new_unregistered_site_is_flagged():
     """A measurement site absent from the registry must surface as new."""
     source = "import json\ndef f(x):\n    return len(json.dumps(x))\n"
     found = {m.key for m in _find_measurements(source, "src/_brand_new.py")}
-    registry = {("src/api/websocket/artifacts.py", "cap_snapshot_payload", "json.dumps(x)")}
+    registry = {
+        ("src/api/websocket/artifacts.py", "cap_snapshot_payload", "json.dumps(x)")
+    }
     new = found - registry
     assert new, "detector failed to flag a brand-new unregistered measurement site"
 
@@ -593,9 +678,17 @@ def test_fixed_sites_still_measure_default_form(commit_sha):
     """Regression net: the two fixed sites + the follow-up fixes stay default."""
     by_key = {m.key: m for m in _sweep(commit_sha)}
     fixed_keys = [
-        ("src/core/applications/interactions/handler.py", "_validate_interaction_data", "json.dumps(data)"),
+        (
+            "src/core/applications/interactions/handler.py",
+            "_validate_interaction_data",
+            "json.dumps(data)",
+        ),
         ("src/core/artifacts/repository.py", "append_artifact_op", "_json_dumps(data)"),
-        ("src/api/routes/artifacts/routes/crud.py", "update_artifact", "json.dumps(update_fields['payload'])"),
+        (
+            "src/api/routes/artifacts/routes/crud.py",
+            "update_artifact",
+            "json.dumps(update_fields['payload'])",
+        ),
         ("src/api/schemas/artifacts.py", "_validate_payload_size", "json.dumps(value)"),
     ]
     for key in fixed_keys:

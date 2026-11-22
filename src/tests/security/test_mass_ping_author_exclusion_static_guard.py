@@ -58,10 +58,7 @@ def _dotted_name(node) -> str | None:
 
 
 def _is_coverage_call(node) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and _dotted_name(node.func) == COVERAGE_HELPER
-    )
+    return isinstance(node, ast.Call) and _dotted_name(node.func) == COVERAGE_HELPER
 
 
 def _exclude_arg(call: ast.Call):
@@ -111,10 +108,7 @@ def _adhoc_coverage_lines(source: str):
 
     def _helper_range():
         for node in tree.body:
-            if (
-                isinstance(node, ast.FunctionDef)
-                and node.name == COVERAGE_HELPER
-            ):
+            if isinstance(node, ast.FunctionDef) and node.name == COVERAGE_HELPER:
                 return node.lineno, node.end_lineno
         return None
 
@@ -125,15 +119,11 @@ def _adhoc_coverage_lines(source: str):
             continue
         if skip and skip[0] <= node.lineno <= skip[1]:
             continue
-        if not any(
-            isinstance(op, (ast.GtE, ast.Gt, ast.Eq)) for op in node.ops
-        ):
+        if not any(isinstance(op, (ast.GtE, ast.Gt, ast.Eq)) for op in node.ops):
             continue
         texts = [ast.dump(x).lower() for x in [node.left, *node.comparators]]
         role_side = any("role_member" in t for t in texts)
-        roster_side = any(
-            "member_count" in t or "server_member" in t for t in texts
-        )
+        roster_side = any("member_count" in t or "server_member" in t for t in texts)
         if role_side and roster_side:
             findings.append(node.lineno)
     return findings
@@ -141,9 +131,7 @@ def _adhoc_coverage_lines(source: str):
 
 def _function(tree: ast.Module, name: str) -> ast.FunctionDef:
     return next(
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name == name
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name
     )
 
 

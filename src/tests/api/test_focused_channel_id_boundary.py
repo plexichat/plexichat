@@ -87,20 +87,24 @@ def _parse_focus_id_calls(node):
 
 def test_detector_catches_bare_int_and_accepts_gate():
     """Self-test: the detector flags only the regression shape."""
-    bad = ast.parse(textwrap.dedent(
-        """
+    bad = ast.parse(
+        textwrap.dedent(
+            """
         data = json.loads(value)
         cid = data.get("channel_id")
         presence.set_focused_channel(uid, channel_id=int(cid))
         """
-    ))
-    good = ast.parse(textwrap.dedent(
-        """
+        )
+    )
+    good = ast.parse(
+        textwrap.dedent(
+            """
         data = json.loads(value)
         cid = _parse_focus_id(data.get("channel_id"), "channel_id")
         presence.set_focused_channel(uid, channel_id=cid)
         """
-    ))
+        )
+    )
     assert _bare_int_on_focus_vars(bad)
     assert _bare_int_on_focus_vars(good) == []
     assert _parse_focus_id_calls(good) == 1

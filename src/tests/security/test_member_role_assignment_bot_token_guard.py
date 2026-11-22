@@ -87,7 +87,9 @@ def no_backend_lookup(monkeypatch):
     return _unexpected
 
 
-@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+@pytest.mark.parametrize(
+    "handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS
+)
 def test_bot_token_refused_before_backend_lookup(
     handler, route_kwargs, backend_method, no_backend_lookup
 ):
@@ -97,7 +99,9 @@ def test_bot_token_refused_before_backend_lookup(
     assert exc.value.detail["error"]["code"] == 403
 
 
-@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+@pytest.mark.parametrize(
+    "handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS
+)
 def test_user_token_passes_the_identity_gate(
     handler, route_kwargs, backend_method, monkeypatch
 ):
@@ -109,7 +113,9 @@ def test_user_token_passes_the_identity_gate(
     assert exc.value.status_code == 500
 
 
-@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+@pytest.mark.parametrize(
+    "handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS
+)
 def test_bot_token_does_not_wield_owner_authority(
     handler, route_kwargs, backend_method, monkeypatch
 ):
@@ -125,7 +131,9 @@ def test_bot_token_does_not_wield_owner_authority(
     getattr(servers, backend_method).assert_not_called()
 
 
-@pytest.mark.parametrize("handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS)
+@pytest.mark.parametrize(
+    "handler,route_kwargs,backend_method", _HANDLERS, ids=_HANDLER_IDS
+)
 def test_handler_source_calls_require_user_token(handler, route_kwargs, backend_method):
     """Static guard so the runtime checks cannot silently stop covering it."""
     body = inspect.getsource(handler)

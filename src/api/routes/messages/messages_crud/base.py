@@ -177,7 +177,9 @@ class MessagesCRUDBase:
         get_channel = getattr(servers_mod, "get_channel", None)
         timed_out = getattr(servers_mod, "is_timed_out", None)
         has_permission = getattr(servers_mod, "has_permission", None)
-        if not (callable(get_channel) and callable(timed_out) and callable(has_permission)):
+        if not (
+            callable(get_channel) and callable(timed_out) and callable(has_permission)
+        ):
             raise _deny()
         try:
             if get_channel(int(channel_id), user_id) is None:
@@ -185,7 +187,9 @@ class MessagesCRUDBase:
             if timed_out(user_id, int(server_id)):
                 raise _deny()
             allowed = bool(
-                has_permission(user_id, int(server_id), "messages.send", int(channel_id))
+                has_permission(
+                    user_id, int(server_id), "messages.send", int(channel_id)
+                )
             )
         except HTTPException:
             raise

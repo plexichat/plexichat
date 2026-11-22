@@ -6,6 +6,8 @@ linked /docs/api/configuration twice (once in "Guide", once as the
 "Configuration" section's overview).
 """
 
+import re
+
 from src.api.routes.docs.config import DocsConfig
 from src.api.routes.docs.navigation import build_sidebar_html
 from src.api.routes.docs.renderer import (
@@ -58,6 +60,26 @@ def test_sidebar_links_each_page_once():
     assert html.count('href="/docs/api/configuration"') == 1
 
 
+def test_sidebar_is_a_labeled_navigation_landmark():
+    html = build_sidebar_html(DocsConfig(), "/")
+
+    # The sidebar must be a landmark AT can jump to, not a generic <aside>.
+    assert '<nav class="sidebar" aria-label="Documentation">' in html
+    assert html.rstrip().endswith("</nav>")
+
+
+def test_active_sidebar_link_is_marked_with_aria_current():
+    html = build_sidebar_html(DocsConfig(), "/getting-started")
+
+    # The current page is highlighted visually AND announced to AT.
+    assert (
+        '<a href="/docs/api/getting-started" class="active" aria-current="page">'
+        "Getting Started</a>"
+    ) in html
+    # Exactly one item is the current page; the rest are not falsely marked.
+    assert html.count('aria-current="page"') == 1
+
+
 def test_repository_relative_links_map_onto_served_routes():
     # Every one of these 404'd on the live deployment: the markdown says where
     # the file lives, the router serves flat paths.
@@ -98,8 +120,15 @@ def test_mistune_is_actually_used_not_the_fallback():
         "/",
     )
     assert "<thead>" in html and "<tbody>" in html
-    assert '<code class="language-bash">' in html
-    assert 'class="code-block"' not in html  # fallback markup
+    # Fenced examples get the same copy affordance on the mistune path as on
+    # the fallback path: a .copy-btn whose data-target names the code element.
+    assert 'class="code-block"' in html
+    target = re.search(r'class="copy-btn" data-target="([^"]+)"', html).group(1)
+    assert f'<code id="{target}" class="language-bash">' in html
+    # mistune still escapes fence contents, so a snippet cannot inject markup.
+    assert "&lt;script&gt;" in markdown_to_html(
+        "```html\n<script>alert(1)</script>\n```\n", "Page", DocsConfig(), "/"
+    )
 
 
 def test_link_rewrite_leaves_code_fences_alone():
@@ -127,6 +156,38 @@ def test_sibling_links_resolve_with_the_page_directory():
     assert resolve_doc_link("admin/rbac.md", routes, "admin") == "/admin/rbac"
     # And without that context there is nothing honest to link to.
     assert resolve_doc_link("rbac.md", routes) is None
+
+
+def test_openapi_pages_declare_the_page_language():
+    """The Swagger/ReDoc pages inherit FastAPI's bare ``<html>`` (WCAG 3.1.1).
+
+    The narrative shell in serving.py emits ``<html lang="en">``, but the
+    branded OpenAPI surfaces wrap FastAPI's templates, which open with a plain
+    ``<html>``. With no declared language a screen reader falls back to the
+    browser's default locale and mispronounces the English docs.
+    """
+    from starlette.requests import Request
+
+    from src.api.routes.docs.openapi import render_redoc_page, render_swagger_ui_page
+
+    def request() -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/docs",
+                "headers": [(b"host", b"testserver")],
+                "client": ("127.0.0.1", 12345),
+                "scheme": "http",
+                "server": ("testserver", 80),
+                "query_string": b"",
+            }
+        )
+
+    for render in (render_swagger_ui_page, render_redoc_page):
+        html = render(request(), "Plexichat", "/openapi.json").body.decode("utf-8")
+        tag = re.search(r"<html\b[^>]*>", html, re.IGNORECASE).group(0)
+        assert re.search(r'\blang\s*=\s*["\']en["\']', tag, re.IGNORECASE), tag
 
 
 def test_admin_index_guide_links_resolve_to_served_routes():

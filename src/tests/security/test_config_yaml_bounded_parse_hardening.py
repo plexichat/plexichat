@@ -94,7 +94,7 @@ def test_yaml_aliases_cannot_bypass_the_depth_cap(tmp_path):
 
     lines = ["a0: &a0 [x]"]
     for i in range(1, 1200):
-        lines.append(f"a{i}: &a{i} [*a{i-1}]")
+        lines.append(f"a{i}: &a{i} [*a{i - 1}]")
     path = tmp_path / "config.yaml"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

@@ -93,6 +93,7 @@ def _is_guard_call_name(name: str) -> bool:
     """
     return bool(name and GUARD_CALL_RE.fullmatch(name))
 
+
 # Mutating aliased-decorator registrations intentionally reachable without a
 # session token. (relative source file, method, raw path) -> justification.
 # Keep empty unless a genuinely public mutating route uses an alias; every

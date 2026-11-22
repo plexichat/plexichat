@@ -49,8 +49,10 @@ def refresh_session(
     ``ip_address``/``user_agent`` are threaded through so the rotation can
     re-verify the presented credential's context when ``token_binding`` is on.
     """
-    return _get_auth_manager().get_instance().refresh_session(
-        token, ip_address, user_agent
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .refresh_session(token, ip_address, user_agent)
     )
 
 

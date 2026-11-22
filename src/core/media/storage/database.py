@@ -112,9 +112,7 @@ class _BoundedCache:
             return _MISSING
 
     def put(self, key: Hashable, value: Any) -> None:
-        cost = max(1, int(self._key_sizer(key))) + max(
-            1, int(self._value_sizer(value))
-        )
+        cost = max(1, int(self._key_sizer(key))) + max(1, int(self._value_sizer(value)))
         if cost > self._max_bytes:
             # A single entry that alone busts the budget is never cached.
             return
@@ -270,9 +268,7 @@ class DatabaseStorage(StorageBackendBase):
             old_checksum = None
             if existing:
                 old_checksum = (
-                    existing["checksum"]
-                    if isinstance(existing, dict)
-                    else existing[0]
+                    existing["checksum"] if isinstance(existing, dict) else existing[0]
                 )
 
             if existing:

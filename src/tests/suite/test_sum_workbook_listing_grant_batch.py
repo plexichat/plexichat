@@ -15,8 +15,6 @@ These tests pin three properties of the batched replacement:
   excluded (fail-closed).
 """
 
-import pytest
-
 from src.core.suite.sum.manager import SumManager
 from src.core.suite.sum.schema import create_tables
 
@@ -64,7 +62,9 @@ def test_list_workbooks_batches_grant_queries(db, two_users, server_manager):
     manager = _make_manager(db, server_manager)
     _shared(db, manager, owner.id, viewer.id, 12, "view")
     _shared(db, manager, owner.id, viewer.id, 4, "edit")
-    owned = [int(manager.create_workbook(viewer.id, f"Mine {i}")["id"]) for i in range(3)]
+    owned = [
+        int(manager.create_workbook(viewer.id, f"Mine {i}")["id"]) for i in range(3)
+    ]
 
     # Authoritative per-workbook permissions, captured before spying so the
     # parity comparison is independent of the batched path under test.
@@ -96,9 +96,7 @@ def test_list_workbooks_batches_grant_queries(db, two_users, server_manager):
     assert all(str(wb_id) in expected for wb_id in owned)
 
 
-def test_list_workbooks_page_bounds_keep_one_grant_query(
-    db, two_users, server_manager
-):
+def test_list_workbooks_page_bounds_keep_one_grant_query(db, two_users, server_manager):
     """The 100-row cap and OFFSET windows still use a single grant read."""
     owner, viewer = two_users
     manager = _make_manager(db, server_manager)
@@ -135,9 +133,7 @@ def test_list_workbooks_page_bounds_keep_one_grant_query(
     assert spy.grant_queries == 0
 
 
-def test_list_workbooks_permissions_never_cross_users(
-    db, three_users, server_manager
-):
+def test_list_workbooks_permissions_never_cross_users(db, three_users, server_manager):
     """A viewer only ever receives their own effective access, never another's."""
     owner, viewer, stranger = three_users
     manager = _make_manager(db, server_manager)
@@ -200,13 +196,11 @@ def test_bulk_grant_lookup_is_per_user_expiry_and_revocation_aware(
     grant = manager.grant_workbook(owner.id, revoked_id, viewer.id, ["edit"])
     manager.revoke_grant(owner.id, int(grant["id"]))
 
-    lookup = manager._grant_permissions_bulk(
-        [wb_id, expired_id, revoked_id], viewer.id
-    )
+    lookup = manager._grant_permissions_bulk([wb_id, expired_id, revoked_id], viewer.id)
     assert lookup.get(wb_id) == frozenset({"view"})
     assert lookup.get(expired_id) in (None, frozenset())
     assert lookup.get(revoked_id) in (None, frozenset())
-    assert manager._grant_permissions_bulk([wb_id], stranger.id).get(wb_id) == frozenset(
-        {"edit"}
-    )
+    assert manager._grant_permissions_bulk([wb_id], stranger.id).get(
+        wb_id
+    ) == frozenset({"edit"})
     assert manager._grant_permissions_bulk([], viewer.id) == {}

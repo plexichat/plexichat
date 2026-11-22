@@ -41,6 +41,7 @@ class _WiredAliasNoGrant:
 
     def get_channel_by_conversation(self, conversation_id):
         return {"id": CHANNEL, "server_id": SERVER}
+
     # no get_channel / is_timed_out / has_permission -> cannot prove send grant
 
 

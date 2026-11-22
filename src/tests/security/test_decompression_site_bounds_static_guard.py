@@ -92,9 +92,7 @@ def _production_files(commit: str) -> tuple[str, ...]:
     )
     assert proc.returncode == 0, "cannot list production trees from committed HEAD"
     files = tuple(
-        p
-        for p in proc.stdout.splitlines()
-        if p.endswith(".py") and not _is_excluded(p)
+        p for p in proc.stdout.splitlines() if p.endswith(".py") and not _is_excluded(p)
     )
     assert files, "no production python modules found in the committed tree"
     return files
@@ -137,8 +135,7 @@ def _kind_of(call: ast.Call) -> str | None:
             # constructor so a novel wrapper cannot hide a new extraction site.
             return "archive.extract"
         if attr == "open" and (
-            recv in {"Image", "self._Image", "PIL.Image"}
-            or recv.endswith(".Image")
+            recv in {"Image", "self._Image", "PIL.Image"} or recv.endswith(".Image")
         ):
             return "PIL.Image.open"
     if isinstance(func, ast.Name) and func.id in {"load_workbook", "ZstdDecompressor"}:
@@ -172,10 +169,10 @@ def _discover(files, reader) -> dict[str, set[str]]:
 
 
 class _Site(NamedTuple):
-    path: str             # repo-relative path in committed HEAD
-    kinds: frozenset[str] # decompression APIs expected at this site
+    path: str  # repo-relative path in committed HEAD
+    kinds: frozenset[str]  # decompression APIs expected at this site
     bounds: tuple[str, ...]  # substrings proving bounded decode; () => allowlisted
-    reason: str           # why bounded, or why an allowlist is safe
+    reason: str  # why bounded, or why an allowlist is safe
 
 
 # Attacker-influenced sites carry the actual guard markers. Allowlisted sites
@@ -186,12 +183,12 @@ _SITES: dict[str, _Site] = {
         "src/static_client/fetcher.py",
         frozenset({"zipfile.ZipFile"}),
         (
-            "_preflight_archive",      # validate all metadata before writing
-            "_MAX_ARCHIVE_ENTRIES",    # entry-count cap
-            "file_size",               # cumulative uncompressed byte cap
-            "MAX_EXPANSION_RATIO",     # expansion-ratio cap
-            "external_attr",           # symlink / special-file rejection
-            "pre_existing",            # cleanup-on-failure of partial extraction
+            "_preflight_archive",  # validate all metadata before writing
+            "_MAX_ARCHIVE_ENTRIES",  # entry-count cap
+            "file_size",  # cumulative uncompressed byte cap
+            "MAX_EXPANSION_RATIO",  # expansion-ratio cap
+            "external_attr",  # symlink / special-file rejection
+            "pre_existing",  # cleanup-on-failure of partial extraction
         ),
         "Untrusted static-asset ZIP: count/byte/ratio preflight, zip-slip and "
         "symlink validation, and cleanup of partial output (436f0a45).",
@@ -201,10 +198,10 @@ _SITES: dict[str, _Site] = {
         frozenset({"openpyxl.load_workbook", "zipfile.ZipFile"}),
         (
             "_reject_zip_bomb",
-            "MAX_XLSX_ARCHIVE_ENTRIES",      # entry-count cap
-            "MAX_XLSX_MEMBER_BYTES",         # per-member byte cap
-            "MAX_XLSX_UNCOMPRESSED_BYTES",   # cumulative uncompressed byte cap
-            "MAX_XLSX_EXPANSION_RATIO",      # expansion-ratio cap
+            "MAX_XLSX_ARCHIVE_ENTRIES",  # entry-count cap
+            "MAX_XLSX_MEMBER_BYTES",  # per-member byte cap
+            "MAX_XLSX_UNCOMPRESSED_BYTES",  # cumulative uncompressed byte cap
+            "MAX_XLSX_EXPANSION_RATIO",  # expansion-ratio cap
         ),
         "Untrusted XLSX: central-directory caps checked before openpyxl inflates "
         "any member (095efa15).",
@@ -223,10 +220,10 @@ _SITES: dict[str, _Site] = {
         "src/api/websocket/compression.py",
         frozenset({"zlib.decompressobj"}),
         (
-            "max_length=",                  # decompression output cap
-            "unconsumed_tail",              # fail closed when the cap is hit
-            "_clamp_decompression_limit",   # caller cannot raise the ceiling
-            "_max_buffer",                  # cumulative compressed-input cap
+            "max_length=",  # decompression output cap
+            "unconsumed_tail",  # fail closed when the cap is hit
+            "_clamp_decompression_limit",  # caller cannot raise the ceiling
+            "_max_buffer",  # cumulative compressed-input cap
         ),
         "Bounded WS frames: max_length cap, tail detection and a compressed "
         "buffer ceiling for fragmented streams.",
@@ -241,10 +238,10 @@ _SITES: dict[str, _Site] = {
         "src/core/avatars/manager/processing.py",
         frozenset({"PIL.Image.open"}),
         (
-            "MAX_IMAGE_PIXELS",            # pixel cap
-            "check_image_decode_limits",   # decoded-byte / ratio budget
-            "declared_type_matches_bytes", # content sniffing
-            "max_dim",                     # dimension cap
+            "MAX_IMAGE_PIXELS",  # pixel cap
+            "check_image_decode_limits",  # decoded-byte / ratio budget
+            "declared_type_matches_bytes",  # content sniffing
+            "max_dim",  # dimension cap
         ),
         "Avatar upload: pixel + dimension caps, decoded-byte/ratio budget and "
         "content-type sniffing before any load().",
@@ -369,7 +366,9 @@ def test_every_decompression_site_is_registered(commit_sha):
     for path, kinds in discovered.items():
         site = next(s for s in _SITES.values() if s.path == path)
         novel = kinds - set(site.kinds)
-        assert not novel, f"{path}: new decompression API not registered: {sorted(novel)}"
+        assert not novel, (
+            f"{path}: new decompression API not registered: {sorted(novel)}"
+        )
 
 
 def test_registered_sites_keep_their_bounds(commit_sha):
@@ -379,7 +378,9 @@ def test_registered_sites_keep_their_bounds(commit_sha):
     for name, site in _SITES.items():
         source = reader(site.path)
         kinds = _decompression_kinds(ast.parse(source, filename=site.path))
-        violations = _site_violations(source, kinds, site.kinds, site.bounds, site.reason)
+        violations = _site_violations(
+            source, kinds, site.kinds, site.bounds, site.reason
+        )
         assert not violations, f"{name} ({site.path}): " + "; ".join(violations)
         if site.bounds:
             checked_bounded += 1
@@ -439,14 +440,16 @@ def test_self_test_detector_recognises_every_documented_api():
     ):
         assert expected in found, f"detector missed {expected!r}: {sorted(found)}"
     # Pure compression / checksum calls must not be reported as decode sites.
-    clean = ast.parse(textwrap.dedent(
-        """
+    clean = ast.parse(
+        textwrap.dedent(
+            """
         import zlib, zstandard
         zlib.compress(b"x")
         zlib.crc32(b"x")
         zstandard.ZstdCompressor().compress(b"x")
         """
-    ))
+        )
+    )
     assert _decompression_kinds(clean) == set()
 
 
@@ -494,14 +497,23 @@ def test_self_test_unbounded_extractall_flagged_bounded_and_documented_accepted(
     assert any("MAX_ARCHIVE_ENTRIES" in v for v in violations), violations
     assert any("file_size" in v for v in violations), violations
     # Bounded: same checker, same required markers -> accepted.
-    assert _site_violations(
-        BOUNDED_ZIP, unbounded_kinds, frozenset(unbounded_kinds), required, "x"
-    ) == []
+    assert (
+        _site_violations(
+            BOUNDED_ZIP, unbounded_kinds, frozenset(unbounded_kinds), required, "x"
+        )
+        == []
+    )
     # Documented allowlist: no bounds required, but a reason is mandatory.
-    assert _site_violations(
-        UNBOUNDED_ZIP, unbounded_kinds, frozenset(unbounded_kinds), (),
-        "CI pinned, digest-verified download",
-    ) == []
+    assert (
+        _site_violations(
+            UNBOUNDED_ZIP,
+            unbounded_kinds,
+            frozenset(unbounded_kinds),
+            (),
+            "CI pinned, digest-verified download",
+        )
+        == []
+    )
     assert _site_violations(
         UNBOUNDED_ZIP, unbounded_kinds, frozenset(unbounded_kinds), (), ""
     )

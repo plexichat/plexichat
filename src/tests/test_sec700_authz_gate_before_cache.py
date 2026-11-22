@@ -28,22 +28,35 @@ ROOT = Path(__file__).resolve().parents[2]
 # gate intentionally runs only on a cache HIT (the cold path enforces access
 # inline); a naive "gate always first" rule does not apply there.
 SITES = [
-    ("src/core/polls/manager/reading.py", "get_poll",
-     {"get_message"}, {"get"}),
-    ("src/core/polls/manager/voting.py", "get_results",
-     {"can_access_poll"}, {"get"}),
-    ("src/core/reactions/manager/reactions.py", "get_reaction_users",
-     {"_get_message", "_is_participant"}, {"_cached_reaction_read"}),
-    ("src/core/reactions/manager/reactions.py", "get_user_reactions",
-     {"_get_message", "_is_participant"}, {"_cached_reaction_read"}),
-    ("src/core/auth/managers/session/verification.py", "verify_token",
-     {"is_malformed_token_input", "check_rate_limit"}, {"_verify_token"}),
+    ("src/core/polls/manager/reading.py", "get_poll", {"get_message"}, {"get"}),
+    ("src/core/polls/manager/voting.py", "get_results", {"can_access_poll"}, {"get"}),
+    (
+        "src/core/reactions/manager/reactions.py",
+        "get_reaction_users",
+        {"_get_message", "_is_participant"},
+        {"_cached_reaction_read"},
+    ),
+    (
+        "src/core/reactions/manager/reactions.py",
+        "get_user_reactions",
+        {"_get_message", "_is_participant"},
+        {"_cached_reaction_read"},
+    ),
+    (
+        "src/core/auth/managers/session/verification.py",
+        "verify_token",
+        {"is_malformed_token_input", "check_rate_limit"},
+        {"_verify_token"},
+    ),
 ]
 
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 

@@ -69,9 +69,9 @@ def test_artifact_delete_route_binds_target_and_actor(monkeypatch):
         artifacts_routes.admin_delete_artifact("555", SimpleNamespace(client=None))
     )
 
-    assert calls == [
-        ("artifacts.force_delete", {"target_context": (555, 100)})
-    ], "artifact force-delete must consume an approval bound to the exact artifact/admin"
+    assert calls == [("artifacts.force_delete", {"target_context": (555, 100)})], (
+        "artifact force-delete must consume an approval bound to the exact artifact/admin"
+    )
     assert manager.deleted == [(555, 100)]
 
 
@@ -158,8 +158,9 @@ def test_no_target_bearing_gate_caller_drops_target_context():
         offenders.extend(o)
 
     assert checked >= 3, "guard must actually inspect the bound call sites"
-    assert not offenders, "target-bearing approval callers missing target_context: " + ", ".join(
-        offenders
+    assert not offenders, (
+        "target-bearing approval callers missing target_context: "
+        + ", ".join(offenders)
     )
 
 
@@ -174,7 +175,9 @@ def test_detector_recognizes_import_alias_and_assignment_rename():
     )
     checked, offenders = _scan_source(source, "alias.py")
     assert checked == 1, "the aliased call must be recognized as a gate call"
-    assert offenders, "an aliased target-bearing call without the binding must be flagged"
+    assert offenders, (
+        "an aliased target-bearing call without the binding must be flagged"
+    )
 
     bound = source.replace(
         'gate("artifacts.force_delete")',
@@ -194,7 +197,9 @@ def test_detector_non_vacuous_on_novel_target_bearing_action():
         '    gate("messages.delete")\n'
     )
     checked, offenders = _scan_source(source, "novel.py", actions)
-    assert checked == 1 and offenders, "novel action missing the binding must be flagged"
+    assert checked == 1 and offenders, (
+        "novel action missing the binding must be flagged"
+    )
 
     bound = source.replace(
         'gate("messages.delete")',

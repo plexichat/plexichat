@@ -23,9 +23,7 @@ class _RecorderReactions:
     def __init__(self):
         self.calls = []
 
-    def get_reaction_users(
-        self, user_id, message_id, emoji, limit, after_user_id=None
-    ):
+    def get_reaction_users(self, user_id, message_id, emoji, limit, after_user_id=None):
         self.calls.append(
             {
                 "user_id": user_id,
@@ -70,9 +68,7 @@ def cursor_env(monkeypatch):
 
 def _get(client, after=None):
     params = {} if after is None else {"after": after}
-    return client.get(
-        "/channels/42/messages/99/reactions/%F0%9F%91%8D", params=params
-    )
+    return client.get("/channels/42/messages/99/reactions/%F0%9F%91%8D", params=params)
 
 
 def test_valid_cursor_reaches_manager_as_int(cursor_env):

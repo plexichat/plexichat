@@ -167,7 +167,9 @@ def test_committed_blob_differs_from_stale_working_copy(commit_sha: str) -> None
     # If this assertion ever passes it means the reader was wired to the
     # working tree; that would let a stale staged copy mask a committed revert.
     committed = _read_committed(commit_sha, MASS_PING_COMMITTED_PINS[0].path)
-    on_disk = (_REPO_ROOT / MASS_PING_COMMITTED_PINS[0].path).read_text(encoding="utf-8")
+    on_disk = (_REPO_ROOT / MASS_PING_COMMITTED_PINS[0].path).read_text(
+        encoding="utf-8"
+    )
     # We only assert the committed blob carries the pin; the working copy may
     # legitimately diverge, so the two need not be equal. Reading from git is
     # the property under test, proven by the marker being found in `committed`.

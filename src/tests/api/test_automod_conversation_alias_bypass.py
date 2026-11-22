@@ -95,7 +95,12 @@ def automod_alias(modules, user_pool, monkeypatch):
         # The send grant removes every other reason a send could be denied, so
         # automod is the only thing that may stop either request.
         servers.set_channel_override(
-            owner.id, channel.id, "member", member.id, allow={"messages.send": True}, deny={}
+            owner.id,
+            channel.id,
+            "member",
+            member.id,
+            allow={"messages.send": True},
+            deny={},
         )
 
         monkeypatch.setattr(api, "get_servers", lambda: servers)
@@ -119,7 +124,9 @@ class TestAutomodConversationAliasBypass:
         """Pin the facts that make the bypass possible."""
         _router, servers, messaging, channel, conv_id, member, server = automod_alias
         assert servers.get_channel(conv_id, member.id) is None
-        assert int(servers.get_channel_by_conversation(conv_id)["id"]) == int(channel.id)
+        assert int(servers.get_channel_by_conversation(conv_id)["id"]) == int(
+            channel.id
+        )
         assert servers.has_permission(member.id, server.id, "messages.send", channel.id)
         assert messaging.is_participant(conv_id, member.id) is True
 
@@ -129,10 +136,15 @@ class TestAutomodConversationAliasBypass:
         router, _servers, messaging, channel, conv_id, member, _server = automod_alias
         with pytest.raises(HTTPException) as exc:
             await router.send_channel_message(
-                str(channel.id), MessageCreateRequest(content=BLOCKED), _token(member.id)
+                str(channel.id),
+                MessageCreateRequest(content=BLOCKED),
+                _token(member.id),
             )
         assert exc.value.status_code == 400
-        assert [m.content for m in (messaging.get_messages(member.id, conv_id, limit=10) or [])] == []
+        assert [
+            m.content
+            for m in (messaging.get_messages(member.id, conv_id, limit=10) or [])
+        ] == []
 
     @pytest.mark.asyncio
     async def test_alias_send_is_blocked_by_automod(self, automod_alias):
@@ -145,7 +157,10 @@ class TestAutomodConversationAliasBypass:
         assert exc.value.status_code == 400, (
             "automod must be enforced through the conversation-id alias"
         )
-        assert [m.content for m in (messaging.get_messages(member.id, conv_id, limit=10) or [])] == []
+        assert [
+            m.content
+            for m in (messaging.get_messages(member.id, conv_id, limit=10) or [])
+        ] == []
 
     @pytest.mark.asyncio
     async def test_alias_send_fails_closed_when_automod_gate_unavailable(
@@ -171,7 +186,10 @@ class TestAutomodConversationAliasBypass:
                 _token(member.id),
             )
         assert exc.value.status_code == 403
-        assert [m.content for m in (messaging.get_messages(member.id, conv_id, limit=10) or [])] == []
+        assert [
+            m.content
+            for m in (messaging.get_messages(member.id, conv_id, limit=10) or [])
+        ] == []
 
     @pytest.mark.asyncio
     async def test_genuine_dm_is_not_blocked_by_automod_alias_gate(
@@ -190,4 +208,7 @@ class TestAutomodConversationAliasBypass:
             _token(member.id),
         )
         assert response is not None
-        assert [m.content for m in (messaging.get_messages(member.id, dm_id, limit=10) or [])] == [BLOCKED]
+        assert [
+            m.content
+            for m in (messaging.get_messages(member.id, dm_id, limit=10) or [])
+        ] == [BLOCKED]

@@ -77,7 +77,9 @@ class _Probe:
                     {"returncode": 1, "stdout": b"", "stderr": b"ffprobe boom"},
                 )()
             return type(
-                "R", (), {"returncode": 0, "stdout": _ffprobe_json(self.width), "stderr": b""}
+                "R",
+                (),
+                {"returncode": 0, "stdout": _ffprobe_json(self.width), "stderr": b""},
             )()
 
         monkeypatch.setattr(video.subprocess, "run", fake_run)
@@ -141,15 +143,19 @@ class TestVideoMetadataDedup:
     def test_scope_and_content_are_partitioned_in_the_key(self):
         digest = "a" * 64
         other = "b" * 64
-        assert MetadataResultCache.make_key("cred-A", digest) == MetadataResultCache.make_key(
+        assert MetadataResultCache.make_key(
             "cred-A", digest
+        ) == MetadataResultCache.make_key("cred-A", digest)
+        assert MetadataResultCache.make_key(
+            "cred-A", digest
+        ) != MetadataResultCache.make_key("cred-B", digest), (
+            "a different credential/scope must never share an entry"
         )
-        assert MetadataResultCache.make_key("cred-A", digest) != MetadataResultCache.make_key(
-            "cred-B", digest
-        ), "a different credential/scope must never share an entry"
-        assert MetadataResultCache.make_key("cred-A", digest) != MetadataResultCache.make_key(
-            "cred-A", other
-        ), "different file content must never share an entry"
+        assert MetadataResultCache.make_key(
+            "cred-A", digest
+        ) != MetadataResultCache.make_key("cred-A", other), (
+            "different file content must never share an entry"
+        )
 
     def test_scope_isolation_no_cross_credential_result_reuse(
         self, monkeypatch, _isolated_video_config
@@ -245,7 +251,9 @@ class TestVideoMetadataDedup:
             target=lambda: results.append(cache.get_or_compute("k", lambda: "never"))
         )
         overflow = threading.Thread(
-            target=lambda: results.append(cache.get_or_compute("other", lambda: "fallback"))
+            target=lambda: results.append(
+                cache.get_or_compute("other", lambda: "fallback")
+            )
         )
         follower.start()
         overflow.start()

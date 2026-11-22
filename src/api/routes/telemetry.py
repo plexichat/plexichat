@@ -198,8 +198,7 @@ def _sanitize_csp_report(report: Any) -> Any:
         for key, value in report.items():
             lower_key = str(key).lower()
             if isinstance(value, str) and (
-                lower_key in _CSP_URL_KEYS
-                or lower_key.endswith(_CSP_URL_KEY_SUFFIXES)
+                lower_key in _CSP_URL_KEYS or lower_key.endswith(_CSP_URL_KEY_SUFFIXES)
             ):
                 sanitized[key] = _redact_uri(value)
             else:

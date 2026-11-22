@@ -38,7 +38,14 @@ def _make_reset_token(db, auth_manager, expires_at):
         "INSERT INTO auth_email_tokens "
         "(id, user_id, token_hash, token_type, created_at, expires_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (token_id, user.id, token_hash, "reset_password", expires_at - 60_000, expires_at),
+        (
+            token_id,
+            user.id,
+            token_hash,
+            "reset_password",
+            expires_at - 60_000,
+            expires_at,
+        ),
     )
     original_hash = db.fetch_one(
         "SELECT password_hash FROM auth_users WHERE id = ?", (user.id,)

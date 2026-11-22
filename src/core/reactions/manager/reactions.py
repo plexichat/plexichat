@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Iterable, cast
 import utils.logger as logger
 from src.core.base import SnowflakeID
 from ..models import (
@@ -255,7 +255,9 @@ class ReactionOpsMixin(ReactionProtocol):
                     (message_id, user_id, normalized_emoji),
                 )
                 if duplicate:
-                    raise ReactionExistsError("You have already reacted with this emoji")
+                    raise ReactionExistsError(
+                        "You have already reacted with this emoji"
+                    )
                 raise ReactionLimitError(
                     "Reaction quota reached while adding reaction",
                     max_reactions,
@@ -747,9 +749,9 @@ class ReactionOpsMixin(ReactionProtocol):
                 getter = getattr(self._relationships, "get_all_blocked_ids", None)
                 try:
                     if callable(getter):
-                        values = getter(viewer) or []
+                        values = cast(Iterable[Any], getter(viewer) or [])
                     else:
-                        values = self._get_blocked_user_ids(viewer)
+                        values = cast(Iterable[Any], self._get_blocked_user_ids(viewer))
                     for value in values:
                         try:
                             blocked_ids.add(int(value))

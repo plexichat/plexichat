@@ -122,9 +122,7 @@ def test_force_logout_closes_target_gateway_socket_server_side(monkeypatch):
     monkeypatch.setattr(dispatcher, "dispatch_event", _record_dispatch)
     _patch_common(monkeypatch, dispatcher)
 
-    asyncio.run(
-        security.force_logout(_request(), SimpleNamespace(user_id=TARGET_ID))
-    )
+    asyncio.run(security.force_logout(_request(), SimpleNamespace(user_id=TARGET_ID)))
 
     assert conn.websocket.closed, (
         "force-logout left the target's gateway socket connected; sending a "

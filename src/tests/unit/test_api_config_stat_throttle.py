@@ -97,15 +97,18 @@ class TestApiConfigStatThrottle:
         rebuilt = api_config.get_api_config()
         assert rebuilt is not settings
         assert rebuilt == settings
-        as_tuple = lambda c: (
-            c.title,
-            c.description,
-            c.version,
-            c.api_prefix,
-            tuple(c.cors_origins),
-            c.cors_allow_credentials,
-            c.max_request_body_size,
-        )
+
+        def as_tuple(c):
+            return (
+                c.title,
+                c.description,
+                c.version,
+                c.api_prefix,
+                tuple(c.cors_origins),
+                c.cors_allow_credentials,
+                c.max_request_body_size,
+            )
+
         assert as_tuple(rebuilt) == as_tuple(settings)
 
     def test_new_config_setup_invalidates_after_ceiling(
@@ -163,7 +166,9 @@ class TestApiConfigStatThrottle:
         assert snap.version != version_before
         assert snap.stats()["rebuilds"] == rebuilds_before + 1
 
-    def test_clear_cache_forces_immediate_reload(self, api_snapshot, restore_config, tmp_path):
+    def test_clear_cache_forces_immediate_reload(
+        self, api_snapshot, restore_config, tmp_path
+    ):
         """Explicit invalidation bypasses the ceiling (admin reload path)."""
         snap = api_snapshot
         path = tmp_path / "config.yaml"
@@ -179,16 +184,18 @@ class TestApiConfigStatThrottle:
         api_config.clear_api_config_cache()
         assert api_config.get_api_config().title == "B"
 
-    def test_validation_still_fails_closed_on_wildcard_cors(self, api_snapshot, restore_config, tmp_path):
+    def test_validation_still_fails_closed_on_wildcard_cors(
+        self, api_snapshot, restore_config, tmp_path
+    ):
         """The ceiling changes only caching -- no security validation is weakened."""
         snap = api_snapshot
         path = tmp_path / "config.yaml"
-        path.write_text(
-            "api:\n  cors_origins: ['*']\n  allow_wildcard_cors: false\n"
-        )
+        path.write_text("api:\n  cors_origins: ['*']\n  allow_wildcard_cors: false\n")
         config.setup(
             config_path=str(path),
-            default_config={"api": {"cors_origins": ["*"], "allow_wildcard_cors": False}},
+            default_config={
+                "api": {"cors_origins": ["*"], "allow_wildcard_cors": False}
+            },
         )
         snap.invalidate()
         assert api_config.get_api_config().cors_origins == []

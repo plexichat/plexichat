@@ -21,7 +21,6 @@ import mimetypes
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 
 from src.static_client.router import (
     StaticClientMiddleware,

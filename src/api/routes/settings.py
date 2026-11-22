@@ -265,7 +265,9 @@ async def bulk_update_settings(
                     try:
                         data = json.loads(value)
                         if not isinstance(data, dict):
-                            raise ValueError("_focused_channel payload must be an object")
+                            raise ValueError(
+                                "_focused_channel payload must be an object"
+                            )
                         cid = _parse_focus_id(data.get("channel_id"), "channel_id")
                         sid = _parse_focus_id(data.get("server_id"), "server_id")
 

@@ -9,7 +9,6 @@ safe default instead.
 
 import math
 
-import pytest
 
 from src.core.security.hardening import clamp_finite_float
 

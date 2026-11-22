@@ -398,9 +398,7 @@ def cached(
             else:
                 cache_key = generate_cache_key(key_prefix, *_key_args(args), **kwargs)
 
-            kind, value = _read_local(
-                cache_key, l1_ttl is not None or not valkey_ready
-            )
+            kind, value = _read_local(cache_key, l1_ttl is not None or not valkey_ready)
             if kind == "fresh":
                 _cache_stats["hits"] += 1
                 logger.debug(f"CACHE HIT (Memory L1): {cache_key}")
@@ -503,9 +501,7 @@ def cached(
             else:
                 cache_key = generate_cache_key(key_prefix, *_key_args(args), **kwargs)
 
-            kind, value = _read_local(
-                cache_key, l1_ttl is not None or not valkey_ready
-            )
+            kind, value = _read_local(cache_key, l1_ttl is not None or not valkey_ready)
             if kind == "fresh":
                 _cache_stats["hits"] += 1
                 logger.debug(f"CACHE HIT (Memory L1): {cache_key}")

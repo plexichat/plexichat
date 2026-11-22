@@ -30,9 +30,7 @@ class _DB:
     def fetch_all(self, query, params=None):
         q = " ".join(query.split())
         if "srv_servers s" in q and "srv_members m" in q:
-            return [
-                {"server_id": 10, "owner_id": self.owner_id, "member_id": 100}
-            ]
+            return [{"server_id": 10, "owner_id": self.owner_id, "member_id": 100}]
         if "srv_member_roles mr" in q:
             return []
         raise AssertionError(f"unexpected query: {q}")

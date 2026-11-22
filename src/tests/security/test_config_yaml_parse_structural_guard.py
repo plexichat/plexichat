@@ -278,9 +278,7 @@ def _module_constants(source: str) -> dict[str, int]:
 
 
 def _defines(tree: ast.AST, kind: type, name: str) -> bool:
-    return any(
-        isinstance(node, kind) and node.name == name for node in ast.walk(tree)
-    )
+    return any(isinstance(node, kind) and node.name == name for node in ast.walk(tree))
 
 
 def _assert_caps_present(source: str, *, label: str = CORE_PATH) -> None:
@@ -431,7 +429,9 @@ def test_self_test_cap_removal_and_drift_are_flagged():
     with pytest.raises(AssertionError, match="removed"):
         _assert_caps_present(no_caps, label="synthetic")
 
-    drifted = _SYNTHETIC_CORE.replace("MAX_CONFIG_DEPTH = 64", "MAX_CONFIG_DEPTH = 4096")
+    drifted = _SYNTHETIC_CORE.replace(
+        "MAX_CONFIG_DEPTH = 64", "MAX_CONFIG_DEPTH = 4096"
+    )
     with pytest.raises(AssertionError, match="drifted"):
         _assert_caps_present(drifted, label="synthetic")
 
@@ -442,7 +442,8 @@ def test_self_test_cap_removal_and_drift_are_flagged():
         _assert_caps_present(no_helper, label="synthetic")
 
     no_loader = _SYNTHETIC_CORE.replace(
-        "class _BoundedSafeLoader(yaml.SafeLoader):", "class _RenamedLoader(yaml.SafeLoader):"
+        "class _BoundedSafeLoader(yaml.SafeLoader):",
+        "class _RenamedLoader(yaml.SafeLoader):",
     )
     with pytest.raises(AssertionError, match="removed"):
         _assert_caps_present(no_loader, label="synthetic")
@@ -450,7 +451,9 @@ def test_self_test_cap_removal_and_drift_are_flagged():
 
 def test_self_test_alias_guard_removal_is_flagged():
     """Deleting the alias rejection (or just its raise) must fail closed."""
-    _assert_alias_rejection_present(_SYNTHETIC_CORE, label="synthetic")  # baseline passes
+    _assert_alias_rejection_present(
+        _SYNTHETIC_CORE, label="synthetic"
+    )  # baseline passes
 
     # Remove the whole rejection block: still valid Python, but no guard.
     alias_block = (
@@ -519,7 +522,9 @@ def test_no_raw_yaml_parse_in_production(commit_sha):
     assert not offenders, (
         "New raw / unbounded YAML parse in production code -- use "
         "safe_load_bounded (config.core) instead:\n  "
-        + "\n  ".join(str(f) for f in sorted(offenders, key=lambda f: (f.path, f.lineno)))
+        + "\n  ".join(
+            str(f) for f in sorted(offenders, key=lambda f: (f.path, f.lineno))
+        )
     )
 
 
@@ -533,7 +538,9 @@ def test_every_production_yaml_parse_is_one_of_the_three_bounded_sites(commit_sh
 
 
 def test_composer_calls_only_live_inside_the_bounded_helper(commit_sha):
-    offenders = [f for f in _sweep(commit_sha) if f.kind == "composer" and f.path != CORE_PATH]
+    offenders = [
+        f for f in _sweep(commit_sha) if f.kind == "composer" and f.path != CORE_PATH
+    ]
     assert not offenders, (
         "Low-level YAML composer call outside the bounded helper:\n  "
         + "\n  ".join(str(f) for f in offenders)

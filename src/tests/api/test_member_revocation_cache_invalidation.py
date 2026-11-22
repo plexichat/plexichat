@@ -25,8 +25,7 @@ def _func(tree, name):
         (
             n
             for n in ast.walk(tree)
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and n.name == name
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
         ),
         None,
     )

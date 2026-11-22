@@ -12,7 +12,9 @@ from .common import parse_id, call_or_raise, resolve_participant_service
 router = APIRouter()
 
 
-def _require_target_send_access(servers, user_id: int, target_conversation_id: int) -> None:
+def _require_target_send_access(
+    servers, user_id: int, target_conversation_id: int
+) -> None:
     """Fail closed when the forward target is a channel the caller cannot post to.
 
     Forwarding publishes the new message straight through

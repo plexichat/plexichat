@@ -66,7 +66,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-import pytest
 
 SRC = Path(__file__).resolve().parents[2]
 CATALOG_PATH = SRC / "core" / "servers" / "models.py"
@@ -299,10 +298,7 @@ DOCUMENTED_MISMATCHES = {
         "require_permission",
         "voice.speak",
         _CHANNEL,
-    ): (
-        "Screen-share/stream is a per-voice-channel participation right; "
-        "intentional."
-    ),
+    ): ("Screen-share/stream is a per-voice-channel participation right; intentional."),
     (
         "core/notifications/manager/mention_validator.py",
         "validate_mentions",
@@ -446,9 +442,7 @@ CANONICAL_LAYOUT = CheckLayout()
 # ``get_permissions(user, server, channel_id=None)`` carries the channel at
 # positional index 2 (not 3 like the check functions). Its result is a dict
 # that call sites gate directly, so only the channel argument matters here.
-GET_PERMISSIONS_LAYOUT = CheckLayout(
-    perm_index=None, perm_kwarg=None, channel_index=2
-)
+GET_PERMISSIONS_LAYOUT = CheckLayout(perm_index=None, perm_kwarg=None, channel_index=2)
 
 
 def _arg_at(call, index, kwarg=None, kwargs=frozenset()):
@@ -492,9 +486,7 @@ def _resolve_wrapper(fn, aliases):
         perm_expr = _arg_at(sub, inner.perm_index, inner.perm_kwarg)
         if not isinstance(perm_expr, ast.Name) or perm_expr.id not in params:
             continue
-        channel_expr = _arg_at(
-            sub, inner.channel_index, None, inner.channel_kwargs
-        )
+        channel_expr = _arg_at(sub, inner.channel_index, None, inner.channel_kwargs)
         channel_param = (
             channel_expr.id
             if isinstance(channel_expr, ast.Name) and channel_expr.id in params
@@ -506,7 +498,9 @@ def _resolve_wrapper(fn, aliases):
                 perm_index=params.index(perm_expr.id),
                 perm_kwarg=perm_expr.id,
                 channel_index=params.index(channel_param) if channel_param else None,
-                channel_kwargs=frozenset({channel_param}) if channel_param else frozenset(),
+                channel_kwargs=frozenset({channel_param})
+                if channel_param
+                else frozenset(),
             ),
         )
     return None
@@ -815,9 +809,7 @@ def _analyze_source(source, path, scopes=None):
         for perm in perms:
             intended = scopes[perm]
             if scope != intended:
-                findings.append(
-                    Finding(path, function, name, perm, scope, intended)
-                )
+                findings.append(Finding(path, function, name, perm, scope, intended))
 
     _analyze_permission_dict_gates(
         tree, walked, ancestors_of, path, scopes, findings, stats
@@ -945,10 +937,10 @@ _NOVEL_PATH = "core/new_call_site/never_allowlisted.py"
 
 def test_selftest_flags_server_permission_passed_channel_scope():
     """The exact 72d3f648 bug at a novel call site must be flagged."""
-    source = '''
+    source = """
     def delete_channel(servers, user, server_id, channel_id):
         servers.require_permission(user, server_id, "channels.manage", channel_id)
-    '''
+    """
     findings, stats = _analyze_source(source, _NOVEL_PATH)
     assert stats.permission_checks == 1
     assert len(findings) == 1
@@ -965,10 +957,10 @@ def test_selftest_flags_server_permission_passed_channel_scope():
 
 
 def test_selftest_flags_channel_permission_passed_server_scope():
-    source = '''
+    source = """
     def gather(servers, user, server_id):
         return servers.has_permission(user, server_id, "messages.send")
-    '''
+    """
     findings, _ = _analyze_source(source, _NOVEL_PATH)
     assert len(findings) == 1
     assert findings[0].permission == "messages.send"
@@ -977,12 +969,12 @@ def test_selftest_flags_channel_permission_passed_server_scope():
 
 
 def test_selftest_accepts_correct_scopes():
-    source = '''
+    source = """
     def ok(servers, user, server_id, channel_id):
         servers.require_permission(user, server_id, "channels.manage")
         servers.has_permission(user, server_id, "messages.send", channel_id)
         servers.has_permission(user, server_id, "server.manage")
-    '''
+    """
     findings, stats = _analyze_source(source, _NOVEL_PATH)
     assert stats.permission_checks == 3
     assert findings == []
@@ -990,13 +982,13 @@ def test_selftest_accepts_correct_scopes():
 
 def test_selftest_resolves_loop_variable_permission():
     """Covers the slowmode loop whose ``cid`` argument was removed by the fix."""
-    source = '''
+    source = """
     async def set_channel_slowmode(servers, user, server_id, cid):
         for permission in ("channels.manage", "administrator"):
             if servers.has_permission(user, server_id, permission, cid):
                 return True
         return False
-    '''
+    """
     findings, _ = _analyze_source(source, _NOVEL_PATH)
     assert {f.permission for f in findings} == {"channels.manage", "administrator"}
     assert all(f.scope == _CHANNEL and f.intended == _SERVER for f in findings)
@@ -1004,10 +996,10 @@ def test_selftest_resolves_loop_variable_permission():
 
 
 def test_selftest_channel_keyword_argument_is_detected():
-    source = '''
+    source = """
     def gate(servers, user, server_id, cid):
         servers.has_permission(user, server_id, "channels.manage", channel_id=cid)
-    '''
+    """
     findings, _ = _analyze_source(source, _NOVEL_PATH)
     assert len(findings) == 1
     assert findings[0].scope == _CHANNEL
@@ -1016,10 +1008,10 @@ def test_selftest_channel_keyword_argument_is_detected():
 
 def test_selftest_same_finding_is_accepted_only_when_documented():
     """The allowlist is keyed by path/function: move the same bug and it fails."""
-    source = '''
+    source = """
     def create_invite(servers, user, server_id, channel_id):
         return servers.require_permission(user, server_id, "invites.create", channel_id)
-    '''
+    """
     documented_path = "core/servers/handlers/members/invites.py"
     findings, _ = _analyze_source(source, documented_path)
     assert len(findings) == 1
@@ -1038,10 +1030,10 @@ def test_selftest_fixed_roles_manage_site_is_no_longer_allowlisted():
     that entry was removed with the fix, so reintroducing the bug at the same
     path must now be flagged rather than silently allowed.
     """
-    source = '''
+    source = """
     def validate_mentions(servers, user, server_id, channel_id):
         return servers.has_permission(user, server_id, "roles.manage", channel_id)
-    '''
+    """
     findings, _ = _analyze_source(
         source, "core/notifications/manager/mention_validator.py"
     )
@@ -1069,10 +1061,10 @@ def test_selftest_mislabeled_destructive_permission_is_invisible_to_analyser():
     # Simulate the misclassification the catalog pin guards against.
     scopes = dict(catalog_scopes())
     scopes[destructive] = _CHANNEL
-    source = '''
+    source = """
     def wipe(servers, user, server_id, channel_id):
         servers.require_permission(user, server_id, "server.wipe_members", channel_id)
-    '''
+    """
     findings, _ = _analyze_source(source, _NOVEL_PATH, scopes=scopes)
     assert findings == [], "a mislabeled destructive perm evades the mismatch scan"
 
@@ -1086,7 +1078,7 @@ def test_selftest_mislabeled_destructive_permission_is_invisible_to_analyser():
 # Alias / wrapper resolution self-tests
 # ---------------------------------------------------------------------------
 
-_ALIAS_WRAPPER = '''
+_ALIAS_WRAPPER = """
     class Gate:
         def _check_permission(self, user, server, permission, channel_id=None):
             return self._servers.has_permission(user, server, permission, channel_id)
@@ -1097,12 +1089,14 @@ _ALIAS_WRAPPER = '''
         def ok(self, user, server, cid):
             self._check_permission(user, server, "messages.send", cid)
             self._check_permission(user, server, "channels.manage")
-'''
+"""
 
 
 def test_selftest_alias_mismatch_is_flagged():
     """A server-scoped permission checked via a local wrapper fails closed."""
-    aliases, unresolved = _resolve_alias_definitions(ast.parse(textwrap.dedent(_ALIAS_WRAPPER)))
+    aliases, unresolved = _resolve_alias_definitions(
+        ast.parse(textwrap.dedent(_ALIAS_WRAPPER))
+    )
     assert "_check_permission" in aliases, "wrapper must be resolved to canonical"
     assert "_check_permission" not in unresolved
 
@@ -1118,17 +1112,19 @@ def test_selftest_alias_mismatch_is_flagged():
         _SERVER,
     )
     assert not _is_documented(f), "a novel alias mismatch must fail closed"
-    assert not [f for f in findings if f.function == "ok"], "correct alias scopes accepted"
+    assert not [f for f in findings if f.function == "ok"], (
+        "correct alias scopes accepted"
+    )
 
 
 def test_selftest_assignment_alias_is_scanned():
     """``check = has_permission`` aliases are resolved from the RHS."""
-    source = '''
+    source = """
     check = has_permission
 
     def gate(user, server, cid):
         check(user, server, "channels.manage", cid)
-    '''
+    """
     aliases, _ = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
     assert aliases["check"][0] == "has_permission"
     findings, _ = _analyze_source(source, _NOVEL_PATH)
@@ -1147,12 +1143,12 @@ def test_selftest_import_alias_mismatch_is_flagged():
     only the literal callee name records zero checks and zero findings here,
     letting the exact 72d3f648 escalation pass silently -- the N713 hole.
     """
-    source = '''
+    source = """
     from src.core.servers.permission_utils import has_permission as hp
 
     def delete_channel(servers, user, server_id, channel_id):
         hp(user, server_id, "channels.manage", channel_id)
-    '''
+    """
     aliases, _ = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
     assert aliases["hp"][0] == "has_permission"
     findings, stats = _analyze_source(source, _NOVEL_PATH)
@@ -1179,13 +1175,13 @@ def test_selftest_import_alias_mismatch_is_flagged():
 
 def test_selftest_chained_import_and_assignment_alias_is_flagged():
     """``import as`` followed by ``x = alias`` resolves through the chain."""
-    source = '''
+    source = """
     from src.core.servers.permission_utils import has_permission as _real
     check = _real
 
     def delete_channel(servers, user, server_id, channel_id):
         check(user, server_id, "channels.manage", channel_id)
-    '''
+    """
     aliases, _ = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
     assert aliases["check"][0] == "has_permission"
     findings, stats = _analyze_source(source, _NOVEL_PATH)
@@ -1196,13 +1192,13 @@ def test_selftest_chained_import_and_assignment_alias_is_flagged():
 
 def test_selftest_unresolvable_check_alias_fails_closed():
     """A check-shaped alias we cannot resolve is still scanned, not dropped."""
-    source = '''
+    source = """
     def _check_permission(user, server, permission, channel_id=None):
         return external_policy.allow(user, server, permission, channel_id)
 
     def gate(user, server, cid):
         return _check_permission(user, server, "channels.manage", cid)
-    '''
+    """
     aliases, unresolved = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
     assert "_check_permission" not in aliases
     assert "_check_permission" in unresolved
@@ -1233,7 +1229,7 @@ def test_alias_resolution_is_active_on_real_tree():
 
 def test_selftest_dict_gate_flags_server_perm_with_channel_scope():
     """The exact N662 bug: assigned-local dict gate with a channel id."""
-    source = '''
+    source = """
     def request_transcript_export(servers, user, server_id, cid):
         permissions = servers.get_permissions(user, server_id, cid) or {}
         if not permissions.get("messages.export_transcript"):
@@ -1241,7 +1237,7 @@ def test_selftest_dict_gate_flags_server_perm_with_channel_scope():
         if not permissions["administrator"]:
             return None
         return "exported"
-    '''
+    """
     findings, stats = _analyze_source(source, _NOVEL_PATH)
     gate_findings = [f for f in findings if f.call == "get_permissions"]
     assert stats.dict_gates == 2
@@ -1257,11 +1253,11 @@ def test_selftest_dict_gate_flags_server_perm_with_channel_scope():
 
 def test_selftest_dict_gate_direct_subscript_and_get_are_flagged():
     """Both direct gate forms are recognised, not just the assigned-local form."""
-    source = '''
+    source = """
     def gate(servers, user, server_id, cid):
         assert servers.get_permissions(user, server_id, cid)["messages.export_transcript"]
         assert servers.get_permissions(user, server_id, cid).get("administrator")
-    '''
+    """
     findings, stats = _analyze_source(source, _NOVEL_PATH)
     gate_findings = [f for f in findings if f.call == "get_permissions"]
     assert stats.dict_gates == 2
@@ -1274,7 +1270,7 @@ def test_selftest_dict_gate_direct_subscript_and_get_are_flagged():
 
 def test_selftest_dict_gate_accepts_correct_scopes():
     """Correct server scope and channel scope are both accepted."""
-    source = '''
+    source = """
     def ok(servers, user, server_id, cid):
         server_perms = servers.get_permissions(user, server_id)
         assert server_perms["messages.export_transcript"]
@@ -1282,7 +1278,7 @@ def test_selftest_dict_gate_accepts_correct_scopes():
         channel_perms = servers.get_permissions(user, server_id, cid) or {}
         assert channel_perms["messages.send"]
         assert channel_perms.get("messages.bypass_slowmode")
-    '''
+    """
     findings, stats = _analyze_source(source, _NOVEL_PATH)
     assert stats.dict_gates == 4
     assert [f for f in findings if f.call == "get_permissions"] == []
@@ -1296,13 +1292,13 @@ def test_selftest_dict_gate_allowlist_is_precise_and_non_vacuous():
         assert perm in EXPECTED_CHANNEL_SCOPED or perm.startswith("voice.")
         assert isinstance(reason, str) and len(reason.strip()) >= 30
 
-    source = '''
+    source = """
     def join(servers, user, server_id, cid):
         perms = servers.get_permissions(user, server_id, cid) or {}
         assert perms.get("voice.connect")          # allowlisted voice perm
         assert perms["messages.send"]              # catalog channel-scoped
         assert not perms.get("messages.export_transcript")  # real finding
-    '''
+    """
     findings, _ = _analyze_source(source, _NOVEL_PATH)
     gate_findings = [f for f in findings if f.call == "get_permissions"]
     assert len(gate_findings) == 1, "only the unallowlisted server perm is flagged"

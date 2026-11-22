@@ -22,9 +22,7 @@ pytestmark = pytest.mark.unit
 
 _WORKBOOK_ID = 777
 _SHEET_ID = 11
-_PROTECTED = [
-    {"row_start": 0, "row_end": 10, "column_start": 0, "column_end": 10}
-]
+_PROTECTED = [{"row_start": 0, "row_end": 10, "column_start": 0, "column_end": 10}]
 
 
 class _DB:

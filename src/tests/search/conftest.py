@@ -8,6 +8,21 @@ import pytest
 import uuid
 
 
+@pytest.fixture(autouse=True)
+def _fresh_search_rate_budget():
+    """Give every search test its own rate-limit budget.
+
+    The per-user search budget is a process-wide atomic counter, so a test that
+    exhausts it for a user id would otherwise fail the next test that searches
+    as the same id.
+    """
+    from src.core.database.cache.rate_limit import reset_rate_limit_prefix
+
+    reset_rate_limit_prefix("search:per_user:")
+    yield
+    reset_rate_limit_prefix("search:per_user:")
+
+
 @pytest.fixture
 def db_and_modules(modules):
     """Legacy fixture for backward compatibility."""

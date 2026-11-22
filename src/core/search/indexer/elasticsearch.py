@@ -151,6 +151,11 @@ class ElasticsearchIndexer(BaseIndexer):
                 )
         else:
             return self._http_client.request(method, path, body)
+        # Unreachable: every branch above returns or raises. The terminal raise
+        # states that to the type checker instead of leaving an implicit None.
+        raise SearchBackendError(
+            "Elasticsearch request made no attempt", backend="elasticsearch"
+        )
 
     def _create_message_index(self):
         """Create message index with mappings."""
@@ -312,10 +317,10 @@ class ElasticsearchIndexer(BaseIndexer):
                 )
 
             bulk_data = "\n".join(bulk_body) + "\n"
-            import urllib.request
 
             url = self._validate_http_url(f"{self._hosts[0]}/_bulk")
 
+            result: Dict[str, Any] = {}
             with pinned_urlopen(
                 url,
                 timeout=60,

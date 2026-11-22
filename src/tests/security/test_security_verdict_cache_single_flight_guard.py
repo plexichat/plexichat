@@ -70,9 +70,7 @@ SINGLE_FLIGHT_REQUIRED: dict[tuple[str, str], str] = {
 # Verdict namespaces by cache-key prefix. A cache in one of these namespaces is
 # verdict-feeding even if its (path, name) is not individually pinned above, so
 # a new mirror of a known verdict cannot slip through unclassified.
-_VERDICT_PREFIXES = frozenset(
-    {"has_perm", "token_verify", "access_token_required"}
-)
+_VERDICT_PREFIXES = frozenset({"has_perm", "token_verify", "access_token_required"})
 
 # Modules that feed security verdicts. Any @cached added here is treated as
 # verdict-feeding by default (fails closed). Kept as exact files or directory
@@ -259,9 +257,7 @@ def _single_flight_of(deco) -> bool:
         return False
     for kw in deco.keywords:
         if kw.arg == "single_flight":
-            return (
-                isinstance(kw.value, ast.Constant) and kw.value.value is True
-            )
+            return isinstance(kw.value, ast.Constant) and kw.value.value is True
     return False
 
 
@@ -396,7 +392,9 @@ def test_synthetic_missing_single_flight_verdict_is_flagged() -> None:
         )
     ]
     found = discover(synthetic)
-    cache = found[("src/core/servers/handlers/roles/permissions.py", "_compute_has_permission")]
+    cache = found[
+        ("src/core/servers/handlers/roles/permissions.py", "_compute_has_permission")
+    ]
     assert is_verdict_feeding(cache)
     assert cache.single_flight is False
     assert is_unprotected_verdict(cache) is True
@@ -433,7 +431,9 @@ def test_synthetic_new_verdict_cache_in_guarded_module_fails_closed() -> None:
         )
     ]
     found = discover(new_cache)
-    cache = found[("src/core/auth/managers/session/verification.py", "_verify_new_credential")]
+    cache = found[
+        ("src/core/auth/managers/session/verification.py", "_verify_new_credential")
+    ]
     assert is_verdict_feeding(cache)  # via _VERDICT_DIRS, not name/prefix
     assert is_unprotected_verdict(cache) is True
 
@@ -513,7 +513,9 @@ def test_known_verdict_caches_are_present_and_single_flight(committed) -> None:
     """Every pinned verdict fix is live at HEAD with single_flight=True."""
     for key, why in SINGLE_FLIGHT_REQUIRED.items():
         cache = committed.get(key)
-        assert cache is not None, f"verdict cache {key} missing from committed tree: {why}"
+        assert cache is not None, (
+            f"verdict cache {key} missing from committed tree: {why}"
+        )
         assert cache.single_flight is True, (
             f"{key}: single_flight=True missing from committed blob "
             f"{cache.path}:{cache.lineno} ({why})"
@@ -532,7 +534,9 @@ def test_no_unprotected_verdict_cache_in_committed_tree(committed) -> None:
     assert not wrong, (
         "security verdict caches without single_flight and without a documented "
         "allowlist entry:\n  "
-        + "\n  ".join(f"{c.path}:{c.lineno} {c.name} (prefix={c.prefix!r})" for c in wrong)
+        + "\n  ".join(
+            f"{c.path}:{c.lineno} {c.name} (prefix={c.prefix!r})" for c in wrong
+        )
     )
 
 

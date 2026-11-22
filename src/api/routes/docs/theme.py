@@ -18,6 +18,10 @@ def build_brand_styles(conf: DocsConfig) -> str:
             --method-badge-ink: var(--text);
             --accent: #6366f1;
             --accent-hover: #4f46e5;
+            /* Ink for controls filled with --accent (active nav link, surface
+               badge, buttons). Swagger UI's own badge ink is handled
+               separately by --method-badge-ink. */
+            --accent-ink: #ffffff;
             --border: #e4e4e7;
             --border-light: #f4f4f5;
             --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
@@ -49,6 +53,10 @@ def build_brand_styles(conf: DocsConfig) -> str:
             --method-badge-ink: var(--code-bg);
             --accent: #818cf8;
             --accent-hover: #6366f1;
+            /* White ink on the light #818cf8 accent is only 2.98:1 -- below
+               the 4.5:1 WCAG AA minimum. Reuse the near-black page bg so the
+               filled controls stay legible in dark mode (6.42:1). */
+            --accent-ink: var(--bg);
             --border: #1f2937;
             --border-light: #1f2937;
             --code-bg: #000000;
@@ -79,7 +87,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         }
         .dark-mode-toggle:hover {
             background: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
             border-color: var(--accent);
         }
 
@@ -107,6 +115,28 @@ def build_brand_styles(conf: DocsConfig) -> str:
         textarea:focus-visible {
             outline: 2px solid var(--accent);
             outline-offset: 2px;
+        }
+
+        /* Keyboard skip link: the docs sidebar carries 100+ links before the
+           main content, so keyboard users need a way to bypass it on every
+           page load. Off-screen until focused, then pinned top-left above the
+           layout. Mirrors the app shell's .skip-link pattern. */
+        .skip-link {
+            position: fixed;
+            top: var(--spacing-md);
+            left: var(--spacing-md);
+            z-index: 10000;
+            padding: 8px 14px;
+            border-radius: var(--radius-md);
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--accent);
+            transform: translateY(-200%);
+        }
+
+        .skip-link:focus,
+        .skip-link:focus-visible {
+            transform: translateY(0);
         }
 
         .docs-layout {
@@ -221,13 +251,13 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .nav-list a:hover {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
         }
 
         .nav-list a.active {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
             font-weight: 500;
         }
 
@@ -255,7 +285,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .surface-badge {
             background: var(--accent);
             border-radius: var(--radius-lg);
-            color: #fff;
+            color: var(--accent-ink);
             display: inline-flex;
             font-size: 0.75rem;
             font-weight: 600;
@@ -304,7 +334,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .surface-link.active {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
         }
 
         .content-container {
@@ -420,7 +450,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .copy-btn:hover {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
         }
 
         .table-wrapper {
@@ -503,7 +533,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .footer-runtime span.accent {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
         }
 
         .related-links {
@@ -542,7 +572,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .related-link:hover {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
         }
 
         /* OpenAPI overrides */
@@ -669,7 +699,7 @@ def build_brand_styles(conf: DocsConfig) -> str:
         .plexi-swagger-page .swagger-ui .btn.execute {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--accent-ink);
         }
 
         .plexi-swagger-page .swagger-ui .btn.authorize:hover,

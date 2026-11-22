@@ -31,6 +31,7 @@ class _NoBackingChannel:
 class _WiredAliasNoGrant:
     def get_channel_by_conversation(self, conversation_id):
         return {"id": CHANNEL}
+
     # no get_channel / channel_exists -> cannot prove the view grant
 
 

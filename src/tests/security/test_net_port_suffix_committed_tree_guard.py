@@ -41,8 +41,8 @@ PORT_SUFFIX_STRIP_MARKER = (
     '                        host = host[1 : host.index("]")]\n'
     '                    elif host.count(":") == 1:\n'
     '                        host = host.rsplit(":", 1)[0]\n'
-    '                    try:\n'
-    '                        ipaddress.ip_address(host)'
+    "                    try:\n"
+    "                        ipaddress.ip_address(host)"
 )
 
 

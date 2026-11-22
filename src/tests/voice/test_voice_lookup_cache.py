@@ -151,9 +151,10 @@ def test_channel_and_settings_reads_are_cached():
     assert channel["name"] == "chan"
     assert settings["user_limit"] == 12
     assert len([c for c in db.fetch_one_calls if "FROM srv_channels" in c[0]]) == 1
-    assert len(
-        [c for c in db.fetch_one_calls if "FROM voice_channel_settings" in c[0]]
-    ) == 1
+    assert (
+        len([c for c in db.fetch_one_calls if "FROM voice_channel_settings" in c[0]])
+        == 1
+    )
 
 
 # --- invalidation ----------------------------------------------------------

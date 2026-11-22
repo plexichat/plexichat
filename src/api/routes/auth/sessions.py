@@ -388,9 +388,7 @@ async def revoke_all_sessions(
             # With except_current plus a real current session the surviving
             # socket cannot be distinguished (connections record only a gateway
             # session id, not the auth-session id), so do not blanket-close it.
-            close_user_gateway_connections(
-                current_user.user_id, "All sessions revoked"
-            )
+            close_user_gateway_connections(current_user.user_id, "All sessions revoked")
             # The current session was revoked — drop the browser cookie too.
             clear_session_cookie(response)
         return RevokeAllSessionsResponse(success=True, revoked_count=revoked)

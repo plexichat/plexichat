@@ -34,6 +34,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.security]
 USER = 42
 MESSAGE = 10
 CONV = 123
+CHANNEL = 456
 
 
 class _Msg:

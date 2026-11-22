@@ -109,9 +109,7 @@ def test_ticket_from_bound_session_rejected_without_context(
         auth_manager.verify_token(ticket, ip_address=IP)
 
 
-def test_ticket_for_unbound_session_fails_closed(
-    auth_manager, test_user, monkeypatch
-):
+def test_ticket_for_unbound_session_fails_closed(auth_manager, test_user, monkeypatch):
     _enable_binding(auth_manager, monkeypatch)
     # Login with no recorded IP/UA -> a session row with NULL binding indexes.
     result = auth_manager.login(test_user.username, "TestPass123!")
@@ -132,6 +130,4 @@ def test_ticket_canonicalized_spelling_change_is_denied(
     _, ticket = _mint_ticket(auth_manager, test_user)
 
     with pytest.raises(TokenInvalidError):
-        auth_manager.verify_token(
-            ticket, ip_address="::ffff:" + IP, user_agent=UA
-        )
+        auth_manager.verify_token(ticket, ip_address="::ffff:" + IP, user_agent=UA)

@@ -75,7 +75,9 @@ def test_bot_token_loses_delegated_scope_when_owner_is_demoted(db, auth_manager)
     _demote_owner(db, owner.id)
     # The demoted owner can no longer ban, and the ceiling must follow through
     # to the delegated credential.
-    owner_row = db.fetch_one("SELECT permissions FROM auth_users WHERE id = ?", (owner.id,))
+    owner_row = db.fetch_one(
+        "SELECT permissions FROM auth_users WHERE id = ?", (owner.id,)
+    )
     assert not has_permission(json.loads(owner_row["permissions"]), "moderation.ban")
 
     after = auth_manager.verify_token(bot.token)

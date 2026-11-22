@@ -110,9 +110,7 @@ class TestReportRouteWiring:
 
         monkeypatch.setattr("src.core.media.report_hash", fake_report_hash)
 
-        response = asyncio.run(
-            media_routes.report_content_hash(_body(), None, _user())
-        )
+        response = asyncio.run(media_routes.report_content_hash(_body(), None, _user()))
         assert response.report_id == "777"
         assert response.message == "Report already submitted"
         assert created == []
@@ -132,9 +130,7 @@ class TestReportRouteWiring:
 
         monkeypatch.setattr("src.core.media.report_hash", fake_report_hash)
 
-        response = asyncio.run(
-            media_routes.report_content_hash(_body(), None, _user())
-        )
+        response = asyncio.run(media_routes.report_content_hash(_body(), None, _user()))
         assert response.report_id == "123"
         assert len(created) == 1
         assert created[0]["reporter_id"] == 42

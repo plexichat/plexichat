@@ -30,6 +30,7 @@ from src.core.servers.exceptions import (
 
 
 from src.api.routes.messages.helpers import require_snowflake
+
 # Reuse the canonical live channel-view gate already enforced by the
 # get-message-by-id route. Without it, conversation participation (granted to
 # every server member) is incorrectly treated as permission to delete, so a

@@ -40,10 +40,10 @@ _LOGGING_PATH = "src/api/middleware/logging.py"
 # line.  Pin the multi-line call, not just the helper name, so a stale copy that
 # keeps the import but restores the raw path is caught by name.
 _GET_CURRENT_USER_REDACTION = (
-    '        logger.debug(\n'
+    "        logger.debug(\n"
     '            f"get_current_user: No user in state for path "\n'
     '            f"{_safe_log_path(request.scope, request.url.path)}. Error: {error}"\n'
-    '        )'
+    "        )"
 )
 
 # Residual fix: the pre-routing middleware now computes a single safe path and
@@ -51,21 +51,21 @@ _GET_CURRENT_USER_REDACTION = (
 # keeps the helper but reverts the call sites is caught.
 _MIDDLEWARE_SAFE_PATH = (
     '            path = scope.get("path", "")\n'
-    '            # SECURITY: AuthenticationMiddleware runs before routing, so\n'
+    "            # SECURITY: AuthenticationMiddleware runs before routing, so\n"
     '            # scope["route"] is absent here. _safe_log_path still fails closed\n'
-    '            # for credential-bearing paths (webhook token, invite code, push\n'
-    '            # token) by masking the secret segment. Use this for ALL path\n'
-    '            # logs below; never interpolate the raw resolved ``path``.\n'
-    '            log_path = _safe_log_path(scope, path)'
+    "            # for credential-bearing paths (webhook token, invite code, push\n"
+    "            # token) by masking the secret segment. Use this for ALL path\n"
+    "            # logs below; never interpolate the raw resolved ``path``.\n"
+    "            log_path = _safe_log_path(scope, path)"
 )
 
 # The exact site that leaked in the probe.  Pinning it independently catches a
 # partial revert that fixes only get_current_user but leaves this DEBUG line
 # writing the resolved token path.
 _MIDDLEWARE_FAILED_AUTH_REDACTION = (
-    '                                logger.debug(\n'
+    "                                logger.debug(\n"
     '                                    f"Authentication failed for path {log_path}: {e}"\n'
-    '                                )'
+    "                                )"
 )
 
 # _safe_log_path's no-route-metadata branch must know about push tokens,

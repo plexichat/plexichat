@@ -73,9 +73,7 @@ class _CountingDB:
         return self.conn.execute(sql, params)
 
     def execute_many(self, sql, params_list, auto_commit=True):
-        self.statements.append(
-            ("execute_many", sql, [tuple(p) for p in params_list])
-        )
+        self.statements.append(("execute_many", sql, [tuple(p) for p in params_list]))
         return self.conn.executemany(sql, params_list)
 
     # -- media-reference normalization reads (all empty in this test) -------
@@ -122,7 +120,9 @@ def _legacy_per_row(db, rows):
     try:
         for att in rows:
             normalized = dict(att)
-            normalized["metadata"] = AttachmentRepository(db)._reject_locked_media_reference(
+            normalized["metadata"] = AttachmentRepository(
+                db
+            )._reject_locked_media_reference(
                 att.get("metadata"),
                 att.get("checksum"),
                 att.get("filename"),
@@ -140,7 +140,9 @@ def _legacy_per_row(db, rows):
                     normalized["url"],
                     normalized.get("url_encrypted"),
                     normalized["created_at"],
-                    json.dumps(normalized.get("metadata")) if normalized.get("metadata") else None,
+                    json.dumps(normalized.get("metadata"))
+                    if normalized.get("metadata")
+                    else None,
                     normalized.get("checksum"),
                 ),
                 auto_commit=False,
@@ -169,7 +171,9 @@ def test_create_bulk_query_count_is_bounded_not_per_row():
     chunks = (n + _MAX_BULK_CHUNK - 1) // _MAX_BULK_CHUNK
     assert after == chunks
     assert after <= 4
-    assert after * 20 < before, f"expected order-of-magnitude reduction: {before} -> {after}"
+    assert after * 20 < before, (
+        f"expected order-of-magnitude reduction: {before} -> {after}"
+    )
 
     for kind, sql, params in after_db.statements:
         assert kind == "execute_many"

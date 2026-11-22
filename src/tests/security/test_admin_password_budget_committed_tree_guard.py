@@ -78,13 +78,17 @@ def test_admin_password_budget_is_in_committed_tree(head_sha: str) -> None:
 @pytest.mark.security
 def test_budget_pin_is_non_vacuous() -> None:
     """A stale blob with the budget erased must be rejected by the evaluator."""
-    stale_mixin = "        if not encryption.verify_password(password, password_hash):\n"
+    stale_mixin = (
+        "        if not encryption.verify_password(password, password_hash):\n"
+    )
     assert not _mixin_has_budget(stale_mixin)
-    fixed_mixin = stale_mixin.replace(
-        "        if not encryption.verify_password",
-        f"        {_CHECK_CALL}\n"
-        "        if not encryption.verify_password",
-    ) + _RESET_CALL
+    fixed_mixin = (
+        stale_mixin.replace(
+            "        if not encryption.verify_password",
+            f"        {_CHECK_CALL}\n        if not encryption.verify_password",
+        )
+        + _RESET_CALL
+    )
     assert _mixin_has_budget(fixed_mixin), "evaluator must accept the fixed form"
 
     stale_helpers = (
@@ -95,8 +99,13 @@ def test_budget_pin_is_non_vacuous() -> None:
     assert not _helpers_has_budget(stale_helpers)
     fixed_helpers = stale_helpers.replace(
         'f"admin_login:{admin_id}"', _ACCOUNT_KEY
-    ).replace("    return bool(allowed)", f"    except Exception:\n        {_FAIL_CLOSED}\n    return bool(allowed)")
-    assert _helpers_has_budget(fixed_helpers), "evaluator must accept the fail-closed form"
+    ).replace(
+        "    return bool(allowed)",
+        f"    except Exception:\n        {_FAIL_CLOSED}\n    return bool(allowed)",
+    )
+    assert _helpers_has_budget(fixed_helpers), (
+        "evaluator must accept the fail-closed form"
+    )
 
 
 @pytest.mark.security

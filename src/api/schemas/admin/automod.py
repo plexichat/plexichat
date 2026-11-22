@@ -31,7 +31,9 @@ _AI_BACKEND_URL_FIELDS = {
 _AI_BACKEND_NAMES = frozenset(_AI_BACKEND_URL_FIELDS)
 
 
-def _validate_ai_backend_urls(value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _validate_ai_backend_urls(
+    value: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     """Reject unsafe outbound URLs in an AutoMod AI config update.
 
     Every URL the "custom" and "openai" adapters fetch goes through the shared
@@ -65,11 +67,10 @@ def _validate_ai_backend_urls(value: Optional[Dict[str, Any]]) -> Optional[Dict[
         try:
             parse_outbound_url(url, f"ai.{backend_name}.{field_name}")
         except (OutboundUrlRejected, ValueError) as exc:
-            raise ValueError(
-                f"Invalid or unsafe {backend_name} {field_name}"
-            ) from exc
+            raise ValueError(f"Invalid or unsafe {backend_name} {field_name}") from exc
 
     return value
+
 
 #: Rule/action kinds the automod engine knows about (``RuleType`` / ``ActionType``).
 #: The route already converts through those enums; declaring the values here

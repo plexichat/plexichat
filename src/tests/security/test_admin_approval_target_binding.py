@@ -105,7 +105,7 @@ class _ApprovalDB:
         assert "update admin_approvals" in self._norm(sql)
         p = tuple(params or ())
         self.executed.append((self._norm(sql), p))
-        now_ms, row_id = p[0], p[1]
+        row_id = p[1]
         check_now = p[2] if len(p) > 2 else None
         target_id = p[3] if len(p) > 3 else None
         actor_id = p[5] if len(p) > 5 else None

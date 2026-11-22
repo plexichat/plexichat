@@ -20,6 +20,7 @@ import pytest
 
 from src.core.auth.exceptions import TokenExpiredError
 from src.core.auth.managers.session.lifecycle import LifecycleMixin
+
 # Importing the active verifier registers TokenInfo for cache reconstruction,
 # so a hit yields a real TokenInfo (with .expires_at) rather than a plain dict.
 from src.core.auth.managers.session.verification import VerificationMixin  # noqa: F401
@@ -78,9 +79,7 @@ def test_mirror_denies_cached_but_expired_verdict():
             "src.core.auth.managers.session.lifecycle.parse_token",
             return_value=_PARSED,
         ),
-        patch.object(
-            LifecycleMixin, "_verify_session_token", side_effect=fake_verify
-        ),
+        patch.object(LifecycleMixin, "_verify_session_token", side_effect=fake_verify),
     ):
         # Warm the mirror's cache with a still-valid verdict.
         first = LifecycleMixin.verify_token(host, _TOKEN)
@@ -116,9 +115,7 @@ def test_mirror_cache_still_serves_unexpired_verdict():
             "src.core.auth.managers.session.lifecycle.parse_token",
             return_value=_PARSED,
         ),
-        patch.object(
-            LifecycleMixin, "_verify_session_token", side_effect=fake_verify
-        ),
+        patch.object(LifecycleMixin, "_verify_session_token", side_effect=fake_verify),
     ):
         assert LifecycleMixin.verify_token(host, _TOKEN).valid is True
         assert LifecycleMixin.verify_token(host, _TOKEN).valid is True

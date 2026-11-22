@@ -21,9 +21,7 @@ from src.core.servers.exceptions import RoleHierarchyError
 def test_assign_role_denies_when_role_position_rises_in_gap(
     server_with_members, monkeypatch
 ):
-    server, owner, admin, member, _outsider, _admin_role, servers = (
-        server_with_members
-    )
+    server, owner, admin, member, _outsider, _admin_role, servers = server_with_members
 
     # The actor holds ``members.manage_roles`` via its assigned role and can
     # initially outrank the target role; the grantee sits below both.
@@ -36,8 +34,7 @@ def test_assign_role_denies_when_role_position_rises_in_gap(
     servers.move_role(owner.id, target_role.id, 0)
 
     actor_max = max(
-        int(r["position"])
-        for r in servers._get_member_role_rows(server.id, admin.id)
+        int(r["position"]) for r in servers._get_member_role_rows(server.id, admin.id)
     )
     assert actor_max > 0
     assert actor_max > 0  # the pre-lock rank check must initially pass

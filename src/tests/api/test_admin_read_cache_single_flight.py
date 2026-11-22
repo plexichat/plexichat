@@ -146,6 +146,11 @@ def test_failed_render_is_shared_but_not_cached():
 
     # A failed compute is not cached: the next call retries the render.
     read_cache.get_or_render("sf_probe", ("boom",), lambda: b"recovered")
-    assert read_cache.get_or_render(
-        "sf_probe", ("boom",), lambda: (_ for _ in ()).throw(AssertionError("cached"))
-    ) == b"recovered"
+    assert (
+        read_cache.get_or_render(
+            "sf_probe",
+            ("boom",),
+            lambda: (_ for _ in ()).throw(AssertionError("cached")),
+        )
+        == b"recovered"
+    )

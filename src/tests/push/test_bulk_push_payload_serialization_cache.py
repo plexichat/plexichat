@@ -160,7 +160,7 @@ class TestBoundsNotWeakened:
         assert stats["misses"] > stats["max_entries"]
 
     def test_canonical_json_bytes_match_direct_serialization(self):
-        for value in ("123", 9007199254740993, None, True, 1.5, "a\"b\\c\n"):
+        for value in ("123", 9007199254740993, None, True, 1.5, 'a"b\\c\n'):
             expected = len(
                 json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
             )

@@ -26,7 +26,6 @@ import asyncio
 import threading
 import types
 
-import pytest
 
 from src.api.routes.suite.stash import grants
 from src.api.schemas.stash import StashDownloadRedeemRequest
@@ -96,7 +95,9 @@ class _CountingMedia:
 def _run_redeem(monkeypatch, manager, media):
     # Isolate the redemption from the online-guess budget: this test is about
     # the claim/sign ordering, not the rate limiter.
-    monkeypatch.setattr(grants, "_enforce_download_ticket_redeem_guess_limit", lambda *a, **k: None)
+    monkeypatch.setattr(
+        grants, "_enforce_download_ticket_redeem_guess_limit", lambda *a, **k: None
+    )
     monkeypatch.setattr(grants, "_manager", lambda: manager)
     monkeypatch.setattr(grants.api, "get_media", lambda: media)
     body = StashDownloadRedeemRequest(ticket=TICKET)

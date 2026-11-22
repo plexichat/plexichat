@@ -272,8 +272,7 @@ def test_scan_tree_reads_and_parses_each_file_once(monkeypatch):
         f"{len(probe)} files"
     )
     assert len(read_calls) == len(probe), (
-        f"each file must be read once: {len(read_calls)} reads for "
-        f"{len(probe)} files"
+        f"each file must be read once: {len(read_calls)} reads for {len(probe)} files"
     )
     # Coverage preserved: the URL-bearing probe is still scanned and the
     # non-URL probes are still skipped.

@@ -113,7 +113,9 @@ def test_logout_all_closes_live_gateway_socket(monkeypatch, auth_manager, test_u
     assert len(conn.websocket.closed) == 1
 
 
-def test_password_change_closes_live_gateway_socket(monkeypatch, auth_manager, test_user):
+def test_password_change_closes_live_gateway_socket(
+    monkeypatch, auth_manager, test_user
+):
     uid = int(test_user.id)
     conn = _FakeConnection(uid)
     _install_dispatcher(monkeypatch, conn)

@@ -451,7 +451,9 @@ def _assert_site(site: IpKeySite, source: str) -> None:
     fn = _find_function(ast.parse(source), site.func)
     body = ast.unparse(fn)
     for marker in site.must_contain:
-        assert marker in body, f"{site.label}: marker {marker!r} missing from {site.func}"
+        assert marker in body, (
+            f"{site.label}: marker {marker!r} missing from {site.func}"
+        )
     if site.mode == "canon":
         assert any(marker in body for marker in CANON_MARKERS), (
             f"{site.label}: {site.func} no longer canonicalizes its IP key "
@@ -555,9 +557,7 @@ def test_self_test_raw_fast_blind_index_ip_key_is_flagged():
                 return self.crypto.fast_blind_index(ip, "ip_address")
         """
     )
-    findings = _raw_ip_key_candidates(
-        ast.parse(source), path="src/api/_synthetic.py"
-    )
+    findings = _raw_ip_key_candidates(ast.parse(source), path="src/api/_synthetic.py")
     assert len(findings) == 1, findings
     assert "fast_blind_index" in findings[0].call
     # Also flagged with a novel variable name when the domain label gives it away.
@@ -568,9 +568,9 @@ def test_self_test_raw_fast_blind_index_ip_key_is_flagged():
                 return self.crypto.fast_blind_index(source_addr, "ip_address")
         """
     )
-    assert len(
-        _raw_ip_key_candidates(ast.parse(novel), path="src/api/_synthetic.py")
-    ) == 1
+    assert (
+        len(_raw_ip_key_candidates(ast.parse(novel), path="src/api/_synthetic.py")) == 1
+    )
 
 
 def test_self_test_canonicalized_forms_are_accepted():
@@ -598,9 +598,7 @@ def test_self_test_canonicalized_forms_are_accepted():
                 return self.crypto.blind_index(canonical, "ip_address")
         """
     )
-    assert (
-        _raw_ip_key_candidates(ast.parse(source), path="src/api/_synthetic.py") == []
-    )
+    assert _raw_ip_key_candidates(ast.parse(source), path="src/api/_synthetic.py") == []
 
 
 def test_self_test_registered_exceptions_do_not_hide_a_new_raw_ip_key():
@@ -634,14 +632,10 @@ def test_self_test_documented_exception_suppresses_only_its_own_site():
     tree = ast.parse(source)
     path = "src/api/_synthetic.py"
     assert len(_raw_ip_key_candidates(tree, path=path)) == 1
-    allow = (
-        RawIpException("synthetic", path, "build_key", "raw is intentional here"),
-    )
+    allow = (RawIpException("synthetic", path, "build_key", "raw is intentional here"),)
     assert _raw_ip_key_candidates(tree, path=path, exceptions=allow) == []
     # A different function name under the same path is NOT suppressed.
-    other = (
-        RawIpException("synthetic", path, "some_other_func", "not this one"),
-    )
+    other = (RawIpException("synthetic", path, "some_other_func", "not this one"),)
     assert len(_raw_ip_key_candidates(tree, path=path, exceptions=other)) == 1
 
 
@@ -703,9 +697,7 @@ def test_scan_is_not_vacuous(commit_sha):
     # still contain their canonicalization markers in HEAD.
     reader = _make_blob_reader(commit_sha)
     assert "canonicalize_ip_address" in reader("src/core/auth/managers/base.py")
-    assert "ipaddress.ip_address" in reader(
-        "src/core/ratelimit/manager/principals.py"
-    )
+    assert "ipaddress.ip_address" in reader("src/core/ratelimit/manager/principals.py")
 
 
 def test_documented_ip_key_sites_still_canonicalized_in_committed_tree(commit_sha):
@@ -744,5 +736,7 @@ def test_no_new_raw_ip_blind_index_key_in_committed_tree(commit_sha):
     assert not offenders, (
         "New raw blind-index IP key(s) in production (canonicalize_ip_address "
         "or an ipaddress.ip_address normalizer is required before hashing):\n  "
-        + "\n  ".join(str(o) for o in sorted(offenders, key=lambda o: (o.path, o.lineno)))
+        + "\n  ".join(
+            str(o) for o in sorted(offenders, key=lambda o: (o.path, o.lineno))
+        )
     )

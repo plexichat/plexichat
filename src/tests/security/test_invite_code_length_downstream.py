@@ -88,9 +88,7 @@ def test_fresh_22_char_invite_code_is_detected_in_chat(template):
     """A live 22-char invite must not evade the invite-link rule."""
     code = _fresh_invite_code()
     rule = InviteLinkRule(_rule({"block_all": True}))
-    match = rule.check(
-        template.format(code=code), 1, 1, {"known_invite_codes": [code]}
-    )
+    match = rule.check(template.format(code=code), 1, 1, {"known_invite_codes": [code]})
     assert match.matched, f"fresh invite code was not detected in {template!r}"
     assert code in match.match_details["invite_codes"]
 
@@ -108,9 +106,7 @@ def test_allowlisted_fresh_invite_code_is_not_blocked():
     """Broadening candidate extraction must not block allowlisted codes."""
     code = _fresh_invite_code()
     rule = InviteLinkRule(_rule({"block_all": True, "allowed_codes": [code]}))
-    match = rule.check(
-        f"discord.gg/{code}", 1, 1, {"known_invite_codes": [code]}
-    )
+    match = rule.check(f"discord.gg/{code}", 1, 1, {"known_invite_codes": [code]})
     assert not match.matched
 
 

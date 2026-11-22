@@ -111,9 +111,7 @@ class TestManualActionHierarchy:
         server, owner = test_server
         senior = user_pool.get_user()
         modules.servers.add_member(server.id, senior.id)
-        modules.servers.create_role(
-            owner.id, server.id, name="Senior", permissions={}
-        )
+        modules.servers.create_role(owner.id, server.id, name="Senior", permissions={})
 
         assert (
             automod_manager.trigger_action(

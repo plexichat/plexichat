@@ -148,7 +148,9 @@ def test_bot_token_cannot_read_owner_export_status(owner_export):
         ),
     ],
 )
-def test_bot_token_rejected_before_any_export_service_access(monkeypatch, handler, kwargs):
+def test_bot_token_rejected_before_any_export_service_access(
+    monkeypatch, handler, kwargs
+):
     def tripwire(*args, **kwargs):
         raise AssertionError("export service was accessed for a bot credential")
 

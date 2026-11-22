@@ -15,16 +15,12 @@ Lightweight fake hosts call the real mixins directly, so these run as fast unit
 tests without the full application bootstrap.
 """
 
-import time
-
 import pytest
 
 from src.core.search.manager.message_search import MessageSearchMixin
 from src.core.search.manager.result_cache import (
     CACHE_MISS,
     SearchResultCache,
-    clear_result_caches,
-    get_result_cache,
     make_key,
 )
 from src.core.search.manager.server_search import ServerSearchMixin
@@ -39,8 +35,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.search]
 
 def test_cache_hit_miss_and_deep_copy_isolation():
     cache = SearchResultCache(ttl_seconds=10, max_entries=8)
-    value = [MessageSearchResult(id=1, message_id=1, content="needle",
-                                 reactions=["a"])]
+    value = [MessageSearchResult(id=1, message_id=1, content="needle", reactions=["a"])]
 
     assert cache.get("k") is CACHE_MISS
     cache.put("k", value)
@@ -90,8 +85,8 @@ def test_make_key_encodes_authz_scope_and_normalizes_sequences():
     a = make_key("v1", (7, {3, 1, 2}), limit=25, query="x")
     b = make_key("v1", (7, (1, 2, 3)), query="x", limit=25)
     other_user = make_key("v1", (8, (1, 2, 3)), query="x", limit=25)
-    assert a == b            # same scope/params regardless of order/type
-    assert a != other_user   # different subject -> different key
+    assert a == b  # same scope/params regardless of order/type
+    assert a != other_user  # different subject -> different key
 
 
 # --- fake mixin hosts --------------------------------------------------------
@@ -108,8 +103,9 @@ class _FakeMessageIndexer:
         # Echo the caller's readable set into the result so a leak is visible.
         conv = conversation_ids[0] if conversation_ids else 0
         return [
-            MessageSearchResult(id=conv, message_id=conv, content="needle",
-                                conversation_id=conv)
+            MessageSearchResult(
+                id=conv, message_id=conv, content="needle", conversation_id=conv
+            )
         ]
 
 
@@ -126,8 +122,9 @@ class _MessageHost(MessageSearchMixin):
     def _check_rate_limit(self, user_id):
         pass
 
-    def _get_accessible_conversations(self, user_id, conversation_id=None,
-                                      server_id=None, channel_id=None):
+    def _get_accessible_conversations(
+        self, user_id, conversation_id=None, server_id=None, channel_id=None
+    ):
         return list(self._accessible_by_user.get(user_id, ()))
 
     # The mixin calls self._filter_processor.apply_filters(...)

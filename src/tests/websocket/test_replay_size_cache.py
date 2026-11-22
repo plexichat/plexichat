@@ -72,9 +72,7 @@ def test_direct_mutation_backstop_still_drops_oversized_event():
     session.add_replay_event(_event(1, "ok"))
     assert session.get_replay_events(0) == [_event(1, "ok")]  # warm the cache
 
-    session.replay_events.append(
-        _event(2, "x" * (MAX_REPLAY_EVENT_BYTES + 1))
-    )
+    session.replay_events.append(_event(2, "x" * (MAX_REPLAY_EVENT_BYTES + 1)))
     session.replay_events.append(_event(3, "still-ok"))
     assert [event["s"] for event in session.get_replay_events(0)] == [1, 3]
 

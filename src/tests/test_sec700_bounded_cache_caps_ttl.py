@@ -161,7 +161,10 @@ def test_self_test_detectors_catch_uncapped_cache():
         """
     )
     good_cfg = (
-        ("DEFAULT_MAX_ENTRIES",), "DEFAULT_TTL_SECONDS", ("popitem",), ("expires_at",)
+        ("DEFAULT_MAX_ENTRIES",),
+        "DEFAULT_TTL_SECONDS",
+        ("popitem",),
+        ("expires_at",),
     )
     assert _cache_missing(good, *good_cfg) == []
     missing = _cache_missing(bad, *good_cfg)

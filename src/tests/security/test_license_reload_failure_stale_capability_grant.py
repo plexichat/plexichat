@@ -83,9 +83,12 @@ def test_failed_reload_fail_closed_at_capability_gate(isolated_state, monkeypatc
         public_key_base64=base64.b64encode(pub).decode("ascii"),
         license_path="/tmp/opencode/nonexistent-license",
     )
-    assert licensing.apply_license_from_dict(
-        _signed_license(priv, features={"artifacts_whiteboard": True})
-    )["success"] is True
+    assert (
+        licensing.apply_license_from_dict(
+            _signed_license(priv, features={"artifacts_whiteboard": True})
+        )["success"]
+        is True
+    )
 
     # Prime the capability memo under the valid, premium-granting license.
     caps.clear_capability_cache()

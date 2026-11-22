@@ -16,7 +16,6 @@ keywords past the old cap are still caught while clean text is untouched.
 
 import pytest
 
-from src.core.automod.canonicalization import MAX_CANONICAL_LENGTH
 from src.core.automod.models import (
     ActionType,
     Rule,
@@ -106,9 +105,11 @@ def test_invisible_spliced_keyword_past_cap_is_matched(separator):
 
 def test_clean_content_with_heavy_expansion_is_not_flagged():
     """Non-vacuity: removing the cap must not make clean text match."""
-    assert not _keyword_rule().check(
-        f"{_EXPANDER} all of this is legitimate prose ", 1, 1
-    ).matched
+    assert (
+        not _keyword_rule()
+        .check(f"{_EXPANDER} all of this is legitimate prose ", 1, 1)
+        .matched
+    )
     assert not _keyword_rule().check("hello world, nothing banned here", 1, 1).matched
 
 

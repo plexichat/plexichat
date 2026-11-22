@@ -108,9 +108,7 @@ def _remember(store: Dict[str, Any], key: str, entry: Any) -> None:
             store.pop(oldest, None)
 
 
-def coalesced_cache_get(
-    key: str, *, loader: Optional[Callable[[], Any]] = None
-) -> Any:
+def coalesced_cache_get(key: str, *, loader: Optional[Callable[[], Any]] = None) -> Any:
     """Return a cache value, issuing at most one backing read per key/request.
 
     ``None`` (a cache miss) is memoised too: a second lookup of the same absent

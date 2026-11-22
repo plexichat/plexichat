@@ -466,9 +466,7 @@ def _coerce_bound_id(value):
     raise ValueError("not an id")
 
 
-def require_approved_request(
-    action_type: str, target_context=None
-) -> Optional[int]:
+def require_approved_request(action_type: str, target_context=None) -> Optional[int]:
     """
     Approval gate for destructive operations.
 

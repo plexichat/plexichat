@@ -43,7 +43,7 @@ class _OtherEnum:
 class _Unresolvable:
     # A forward reference that can never resolve: get_type_hints raises, and
     # reconstruction must fail closed (leave the raw value untouched).
-    value: "NoSuchTypeInThisModule"
+    value: "NoSuchTypeInThisModule"  # noqa: F821 - deliberately unresolvable
 
 
 s.register_reconstructable_type(_Color, _Shape, _WithEnum, _OtherEnum, _Unresolvable)

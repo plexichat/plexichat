@@ -91,7 +91,7 @@ def test_concurrent_stale_reads_cannot_bypass_limit(monkeypatch):
 def test_budget_is_shared_across_independent_instances(monkeypatch):
     """Two 'workers' must draw from one budget, not one budget each."""
     limit = 2
-    store = _install_shared_store(monkeypatch)
+    _install_shared_store(monkeypatch)
     # Force the old code path (no generic cache) so an unfixed limiter falls
     # back to the per-instance dicts; the fixed path ignores this flag.
     monkeypatch.setattr(rl, "valkey_available", lambda: False, raising=False)

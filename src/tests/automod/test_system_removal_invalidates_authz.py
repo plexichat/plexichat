@@ -74,8 +74,9 @@ class TestSystemRemovalInvalidatesAuthz:
         action = RuleAction(action_type=ActionType.KICK_USER)
         # No bot_user_id -> raw-SQL system fallback is taken.
         assert (
-            executor.execute(action, _violation(server, victim),
-                             context={"__system_context__": True})
+            executor.execute(
+                action, _violation(server, victim), context={"__system_context__": True}
+            )
             is True
         )
 
@@ -97,8 +98,9 @@ class TestSystemRemovalInvalidatesAuthz:
         executor = BanUserAction(automod_manager._db, modules.servers, None, None)
         action = RuleAction(action_type=ActionType.BAN_USER)
         assert (
-            executor.execute(action, _violation(server, victim),
-                             context={"__system_context__": True})
+            executor.execute(
+                action, _violation(server, victim), context={"__system_context__": True}
+            )
             is True
         )
 

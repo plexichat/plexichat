@@ -19,7 +19,11 @@ import pytest
 
 import src.static_client.fetcher as fetcher
 from src.static_client.config import GitLabConfig
-from src.static_client.fetcher import FetchError, GitLabReleaseClient, _download_to_stream
+from src.static_client.fetcher import (
+    FetchError,
+    GitLabReleaseClient,
+    _download_to_stream,
+)
 
 API_BASE = "https://releases.example.com/api/v4"
 PUBLIC_API = API_BASE + "/projects/1/releases"

@@ -71,6 +71,7 @@ def _is_guard_call_name(name: str) -> bool:
     """
     return bool(name and GUARD_CALL_RE.fullmatch(name))
 
+
 # Mutating routes intentionally reachable without a session token.
 # (relative source file, HTTP method, raw decorator path) -> justification.
 PUBLIC_MUTATING_ROUTES = {

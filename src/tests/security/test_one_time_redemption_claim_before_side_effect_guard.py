@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import ast
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -226,11 +226,7 @@ def _find_function(tree: ast.AST, qualname: str):
             None,
         )
     owner = next(
-        (
-            n
-            for n in tree.body
-            if isinstance(n, ast.ClassDef) and n.name == parts[0]
-        ),
+        (n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == parts[0]),
         None,
     )
     if owner is None:
@@ -581,10 +577,10 @@ def test_manager_cas_evaluator_self_test() -> None:
         "        cursor = self._db.execute(\n"
         "            \"UPDATE media_upload_sessions SET status = 'redeeming' \"\n"
         "            \"WHERE id = ? AND user_id = ? AND status = 'completed' \"\n"
-        "            \"AND updated_at = ?\",\n"
+        '            "AND updated_at = ?",\n'
         "            (uid, sid),\n"
         "        )\n"
-        "        if getattr(cursor, \"rowcount\", 1) == 0:\n"
+        '        if getattr(cursor, "rowcount", 1) == 0:\n'
         "            return None\n"
         "        return session\n"
     )
@@ -600,10 +596,10 @@ def test_manager_cas_evaluator_self_test() -> None:
         "        cursor = self._db.execute(\n"
         "            \"UPDATE media_upload_sessions SET status = 'redeeming' \"\n"
         "            \"WHERE id = ? AND user_id = ? AND status = 'completed' \"\n"
-        "            \"AND updated_at = ?\",\n"
+        '            "AND updated_at = ?",\n'
         "            (uid, sid),\n"
         "        )\n"
-        "        if getattr(cursor, \"rowcount\", 1) == 0:\n"
+        '        if getattr(cursor, "rowcount", 1) == 0:\n'
         "            return None\n"
     )
     ok, detail = _evaluate_manager_cas(bad)

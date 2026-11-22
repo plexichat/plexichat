@@ -27,9 +27,9 @@ def test_moderator_cannot_grant_permissions_to_everyone(server_with_members):
     )
     servers.assign_role(owner.id, server.id, member_user.id, mod_role.id)
 
-    default_role = [
-        r for r in servers.get_roles(owner.id, server.id) if r.is_default
-    ][0]
+    default_role = [r for r in servers.get_roles(owner.id, server.id) if r.is_default][
+        0
+    ]
 
     # Before the fix this succeeded, so @everyone gained roles.manage and every
     # member with it -- a privilege escalation for the whole server.
@@ -50,9 +50,9 @@ def test_owner_can_still_grant_permissions_to_everyone(server_with_members):
         server_with_members
     )
 
-    default_role = [
-        r for r in servers.get_roles(owner.id, server.id) if r.is_default
-    ][0]
+    default_role = [r for r in servers.get_roles(owner.id, server.id) if r.is_default][
+        0
+    ]
 
     updated = servers.update_role(
         owner.id,

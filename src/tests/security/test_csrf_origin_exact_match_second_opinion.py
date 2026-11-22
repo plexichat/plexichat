@@ -79,7 +79,9 @@ FORGED_REFERERS = [
     pytest.param("https://sub.app.plexichat.com/channel/1", id="subdomain"),
     pytest.param("https://app.plexichat.com./channel/1", id="trailing-dot"),
     pytest.param("https://app.plexichat.com:8443/channel/1", id="nondefault-port"),
-    pytest.param("https://app.plexichat.com@evil.com/channel/1", id="userinfo-host-evil"),
+    pytest.param(
+        "https://app.plexichat.com@evil.com/channel/1", id="userinfo-host-evil"
+    ),
     pytest.param("https://APP.PLEXICHAT.COM/channel/1", id="case-fold"),
 ]
 
@@ -155,13 +157,16 @@ def test_cookie_state_change_route_binds_exact_origin() -> None:
             return _cookie_csrf_allowed(req)
 
     # Cross-site is hard-denied regardless of Origin.
-    assert allowed(
-        {
-            "Sec-Fetch-Site": "cross-site",
-            "X-Plexichat-Request": "1",
-            "Origin": _ALLOWED_ORIGIN,
-        }
-    ) is False
+    assert (
+        allowed(
+            {
+                "Sec-Fetch-Site": "cross-site",
+                "X-Plexichat-Request": "1",
+                "Origin": _ALLOWED_ORIGIN,
+            }
+        )
+        is False
+    )
     # same-site is not a CSRF boundary: only an EXACT allowlisted Origin passes.
     assert (
         allowed(

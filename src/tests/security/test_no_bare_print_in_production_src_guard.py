@@ -105,9 +105,7 @@ def _production_files(commit: str) -> tuple[str, ...]:
     proc = _git("ls-tree", "-r", "--name-only", commit, "--", "src")
     assert proc.returncode == 0, f"cannot list src: {proc.stderr.strip()}"
     files = tuple(
-        p
-        for p in proc.stdout.splitlines()
-        if p.endswith(".py") and not _is_excluded(p)
+        p for p in proc.stdout.splitlines() if p.endswith(".py") and not _is_excluded(p)
     )
     assert files, "no production python modules found in the committed tree"
     return files
@@ -188,7 +186,11 @@ def test_self_test_documenting_a_print_is_required_to_allow_it():
     reader = lambda path: textwrap.dedent(source)  # noqa: E731 - synthetic reader
     assert _offenders(files, reader)  # undocumented: flagged
     documented = (
-        ("src/api/middleware/_synthetic.py", "print('DBG', repr(msg))", "CLI entry point"),
+        (
+            "src/api/middleware/_synthetic.py",
+            "print('DBG', repr(msg))",
+            "CLI entry point",
+        ),
     )
     assert _offenders(files, reader, documented) == []
 

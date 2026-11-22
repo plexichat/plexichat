@@ -155,9 +155,9 @@ def _handlers_in_tree(src_name: str, tree: ast.AST) -> list[tuple[str, ast.AST]]
     aliases = _canonical_names(tree)
     handlers: list[tuple[str, ast.AST]] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_route_handler(
-            node, aliases
-        ):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ) and _is_route_handler(node, aliases):
             handlers.append((f"{src_name}::{node.name}", node))
     return handlers
 
@@ -270,7 +270,9 @@ async def plain(request: Request):
 
     # Non-vacuity at the integration boundary: the exact helper used by
     # _handlers() must inventory the aliased handlers and skip the plain one.
-    inventoried = {name.rsplit("::", 1)[-1] for name, _ in _handlers_in_tree("synthetic.py", tree)}
+    inventoried = {
+        name.rsplit("::", 1)[-1] for name, _ in _handlers_in_tree("synthetic.py", tree)
+    }
     assert {"direct", "chained", "read_only"} <= inventoried
     assert "plain" not in inventoried
 
@@ -281,7 +283,9 @@ async def plain(request: Request):
         for name, node in _handlers_in_tree("synthetic.py", tree)
         if _APPROVAL_GATES & _call_names(node)
     ]
-    flagged = [n.name for n in destructive if "require_admin_permission" not in _call_names(n)]
+    flagged = [
+        n.name for n in destructive if "require_admin_permission" not in _call_names(n)
+    ]
     assert "direct" in flagged and "chained" in flagged
 
 

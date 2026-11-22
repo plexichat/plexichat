@@ -144,9 +144,7 @@ def env():
         patch.object(api, "get_relationships", return_value=relationships),
         patch.object(api, "get_servers", return_value=None),
     ):
-        yield SimpleNamespace(
-            db=db, settings=settings, relationships=relationships
-        )
+        yield SimpleNamespace(db=db, settings=settings, relationships=relationships)
 
 
 async def _read(uid: int, token):

@@ -228,4 +228,6 @@ def test_mutated_tier_configuration_cannot_poison_cached_table():
     assert second.tiers == features._tier_configuration_snapshot.snapshot().tiers
     assert "rogue" not in second.tiers
     assert second.default == features._tier_configuration_snapshot.snapshot().default
-    assert {tier: limits.to_dict() for tier, limits in second.limits.items()} == baseline
+    assert {
+        tier: limits.to_dict() for tier, limits in second.limits.items()
+    } == baseline

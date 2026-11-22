@@ -103,6 +103,4 @@ async def test_subscribe_defaults_to_zero_when_cursor_is_absent(monkeypatch) -> 
     await _handler(monkeypatch).handle_sum_subscribe(
         _connection(), {"workbook_id": WORKBOOK_ID}, Mock()
     )
-    manager.replay_operations.assert_called_once_with(
-        1, WORKBOOK_ID, after_revision=0
-    )
+    manager.replay_operations.assert_called_once_with(1, WORKBOOK_ID, after_revision=0)

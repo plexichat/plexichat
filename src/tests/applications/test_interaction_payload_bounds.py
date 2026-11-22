@@ -98,7 +98,10 @@ def test_aggregate_size_is_rejected_even_when_each_value_fits():
     """Per-value limits alone are insufficient; total size is bounded."""
     handler, db = _handler()
     # Each value is below a typical per-option cap but the aggregate is large.
-    data = {"name": "many", "options": [{"name": str(i), "value": "x" * 3000} for i in range(25)]}
+    data = {
+        "name": "many",
+        "options": [{"name": str(i), "value": "x" * 3000} for i in range(25)],
+    }
 
     with pytest.raises(InteractionValidationError):
         _create(handler, data)

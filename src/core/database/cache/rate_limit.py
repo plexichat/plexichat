@@ -157,3 +157,31 @@ def reset_rate_limit(key: str) -> bool:
     with _mem_rate_limits_lock:
         _mem_rate_limits.pop(f"ratelimit:{key}", None)
     return cache_delete(f"ratelimit:{key}")
+
+
+def reset_rate_limit_prefix(prefix: str) -> int:
+    """Reset every rate-limit counter whose key starts with ``prefix``.
+
+    ``reset_rate_limit`` needs the exact key, which callers that no longer
+    track the ids they limited (for example the search manager, whose budget
+    is now a shared atomic counter) cannot supply. This drops the whole
+    namespace instead.
+
+    Args:
+        prefix: Key prefix, without the ``ratelimit:`` storage prefix.
+
+    Returns:
+        Number of in-process counters dropped.
+    """
+    from src.core.database.cache.operations import invalidate_pattern
+
+    global _mem_rate_limits
+    storage_prefix = f"ratelimit:{prefix}"
+    removed = 0
+    with _mem_rate_limits_lock:
+        stale = [k for k in _mem_rate_limits if k.startswith(storage_prefix)]
+        for stale_key in stale:
+            _mem_rate_limits.pop(stale_key, None)
+        removed = len(stale)
+    invalidate_pattern(f"{storage_prefix}*")
+    return removed

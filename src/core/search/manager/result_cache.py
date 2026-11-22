@@ -60,8 +60,11 @@ class SearchResultCache:
     a wrong-user result (the key always carries the authz scope).
     """
 
-    def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS,
-                 max_entries: int = DEFAULT_MAX_ENTRIES):
+    def __init__(
+        self,
+        ttl_seconds: float = DEFAULT_TTL_SECONDS,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+    ):
         self.ttl_seconds = float(ttl_seconds)
         self.max_entries = max(1, int(max_entries))
         self._entries: "OrderedDict[Hashable, _Entry]" = OrderedDict()
@@ -103,8 +106,7 @@ class SearchResultCache:
         return len(self._entries)
 
 
-def make_key(version: str, authz_scope: Iterable[Hashable],
-             **params: Any) -> Tuple:
+def make_key(version: str, authz_scope: Iterable[Hashable], **params: Any) -> Tuple:
     """Build a hashable cache key from an authz scope plus request params.
 
     The authz scope must come first so it is impossible to add a parameter
@@ -121,9 +123,9 @@ def make_key(version: str, authz_scope: Iterable[Hashable],
         return value
 
     scope = tuple(normalize(part) for part in authz_scope)
-    normalized_params = tuple(sorted(
-        (name, normalize(value)) for name, value in params.items()
-    ))
+    normalized_params = tuple(
+        sorted((name, normalize(value)) for name, value in params.items())
+    )
     return (version, scope, normalized_params)
 
 
@@ -132,9 +134,13 @@ def _caches(manager: Any) -> Dict[str, SearchResultCache]:
     return manager.__dict__.setdefault("_search_result_caches", {})
 
 
-def get_result_cache(manager: Any, name: str, *,
-                     ttl_seconds: Optional[float] = None,
-                     max_entries: Optional[int] = None) -> SearchResultCache:
+def get_result_cache(
+    manager: Any,
+    name: str,
+    *,
+    ttl_seconds: Optional[float] = None,
+    max_entries: Optional[int] = None,
+) -> SearchResultCache:
     """Get (or lazily create) a named cache attached to ``manager``.
 
     TTL/size come from an explicit override, then the manager's ``_config``,
@@ -147,12 +153,15 @@ def get_result_cache(manager: Any, name: str, *,
     if max_entries is None:
         max_entries = config.get(CONFIG_MAX_ENTRIES_KEY, DEFAULT_MAX_ENTRIES)
 
+    ttl = float(ttl_seconds) if ttl_seconds is not None else DEFAULT_TTL_SECONDS
+    entries = int(max_entries) if max_entries is not None else DEFAULT_MAX_ENTRIES
+
     cache = _caches(manager).get(name)
     if cache is None:
-        cache = _caches(manager)[name] = SearchResultCache(ttl_seconds, max_entries)
+        cache = _caches(manager)[name] = SearchResultCache(ttl, max(1, entries))
     else:
-        cache.ttl_seconds = float(ttl_seconds)
-        cache.max_entries = max(1, int(max_entries))
+        cache.ttl_seconds = ttl
+        cache.max_entries = max(1, entries)
     return cache
 
 

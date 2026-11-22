@@ -265,7 +265,9 @@ class TestReactionCustomEmoji:
         # test_custom_emoji_cross_server_use_gate.py. This test isolates the
         # reaction write for a hand-inserted emoji whose server (999) has no
         # real member rows, so stub that gate here.
-        monkeypatch.setattr(reaction_manager._servers, "get_member", lambda *a: object())
+        monkeypatch.setattr(
+            reaction_manager._servers, "get_member", lambda *a: object()
+        )
         test_db.execute(
             "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
         )

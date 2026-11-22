@@ -153,5 +153,8 @@ def test_channel_only_grant_still_works_in_granted_channel(two_channel_scenario)
     ) = two_channel_scenario
 
     # No over-tightening: the bounded grant remains usable in channel A.
-    assert threads.archive_thread(grantee.id, thread_a.id).state == threads.ThreadState.ARCHIVED
+    assert (
+        threads.archive_thread(grantee.id, thread_a.id).state
+        == threads.ThreadState.ARCHIVED
+    )
     assert threads.lock_thread(grantee.id, thread_a.id).locked is True

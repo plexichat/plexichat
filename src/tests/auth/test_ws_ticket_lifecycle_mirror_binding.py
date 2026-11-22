@@ -118,9 +118,7 @@ def test_mirror_fails_closed_without_context(auth_manager, test_user, monkeypatc
         _verify_mirror(auth_manager, parsed, ip=IP, ua=None)
 
 
-def test_mirror_fails_closed_for_unbound_session(
-    auth_manager, test_user, monkeypatch
-):
+def test_mirror_fails_closed_for_unbound_session(auth_manager, test_user, monkeypatch):
     _enable_binding(auth_manager, monkeypatch)
     # No IP/UA at login -> session row with NULL binding indexes.
     result = auth_manager.login(test_user.username, "TestPass123!")

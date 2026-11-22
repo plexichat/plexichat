@@ -45,7 +45,9 @@ def test_removed_thread_member_not_replayed_from_cached_audience(
         lambda x: ThreadType.PRIVATE.value if x == tid else None,
     )
     monkeypatch.setattr(
-        threads_mod, "get_thread_member_user_ids", lambda x: threads.get_all_member_user_ids(x)
+        threads_mod,
+        "get_thread_member_user_ids",
+        lambda x: threads.get_all_member_user_ids(x),
     )
     # No relationship module: the block filter is a no-op, so the audience is
     # exactly the live thread roster (minus the actor).

@@ -96,7 +96,9 @@ def test_import_refuses_an_oversized_xlsx(db, two_users, server_manager):
             wb_id,
             sheet_id,
             content,
-            base_revision=int(manager.get_workbook(owner.id, wb_id)["current_revision"]),
+            base_revision=int(
+                manager.get_workbook(owner.id, wb_id)["current_revision"]
+            ),
         )
 
 

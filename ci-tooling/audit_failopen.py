@@ -700,9 +700,7 @@ FAIL_CLOSED = re.compile(r"if \(!\s*[\w.]*\w\s*\)\s*return false")
 INLINE_DELEGATE = re.compile(r"^\s*return\s+(ctx|window|this)\.\w+\(")
 
 
-def sweep_client(
-    client_root: Path, cache: SourceCache | None = None
-) -> list[Hit]:
+def sweep_client(client_root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep C: client access-decision helpers that fail open.
 
     Only bodies that actually decide access (they touch a permission, an
@@ -999,9 +997,7 @@ def _random_credential_call(node: ast.AST) -> str | None:
     return None
 
 
-def sweep_sdp_fabrication(
-    root: Path, cache: SourceCache | None = None
-) -> list[Hit]:
+def sweep_sdp_fabrication(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep G: SDP answers that invent the ICE/DTLS credentials they need.
 
     Scoped tightly to functions that actually assemble an SDP answer (their
@@ -1692,8 +1688,10 @@ def sweep_routes(root: Path, cache: SourceCache | None = None) -> list[Hit]:
                 )
                 continue
             if (
-                method in MUTATING or method == UNRESOLVED_METHOD
-            ) and not authorized and not self_scoped:
+                (method in MUTATING or method == UNRESOLVED_METHOD)
+                and not authorized
+                and not self_scoped
+            ):
                 hits.append(
                     Hit(
                         UNAUTHZ,
@@ -1962,9 +1960,7 @@ def _collection_and_row_names(fn: ast.AST) -> tuple[set[str], set[str]]:
     return collections, rows
 
 
-def sweep_empty_decided(
-    root: Path, cache: SourceCache | None = None
-) -> list[Hit]:
+def sweep_empty_decided(root: Path, cache: SourceCache | None = None) -> list[Hit]:
     """Sweep I: authorization decided from a listing the function fetched.
 
     The threads-listing shape fixed in ANNEX AB: the access call sat inside a
@@ -2070,8 +2066,10 @@ def report(
     # One cache for the whole run: every sweep reads, parses and walks the
     # shared source tree through it, so a module is never fetched twice.
     cache = cache or SourceCache()
-    hits = sweep_core(root, cache) + sweep_api(root, cache) + sweep_client(
-        client_root, cache
+    hits = (
+        sweep_core(root, cache)
+        + sweep_api(root, cache)
+        + sweep_client(client_root, cache)
     )
     grants = [h for h in hits if h.kind == GRANT]
     reviews = [h for h in hits if h.kind == REVIEW]

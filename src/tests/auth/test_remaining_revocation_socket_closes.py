@@ -90,7 +90,9 @@ def _assert_targeted_close(closed_conn, open_conn):
     assert not open_conn.websocket.closed, "sibling session's socket must stay open"
 
 
-def test_bearer_logout_closes_only_that_sessions_socket(auth_manager, test_user, monkeypatch):
+def test_bearer_logout_closes_only_that_sessions_socket(
+    auth_manager, test_user, monkeypatch
+):
     from src.core.auth._lazy import _get_auth_manager
 
     mgr = _get_auth_manager().get_instance()
@@ -117,7 +119,10 @@ def test_max_session_eviction_closes_evicted_sessions_socket(
     monkeypatch.setattr(
         mgr,
         "_config",
-        {**mgr._config, "sessions": {**mgr._config.get("sessions", {}), "max_per_user": 1}},
+        {
+            **mgr._config,
+            "sessions": {**mgr._config.get("sessions", {}), "max_per_user": 1},
+        },
     )
     first = mgr._create_session(uid, None, None, None)
     c_first = _fake_conn(uid, first.id, "conn-evicted")
@@ -133,9 +138,11 @@ def test_max_session_eviction_closes_evicted_sessions_socket(
         await asyncio.sleep(0.01)
         return second
 
-    second = asyncio.run(_main())
+    asyncio.run(_main())
 
-    row = mgr._db.fetch_one("SELECT revoked FROM auth_sessions WHERE id = ?", (first.id,))
+    row = mgr._db.fetch_one(
+        "SELECT revoked FROM auth_sessions WHERE id = ?", (first.id,)
+    )
     assert row and row["revoked"], "oldest session must be evicted"
     _assert_targeted_close(c_first, c_second)
 

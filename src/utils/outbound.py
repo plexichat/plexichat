@@ -86,8 +86,10 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         # HTTPConnection.connect opens the TCP socket (to the pinned IP, or to
         # the tunnel proxy when configured) without any TLS wrapping.
         http.client.HTTPConnection.connect(self)
-        server_hostname = self._tunnel_host or self._sni_hostname
-        self.sock = self._context.wrap_socket(
+        # Both attributes are set by http.client on the base class but are not
+        # part of its public surface, so read them dynamically.
+        server_hostname = getattr(self, "_tunnel_host", None) or self._sni_hostname
+        self.sock = getattr(self, "_context").wrap_socket(
             self.sock, server_hostname=server_hostname
         )
 
@@ -170,7 +172,10 @@ def pinned_urlopen(
 
     if scheme == "https":
         conn: http.client.HTTPConnection = _PinnedHTTPSConnection(
-            resolved_ip, port, sni_hostname=hostname, timeout=timeout,
+            resolved_ip,
+            port,
+            sni_hostname=hostname,
+            timeout=timeout,
             context=ssl.create_default_context(),
         )
     else:
@@ -183,7 +188,9 @@ def pinned_urlopen(
         conn.close()
         raise
     if response.status >= 400:
-        body_error = HTTPError(url, response.status, response.reason, response.headers, response)
+        body_error = HTTPError(
+            url, response.status, response.reason, response.headers, response
+        )
         response.close()
         conn.close()
         raise body_error

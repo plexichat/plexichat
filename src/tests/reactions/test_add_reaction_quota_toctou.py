@@ -31,7 +31,11 @@ _SOURCE = Path(__file__).resolve().parents[2] / "core/reactions/manager/reaction
 def _dm_with_message(messaging_manager, three_users):
     first, second, _third = three_users
     dm = messaging_manager.create_dm(first.id, second.id)
-    return first, second, messaging_manager.send_message(first.id, dm.id, "quota TOCTOU")
+    return (
+        first,
+        second,
+        messaging_manager.send_message(first.id, dm.id, "quota TOCTOU"),
+    )
 
 
 def _stale_quota(db):
@@ -47,7 +51,10 @@ def _stale_quota(db):
 
     def fetch_one(query, params=None):
         normalized = " ".join((query or "").lower().split())
-        if "count(distinct emoji)" in normalized and "max(case when emoji" in normalized:
+        if (
+            "count(distinct emoji)" in normalized
+            and "max(case when emoji" in normalized
+        ):
             return {
                 "unique_count": 0,
                 "emoji_on_message": 0,

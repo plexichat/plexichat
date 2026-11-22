@@ -165,9 +165,10 @@ def _proxy_config_version() -> tuple:
 
     cached = _proxy_file_version_cache
     now = _time.monotonic()
-    if cached["version"] is None or (
-        now - cached["at"]
-    ) >= _PROXY_FILE_VERSION_MAX_AGE_SECONDS:
+    if (
+        cached["version"] is None
+        or (now - cached["at"]) >= _PROXY_FILE_VERSION_MAX_AGE_SECONDS
+    ):
         cached["version"] = file_version(path)
         cached["at"] = now
     return (id(loader), cached["version"], repr(rate_cfg))

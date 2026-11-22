@@ -458,7 +458,7 @@ def _authenticate(
     """
     from src.core.artifacts.federation import verify_payload_signature
 
-    if not _valid_signature_headers(signature, timestamp, nonce):
+    if timestamp is None or not _valid_signature_headers(signature, timestamp, nonce):
         return None
     # Header shapes are pinned above, so these conversions cannot raise.
     timestamp_int = int(timestamp)
@@ -768,7 +768,9 @@ async def join_request_inbound(request: Request):
     # A valid HMAC does not make their types safe: bound them to the same
     # limits ``submit_inbound_request`` enforces and reject bad values with a
     # clean 400 rather than letting its HardeningViolation surface as a 500.
-    requested_by = validate_payload_text(payload.get("requested_by"), "requested_by", 128)
+    requested_by = validate_payload_text(
+        payload.get("requested_by"), "requested_by", 128
+    )
     note = validate_payload_text(payload.get("note"), "note", 500)
 
     row = manager.submit_inbound_request(

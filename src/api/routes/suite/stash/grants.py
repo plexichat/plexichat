@@ -1,7 +1,6 @@
 """Item grants and download tickets."""
 
 import hashlib
-import ipaddress
 import time
 from typing import Optional
 

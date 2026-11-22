@@ -49,7 +49,12 @@ def slowmode_alias(modules, user_pool):
     # Remove any ambiguity about the send grant: the member may post, so the
     # only thing that may stop the second send is slowmode.
     servers.set_channel_override(
-        owner.id, channel.id, "member", member.id, allow={"messages.send": True}, deny={}
+        owner.id,
+        channel.id,
+        "member",
+        member.id,
+        allow={"messages.send": True},
+        deny={},
     )
     return servers, messaging, channel, conv_id, owner, member, server
 
@@ -59,7 +64,9 @@ class TestSlowmodeConversationAliasBypass:
         """Pin the preconditions that make the bypass possible."""
         servers, _messaging, channel, conv_id, _owner, member, server = slowmode_alias
         assert servers.get_channel(conv_id, member.id) is None
-        assert int(servers.get_channel_by_conversation(conv_id)["id"]) == int(channel.id)
+        assert int(servers.get_channel_by_conversation(conv_id)["id"]) == int(
+            channel.id
+        )
         assert servers.has_permission(member.id, server.id, "messages.send", channel.id)
 
     @pytest.mark.asyncio
@@ -69,7 +76,15 @@ class TestSlowmodeConversationAliasBypass:
         router = MessagesCRUDRouter()
 
         first = await router._send_message_with_fallback(
-            conv_id, member.id, "first alias send", None, None, None, servers, messaging, {}
+            conv_id,
+            member.id,
+            "first alias send",
+            None,
+            None,
+            None,
+            servers,
+            messaging,
+            {},
         )
         assert first is not None
 
@@ -113,7 +128,15 @@ class TestSlowmodeConversationAliasBypass:
         monkeypatch.setattr(servers, "check_channel_slowmode", _boom)
         with pytest.raises(HTTPException) as exc:
             await router._send_message_with_fallback(
-                conv_id, member.id, "bypass attempt", None, None, None, servers, messaging, {}
+                conv_id,
+                member.id,
+                "bypass attempt",
+                None,
+                None,
+                None,
+                servers,
+                messaging,
+                {},
             )
         assert exc.value.status_code == 403
         contents = [

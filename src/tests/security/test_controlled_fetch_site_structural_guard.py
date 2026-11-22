@@ -133,10 +133,30 @@ HTTP_MODULES = frozenset(
     }
 )
 HTTP_METHODS = frozenset(
-    {"get", "post", "put", "patch", "delete", "head", "request", "urlopen", "stream", "send", "open"}
+    {
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete",
+        "head",
+        "request",
+        "urlopen",
+        "stream",
+        "send",
+        "open",
+    }
 )
 CLIENT_CONSTRUCTORS = frozenset(
-    {"Client", "AsyncClient", "Session", "ClientSession", "PoolManager", "HTTPConnectionPool", "HTTPSConnectionPool"}
+    {
+        "Client",
+        "AsyncClient",
+        "Session",
+        "ClientSession",
+        "PoolManager",
+        "HTTPConnectionPool",
+        "HTTPSConnectionPool",
+    }
 )
 
 # Evidence that the URL was screened / pinned before (or instead of) connect.
@@ -164,7 +184,9 @@ NO_REDIRECT_MARKERS: tuple[str, ...] = (
     "retries=False",
     "_NoRedirect",
 )
-NO_REDIRECT_KEYWORDS = frozenset({"allow_redirects", "follow_redirects", "redirect", "retries"})
+NO_REDIRECT_KEYWORDS = frozenset(
+    {"allow_redirects", "follow_redirects", "redirect", "retries"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +244,12 @@ DOCUMENTED_FETCH_SITES: tuple[FetchSite, ...] = (
         "src/core/artifacts/federation.py",
         "_post_with_retry",
         "pinned",
-        ("resolve_remote_target", "pinned_request_target", "httpx.Client", "client.post"),
+        (
+            "resolve_remote_target",
+            "pinned_request_target",
+            "httpx.Client",
+            "client.post",
+        ),
         "Remote instance URL is admin-approved but can originate in an inbound "
         "join request; resolve_remote_target + pinned_request_target screen and "
         "pin the address before the httpx POST.",
@@ -262,7 +289,12 @@ DOCUMENTED_FETCH_SITES: tuple[FetchSite, ...] = (
         "src/core/embeds/link_preview.py",
         "_fetch_with_redirects",
         "no_redirect",
-        ("follow_redirects=False", "_validate_redirect", "bracket_ip_literal", "client.stream"),
+        (
+            "follow_redirects=False",
+            "_validate_redirect",
+            "bracket_ip_literal",
+            "client.stream",
+        ),
         "User-supplied URL; httpx auto-follow is disabled and each 3xx is "
         "re-screened via _validate_redirect and re-pinned (Host/SNI) before "
         "the next hop is contacted.",
@@ -435,9 +467,14 @@ def _client_variable_names(tree: ast.AST) -> set[str]:
         ):
             continue
         for parent in ast.walk(tree):
-            if not isinstance(parent, (ast.Assign, ast.AnnAssign)) or parent.value is not node:
+            if (
+                not isinstance(parent, (ast.Assign, ast.AnnAssign))
+                or parent.value is not node
+            ):
                 continue
-            targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+            targets = (
+                parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+            )
             for target in targets:
                 if isinstance(target, ast.Name):
                     names.add(target.id)
@@ -502,7 +539,9 @@ def _compact(source: str) -> str:
     return source.replace(" ", "").replace("\n", "")
 
 
-def _has_controls(call: ast.Call, fn: ast.AST | None, fn_src: str, call_src: str) -> bool:
+def _has_controls(
+    call: ast.Call, fn: ast.AST | None, fn_src: str, call_src: str
+) -> bool:
     """True if the fetch is screened/pinned or cannot auto-follow a redirect."""
     compact_fn = _compact(fn_src)
     compact_call = _compact(call_src)
@@ -510,10 +549,15 @@ def _has_controls(call: ast.Call, fn: ast.AST | None, fn_src: str, call_src: str
     if any(marker in fn_src or marker in call_src for marker in PIN_MARKERS):
         return True
     # Transport cannot follow a 3xx (call-level keyword or factory setting).
-    if any(marker in compact_fn or marker in compact_call for marker in NO_REDIRECT_MARKERS):
+    if any(
+        marker in compact_fn or marker in compact_call for marker in NO_REDIRECT_MARKERS
+    ):
         return True
     for keyword in call.keywords:
-        if keyword.arg in NO_REDIRECT_KEYWORDS and getattr(keyword.value, "value", None) is False:
+        if (
+            keyword.arg in NO_REDIRECT_KEYWORDS
+            and getattr(keyword.value, "value", None) is False
+        ):
             return True
     return False
 
@@ -619,7 +663,9 @@ def _all_controlled_calls(tree: ast.AST, *, path: str) -> set[tuple[str, str]]:
             attr = func.id
         else:
             continue
-        if attr not in HTTP_METHODS or (module and module.startswith("src.utils.outbound")):
+        if attr not in HTTP_METHODS or (
+            module and module.startswith("src.utils.outbound")
+        ):
             continue
         url_node = _url_argument(node, module, attr)
         if _is_literal_url(url_node):
@@ -701,7 +747,9 @@ def test_synthetic_fixed_and_pinned_fetches_are_accepted():
             return requests.get(user_url, allow_redirects=False, timeout=5)
         """
     )
-    assert _controlled_fetch_calls(ast.parse(pinned), path="src/api/_synthetic.py") == []
+    assert (
+        _controlled_fetch_calls(ast.parse(pinned), path="src/api/_synthetic.py") == []
+    )
 
 
 def test_synthetic_allowlist_suppression_is_site_scoped():
@@ -789,7 +837,9 @@ def test_scan_is_not_vacuous(commit_sha):
         assert required in files, f"{required} unexpectedly excluded from scan"
     reader = _make_blob_reader(commit_sha)
     # These contested files must still carry their controls in HEAD.
-    assert "allow_redirects=False" in reader("src/core/artifacts/transcription/provider.py")
+    assert "allow_redirects=False" in reader(
+        "src/core/artifacts/transcription/provider.py"
+    )
     assert "resolve_remote_target" in reader("src/core/plexijoin/manager.py")
 
 
@@ -808,7 +858,9 @@ def test_caller_side_ssrf_gates_are_still_present(commit_sha):
     """Some fetch sites validate in a caller that has no HTTP call itself."""
     reader = _make_blob_reader(commit_sha)
     proxy = ast.unparse(
-        _find_functions(ast.parse(reader("src/core/media/security/proxy.py")), "fetch")[0]
+        _find_functions(ast.parse(reader("src/core/media/security/proxy.py")), "fetch")[
+            0
+        ]
     )
     assert "validate_url_for_request" in proxy, "media proxy lost its URLValidator gate"
     delivery_src = reader("src/core/webhooks/delivery.py")
@@ -820,7 +872,9 @@ def test_caller_side_ssrf_gates_are_still_present(commit_sha):
     ):
         assert marker in deliver, f"webhook driver lost its gate: {marker}"
     session_fn = ast.unparse(_find_functions(ast.parse(delivery_src), "_session")[0])
-    assert "follow_redirects=False" in session_fn, "webhook session may auto-follow redirects"
+    assert "follow_redirects=False" in session_fn, (
+        "webhook session may auto-follow redirects"
+    )
     # The SFU clients rely on httpx's default no-redirect for their fixed base.
     for rel in (
         "src/core/voice/signaling/sfu/janus.py",
@@ -828,7 +882,9 @@ def test_caller_side_ssrf_gates_are_still_present(commit_sha):
     ):
         sfu_src = reader(rel)
         assert "httpx.AsyncClient(" in sfu_src, f"{rel}: SFU client constructor missing"
-        assert "follow_redirects=True" not in sfu_src, f"{rel}: SFU client auto-follows redirects"
+        assert "follow_redirects=True" not in sfu_src, (
+            f"{rel}: SFU client auto-follows redirects"
+        )
 
 
 def test_registry_enumerates_every_controlled_fetch_site(commit_sha):
@@ -871,5 +927,7 @@ def test_no_new_unguarded_controlled_fetch_in_committed_tree(commit_sha):
         "New controlled-URL HTTP fetch with default redirect-following and no "
         "IP screen (pin the target with pinned_urlopen/resolve_*_target or set "
         "no-redirect + per-hop revalidation, then document it in the registry):\n  "
-        + "\n  ".join(str(o) for o in sorted(offenders, key=lambda o: (o.path, o.lineno)))
+        + "\n  ".join(
+            str(o) for o in sorted(offenders, key=lambda o: (o.path, o.lineno))
+        )
     )

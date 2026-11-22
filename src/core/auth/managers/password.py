@@ -235,7 +235,14 @@ class PasswordMixin(AuthManagerProtocol):
             "AND expires_at > ?",
             (rec["id"], consume_now),
         )
-        if getattr(cursor, "rowcount", 0) == 0:
+        # Fail closed if the driver cannot report an affected-row count: an
+        # unknown rowcount (DB-API ``None``/``-1``) is NOT proof that we won the
+        # single-use claim. Treating it as "not zero" let every replay rotate
+        # the credential (OAuth code exchange and poll voting already deny on
+        # an unknown rowcount for this reason). Only an affirmative ``>= 1``
+        # may proceed past the guarded UPDATE.
+        rowcount = getattr(cursor, "rowcount", None)
+        if not isinstance(rowcount, int) or rowcount < 1:
             raise TokenInvalidError("Invalid token")
         # A successful reset is a credential change: retire every other
         # outstanding reset link for this user. The single-active-token

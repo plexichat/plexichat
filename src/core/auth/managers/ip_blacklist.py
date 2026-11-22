@@ -92,7 +92,9 @@ class IpBlacklistMixin(AuthManagerProtocol):
         try:
             canonical_ip = canonicalize_ip_address(ip_address) or ip_address
             ip_index = self.crypto.fast_blind_index(canonical_ip, "ip_address")
-            legacy_index = self.crypto.legacy_fast_blind_index(canonical_ip, "ip_address")
+            legacy_index = self.crypto.legacy_fast_blind_index(
+                canonical_ip, "ip_address"
+            )
 
             row = self._db.fetch_one(
                 "SELECT expires_at FROM auth_ip_blacklist WHERE ip_index = ? OR (ip_index = ? AND ? != '')",

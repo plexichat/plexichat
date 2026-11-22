@@ -461,9 +461,7 @@ async def confirm_2fa_setup(
         # keeping that id alive would let a fixated/stolen pre-2FA token ride
         # the newly enabled second factor. Revoke it and hand the legitimate
         # user a brand-new session (new id + secret) via a fresh Set-Cookie.
-        rotated = auth.rotate_session_id(
-            current_user.user_id, current_user.session_id
-        )
+        rotated = auth.rotate_session_id(current_user.user_id, current_user.session_id)
         if response is not None:
             set_session_cookie(response, rotated.token, session_expiry_seconds(rotated))
         return SuccessResponse(success=True, message=None)
@@ -530,9 +528,7 @@ async def disable_2fa(
         # Disabling 2FA is also a privilege transition: the preserved current
         # session was minted under the old (2FA) policy and must not keep its id
         # across the switch. Rotate it and re-issue the HttpOnly cookie.
-        rotated = auth.rotate_session_id(
-            current_user.user_id, current_user.session_id
-        )
+        rotated = auth.rotate_session_id(current_user.user_id, current_user.session_id)
         if response is not None:
             set_session_cookie(response, rotated.token, session_expiry_seconds(rotated))
         return SuccessResponse(success=True, message=None)

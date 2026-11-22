@@ -201,10 +201,13 @@ def _load_sources():
     return texts, trees
 
 
-(OPCODES_TEXT, HANDLERS_TEXT, PACKAGE_TEXT), (
-    OPCODES_TREE,
-    HANDLERS_TREE,
-    PACKAGE_TREE,
+(
+    (OPCODES_TEXT, HANDLERS_TEXT, PACKAGE_TEXT),
+    (
+        OPCODES_TREE,
+        HANDLERS_TREE,
+        PACKAGE_TREE,
+    ),
 ) = _load_sources()
 
 MUST_THROTTLE = _declared_set(OPCODES_TREE, "CLIENT_OPCODES") - set(
@@ -377,10 +380,13 @@ def test_sources_are_read_and_parsed_once(monkeypatch):
     monkeypatch.setattr(Path, "read_text", counting_read_text)
     monkeypatch.setattr(ast, "parse", counting_parse)
 
-    (opcodes_text, handlers_text, package_text), (
-        opcodes_tree,
-        handlers_tree,
-        package_tree,
+    (
+        (opcodes_text, handlers_text, package_text),
+        (
+            opcodes_tree,
+            handlers_tree,
+            package_tree,
+        ),
     ) = _load_sources()
 
     assert reads == [OPCODES_SRC, HANDLERS_SRC, PACKAGE_SRC]

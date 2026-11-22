@@ -504,9 +504,7 @@ def find_broad_swallow_grants(
                     if side is not None:
                         break
             if side is not None:
-                found.append(
-                    SwallowGrant(rel_path, func.name, _call_name(side.func))
-                )
+                found.append(SwallowGrant(rel_path, func.name, _call_name(side.func)))
     return found
 
 
@@ -580,7 +578,7 @@ def test_detector_flags_a_fresh_broad_swallow_grant():
     Covers both shapes the campaign removed: an `if allowed:` guard on the
     absorbed predicate, and an explicit-audience list fed into a dispatch.
     """
-    guarded = '''
+    guarded = """
 async def handler(event):
     try:
         allowed = check_gate()
@@ -588,19 +586,19 @@ async def handler(event):
         logger.debug("gate unavailable, continuing: %s", exc)
     if allowed:
         events.dispatch(event)
-'''
+"""
     assert [g.side_call for g in find_broad_swallow_grants(guarded, "new.py")] == [
         "dispatch"
     ]
 
-    explicit_audience = '''
+    explicit_audience = """
 def fanout(event):
     try:
         user_ids = _dm_participants_without_blocks(user_ids, actor_id)
     except Exception as exc:
         logger.debug("block filter unavailable: %s", exc)
     events.dispatch(event, user_ids=user_ids)
-'''
+"""
     assert [
         g.side_call for g in find_broad_swallow_grants(explicit_audience, "new.py")
     ] == ["dispatch"]

@@ -70,9 +70,7 @@ GATE_PREFIXES = ("_require_", "_can_", "_check_")
 
 # ``api.get_servers()`` and the equivalent injected-facade getters used across
 # core services. Suffix/pattern forms catch sibling getters under novel names.
-_GETTER_NAMES = frozenset(
-    {"get_servers", "get_servers_module", "_get_servers_module"}
-)
+_GETTER_NAMES = frozenset({"get_servers", "get_servers_module", "_get_servers_module"})
 
 # Names used for the injected module argument in fixed gates (and plausible
 # names in future ones). Kept module-specific to avoid sweeping unrelated
@@ -280,7 +278,9 @@ def _branch_outcome(branch: ast.If) -> str:
         elif isinstance(node, ast.Raise):
             denies += 1
         elif isinstance(node, ast.Call):
-            if any(token in _call_name(node.func).lower() for token in _DENY_CALL_TOKENS):
+            if any(
+                token in _call_name(node.func).lower() for token in _DENY_CALL_TOKENS
+            ):
                 denies += 1
     # Any allow-shaped exit wins: an ambiguous branch is not a proven denial.
     if allows:
@@ -334,7 +334,9 @@ def _is_documented(gate: UnwiredGate, allowlist=DOCUMENTED_NON_AUTH_GATES) -> bo
 
 def _unexpected(gates, allowlist=DOCUMENTED_NON_AUTH_GATES):
     """Gates the guard would fail on: not proven deny and not documented."""
-    return [g for g in gates if g.outcome != "deny" and not _is_documented(g, allowlist)]
+    return [
+        g for g in gates if g.outcome != "deny" and not _is_documented(g, allowlist)
+    ]
 
 
 @lru_cache(maxsize=1)

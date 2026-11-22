@@ -188,9 +188,7 @@ class NotificationCreatorMixin(NotificationProtocol):
             # covering everyone, which can only WIDEN suppression here. It also
             # excludes the author from both counts, matching the fan-out.
             try:
-                return role_covers_all_members(
-                    self._db, role_id, server_id, author_id
-                )
+                return role_covers_all_members(self._db, role_id, server_id, author_id)
             except Exception:
                 return True
 
@@ -375,11 +373,7 @@ class NotificationCreatorMixin(NotificationProtocol):
             # content preview) just because another mention in the message
             # retyped them as CHANNEL/EVERYONE/HERE/USER. Apply the preference
             # to the semantic role-ping audience, not the raw MentionType.
-            if (
-                user_id in role_ping_recipients
-                and settings
-                and settings.suppress_roles
-            ):
+            if user_id in role_ping_recipients and settings and settings.suppress_roles:
                 continue
 
             if self._should_notify_user_optimized(
@@ -462,9 +456,7 @@ class NotificationCreatorMixin(NotificationProtocol):
         # batched resolver reuses the exact same permission helpers and fail
         # -closed rules as the per-user path, so the allowed set is identical.
         if callable(get_viewers):
-            resolve = cast(
-                Callable[..., Iterable[SnowflakeID]], get_viewers
-            )
+            resolve = cast(Callable[..., Iterable[SnowflakeID]], get_viewers)
             try:
                 return set(resolve(list(recipients), server_id, channel_id))
             except Exception as e:

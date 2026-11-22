@@ -53,9 +53,7 @@ class _CountingDB:
         self.statements.append(("execute", sql, tuple(params), auto_commit))
         cursor = self.conn.execute(sql, params)
         if "DELETE FROM msg_message_tokens" in sql and self.conflict_token:
-            self.conn.execute(
-                _INSERT, (params[0], self.conflict_token, 0)
-            )
+            self.conn.execute(_INSERT, (params[0], self.conflict_token, 0))
         return cursor
 
     def execute_many(self, sql, params_list, auto_commit=True):
@@ -77,9 +75,7 @@ def _legacy(db, msg_id, token_indexes, auto_commit=True):
     """The exact shape of the old loop, kept here only to measure 'before'."""
     db.execute(_DELETE, (msg_id,), auto_commit=auto_commit)
     for position, token_index in enumerate(token_indexes):
-        db.execute(
-            _INSERT, (msg_id, token_index, position), auto_commit=auto_commit
-        )
+        db.execute(_INSERT, (msg_id, token_index, position), auto_commit=auto_commit)
 
 
 def test_set_content_tokens_query_count_is_bounded_not_per_token():
@@ -98,12 +94,17 @@ def test_set_content_tokens_query_count_is_bounded_not_per_token():
     chunks = (n + _MAX_BULK_CHUNK - 1) // _MAX_BULK_CHUNK
     assert after == 1 + chunks
     assert after <= 5
-    assert after * 20 < before, f"expected order-of-magnitude reduction: {before} -> {after}"
+    assert after * 20 < before, (
+        f"expected order-of-magnitude reduction: {before} -> {after}"
+    )
 
     # First statement is still the scoped DELETE; the rest are bounded, ordered
     # executemany batches that retain the OR IGNORE conflict handling.
     assert before_db.statements[0][0] == "execute"
-    assert "DELETE FROM msg_message_tokens WHERE message_id = ?" in after_db.statements[0][1]
+    assert (
+        "DELETE FROM msg_message_tokens WHERE message_id = ?"
+        in after_db.statements[0][1]
+    )
     expected_start = 0
     for kind, sql, params, _ac in after_db.statements[1:]:
         assert kind == "execute_many"
@@ -128,13 +129,17 @@ def test_set_content_tokens_matches_legacy_rows_and_preserves_duplicates():
     bulk_db = _CountingDB()
     MessageRepository(bulk_db).set_content_tokens(7, tokens)
 
-    assert bulk_db.rows() == legacy_db.rows() == [
-        {"message_id": 7, "token_index": "alpha", "position": 0},
-        {"message_id": 7, "token_index": "beta", "position": 1},
-        {"message_id": 7, "token_index": "alpha", "position": 2},
-        {"message_id": 7, "token_index": "gamma", "position": 3},
-        {"message_id": 7, "token_index": "beta", "position": 4},
-    ]
+    assert (
+        bulk_db.rows()
+        == legacy_db.rows()
+        == [
+            {"message_id": 7, "token_index": "alpha", "position": 0},
+            {"message_id": 7, "token_index": "beta", "position": 1},
+            {"message_id": 7, "token_index": "alpha", "position": 2},
+            {"message_id": 7, "token_index": "gamma", "position": 3},
+            {"message_id": 7, "token_index": "beta", "position": 4},
+        ]
+    )
 
 
 def test_set_content_tokens_preserves_or_ignore_and_auto_commit_flag():
@@ -152,10 +157,14 @@ def test_set_content_tokens_preserves_or_ignore_and_auto_commit_flag():
 
         # Position 0 collided with the concurrent row; OR IGNORE must swallow
         # it in both paths rather than raising, yielding identical rows.
-        assert bulk_db.rows() == legacy_db.rows() == [
-            {"message_id": 9, "token_index": "CONCURRENT", "position": 0},
-            {"message_id": 9, "token_index": "b", "position": 1},
-            {"message_id": 9, "token_index": "c", "position": 2},
-        ]
+        assert (
+            bulk_db.rows()
+            == legacy_db.rows()
+            == [
+                {"message_id": 9, "token_index": "CONCURRENT", "position": 0},
+                {"message_id": 9, "token_index": "b", "position": 1},
+                {"message_id": 9, "token_index": "c", "position": 2},
+            ]
+        )
         # The caller-chosen transaction boundary is passed to every statement.
         assert all(call[3] is auto_commit for call in bulk_db.statements)

@@ -18,7 +18,6 @@ guard cannot silently regress to a bare read.
 import ast
 import os
 import sqlite3
-import time
 from pathlib import Path
 
 import pytest
@@ -80,9 +79,9 @@ def _completed_session(manager, db, user_id=1):
     assert result.success is True
     assert result.is_complete is True
     assert (
-        db.fetch_one("SELECT status FROM media_upload_sessions WHERE id = ?", (session.id,))[
-            "status"
-        ]
+        db.fetch_one(
+            "SELECT status FROM media_upload_sessions WHERE id = ?", (session.id,)
+        )["status"]
         == "completed"
     )
     return session
@@ -130,9 +129,9 @@ def test_chunk_write_cannot_reopen_a_redeemed_session(db, manager):
     late = manager.upload_chunk(session.id, 1, 0, b"B" * session.total_size)
     assert late.success is False
     assert (
-        db.fetch_one("SELECT status FROM media_upload_sessions WHERE id = ?", (session.id,))[
-            "status"
-        ]
+        db.fetch_one(
+            "SELECT status FROM media_upload_sessions WHERE id = ?", (session.id,)
+        )["status"]
         == "redeeming"
     )
     assert manager.complete_session_stream(session.id, 1) is None

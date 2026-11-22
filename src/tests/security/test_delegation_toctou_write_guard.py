@@ -56,9 +56,7 @@ _ASSIGNMENT_TABLES = ("srv_member_roles", "admin_role_assignments")
 # actually carry role grants.  (\s* spans the SQL string concatenation the code
 # uses, e.g. "INSERT INTO admin_role_assignments " on its own source line.)
 _WRITE_RE = re.compile(
-    r"\b(?:INSERT\s+INTO|UPDATE)\s+(?:"
-    + "|".join(_ASSIGNMENT_TABLES)
-    + r")\b",
+    r"\b(?:INSERT\s+INTO|UPDATE)\s+(?:" + "|".join(_ASSIGNMENT_TABLES) + r")\b",
     re.IGNORECASE,
 )
 
@@ -250,8 +248,7 @@ def _is_bound(segment: str) -> bool:
     if "_role_permission_write_guard" in segment and "_write_missed" in segment:
         return True
     if any(marker in segment for marker in _LOCK_MARKERS) and (
-        "fresh_permissions" in segment
-        or "SELECT permissions FROM srv_roles" in segment
+        "fresh_permissions" in segment or "SELECT permissions FROM srv_roles" in segment
     ):
         return True
     return False
@@ -353,9 +350,7 @@ def test_allowlist_entries_are_documented_and_still_present(commit_sha: str) -> 
 
 def test_admin_users_cas_helper_embeds_the_payload_guard(commit_sha: str) -> None:
     """The helper treated as a binding really carries the CAS SQL (non-vacuity)."""
-    src = _make_blob_reader(commit_sha)(
-        "src/api/routes/admin/users/admin_users.py"
-    )
+    src = _make_blob_reader(commit_sha)("src/api/routes/admin/users/admin_users.py")
     match = re.search(
         r"def _role_permission_write_guard\b.*?(?=\ndef |\Z)", src, re.DOTALL
     )
@@ -372,7 +367,7 @@ def test_admin_users_cas_helper_embeds_the_payload_guard(commit_sha: str) -> Non
 # ---------------------------------------------------------------------------
 
 
-_UNGUARDED = '''
+_UNGUARDED = """
 def grant(request):
     if not can_grant_existing_role(db, actor, role_id):
         raise HTTPException(status_code=403)
@@ -380,9 +375,9 @@ def grant(request):
         "INSERT INTO admin_role_assignments (admin_id, role_id) VALUES (?, ?)",
         (target, role_id),
     )
-'''
+"""
 
-_CAS = '''
+_CAS = """
 def grant(request):
     if not can_grant_existing_role(db, actor, role_id, _out=_snap):
         raise HTTPException(status_code=403)
@@ -394,9 +389,9 @@ def grant(request):
     )
     if getattr(cursor, "rowcount", 0) <= 0:
         raise HTTPException(status_code=409)
-'''
+"""
 
-_LOCKED = '''
+_LOCKED = """
 def grant(request):
     check_permissions_grantable(actor_perms, role_permissions)
     db.execute("SELECT pg_advisory_xact_lock(?, ?)", (142, server_id))
@@ -407,9 +402,9 @@ def grant(request):
         "INSERT INTO srv_member_roles (id, member_id, role_id) VALUES (?, ?, ?)",
         (mid, member_id, role_id),
     )
-'''
+"""
 
-_HELPER_CAS = '''
+_HELPER_CAS = """
 def grant(request):
     if not can_grant_existing_role(db, actor, role_id, _out=_snap):
         raise HTTPException(status_code=403)
@@ -421,15 +416,15 @@ def grant(request):
     )
     if _write_missed(cursor):
         raise HTTPException(status_code=409)
-'''
+"""
 
-_UNDELEGATED_SEED = '''
+_UNDELEGATED_SEED = """
 def seed(db, admin_id):
     db.execute(
         "INSERT INTO admin_role_assignments (admin_id, role_id) VALUES (?, ?)",
         (admin_id, super_admin_id),
     )
-'''
+"""
 
 
 def test_synthetic_unguarded_delegation_is_flagged() -> None:
@@ -460,7 +455,10 @@ def test_synthetic_undocumented_write_is_flagged() -> None:
 
 def test_blob_reader_returns_committed_blob_not_working_tree(tmp_path: Path) -> None:
     """Blob reads come from the commit, so a dirty working tree cannot mask a revert."""
-    run = lambda *a: _git(*a, cwd=tmp_path)
+
+    def run(*a):
+        return _git(*a, cwd=tmp_path)
+
     assert run("init", "-q").returncode == 0
     assert run("config", "user.email", "guard@example.com").returncode == 0
     assert run("config", "user.name", "guard").returncode == 0

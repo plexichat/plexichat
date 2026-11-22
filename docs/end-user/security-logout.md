@@ -8,7 +8,7 @@ This page explains why it happened and what to do next. API details are in `src/
 
 - **You signed out.** `POST /api/v1/auth/logout` revokes your current session (`revoked = 1`) and clears the `HttpOnly` session cookie.
 - **You or an administrator revoked sessions.** `DELETE /api/v1/auth/sessions/{session_id}` revokes a single session. `POST /api/v1/auth/sessions/revoke-all` revokes all sessions or all except the current one (`{"except_current": true}`).
-- **Your session expired.** Sessions expire after `authentication.sessions.expire_hours` (default 720 hours / 30 days). Expired tokens return `TokenExpiredError`.
+- **Your session expired.** Sessions expire after `authentication.sessions.expire_hours` (default 168 hours / 7 days). Sessions on a device you explicitly marked trusted use the longer `authentication.sessions.trusted_expire_hours` (default 720 hours / 30 days) instead. Expired tokens return `TokenExpiredError`.
 - **Your session was rotated or invalidated.** `POST /api/v1/auth/refresh` rotates the token. The old token is invalid after rotation. Revoking a session invalidates cached verification (`token_verify:*`).
 - **Administrator or security action.** Disabling TOTP 2FA revokes all other sessions. An administrator can also freeze an account scheduled for deletion.
 

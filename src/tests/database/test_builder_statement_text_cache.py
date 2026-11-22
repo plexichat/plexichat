@@ -80,9 +80,9 @@ def test_all_statement_kinds_share_text_across_values():
             "INSERT INTO users (name) VALUES (?)",
         ),
         (
-            lambda v: UpdateQuery(None, "users", {"name": v})
-            .where("id", "=", 7)
-            .build(),
+            lambda v: (
+                UpdateQuery(None, "users", {"name": v}).where("id", "=", 7).build()
+            ),
             "UPDATE users SET name = ? WHERE id = ?",
         ),
         (
@@ -109,12 +109,8 @@ def test_dict_key_order_is_part_of_the_shape():
     assert sql_a != sql_b
     assert statement_text_cache_stats()["misses"] == 2
 
-    sql_c, _ = (
-        UpdateQuery(None, "users", {"a": 1, "b": 2}).where("id", "=", 1).build()
-    )
-    sql_d, _ = (
-        UpdateQuery(None, "users", {"b": 2, "a": 1}).where("id", "=", 1).build()
-    )
+    sql_c, _ = UpdateQuery(None, "users", {"a": 1, "b": 2}).where("id", "=", 1).build()
+    sql_d, _ = UpdateQuery(None, "users", {"b": 2, "a": 1}).where("id", "=", 1).build()
     assert sql_c == "UPDATE users SET a = ?, b = ? WHERE id = ?"
     assert sql_d == "UPDATE users SET b = ?, a = ? WHERE id = ?"
 
@@ -129,7 +125,9 @@ def test_in_clause_length_is_part_of_the_shape():
 
 
 def test_limit_and_offset_are_part_of_the_shape():
-    base = lambda: SelectQuery(None, "users").where("id", "=", 1)
+    def base():
+        return SelectQuery(None, "users").where("id", "=", 1)
+
     sql_a, _ = base().limit(10).build()
     sql_b, _ = base().limit(20).build()
     sql_c, _ = base().limit(10).offset(5).build()
@@ -183,9 +181,7 @@ def test_schema_registry_validation_still_runs_on_every_build():
     builder = QueryBuilder(None, enable_schema_validation=True)
     builder.register_schema("users", ["id", "name"])
 
-    sql, _ = (
-        builder.table("users").select().where("name", "=", "alice").build()
-    )
+    sql, _ = builder.table("users").select().where("name", "=", "alice").build()
     assert sql == "SELECT * FROM users WHERE name = ?"
     # Warmed shape is cached, but an unregistered column must still be refused
     # before any cache lookup could serve stale text.

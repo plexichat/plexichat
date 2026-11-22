@@ -121,7 +121,6 @@ def test_full_sweep_still_evicts_all_expired_entries(monkeypatch):
     clock["now"] = 1010.0  # every entry is past its 5s TTL
     assert cache.is_duplicate("evt-0") is False
     assert cache.metrics()["size"] == 1, (
-        "all 8 expired ids should have been swept; only the just-reprocessed "
-        "id remains"
+        "all 8 expired ids should have been swept; only the just-reprocessed id remains"
     )
     assert cache.metrics()["evictions"] == 8

@@ -137,7 +137,6 @@ def test_cleanup_expired_end_to_end(db, tmp_path, monkeypatch):
     mgr = ChunkedUploadManager(db)
     monkeypatch.setattr(mgr, "_temp_dir", str(tmp_path))
 
-    now = mgr._get_timestamp() if hasattr(mgr, "_get_timestamp") else None
     import time
 
     now_ms = int(time.time() * 1000)

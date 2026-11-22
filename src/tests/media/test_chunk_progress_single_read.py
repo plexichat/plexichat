@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.unit
-
 from src.core.media.chunked import ChunkedUploadManager
+
+pytestmark = pytest.mark.unit
 
 
 class _Cursor:

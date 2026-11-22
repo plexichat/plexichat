@@ -186,9 +186,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
             # probes do not recognise as a channel. Gate both spellings before
             # any mutation runs so a member denied channels.view cannot edit a
             # message in a private channel via the conversation-id alias.
-            _require_edit_channel_view(
-                cid, real_cid, current_user.user_id, servers_mod
-            )
+            _require_edit_channel_view(cid, real_cid, current_user.user_id, servers_mod)
 
             server_id = None
             # Share the resolved channel with the automod-context helper so it

@@ -46,15 +46,11 @@ def _rule(config):
 
 
 def _blacklist(*entries):
-    return ExternalLinkRule(
-        _rule({"mode": "blacklist", "blacklist": list(entries)})
-    )
+    return ExternalLinkRule(_rule({"mode": "blacklist", "blacklist": list(entries)}))
 
 
 def _whitelist(*entries):
-    return ExternalLinkRule(
-        _rule({"mode": "whitelist", "whitelist": list(entries)})
-    )
+    return ExternalLinkRule(_rule({"mode": "whitelist", "whitelist": list(entries)}))
 
 
 # A URL whose authority encodes host bytes. WHATWG clients decode these before

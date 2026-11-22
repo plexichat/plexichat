@@ -348,9 +348,7 @@ class ActionMixin(AutoModProtocol):
             ActionType.BAN_USER,
             ActionType.KICK_USER,
             ActionType.TIMEOUT_USER,
-        ) and not self._manual_action_can_moderate(
-            user_id, server_id, target_user_id
-        ):
+        ) and not self._manual_action_can_moderate(user_id, server_id, target_user_id):
             logger.warning(
                 f"AutoMod manual action REFUSED: user {user_id} cannot "
                 f"moderate {target_user_id} in server {server_id} "
@@ -385,18 +383,6 @@ class ActionMixin(AutoModProtocol):
             # for the ban/kick/delete executors' raw-SQL fallback.
             if context is None:
                 context = {}
-            # The executors honour ``context['bot_user_id']`` as the actor for
-            # their permission-checked servers/messaging calls, and those
-            # layers write that id into their own audit rows (and into
-            # ``srv_bans.banned_by``).  ``user_id`` is the only identity this
-            # method has permission- and hierarchy-checked, and the one it
-            # records as ``moderator_id`` in the AutoMod audit row.  A
-            # caller-supplied bot id must therefore never reach the
-            # executors: it would name a different principal in the servers
-            # audit trail than in the AutoMod audit row, and let a caller
-            # attribute a sanction to an arbitrary user.  Overwrite it
-            # unconditionally so a caller cannot smuggle in another actor.
-            context["bot_user_id"] = user_id
             # A manual action is NOT the same as an automated rule firing: it
             # runs on behalf of a named moderator. Keep that distinction so
             # executors that relax owner/hierarchy protections for automated

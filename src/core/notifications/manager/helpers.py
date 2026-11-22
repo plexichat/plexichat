@@ -225,12 +225,7 @@ def role_covers_all_members(
             )
     except Exception:
         return True
-    if (
-        not total
-        or not covered
-        or "n" not in total
-        or "n" not in covered
-    ):
+    if not total or not covered or "n" not in total or "n" not in covered:
         return False
     try:
         return int(total["n"]) > 0 and int(covered["n"]) >= int(total["n"])

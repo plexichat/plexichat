@@ -87,9 +87,7 @@ def _grant_rows(db, item_id, subject_id):
     )
 
 
-def test_share_only_grantee_cannot_mint_privileged_grant(
-    db, two_users, media_manager
-):
+def test_share_only_grantee_cannot_mint_privileged_grant(db, two_users, media_manager):
     """A share-only grantee must not delegate permissions they do not hold."""
     owner, delegate = two_users
     servers = _FakeServers(owner.id)
@@ -155,9 +153,7 @@ def test_grantee_holding_permission_can_still_delegate_it(
     # The delegate genuinely holds ``delete`` this time (plus ``share`` to
     # reach the grant entry point).
     manager.grant(owner.id, int(item["id"]), delegate.id, ["delete", "share"])
-    granted = manager.grant(
-        delegate.id, int(item["id"]), target.id, ["delete"]
-    )
+    granted = manager.grant(delegate.id, int(item["id"]), target.id, ["delete"])
     assert granted["permissions"] == ["delete"]
     assert _grant_rows(db, item["id"], target.id)
 
@@ -166,9 +162,7 @@ def test_grantee_holding_permission_can_still_delegate_it(
     assert manager.get_item(target.id, int(item["id"])) is not None
 
 
-def test_owner_can_still_grant_privileged_permissions(
-    db, two_users, media_manager
-):
+def test_owner_can_still_grant_privileged_permissions(db, two_users, media_manager):
     """Non-vacuous: the owner's privileged grants are unaffected."""
     owner, target = two_users
     servers = _FakeServers(owner.id)

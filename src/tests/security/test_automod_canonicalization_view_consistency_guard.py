@@ -49,9 +49,7 @@ pytestmark = [pytest.mark.security, pytest.mark.unit]
 
 ROOT = Path(__file__).resolve().parents[3]
 SCAN_ROOTS = ("src/core/automod", "src/core/antispam")
-CANONICALIZERS = frozenset(
-    {"canonicalize_for_matching", "fold_invisible_for_matching"}
-)
+CANONICALIZERS = frozenset({"canonicalize_for_matching", "fold_invisible_for_matching"})
 
 # (repo-relative path, exact ast.unparse of the call, reason).
 # Each entry is a reviewed, PRE-EXISTING truncated view that is safe because the
@@ -145,9 +143,7 @@ def _is_full_view(call: ast.Call) -> bool:
     """True only when max_length=None is passed explicitly (no truncation)."""
     for kw in call.keywords:
         if kw.arg == "max_length":
-            return (
-                isinstance(kw.value, ast.Constant) and kw.value.value is None
-            )
+            return isinstance(kw.value, ast.Constant) and kw.value.value is None
     return False
 
 
@@ -159,9 +155,7 @@ def _canonical_calls(tree: ast.AST) -> list[tuple[int, str, str, bool]]:
             continue
         name = _canonical_name(node.func)
         if name in CANONICALIZERS:
-            found.append(
-                (node.lineno, name, ast.unparse(node), _is_full_view(node))
-            )
+            found.append((node.lineno, name, ast.unparse(node), _is_full_view(node)))
     return found
 
 
@@ -174,9 +168,7 @@ def _all_calls(files, reader) -> list[tuple[str, int, str, str, bool]]:
     return calls
 
 
-def _offenders(
-    calls, documented=DOCUMENTED_TRUNCATED_VIEWS
-) -> list[str]:
+def _offenders(calls, documented=DOCUMENTED_TRUNCATED_VIEWS) -> list[str]:
     offenders = []
     for path, lineno, _name, source, full in calls:
         if full:
@@ -199,26 +191,28 @@ def test_self_test_flags_truncated_block_view_with_raw_consumer():
     """The exact regression class must be flagged (both entry points)."""
     module = "src/core/automod/rules/_synthetic.py"
     sources = (
-        '''
+        """
         def check(self, content):
             view = canonicalize_for_matching(content)
             if BAD_WORD in view:
                 return self._block(content)  # action consumes RAW content
             return self._no_match()
-        ''',
-        '''
+        """,
+        """
         def check(self, content):
             view = fold_invisible_for_matching(content)
             if "a" * 20 in view:
                 return self._block(content)  # action consumes RAW content
             return self._no_match()
-        ''',
+        """,
     )
     for source in sources:
         calls = _all_calls((module,), lambda _p, s=source: textwrap.dedent(s))
         assert len(calls) == 1, source
         assert calls[0][4] is False, "synthetic call must be detected as truncated"
-        assert _offenders(calls), f"truncated-block-with-raw-consumer not flagged: {source}"
+        assert _offenders(calls), (
+            f"truncated-block-with-raw-consumer not flagged: {source}"
+        )
 
 
 def test_self_test_full_view_is_accepted():
@@ -301,9 +295,7 @@ def test_scan_is_not_vacuous(commit_sha):
 
 
 def test_no_undocumented_truncated_canonical_block_view(commit_sha):
-    calls = _all_calls(
-        _committed_files(commit_sha), _make_blob_reader(commit_sha)
-    )
+    calls = _all_calls(_committed_files(commit_sha), _make_blob_reader(commit_sha))
     offenders = _offenders(calls)
     assert not offenders, (
         "Automod/antispam filter blocks on a truncated canonical view whose "

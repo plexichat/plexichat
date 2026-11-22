@@ -27,6 +27,20 @@ from src.core.webhooks.delivery import (
     WebhookDeliveryError,
     pinned_request,
 )
+from src.utils.security import clear_url_validation_cache
+
+
+# The SSRF validator memoizes successful resolutions process-wide with a short
+# TTL. Several tests below reuse the same endpoint URL with different mocked
+# DNS answers; without clearing the memo between tests a cached "public" IP is
+# returned and no lookup happens (serial / -n0 runs then fail for the wrong
+# reason, and a stale entry could mask a real regression). Isolate it per test.
+@pytest.fixture(autouse=True)
+def _isolate_url_resolution_cache():
+    clear_url_validation_cache()
+    yield
+    clear_url_validation_cache()
+
 
 # Publicly routable addresses the validator accepts.
 PUBLIC_IP = "93.184.216.34"  # 2**53 is irrelevant here; these are IPs

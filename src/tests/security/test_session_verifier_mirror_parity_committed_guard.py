@@ -271,7 +271,9 @@ def _check(
             )
             continue
         for definition in concrete:
-            missing = [label for label, marker in spec.items() if marker not in definition.src]
+            missing = [
+                label for label, marker in spec.items() if marker not in definition.src
+            ]
             if missing:
                 problems.append(
                     f"WEAK VERIFIER MIRROR: {name} at "
@@ -327,9 +329,7 @@ def test_protocol_stub_is_allowlisted(commit_sha: str) -> None:
     assert any(
         d.path == _PROTOCOL_PATH and d.name == "_verify_ws_ticket" for d in stubs
     ), "protocol.py abstract _verify_ws_ticket stub was not detected as a stub"
-    concrete_ws = [
-        d for d in defs if d.name == "_verify_ws_ticket" and not d.stub
-    ]
+    concrete_ws = [d for d in defs if d.name == "_verify_ws_ticket" and not d.stub]
     assert len(concrete_ws) == 2, (
         "the allowlisted stub must not be counted as a concrete mirror"
     )
@@ -407,8 +407,16 @@ def test_new_duplicate_missing_markers_fails_closed(commit_sha: str) -> None:
 def test_duplicate_without_marker_spec_fails_closed() -> None:
     """Self-test: a brand-new duplicated method name with no spec fails closed."""
     copies = [
-        _synthetic("_verify_new_credential", "def _verify_new_credential(self): ...", stub=False),
-        _synthetic("_verify_new_credential", "def _verify_new_credential(self): pass", stub=False),
+        _synthetic(
+            "_verify_new_credential",
+            "def _verify_new_credential(self): ...",
+            stub=False,
+        ),
+        _synthetic(
+            "_verify_new_credential",
+            "def _verify_new_credential(self): pass",
+            stub=False,
+        ),
     ]
     problems, _ = _check({"_verify_new_credential": copies})
     assert any("NO MARKER SPEC" in problem for problem in problems)

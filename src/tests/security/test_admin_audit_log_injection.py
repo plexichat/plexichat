@@ -47,9 +47,7 @@ def capture_logger():
 
 
 def _render(logger, handler, entry):
-    AdminLogger(file_logger=logger).log_action(
-        None, entry, log_to_db=False
-    )
+    AdminLogger(file_logger=logger).log_action(None, entry, log_to_db=False)
     assert len(handler.messages) == 1
     return handler.messages[0]
 

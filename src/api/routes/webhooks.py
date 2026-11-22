@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, status, Header
 import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+
 # A bot token's ``user_id`` is its human owner (the bot account is in
 # ``account_id``). Every management handler below authorizes against
 # ``current_user.user_id`` via the webhooks core, which checks the owner's

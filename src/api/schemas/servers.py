@@ -453,7 +453,9 @@ class AutomodRuleCreateRequest(BaseModel):
         ..., max_length=MAX_AUTOMOD_ACTIONS, description="Actions to take"
     )
     applied_roles: Optional[List[SnowflakeID]] = Field(
-        None, max_length=MAX_AUTOMOD_ID_LIST, description="Role IDs this rule applies to"
+        None,
+        max_length=MAX_AUTOMOD_ID_LIST,
+        description="Role IDs this rule applies to",
     )
     exempt_roles: Optional[List[SnowflakeID]] = Field(
         None, max_length=MAX_AUTOMOD_ID_LIST, description="Exempt role IDs"

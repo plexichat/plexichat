@@ -50,6 +50,7 @@ __all__ = [
     "GatewayDispatcher",
 ]
 
+
 # --- Inbound flood guard registration -------------------------------------
 # ``INBOUND_RATE_LIMITS`` in ``.handlers`` is the only per-connection inbound
 # frame-rate ceiling. VOICE_SPEAKING was left out on the assumption that the

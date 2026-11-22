@@ -53,7 +53,9 @@ def test_encode_container_refuses_a_payload_it_could_not_decode():
     assert meta["uncompressed_size"] == MAX_DECOMPRESSED_SIZE
 
 
-def test_chunked_import_cannot_publish_unreadable_workbook(db, two_users, server_manager):
+def test_chunked_import_cannot_publish_unreadable_workbook(
+    db, two_users, server_manager
+):
     """A 2 MB CSV that would inflate past the decode cap is refused, not published."""
     owner, _ = two_users
     manager = _manager(db, server_manager)
@@ -74,7 +76,11 @@ def test_chunked_import_cannot_publish_unreadable_workbook(db, two_users, server
 
     with pytest.raises(SumValidationError, match="workbook size limit"):
         manager.import_csv(
-            owner.id, wb_id, sheet_id, content, base_revision=int(before["current_revision"])
+            owner.id,
+            wb_id,
+            sheet_id,
+            content,
+            base_revision=int(before["current_revision"]),
         )
 
     # Fail closed: no revision bump, the previous blob is still authoritative,
@@ -87,7 +93,9 @@ def test_chunked_import_cannot_publish_unreadable_workbook(db, two_users, server
         (wb_id,),
     )
     assert dict(blob_after) == dict(blob_before)
-    row_meta = db.fetch_one("SELECT blob_path FROM sum_workbooks WHERE id = ?", (wb_id,))
+    row_meta = db.fetch_one(
+        "SELECT blob_path FROM sum_workbooks WHERE id = ?", (wb_id,)
+    )
     container = manager._blob.retrieve(row_meta["blob_path"])
     db_bytes, _, _ = decode_container(container)
     assert len(db_bytes) <= MAX_DECOMPRESSED_SIZE
@@ -101,7 +109,9 @@ def test_ordinary_import_still_lands_after_the_guard(db, two_users, server_manag
     revision = int(manager.get_workbook(owner.id, wb_id)["current_revision"])
 
     content = "\n".join(",".join(f"r{r}c{c}" for c in range(100)) for r in range(30))
-    result = manager.import_csv(owner.id, wb_id, sheet_id, content, base_revision=revision)
+    result = manager.import_csv(
+        owner.id, wb_id, sheet_id, content, base_revision=revision
+    )
     assert result["cells"] == 3000
     viewport = manager.read_viewport(owner.id, wb_id, sheet_id, 0, 2, 0, 2)
     assert viewport["cells"][0]["value"] == "r0c0"

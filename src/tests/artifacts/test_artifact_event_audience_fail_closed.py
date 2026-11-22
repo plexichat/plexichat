@@ -103,13 +103,17 @@ def test_lifecycle_event_keeps_genuine_participants(monkeypatch):
     assert captured["user_ids"] == [2001, 2002]
 
 
-def test_artifact_message_event_fails_closed_when_participant_lookup_raises(monkeypatch):
+def test_artifact_message_event_fails_closed_when_participant_lookup_raises(
+    monkeypatch,
+):
     """The inline MESSAGE_CREATE carries the artifact title as message content."""
     from src.api.routes import artifacts_helpers
     from src.api.schemas.artifacts import ArtifactResponse
 
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(artifacts_helpers, "_can_emit_artifact_message", lambda *a: True)
+    monkeypatch.setattr(
+        artifacts_helpers, "_can_emit_artifact_message", lambda *a: True
+    )
 
     class _Messaging(_FailingMessaging):
         def send_message(self, **kwargs):

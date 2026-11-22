@@ -501,8 +501,7 @@ def _is_cas_update(text):
     if any(op in where for op in (" is null", "<> ", "!= ", " > ", " < ")):
         return True
     return any(
-        state in where
-        for state in ("used = 0", "used=0", "revoked = 0", "revoked=0")
+        state in where for state in ("used = 0", "used=0", "revoked = 0", "revoked=0")
     )
 
 
@@ -586,12 +585,10 @@ def _atomic_signals(function, module_strings=None):
         ident = _call_ident(call).lower()
         source = _call_source(call).lower()
         combined = f"{source} {ident}"
-        if (
-            any(word in combined for word in ("guard", "replay", "claim", "nonce"))
-            and any(
-                word in combined
-                for word in ("consume", "check_and_mark", "claim", "once")
-            )
+        if any(
+            word in combined for word in ("guard", "replay", "claim", "nonce")
+        ) and any(
+            word in combined for word in ("consume", "check_and_mark", "claim", "once")
         ):
             signals.add("replay-guard-consume")
     return signals
@@ -650,9 +647,7 @@ def _surface_offender(
     return None
 
 
-def _new_candidate_offender(
-    relative, function, known, documented, module_strings=None
-):
+def _new_candidate_offender(relative, function, known, documented, module_strings=None):
     """Fail closed on a new one-time validator whose removal is a plain delete."""
     name = function.name
     if (relative, name) in known or (relative, name) in documented:
@@ -756,9 +751,16 @@ def test_self_test_every_atomic_shape_is_accepted():
         assert function is not None, label
         signals = _atomic_signals(function, module_strings.get("<synthetic>", {}))
         assert expected_signals[label] in signals, (label, signals)
-        assert _new_candidate_offender(
-            "<synthetic>", function, set(), set(), module_strings.get("<synthetic>", {})
-        ) is None, label
+        assert (
+            _new_candidate_offender(
+                "<synthetic>",
+                function,
+                set(),
+                set(),
+                module_strings.get("<synthetic>", {}),
+            )
+            is None
+        ), label
 
 
 def test_self_test_conditional_update_without_rowcount_is_not_atomic():
@@ -790,9 +792,7 @@ def test_self_test_documented_and_pinned_cases_are_accepted():
     assert _new_candidate_offender("<synthetic>", function, set(), set()) is not None
     # Documented with a reason: accepted by the discovery pass.
     documented = {("<synthetic>", "verify_challenge_code")}
-    assert (
-        _new_candidate_offender("<synthetic>", function, set(), documented) is None
-    )
+    assert _new_candidate_offender("<synthetic>", function, set(), documented) is None
     # Pinned in the inventory: its plain delete is allowed only because a
     # separate atomic claim is pinned (verified via a helper here).
     helper_source = """
@@ -845,7 +845,9 @@ def test_scan_is_not_vacuous():
     direct = sum(
         1
         for relative, qualified, _, _ in ONE_TIME_SURFACES
-        if _atomic_signals(_find(relative, qualified), _module_strings(_module(relative)))
+        if _atomic_signals(
+            _find(relative, qualified), _module_strings(_module(relative))
+        )
     )
     assert direct >= 15, f"only {direct} surfaces show an in-body atomic claim"
 

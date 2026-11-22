@@ -41,12 +41,17 @@ def _freeze_envelope_value(value: Any) -> Any:
     if isinstance(value, dict):
         return (
             "d",
-            tuple(sorted((str(k), _freeze_envelope_value(v)) for k, v in value.items())),
+            tuple(
+                sorted((str(k), _freeze_envelope_value(v)) for k, v in value.items())
+            ),
         )
     if isinstance(value, (list, tuple)):
         return ("l", tuple(_freeze_envelope_value(v) for v in value))
     if isinstance(value, (set, frozenset)):
-        return ("s", tuple(sorted((_freeze_envelope_value(v) for v in value), key=repr)))
+        return (
+            "s",
+            tuple(sorted((_freeze_envelope_value(v) for v in value), key=repr)),
+        )
     if isinstance(value, (str, int, float, bool, type(None))):
         return ("v", type(value).__name__, value)
     try:

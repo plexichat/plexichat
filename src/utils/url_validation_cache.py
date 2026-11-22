@@ -42,7 +42,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from typing import Dict, Hashable, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -62,9 +62,7 @@ def _positive_float_env(name: str, default: float) -> float:
 
 
 # Short by design: this is a burst-coalescing memo, not a durable DNS cache.
-DEFAULT_TTL_SECONDS = _positive_float_env(
-    "PLEXICHAT_URL_VALIDATION_CACHE_TTL", 5.0
-)
+DEFAULT_TTL_SECONDS = _positive_float_env("PLEXICHAT_URL_VALIDATION_CACHE_TTL", 5.0)
 DEFAULT_MAXSIZE = _positive_int_env("PLEXICHAT_URL_VALIDATION_CACHE_MAXSIZE", 512)
 
 # Cache value: (hostname, resolved_ip) exactly as returned by the validator.

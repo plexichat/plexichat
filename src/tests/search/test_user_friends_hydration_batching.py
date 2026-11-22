@@ -112,11 +112,14 @@ def test_friend_hydration_cold_and_warm_paths_agree():
         cold = cold_mgr._get_user_friends_map([1, 2, 3])
 
     warm_mgr, warm_db = _manager(friends)
-    with patch("src.core.database.valkey_available", return_value=True), patch(
-        "src.core.database.cache_get_many", side_effect=lambda keys: {
-            k: cache[k] for k in keys if k in cache
-        }
-    ), patch("src.core.database.cache_set"):
+    with (
+        patch("src.core.database.valkey_available", return_value=True),
+        patch(
+            "src.core.database.cache_get_many",
+            side_effect=lambda keys: {k: cache[k] for k in keys if k in cache},
+        ),
+        patch("src.core.database.cache_set"),
+    ):
         warm = warm_mgr._get_user_friends_map([1, 2, 3])
 
     assert warm == cold == {1: {2, 3}, 2: {1}, 3: set()}
@@ -131,15 +134,12 @@ def test_enrichment_mutual_friend_counts_unchanged():
     # each hit's friend set with that set (friend links are directed).
     friends = {
         100: [1, 2, 3],
-        1: [2, 3],   # 2 mutual (2, 3)
-        2: [3],      # 1 mutual (3)
-        3: [999],    # 0 mutual
+        1: [2, 3],  # 2 mutual (2, 3)
+        2: [3],  # 1 mutual (3)
+        3: [999],  # 0 mutual
     }
     mgr, db = _manager(friends)
-    hits = [
-        UserSearchResult(id=i, user_id=i, username=f"u{i}")
-        for i in (1, 2, 3)
-    ]
+    hits = [UserSearchResult(id=i, user_id=i, username=f"u{i}") for i in (1, 2, 3)]
 
     with patch("src.core.database.valkey_available", return_value=False):
         enriched = mgr._enrich_user_results(hits, 100)

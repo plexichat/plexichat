@@ -141,14 +141,15 @@ def _preflight_archive(
             raise FetchError(f"Refusing to extract member with invalid size: {name!r}")
         if max_uncompressed_bytes is not None and size > max_uncompressed_bytes:
             raise FetchError(
-                "Extraction exceeded max_uncompressed_bytes="
-                f"{max_uncompressed_bytes}"
+                f"Extraction exceeded max_uncompressed_bytes={max_uncompressed_bytes}"
             )
         declared_total += size
-        if max_uncompressed_bytes is not None and declared_total > max_uncompressed_bytes:
+        if (
+            max_uncompressed_bytes is not None
+            and declared_total > max_uncompressed_bytes
+        ):
             raise FetchError(
-                "Extraction exceeded max_uncompressed_bytes="
-                f"{max_uncompressed_bytes}"
+                f"Extraction exceeded max_uncompressed_bytes={max_uncompressed_bytes}"
             )
         compressed_total += max(0, info.compress_size)
 

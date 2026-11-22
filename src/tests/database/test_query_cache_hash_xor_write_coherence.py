@@ -54,9 +54,7 @@ def test_non_vacuous_single_xor_expression_is_still_a_read():
 
 def test_non_vacuous_plain_stacked_write_is_still_a_write():
     # Sanity: the pre-existing stacked-write detection remains intact.
-    assert (
-        _query_mutates_data("SELECT 1; UPDATE authz_roles SET role = 'user'") is True
-    )
+    assert _query_mutates_data("SELECT 1; UPDATE authz_roles SET role = 'user'") is True
 
 
 def test_hash_inside_string_literal_is_not_a_separator():

@@ -10,8 +10,6 @@ never a real participant, so the wrong principal receives the event. Only
 values that are already genuine ``int`` may attend the audience.
 """
 
-import pytest
-
 import src.api as api_mod
 from src.core.artifacts.manager import ArtifactManager
 

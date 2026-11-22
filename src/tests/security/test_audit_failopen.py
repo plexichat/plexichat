@@ -516,7 +516,9 @@ def test_report_reuses_one_read_and_parse_per_module(
     """
     root = tmp_path / "server"
     client = tmp_path / "client"
-    _write(root, "src/core/sample/manager.py", "class M:\n    def f(self):\n        pass\n")
+    _write(
+        root, "src/core/sample/manager.py", "class M:\n    def f(self):\n        pass\n"
+    )
     _write(
         root,
         "src/api/routes/sample.py",

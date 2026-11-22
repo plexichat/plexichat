@@ -60,8 +60,10 @@ def _client_data(challenge: bytes, origin: str, typ: str = "webauthn.get") -> by
 
 def _auth_data(rp_id: str, sign_count: int, up: bool = True, uv: bool = True) -> bytes:
     flags = (0x01 if up else 0) | (0x04 if uv else 0)
-    return hashlib.sha256(rp_id.encode("utf-8")).digest() + bytes([flags]) + struct.pack(
-        ">I", sign_count
+    return (
+        hashlib.sha256(rp_id.encode("utf-8")).digest()
+        + bytes([flags])
+        + struct.pack(">I", sign_count)
     )
 
 
@@ -148,7 +150,12 @@ def _register_credential(db, mgr, user_id, rp_id):
         "INSERT INTO auth_passkeys "
         "(id, user_id, credential_id, credential_public_key, sign_count, created_at) "
         "VALUES (?, ?, ?, ?, 0, 0)",
-        (user_id * 1000, user_id, credential_id_b64, _cose_es256(private_key.public_key())),
+        (
+            user_id * 1000,
+            user_id,
+            credential_id_b64,
+            _cose_es256(private_key.public_key()),
+        ),
     )
     return credential_id_b64, private_key
 
@@ -206,7 +213,9 @@ class TestWebAuthnOriginAndRPBinding:
         with pytest.raises(ValueError, match="RP ID|rp id|verification failed"):
             binding_manager.verify_authentication(challenge_id, credential)
 
-    def test_client_supplied_origin_and_extension_cannot_override(self, db, binding_manager):
+    def test_client_supplied_origin_and_extension_cannot_override(
+        self, db, binding_manager
+    ):
         """Unsigned client fields must not redirect the expected origin/RP ID.
 
         The attacker sends an assertion for the real origin/RP (so it is

@@ -153,9 +153,7 @@ class AdminMixin(ApplicationManagerProtocol):
             joins.append(f"LEFT JOIN ({sql}) AS c_{column} ON 1=1")
             projections.append(f"COALESCE(c_{column}.c, 0) AS {column}")
 
-        add_count(
-            "bookmarks", "user_bookmarks" if present["user_bookmarks"] else None
-        )
+        add_count("bookmarks", "user_bookmarks" if present["user_bookmarks"] else None)
         add_count("scheduled_messages_pending", scheduled_table, "status = 'pending'")
         add_count("forwarded_messages", forwarded_table)
         add_count(

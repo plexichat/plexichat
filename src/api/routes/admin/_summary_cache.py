@@ -152,9 +152,7 @@ def get_or_compute(
                 _INFLIGHT[key] = flight
                 leader = True
                 _STATS["misses"] += 1
-                _STATS["inflight_peak"] = max(
-                    _STATS["inflight_peak"], len(_INFLIGHT)
-                )
+                _STATS["inflight_peak"] = max(_STATS["inflight_peak"], len(_INFLIGHT))
         else:
             _STATS["coalesced"] += 1
 

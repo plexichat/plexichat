@@ -91,9 +91,7 @@ class ThreadMembershipMixin(ThreadProtocol):
         # thread name/owner/existence and message/typing activity. Fail closed:
         # only exact int ids from the authoritative roster may enter.
         return [
-            uid
-            for uid in (row["user_id"] for row in rows or [])
-            if type(uid) is int
+            uid for uid in (row["user_id"] for row in rows or []) if type(uid) is int
         ]
 
     def get_thread_type_value(self, thread_id: int) -> Optional[Any]:

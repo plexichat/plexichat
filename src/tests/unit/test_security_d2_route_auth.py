@@ -98,6 +98,7 @@ def _called_names(tree: ast.AST) -> set[str]:
                 out.add(".".join(reversed(parts)))
     return out
 
+
 # Mutating routes that are intentionally reachable without a session token.
 # Every entry states *why* it is public and must still be an unprotected route
 # for the staleness check to accept it.

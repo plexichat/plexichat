@@ -116,7 +116,12 @@ async def test_alias_read_denied_member_cannot_search(monkeypatch):
 
     assert exc.value.status_code in (403, 404)
     # The grant was checked on the REAL channel id, not the URL alias.
-    assert (VIEWER_ID, SERVER_ID, "messages.read", CHANNEL_ID) in servers.permission_calls
+    assert (
+        VIEWER_ID,
+        SERVER_ID,
+        "messages.read",
+        CHANNEL_ID,
+    ) in servers.permission_calls
     assert entered == []
 
 
@@ -130,7 +135,12 @@ async def test_alias_read_granted_member_can_search(monkeypatch):
     result = await route.search_messages(str(CONV_ID), "harmless", 25, _viewer())
 
     assert result == ["channel-message-hit"]
-    assert (VIEWER_ID, SERVER_ID, "messages.read", CHANNEL_ID) in servers.permission_calls
+    assert (
+        VIEWER_ID,
+        SERVER_ID,
+        "messages.read",
+        CHANNEL_ID,
+    ) in servers.permission_calls
     assert entered and entered[0]["conv_id"] == CONV_ID
 
 

@@ -4,7 +4,7 @@ Read receipt routes - Message acknowledgment and unread counts.
 
 from src.core.security.hardening import parse_id
 
-from typing import Optional, Dict
+from typing import Optional, Dict, NoReturn
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from starlette.concurrency import run_in_threadpool
 
@@ -64,7 +64,8 @@ def _require_read_receipt_channel_view(cid: int, user_id: int, servers_mod) -> N
     channel. Fails closed on any broken lookup; a genuine DM/group has no
     backing channel and is left to the messaging layer's participation gate.
     """
-    def _deny() -> None:
+
+    def _deny() -> NoReturn:
         # Same 404 as a missing channel, so a restricted channel is not
         # disclosed and the alias cannot be used as an existence oracle.
         raise HTTPException(

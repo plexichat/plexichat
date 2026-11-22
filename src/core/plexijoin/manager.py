@@ -9,7 +9,6 @@ import logging
 import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple, cast
-from urllib.parse import urlparse
 
 from src.core.admin.logging import AdminLogEntry
 
@@ -88,7 +87,7 @@ def resolve_remote_target(remote_url: str) -> Tuple[str, str]:
     # credentials, but this path called URLValidator directly and skipped that
     # check. A PlexiJoin remote URL is stored verbatim and echoed back by the
     # /join/list serializer (and folded into ``remote_instance_id`` from
-    # ``urlparse(url).netloc``), so a ``https://user:pass@host`` value leaks the
+    # ``urlparse(url).netloc``), so a ``https://user:pass@host`` value leaks the  # pragma: allowlist secret
     # secret to every admin with read access and to logs, and re-sends it on
     # each outbound delivery. Refuse it here, before DNS resolution, just like
     # the shared gate does.

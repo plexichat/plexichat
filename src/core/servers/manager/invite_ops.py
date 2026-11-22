@@ -27,7 +27,6 @@ class InviteOpsMixin(ServerProtocol):
     def get_server_invites(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List:
         return self.get_invites(user_id, server_id)
 
-
     # Keep each IN (...) clause below the SQLite/PostgreSQL bound-parameter
     # ceiling; the automod resolver caps its candidate list, but chunking keeps
     # this helper safe for any caller.

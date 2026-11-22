@@ -122,8 +122,7 @@ def _derive_from_trees(trees) -> tuple[tuple[str, str], ...]:
                 )
             }
             raw_compare = any(
-                _is_raw_credential_compare(child, params)
-                for child in ast.walk(node)
+                _is_raw_credential_compare(child, params) for child in ast.walk(node)
             )
             if calls_ct or raw_compare:
                 pairs.add((relative, node.name))
@@ -383,8 +382,6 @@ def test_novel_named_verifier_is_derived_and_flagged():
     offenders = [
         f"{rel}:{name}"
         for rel, name in derived
-        if not _constant_time_calls(
-            _find_function(ast.parse(novel), name)
-        )
+        if not _constant_time_calls(_find_function(ast.parse(novel), name))
     ]
     assert "src/core/auth/widgets.py:verify_frobnicated_widget" in offenders

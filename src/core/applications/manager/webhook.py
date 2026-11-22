@@ -22,7 +22,9 @@ def _claim_replay_key(key: str, ttl: int):
     """Atomically claim ``key`` in the shared cache tier when available."""
     try:
         from src.core.database.valkey_client import (
-            ValkeyOperationError, get_client, is_available,
+            ValkeyOperationError,
+            get_client,
+            is_available,
         )
     except Exception:
         return None
@@ -46,7 +48,9 @@ class WebhookMixin(ApplicationManagerProtocol):
     ) -> bool:
         max_skew = bounded_int(
             self._config.get("webhook_signature_max_skew_seconds", 300),
-            "webhook_signature_max_skew_seconds", minimum=0, maximum=86_400,
+            "webhook_signature_max_skew_seconds",
+            minimum=0,
+            maximum=86_400,
         )
         try:
             signature = reject_control_characters(signature, "signature")
@@ -68,9 +72,10 @@ class WebhookMixin(ApplicationManagerProtocol):
         if not hmac.compare_digest(expected, signature):
             raise WebhookSignatureError("Invalid webhook signature")
         # Replay protection: only a signature that just verified reaches here.
-        replay_key = "webhook:hmac-seen:" + hashlib.sha256(
-            (secret + "\x00" + signature).encode("utf-8")
-        ).hexdigest()
+        replay_key = (
+            "webhook:hmac-seen:"
+            + hashlib.sha256((secret + "\x00" + signature).encode("utf-8")).hexdigest()
+        )
         replay_ttl = max(60, 2 * max_skew + 60)
         claimed = _claim_replay_key(replay_key, replay_ttl)
         if claimed is True:

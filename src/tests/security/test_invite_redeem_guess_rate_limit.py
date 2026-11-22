@@ -85,15 +85,11 @@ async def _join(fake, ip: Optional[str] = "203.0.113.7", code: str = "GUESSED1")
 
 
 def _deny(monkeypatch):
-    monkeypatch.setattr(
-        invites_route, "check_rate_limit", lambda *_a, **_k: (False, 0)
-    )
+    monkeypatch.setattr(invites_route, "check_rate_limit", lambda *_a, **_k: (False, 0))
 
 
 def _allow(monkeypatch):
-    monkeypatch.setattr(
-        invites_route, "check_rate_limit", lambda *_a, **_k: (True, 9)
-    )
+    monkeypatch.setattr(invites_route, "check_rate_limit", lambda *_a, **_k: (True, 9))
 
 
 def test_route_injects_request_for_authoritative_ip_keying():
@@ -150,7 +146,9 @@ async def test_unlimited_guessing_is_bounded(monkeypatch):
 
     monkeypatch.setattr(invites_route, "check_rate_limit", counting)
     monkeypatch.setattr(
-        config, "get", lambda section, default=None: (
+        config,
+        "get",
+        lambda section, default=None: (
             {
                 "redeem_guess_max": 3,
                 "redeem_guess_window_seconds": 60,
@@ -218,7 +216,9 @@ async def test_throttled_refusal_is_uniform_for_all_code_states(monkeypatch):
     for exc in (
         srv.InviteNotFoundError("Invite not found"),
         srv.InviteExpiredError("Invite has expired", expired_at=1704153600000),
-        srv.InviteMaxUsesError("Invite has reached maximum uses", max_uses=5, current_uses=5),
+        srv.InviteMaxUsesError(
+            "Invite has reached maximum uses", max_uses=5, current_uses=5
+        ),
     ):
         fake = _CountingServers(exc)
         with pytest.raises(HTTPException) as caught:

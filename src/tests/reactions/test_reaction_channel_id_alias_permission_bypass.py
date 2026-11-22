@@ -51,7 +51,9 @@ def _users(auth_manager):
 def _seed_alias_message(db, auth_manager, server_manager):
     """A message whose conversation_id is a server channel's own id (alias)."""
     author, viewer = _users(auth_manager)
-    server = server_manager.create_server(author.id, f"Alias Server {uuid.uuid4().hex[:6]}")
+    server = server_manager.create_server(
+        author.id, f"Alias Server {uuid.uuid4().hex[:6]}"
+    )
 
     # The real linked conversation (srv_channels.conversation_id) ...
     db.execute(
@@ -95,7 +97,9 @@ def _servers(allow_add_reactions: bool):
             return allow_add_reactions
         return True
 
-    return SimpleNamespace(has_permission=has_permission, get_member=lambda *a: object())
+    return SimpleNamespace(
+        has_permission=has_permission, get_member=lambda *a: object()
+    )
 
 
 def test_add_reaction_via_channel_id_alias_denied_without_permission(

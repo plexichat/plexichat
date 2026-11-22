@@ -4,6 +4,8 @@ Pin service - Business logic for pinned messages.
 
 from typing import Any, Dict, List, Optional
 
+import utils.logger as logger
+
 from ..models import Message
 from ..repositories.pin import PinRepository, MAX_PIN_FETCH
 from ..repositories.message import MessageRepository

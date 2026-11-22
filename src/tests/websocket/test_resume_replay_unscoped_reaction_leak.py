@@ -73,9 +73,7 @@ async def test_production_shaped_reaction_event_is_stamped_and_rechecked(
     session = session_manager.create_session(old, USER_ID, intents)
     dispatcher = GatewayDispatcher(session_manager=session_manager)
 
-    await dispatcher.dispatch_event(
-        _reaction_event_like_production_route(), [USER_ID]
-    )
+    await dispatcher.dispatch_event(_reaction_event_like_production_route(), [USER_ID])
 
     # The frame is recorded by the live dispatch path. Its scope MUST have
     # been stamped server-side from the private channel id in ``d``; otherwise
@@ -93,11 +91,14 @@ async def test_production_shaped_reaction_event_is_stamped_and_rechecked(
     # authoritative DM participation gate now fails.
     messaging = Mock()
     messaging.is_participant = Mock(return_value=False)
-    with patch("src.api.get_servers", return_value=None), patch(
-        "src.api.get_messaging", return_value=messaging
+    with (
+        patch("src.api.get_servers", return_value=None),
+        patch("src.api.get_messaging", return_value=messaging),
     ):
         resumed = _connection(session_manager, mock_websocket)
-        assert session_manager.resume_session(resumed, session.session_id, 0) is not None
+        assert (
+            session_manager.resume_session(resumed, session.session_id, 0) is not None
+        )
         resumed.websocket.send_json.reset_mock()
         await dispatcher.replay_events(resumed, 0)
 
@@ -116,17 +117,18 @@ async def test_production_shaped_reaction_event_replays_when_access_retained(
     session = session_manager.create_session(old, USER_ID, intents)
     dispatcher = GatewayDispatcher(session_manager=session_manager)
 
-    await dispatcher.dispatch_event(
-        _reaction_event_like_production_route(), [USER_ID]
-    )
+    await dispatcher.dispatch_event(_reaction_event_like_production_route(), [USER_ID])
 
     messaging = Mock()
     messaging.is_participant = Mock(return_value=True)
-    with patch("src.api.get_servers", return_value=None), patch(
-        "src.api.get_messaging", return_value=messaging
+    with (
+        patch("src.api.get_servers", return_value=None),
+        patch("src.api.get_messaging", return_value=messaging),
     ):
         resumed = _connection(session_manager, mock_websocket)
-        assert session_manager.resume_session(resumed, session.session_id, 0) is not None
+        assert (
+            session_manager.resume_session(resumed, session.session_id, 0) is not None
+        )
         resumed.websocket.send_json.reset_mock()
         await dispatcher.replay_events(resumed, 0)
 
@@ -167,11 +169,14 @@ async def test_production_shaped_ack_event_is_stamped_and_rechecked(
 
     messaging = Mock()
     messaging.is_participant = Mock(return_value=False)
-    with patch("src.api.get_servers", return_value=None), patch(
-        "src.api.get_messaging", return_value=messaging
+    with (
+        patch("src.api.get_servers", return_value=None),
+        patch("src.api.get_messaging", return_value=messaging),
     ):
         resumed = _connection(session_manager, mock_websocket)
-        assert session_manager.resume_session(resumed, session.session_id, 0) is not None
+        assert (
+            session_manager.resume_session(resumed, session.session_id, 0) is not None
+        )
         resumed.websocket.send_json.reset_mock()
         await dispatcher.replay_events(resumed, 0)
 

@@ -18,9 +18,7 @@ from src.core.messaging.services import unread_cache
 
 @pytest.mark.messaging
 class TestUnreadCountDeleteInvalidation:
-    def test_delete_invalidates_cached_unread_count(
-        self, messaging_manager, two_users
-    ):
+    def test_delete_invalidates_cached_unread_count(self, messaging_manager, two_users):
         user1, user2 = two_users
         dm = messaging_manager.create_dm(user1.id, user2.id)
         msg = messaging_manager.send_message(user1.id, dm.id, "unread me")

@@ -333,9 +333,7 @@ def _scoped_text(text: str, record: FixMarker) -> str | None:
     return text[start:end]
 
 
-def _evaluate(
-    record: FixMarker, reader=_read_text
-) -> tuple[bool, str]:
+def _evaluate(record: FixMarker, reader=_read_text) -> tuple[bool, str]:
     """Return ``(present, detail)`` for one fix marker.
 
     ``reader`` is injectable so the self-tests can simulate a marker being
@@ -364,7 +362,10 @@ def _evaluate(
             checked.append(f"{rel} (VULNERABLE pattern {record.marker} present)")
         else:
             if found:
-                return True, f"marker {record.marker} for {record.key!r} present in {rel}"
+                return (
+                    True,
+                    f"marker {record.marker} for {record.key!r} present in {rel}",
+                )
             checked.append(rel)
 
     if record.absent:
@@ -483,9 +484,7 @@ def test_query_cache_marker_non_vacuity(key: str) -> None:
             if record.scope is None:
                 return text + f"\n{record.marker}\n"
             start_anchor, _end_anchor = record.scope
-            return text.replace(
-                start_anchor, f"{start_anchor}\n{record.marker}\n", 1
-            )
+            return text.replace(start_anchor, f"{start_anchor}\n{record.marker}\n", 1)
 
         present, detail = _evaluate(record, reader_reintroduces)
         assert not present, (

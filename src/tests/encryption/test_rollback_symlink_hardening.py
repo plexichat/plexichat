@@ -14,7 +14,10 @@ import stat
 
 import pytest
 
-from src.utils.encryption.kek_migration.migration import KEKMigrationError, KeyringMigration
+from src.utils.encryption.kek_migration.migration import (
+    KEKMigrationError,
+    KeyringMigration,
+)
 
 
 @pytest.fixture

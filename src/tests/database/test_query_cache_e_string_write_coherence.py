@@ -87,9 +87,7 @@ def test_non_vacuous_escaped_e_string_reads_stay_reads():
     # The plain single-quote path must be unaffected by the new alternative.
     assert _query_mutates_data("SELECT 'a;b'") is False
     # Sanity: a plain stacked write is still detected (no regression).
-    assert (
-        _query_mutates_data("SELECT 1; UPDATE authz_roles SET role='user'") is True
-    )
+    assert _query_mutates_data("SELECT 1; UPDATE authz_roles SET role='user'") is True
 
 
 def test_escaped_e_string_stacked_write_invalidates_cached_select(db):

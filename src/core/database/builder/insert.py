@@ -38,9 +38,7 @@ class InsertQuery(TableQuery):
         compile to their own (cached) statement text; values are never cached.
         """
         columns = list(self.data.keys())
-        validated_columns = tuple(
-            self._validate_identifiers_list(columns, "column")
-        )
+        validated_columns = tuple(self._validate_identifiers_list(columns, "column"))
 
         if self.schema_registry:
             self.schema_registry.validate_columns(

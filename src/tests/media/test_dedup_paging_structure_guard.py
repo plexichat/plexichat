@@ -97,20 +97,20 @@ class TestDedupLimitGuardDetector:
     """Validate the detector itself so the real-tree assertion is non-vacuous."""
 
     def test_flags_unclamped_limit_reader(self):
-        src = '''
+        src = """
             def get_things(db, limit=50):
                 return db.fetch_all("SELECT x FROM t LIMIT ? OFFSET ?", (limit, 0))
-        '''
+        """
         unclamped, readers = _scan(src)
         assert readers == {"get_things"}
         assert unclamped == {"get_things"}
 
     def test_accepts_clamped_limit_reader(self):
-        src = '''
+        src = """
             def get_things(db, limit=50):
                 limit = clamp_page_limit(limit)
                 return db.fetch_all("SELECT x FROM t LIMIT ? OFFSET ?", (limit, 0))
-        '''
+        """
         unclamped, readers = _scan(src)
         assert readers == {"get_things"}
         assert unclamped == set()
@@ -143,6 +143,5 @@ class TestDedupPackageLimitReadersAllClamped:
             f"found {sorted(all_readers)}; guard is stale"
         )
         assert all_unclamped == set(), (
-            "dedup LIMIT ? readers missing clamp_page_limit: "
-            f"{sorted(all_unclamped)}"
+            f"dedup LIMIT ? readers missing clamp_page_limit: {sorted(all_unclamped)}"
         )

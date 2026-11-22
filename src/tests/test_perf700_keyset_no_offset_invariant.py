@@ -40,7 +40,10 @@ def _parse(source):
 
 def _find_function(tree, name):
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return node
     return None
 
@@ -94,7 +97,10 @@ def _real_problems():
         if not path.exists():
             problems.append(f"{rel}: missing file")
             continue
-        problems.extend(f"{rel}: {p}" for p in _check_keyset_source(path.read_text(encoding="utf-8"), name))
+        problems.extend(
+            f"{rel}: {p}"
+            for p in _check_keyset_source(path.read_text(encoding="utf-8"), name)
+        )
         scanned.append(rel)
     return problems, scanned
 
@@ -138,9 +144,7 @@ def test_self_test_detectors_catch_synthetic_violations():
     assert any("OFFSET" in p for p in _check_keyset_source(with_offset, "page"))
     assert any("seek" in p for p in _check_keyset_source(no_seek, "page"))
     assert any("LIMIT" in p for p in _check_keyset_source(no_limit, "page"))
-    assert any(
-        "not found" in p for p in _check_keyset_source("x = 1\n", "page")
-    )
+    assert any("not found" in p for p in _check_keyset_source("x = 1\n", "page"))
 
 
 def test_scan_is_not_vacuous():

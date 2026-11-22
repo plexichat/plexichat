@@ -101,6 +101,4 @@ def test_mapped_trusted_hop_is_skipped_rightmost_untrusted_wins(monkeypatch):
 
 def test_mapped_all_hops_trusted_falls_back_to_peer(monkeypatch):
     _fake_config(monkeypatch, ["10.0.0.0/8"])
-    assert (
-        get_client_ip(_scope("10.0.0.1", "::ffff:10.0.0.9, 10.0.0.8")) == "10.0.0.1"
-    )
+    assert get_client_ip(_scope("10.0.0.1", "::ffff:10.0.0.9, 10.0.0.8")) == "10.0.0.1"

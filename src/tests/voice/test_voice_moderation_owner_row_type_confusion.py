@@ -57,7 +57,9 @@ def _force_authoritative_row(monkeypatch):
         "get_cached_server_owner",
         lambda db, sid: server_owner_cache._MISS,
     )
-    monkeypatch.setattr(server_owner_cache, "prime_server_owner", lambda db, sid, oid: None)
+    monkeypatch.setattr(
+        server_owner_cache, "prime_server_owner", lambda db, sid, oid: None
+    )
 
 
 def _gate_allows(monkeypatch, owner_value, moderator_id, target_id=_TARGET_ID):

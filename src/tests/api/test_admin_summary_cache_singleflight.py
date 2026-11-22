@@ -61,9 +61,7 @@ def test_concurrent_identical_reads_compute_once():
 
     def run(results):
         with patch.object(api, "get_db", return_value=_DB):
-            results.append(
-                _summary_cache.get_or_compute("dashboard", (), producer)
-            )
+            results.append(_summary_cache.get_or_compute("dashboard", (), producer))
 
     results: list = []
     threads = []

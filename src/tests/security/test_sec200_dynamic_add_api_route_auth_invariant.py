@@ -89,6 +89,7 @@ def _is_guard_call_name(name: str) -> bool:
     """Whether a called function name actually denotes an auth gate."""
     return bool(name and GUARD_CALL_RE.fullmatch(name))
 
+
 # Mutating ``add_api_route`` registrations intentionally reachable without a
 # session token. (relative source file, HTTP method, raw path) -> justification.
 # Keep empty unless a credential-exchange / token-in-path route is registered
@@ -219,7 +220,10 @@ def _canonical_names(tree):
                         for t in node.targets
                         if isinstance(t, ast.Name)
                     ]
-            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+            elif (
+                isinstance(node, (ast.AnnAssign, ast.NamedExpr))
+                and node.value is not None
+            ):
                 canonical = canonical_of(node.value)
                 if canonical is not None and isinstance(node.target, ast.Name):
                     pairs = [(node.target.id, canonical)]
@@ -407,8 +411,7 @@ def test_every_mutating_add_api_route_is_protected_or_justified_public():
     assert not offenders, (
         "Dynamically registered mutating routes (add_api_route / add_route) with "
         "no auth dependency or permission guard on the registration or its "
-        "endpoint:\n  "
-        + "\n  ".join(sorted(offenders))
+        "endpoint:\n  " + "\n  ".join(sorted(offenders))
     )
 
 
@@ -498,8 +501,7 @@ wire("/chained-readonly", nuke, methods=["GET"])
     assert found[(base, "post", "/aliased-good")] is True
     # Literal read-only aliases are not over-flagged.
     assert not any(
-        path in {"/aliased-readonly", "/chained-readonly"}
-        for _, _, path in found
+        path in {"/aliased-readonly", "/chained-readonly"} for _, _, path in found
     ), f"read-only alias over-flagged: {found}"
 
 

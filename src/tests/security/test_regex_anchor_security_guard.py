@@ -493,7 +493,9 @@ _SANITIZER_CALLS = frozenset(
     }
 )
 _CONTROL_CONTAINERS = frozenset({"CONTROL_CHARACTERS", "_SDP_UNICODE_CONTROL_CHARS"})
-_CONTROL_CONTAINER_METHODS = frozenset({"search", "match", "fullmatch", "findall", "sub"})
+_CONTROL_CONTAINER_METHODS = frozenset(
+    {"search", "match", "fullmatch", "findall", "sub"}
+)
 _STRIP_METHODS = frozenset({"strip", "lstrip", "rstrip"})
 _CONTROL_ORDINALS = frozenset({0x1F, 0x20, 0x7F})
 
@@ -538,7 +540,9 @@ def _literal_int(node: ast.AST) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _name_aware_mitigation(fn: ast.AST | None, value_node: ast.AST | None) -> str | None:
+def _name_aware_mitigation(
+    fn: ast.AST | None, value_node: ast.AST | None
+) -> str | None:
     """Neutralization reason only when a marker reaches the matched value.
 
     A marker on a DIFFERENT variable (``y = x.strip()`` followed by
@@ -631,7 +635,11 @@ def _extract_calls(source: str, path: str) -> list[RegexCall]:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in {"match", "search", "fullmatch"}:
+        if isinstance(func, ast.Attribute) and func.attr in {
+            "match",
+            "search",
+            "fullmatch",
+        }:
             method = func.attr
             receiver = ast.unparse(func.value)
         else:
@@ -655,7 +663,9 @@ def _extract_calls(source: str, path: str) -> list[RegexCall]:
 
         owner = _enclosing_function(tree, node)
         if owner is not None:
-            func_source = "\n".join(lines[owner.lineno - 1 : owner.end_lineno or owner.lineno])
+            func_source = "\n".join(
+                lines[owner.lineno - 1 : owner.end_lineno or owner.lineno]
+            )
             func_name = owner.name
         else:
             func_source = source
@@ -693,7 +703,9 @@ def _collect_calls(commit: str) -> list[RegexCall]:
 def _safe_by_construction(call: RegexCall) -> bool:
     # A raw pattern ending in \Z pins the true end of the string; fullmatch
     # consumes the whole value regardless of the anchor spelling.
-    return call.method == "fullmatch" or re.search(r"(?<!\\)\\Z", call.pattern) is not None
+    return (
+        call.method == "fullmatch" or re.search(r"(?<!\\)\\Z", call.pattern) is not None
+    )
 
 
 def _neutralization(call: RegexCall) -> str | None:
@@ -888,7 +900,12 @@ def test_self_test_documenting_a_case_is_required_to_allow_it():
     calls = _synthetic_calls(source)
     assert _offenders(calls)
     documented = (
-        ("src/_synthetic/gate.py", "check_path", r"^/ok/[a-z]+$", "reviewed: internal only"),
+        (
+            "src/_synthetic/gate.py",
+            "check_path",
+            r"^/ok/[a-z]+$",
+            "reviewed: internal only",
+        ),
     )
     assert _offenders(calls, documented) == []
 
@@ -915,9 +932,10 @@ def test_scan_is_not_vacuous(commit_sha):
         assert required in paths, f"{required} unexpectedly absent from the sweep"
     # The reader returns committed content, not a stale/contested working copy.
     blob = _read_blobs(commit_sha, ("src/core/webhooks/manager/execute.py",))
-    assert r"^/?webhooks/(\d+)/([A-Za-z0-9_.-]+)$" in blob[
-        "src/core/webhooks/manager/execute.py"
-    ]
+    assert (
+        r"^/?webhooks/(\d+)/([A-Za-z0-9_.-]+)$"
+        in blob["src/core/webhooks/manager/execute.py"]
+    )
 
 
 def test_no_undocumented_end_anchored_validator(commit_sha):

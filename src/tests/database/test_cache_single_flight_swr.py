@@ -352,9 +352,7 @@ async def test_swr_window_and_lifetime_are_hard_bounded(offline):
     # L1 ceiling preserved; stale window capped by its own hard ceiling.
     assert stale_until <= expiry + 1  # L1 entry outlives the fresh deadline
     assert stale_until - fresh_until <= _SWR_MAX_STALE_SECONDS + 1
-    assert expiry - time.time() <= (
-        _L1_MAX_TTL_SECONDS + _SWR_MAX_STALE_SECONDS + 2
-    )
+    assert expiry - time.time() <= (_L1_MAX_TTL_SECONDS + _SWR_MAX_STALE_SECONDS + 2)
 
 
 @pytest.mark.asyncio

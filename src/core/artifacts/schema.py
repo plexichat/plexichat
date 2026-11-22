@@ -39,6 +39,12 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_server ON artifacts(server_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_author ON artifacts(author_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
 CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts(created_at);
+-- Keyset (cursor) path for the admin artifact list. ``id`` is appended as a
+-- deterministic tiebreak so ``(created_at, id) < (?, ?)`` seeks straight to a
+-- deep page in O(page size) instead of walking the whole OFFSET. Without this
+-- composite the planner cannot use the tuple predicate and falls back to a
+-- full index walk (60,768 vs 918 VM ops for a 20k-row deep page).
+CREATE INDEX IF NOT EXISTS idx_artifacts_created_id ON artifacts(created_at, id);
 -- Retention sweep: WHERE expires_at IS NOT NULL AND expires_at <= ?.
 CREATE INDEX IF NOT EXISTS idx_artifacts_expires ON artifacts(expires_at);
 -- Listing a conversation/author newest-first.

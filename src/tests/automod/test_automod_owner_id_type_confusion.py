@@ -27,7 +27,9 @@ def _ban_action(owner_id):
             return {"owner_id": owner_id}
         return None
 
-    return BanUserAction(db=SimpleNamespace(fetch_one=fetch_one), servers_module=object())
+    return BanUserAction(
+        db=SimpleNamespace(fetch_one=fetch_one), servers_module=object()
+    )
 
 
 def _kick_action(owner_id):
@@ -38,7 +40,9 @@ def _kick_action(owner_id):
             return {"owner_id": owner_id}
         return None
 
-    return KickUserAction(db=SimpleNamespace(fetch_one=fetch_one), servers_module=object())
+    return KickUserAction(
+        db=SimpleNamespace(fetch_one=fetch_one), servers_module=object()
+    )
 
 
 @pytest.mark.parametrize("action_factory", [_ban_action, _kick_action])

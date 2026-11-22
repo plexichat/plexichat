@@ -283,7 +283,9 @@ def get_mutual_servers(user_id: int, target_id: int) -> List[int]:
     return _get_manager().get_mutual_servers(user_id, target_id)
 
 
-def get_mutual_servers_bulk(user_id: int, target_ids: List[int]) -> Dict[int, List[int]]:
+def get_mutual_servers_bulk(
+    user_id: int, target_ids: List[int]
+) -> Dict[int, List[int]]:
     """Get batched shared-server sets between one viewer and many targets."""
     return _get_manager().get_mutual_servers_bulk(user_id, target_ids)
 

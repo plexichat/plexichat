@@ -190,6 +190,13 @@ class SearchManagerBase(BaseManager):
     def clear_cache(self):
         self._search_rate_window_started_ms.clear()
         self._search_rate_count.clear()
+        # The per-user budget is a shared atomic counter now, so the counters
+        # that actually gate searches live in the rate-limit store, not in the
+        # two dicts above. Dropping them here keeps the documented contract
+        # that clearing the search cache leaves no stale budget behind.
+        from src.core.database.cache.rate_limit import reset_rate_limit_prefix
+
+        reset_rate_limit_prefix("search:per_user:")
 
     def _check_rate_limit(self, user_id: int) -> None: ...
 

@@ -171,11 +171,7 @@ def _is_reverse_sql(node: ast.AST) -> bool:
     if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
         return False
     sql = node.value.lower()
-    return (
-        "srv_channels" in sql
-        and "where" in sql
-        and "conversation_id = ?" in sql
-    )
+    return "srv_channels" in sql and "where" in sql and "conversation_id = ?" in sql
 
 
 def _has_reverse_sql(fn: ast.AST) -> bool:
@@ -414,8 +410,7 @@ GATE_REGISTRY: tuple[GateEntry, ...] = (
         "_can_view_poll_message",
         "paired",
         ("channel_exists", "get_channel_conversation_id"),
-        "Same dual-lookup handling as the poll post gate for the channel-id "
-        "spelling.",
+        "Same dual-lookup handling as the poll post gate for the channel-id spelling.",
     ),
     # --- N735 gates, fixed centrally. Each still has the miss-as-allow shape
     #     (so the detector enumerates it), but the resolver they all delegate
@@ -706,9 +701,9 @@ def gate(servers, conversation_id, user_id):
         # proven by the dual-form evidence markers, not by hiding the gate.
         gates = _reverse_lookup_gates(fn, "src/api/_synthetic.py")
         assert gates, "detector must still enumerate the dual-form gate"
-        assert DUAL_SQL_MARKER in src or any(
-            p in src for p in ID_FORM_PROBES
-        ), "test source lost its dual-form evidence"
+        assert DUAL_SQL_MARKER in src or any(p in src for p in ID_FORM_PROBES), (
+            "test source lost its dual-form evidence"
+        )
 
 
 def test_self_test_miss_as_deny_is_not_a_gate():

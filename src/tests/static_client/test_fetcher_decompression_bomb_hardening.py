@@ -86,7 +86,7 @@ def test_traversal_and_symlink_members_are_still_rejected(tmp_path):
     with zipfile.ZipFile(buf, "w") as zf:
         info = zipfile.ZipInfo("link")
         info.create_system = 3
-        info.external_attr = (0o120777 << 16)
+        info.external_attr = 0o120777 << 16
         zf.writestr(info, "../../etc/passwd")
     with pytest.raises(FetchError):
         _extract(buf.getvalue(), tmp_path)

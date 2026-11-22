@@ -75,12 +75,8 @@ class _FakeServers:
 
 def test_pin_limit_is_400_not_500_with_static_message(monkeypatch):
     # Internal quota/count detail must never appear in the response body.
-    exc = PinLimitError(
-        "pin quota INTERNAL_DETAIL max=50 current=50", 50, 50
-    )
-    monkeypatch.setattr(
-        api_module, "get_messaging", lambda: _FakeMessaging(exc)
-    )
+    exc = PinLimitError("pin quota INTERNAL_DETAIL max=50 current=50", 50, 50)
+    monkeypatch.setattr(api_module, "get_messaging", lambda: _FakeMessaging(exc))
     monkeypatch.setattr(api_module, "get_servers", lambda: _FakeServers())
 
     with pytest.raises(HTTPException) as ei:
@@ -103,9 +99,7 @@ def test_pin_limit_is_400_not_500_with_static_message(monkeypatch):
 def test_pin_limit_arm_precedes_generic_500(monkeypatch):
     """Any PinLimitError reaching the route is a 400, regardless of payload."""
     exc = PinLimitError("SECRET_PATTERN", 1, 1)
-    monkeypatch.setattr(
-        api_module, "get_messaging", lambda: _FakeMessaging(exc)
-    )
+    monkeypatch.setattr(api_module, "get_messaging", lambda: _FakeMessaging(exc))
     monkeypatch.setattr(api_module, "get_servers", lambda: _FakeServers())
 
     with pytest.raises(HTTPException) as ei:

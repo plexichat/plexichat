@@ -241,9 +241,7 @@ def get_unread_count(user_id: int, server_id: Optional[int] = None) -> UnreadCou
     return _get_manager().get_unread_count(user_id, server_id)
 
 
-def get_unread_totals(
-    user_id: int, server_id: Optional[int] = None
-) -> UnreadCount:
+def get_unread_totals(user_id: int, server_id: Optional[int] = None) -> UnreadCount:
     """Get unread and mention totals in a single user-scoped read."""
     return _get_manager().get_unread_totals(user_id, server_id)
 

@@ -76,6 +76,7 @@ def _is_guard_call_name(name: str) -> bool:
     """
     return bool(name and GUARD_RE.fullmatch(name))
 
+
 # Mutating routes intentionally reachable without a session token. Each entry
 # is (relative source file, HTTP method, raw decorator path) -> justification;
 # two routes sharing POST /login cannot excuse one another.

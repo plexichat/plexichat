@@ -100,7 +100,9 @@ class HeartbeatWriteCoalescer:
         self._clock = clock or time.monotonic
         # user_id -> (claimed_at_monotonic, last_seen_of_persisted_write, gen)
         # ``gen`` is a generation tag used to discard stale heap items.
-        self._entries: "OrderedDict[int, Tuple[float, Optional[int], int]]" = OrderedDict()
+        self._entries: "OrderedDict[int, Tuple[float, Optional[int], int]]" = (
+            OrderedDict()
+        )
         # Min-heap of (deadline_monotonic, generation, user_id). Only the head
         # is ever inspected on claim, so a warm tracker pays O(1), not O(N).
         self._expiries: "list[Tuple[float, int, int]]" = []

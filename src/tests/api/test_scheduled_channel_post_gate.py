@@ -84,9 +84,7 @@ def _servers(channel=None, timed_out=False, permissions=None):
 def _setup(monkeypatch, servers, linked_channel=True):
     db = _DB(linked_channel=linked_channel)
     participants = _Participants()
-    messaging = SimpleNamespace(
-        _manager=SimpleNamespace(_participant_svc=participants)
-    )
+    messaging = SimpleNamespace(_manager=SimpleNamespace(_participant_svc=participants))
     monkeypatch.setattr(scheduled_route.api, "get_db", lambda: db)
     monkeypatch.setattr(scheduled_route.api, "get_messaging", lambda: messaging)
     monkeypatch.setattr(api, "get_servers", lambda: servers)
@@ -111,9 +109,17 @@ async def _create(body):
         # Member of the server but the channel is not viewable to them.
         (_servers(channel=None, permissions={"messages.send": True}), "channel"),
         # Timeout must block scheduling just as it blocks a live send.
-        (_servers(channel=object(), timed_out=True, permissions={"messages.send": True}), "timeout"),
+        (
+            _servers(
+                channel=object(), timed_out=True, permissions={"messages.send": True}
+            ),
+            "timeout",
+        ),
         # Channel visible but posting explicitly denied by a permission override.
-        (_servers(channel=object(), permissions={"messages.send": False}), "permission"),
+        (
+            _servers(channel=object(), permissions={"messages.send": False}),
+            "permission",
+        ),
         # No servers module at all: cannot verify -> deny.
         (None, "unavailable"),
     ],

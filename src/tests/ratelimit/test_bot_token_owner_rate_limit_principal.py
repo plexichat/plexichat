@@ -156,9 +156,9 @@ async def test_middleware_charges_bot_bucket_to_bot_account(monkeypatch):
 
 
 def test_bots_of_same_owner_get_distinct_bucket_principals():
-    bot_a = get_user_info_from_request(
-        _request(_token(bot=True, account_id=BOT_ID))
-    )["user_id"]
+    bot_a = get_user_info_from_request(_request(_token(bot=True, account_id=BOT_ID)))[
+        "user_id"
+    ]
     bot_b = get_user_info_from_request(
         _request(_token(bot=True, account_id=OTHER_BOT_ID))
     )["user_id"]
@@ -219,9 +219,7 @@ async def test_core_middleware_default_getter_charges_bot_account(monkeypatch):
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
 
-    middleware = RateLimitMiddlewareASGI(
-        app=_capture, include_headers_on_success=False
-    )
+    middleware = RateLimitMiddlewareASGI(app=_capture, include_headers_on_success=False)
 
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}

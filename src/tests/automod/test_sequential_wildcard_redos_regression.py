@@ -109,9 +109,7 @@ class TestSequentialWildcardRedos:
         )
         assert rule._compiled_patterns == []
 
-    def test_regex_rule_validate_config_rejects_wildcard_chain(
-        self, fallback_engine
-    ):
+    def test_regex_rule_validate_config_rejects_wildcard_chain(self, fallback_engine):
         ok, issues = RegexRule.validate_config(
             {"patterns": [{"pattern": _PAYLOAD, "name": "spam"}]}
         )

@@ -56,9 +56,7 @@ def _deny(monkeypatch):
 
 
 def _allow(monkeypatch):
-    monkeypatch.setattr(
-        share_links, "check_rate_limit", lambda *a, **k: (True, 9)
-    )
+    monkeypatch.setattr(share_links, "check_rate_limit", lambda *a, **k: (True, 9))
 
 
 def test_rate_limit_key_is_a_token_fingerprint():

@@ -205,9 +205,7 @@ class TestSessionIdRotation:
         fake.rotate_session_id.return_value = rotated
 
         response = Response()
-        with patch(
-            "src.api.routes.auth.two_factor.api.get_auth", return_value=fake
-        ):
+        with patch("src.api.routes.auth.two_factor.api.get_auth", return_value=fake):
             self._call(
                 confirm_2fa_setup,
                 body=SimpleNamespace(code="123456"),
@@ -235,9 +233,7 @@ class TestSessionIdRotation:
         fake.rotate_session_id.return_value = rotated
 
         response = Response()
-        with patch(
-            "src.api.routes.auth.two_factor.api.get_auth", return_value=fake
-        ):
+        with patch("src.api.routes.auth.two_factor.api.get_auth", return_value=fake):
             self._call(
                 disable_2fa,
                 body=SimpleNamespace(password="TestPass123!", code="123456"),

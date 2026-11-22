@@ -31,9 +31,12 @@ def _register_and_login(auth_manager, label="voice_upload"):
 def test_voice_upload_fails_closed_when_media_unavailable(test_client, auth_manager):
     _, token = _register_and_login(auth_manager)
 
-    with patch("src.api.get_media", return_value=None), patch(
-        "src.core.messaging.services.voice.VoiceMessageService.create_voice_message"
-    ) as create_voice:
+    with (
+        patch("src.api.get_media", return_value=None),
+        patch(
+            "src.core.messaging.services.voice.VoiceMessageService.create_voice_message"
+        ) as create_voice,
+    ):
         resp = test_client.post(
             UPLOAD_URL,
             data={"conversation_id": "123456789", "duration_ms": "5000"},

@@ -505,11 +505,11 @@ class TemplateManager:
             # concurrent reassignment cannot let the former creator edit the
             # template; fail closed when the guarded update matches no row.
             query = (
-                "UPDATE srv_templates SET " + set_clause + " WHERE id = ? AND creator_id = ?"
+                "UPDATE srv_templates SET "
+                + set_clause
+                + " WHERE id = ? AND creator_id = ?"
             )
-            cursor = self._db.execute(
-                query, (*set_params, template.id, int(user_id))
-            )
+            cursor = self._db.execute(query, (*set_params, template.id, int(user_id)))
             if getattr(cursor, "rowcount", 0) == 0:
                 raise PermissionDeniedError(
                     "Template creator changed concurrently; refusing to update",

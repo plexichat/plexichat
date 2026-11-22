@@ -517,9 +517,7 @@ class SumManagerViewport(SumManagerProtocol):
                 except Exception as segment_error:
                     import utils.logger as logger
 
-                    logger.debug(
-                        f"sum viewport segment lookup failed: {segment_error}"
-                    )
+                    logger.debug(f"sum viewport segment lookup failed: {segment_error}")
                     continue
                 for seg_row in seg_rows:
                     try:

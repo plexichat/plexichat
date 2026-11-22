@@ -126,12 +126,13 @@ def test_many_read_small_batch_is_single_query(db, test_user):
     assert len(_batched_reads(counted)) == 1
     assert all(kind == "fetch_all" for kind, _, _ in counted.reads)
     # No per-key ``... WHERE user_id = ? AND key = ?`` probe survives.
-    assert not any(kind == "fetch_one" and "key = ?" in sql for kind, sql, _ in counted.reads)
+    assert not any(
+        kind == "fetch_one" and "key = ?" in sql for kind, sql, _ in counted.reads
+    )
 
 
 def test_many_read_binds_at_most_500_keys(db, test_user):
     uid = test_user.id
-    manager = SettingsManager(db)
     keys = [f"k{i}" for i in range(1200)]
     counted = _CountingDB(db)
     count_manager = SettingsManager(counted)

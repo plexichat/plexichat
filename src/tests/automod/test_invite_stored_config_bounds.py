@@ -85,7 +85,8 @@ def test_oversized_and_malformed_allowed_codes_are_bounded():
     rule = InviteLinkRule(
         _rule(
             {
-                "allowed_codes": ["ABCDEFGH"] * (MAX_ALLOWED_CODES * 25) + [None, 7, ""],
+                "allowed_codes": ["ABCDEFGH"] * (MAX_ALLOWED_CODES * 25)
+                + [None, 7, ""],
             }
         )
     )

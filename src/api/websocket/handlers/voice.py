@@ -74,7 +74,9 @@ def _clamp_volume(raw: Any) -> float:
     return max(0.0, min(volume, 1.0))
 
 
-def _exclude_blocked_voice_recipients(actor_id: int, recipients: List[int]) -> List[int]:
+def _exclude_blocked_voice_recipients(
+    actor_id: int, recipients: List[int]
+) -> List[int]:
     """Drop recipients with a two-way block relationship to ``actor_id``.
 
     Voice state and speaking frames are published with an *explicit* recipient
@@ -232,7 +234,9 @@ class VoiceHandler:
 
         parsed_channel_id = _parse_channel_id(data.get("channel_id"))
         if parsed_channel_id is None:
-            logger.warning(f"Invalid channel_id in voice connect: {data.get('channel_id')!r}")
+            logger.warning(
+                f"Invalid channel_id in voice connect: {data.get('channel_id')!r}"
+            )
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
         channel_id = parsed_channel_id
 

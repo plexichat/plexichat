@@ -230,9 +230,7 @@ async def test_duplicate_user_ids_do_not_duplicate_fanout():
     session_manager._user_connections = {}
     session_manager._lock = threading.Lock()
 
-    conn = Connection(
-        websocket=AsyncMock(), connection_id="dup", intents=ALL_INTENTS
-    )
+    conn = Connection(websocket=AsyncMock(), connection_id="dup", intents=ALL_INTENTS)
     conn.state = ConnectionState.READY
     conn.user_id = 123
     conn.is_selftest = True

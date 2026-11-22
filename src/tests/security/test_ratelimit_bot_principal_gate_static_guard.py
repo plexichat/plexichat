@@ -214,15 +214,14 @@ class AuditResult:
 
 # --- source / AST vocabulary -----------------------------------------------
 
+
 @lru_cache(maxsize=1)
 def _route_sources() -> tuple[tuple[str, str], ...]:
     out: list[tuple[str, str]] = []
     for path in sorted(ROUTES.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        out.append(
-            (path.relative_to(SRC).as_posix(), path.read_text(encoding="utf-8"))
-        )
+        out.append((path.relative_to(SRC).as_posix(), path.read_text(encoding="utf-8")))
     return tuple(out)
 
 
@@ -462,7 +461,12 @@ def _is_authoritative(
         text = ast.unparse(expr).lower()
         if any(
             marker in text
-            for marker in ("client_ip", "get_client_ip", "cached_client_ip", "trusted_ip")
+            for marker in (
+                "client_ip",
+                "get_client_ip",
+                "cached_client_ip",
+                "trusted_ip",
+            )
         ):
             return True
     if _expr_is_authoritative(expr, helper_sources):
@@ -516,6 +520,7 @@ def _arg_for_param(ccall: ast.Call, fn: ast.AST, param: str):
 
 # --- the auditor ------------------------------------------------------------
 
+
 def _audit(sources) -> AuditResult:
     sources = tuple(sources)
     parsed: dict[str, tuple[str, ast.Module]] = {}
@@ -537,8 +542,10 @@ def _audit(sources) -> AuditResult:
         for fn in _functions(tree):
             funcs.append((rel, fn, source))
             funcs_by_name.setdefault(fn.name, []).append((rel, fn, source))
-            helper_sources[fn.name] = helper_sources.get(fn.name, "") + "\n" + (
-                ast.get_source_segment(source, fn) or ""
+            helper_sources[fn.name] = (
+                helper_sources.get(fn.name, "")
+                + "\n"
+                + (ast.get_source_segment(source, fn) or "")
             )
             for call in _own_calls(fn):
                 name = _canonical_call_name(call.func, aliases)
@@ -568,7 +575,9 @@ def _audit(sources) -> AuditResult:
             ckind, ctokens = _classify(arg, caller, ccall.lineno)
             if ckind == "cu_direct":
                 state["verified"] = True
-                if not _gate_before(caller, ccall, ctokens, aliases_by_rel.get(crel, {})):
+                if not _gate_before(
+                    caller, ccall, ctokens, aliases_by_rel.get(crel, {})
+                ):
                     state["gated"] = False
                     findings.append(
                         f"{crel}:{ccall.lineno} ({caller.name}): call to "
@@ -601,7 +610,11 @@ def _audit(sources) -> AuditResult:
             where = f"{rel}:{call.lineno} ({fn.name})"
 
             if _is_authoritative(expr, kwarg, fn, call.lineno, helper_sources):
-                records.append(CallRecord(rel, fn.name, call.lineno, name, text, "authoritative", True))
+                records.append(
+                    CallRecord(
+                        rel, fn.name, call.lineno, name, text, "authoritative", True
+                    )
+                )
                 continue
 
             kind, roots = _classify(expr, fn, call.lineno)
@@ -654,6 +667,7 @@ def _real_audit() -> AuditResult:
 
 # --- half 1: the real tree --------------------------------------------------
 
+
 def test_no_ungated_user_id_keyed_manual_limiter_in_routes():
     findings = _real_audit().findings
     assert not findings, "ungated/unknown manual limiters in routes:\n  " + "\n  ".join(
@@ -681,12 +695,10 @@ def test_whole_tree_sweep_is_not_vacuous():
 
 # --- half 2: documented authoritative keys ---------------------------------
 
+
 def test_authoritative_sites_are_documented_and_still_authoritative():
     real = _real_audit()
-    sites = {
-        (c.rel, c.func)
-        for c in real.authoritative
-    }
+    sites = {(c.rel, c.func) for c in real.authoritative}
     assert sites == set(DOCUMENTED_AUTHORITATIVE), (
         "authoritative-key limiter sites changed; update DOCUMENTED_AUTHORITATIVE "
         f"with reasons (found {sorted(sites)}, documented "
@@ -816,8 +828,7 @@ def test_detector_follows_interprocedural_helper_chain_for_gate():
     """An ungated chained call site must not hide behind a gated sibling."""
     audit = _audit([("api/routes/probe.py", _CHAINED_HELPER_MIXED)])
     assert any("handler_ungated" in f for f in audit.findings), (
-        "ungated chained helper call site was silently skipped: "
-        + repr(audit.findings)
+        "ungated chained helper call site was silently skipped: " + repr(audit.findings)
     )
 
 
@@ -837,6 +848,7 @@ async def handler(reported_user_id: int, admin_id: int, {_TOKEN_ARG}):
 
 
 # --- half 4: in-memory mutations of the real tree ---------------------------
+
 
 def test_removing_a_real_gate_is_detected():
     rel = "api/routes/reactions.py"
@@ -859,11 +871,11 @@ def test_moving_a_real_gate_after_the_spend_is_detected():
     source = dict(_route_sources())[rel]
     gate = "    require_user_token(current_user)\n"
     spend = (
-        '    rl_result = await ratelimit.acheck_rate_limit(\n'
-        '        user_id=current_user.user_id,\n'
+        "    rl_result = await ratelimit.acheck_rate_limit(\n"
+        "        user_id=current_user.user_id,\n"
         '        route="PUT /reactions",\n'
         '        is_internal=getattr(request.state, "is_internal", False),\n'
-        '    )\n'
+        "    )\n"
     )
     assert gate + "    # Rate limit reactions" in source
     assert spend in source
@@ -886,7 +898,9 @@ def test_removing_a_real_helper_call_site_gate_is_detected():
         "    _check_report_rate_limit(current_user.user_id)"
     )
     assert pair in source
-    mutated = source.replace(pair, "    _check_report_rate_limit(current_user.user_id)", 1)
+    mutated = source.replace(
+        pair, "    _check_report_rate_limit(current_user.user_id)", 1
+    )
     findings = _audit([(rel, mutated)]).findings
     assert findings and any("_check_report_rate_limit" in f for f in findings), (
         "removing the real report helper gate was NOT detected: " + repr(findings)

@@ -136,9 +136,7 @@ class AlertModeratorsAction(BaseAction):
         """
         content = self._format_alert_message(
             violation,
-            include_content=self._channel_alert_can_show_content(
-                channel_id, violation
-            ),
+            include_content=self._channel_alert_can_show_content(channel_id, violation),
         )
 
         try:
@@ -223,9 +221,7 @@ class AlertModeratorsAction(BaseAction):
         # principal. The downstream _should_notify_user_optimized gate only
         # checks preferences/focus, never moderator authority, so this is the
         # sole audience gate. type() also rejects bool; genuine ints preserved.
-        audience = list(
-            dict.fromkeys(mid for mid in moderator_ids if type(mid) is int)
-        )
+        audience = list(dict.fromkeys(mid for mid in moderator_ids if type(mid) is int))
         all_settings = manager.get_notification_settings_bulk(
             audience, violation.server_id
         )

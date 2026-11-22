@@ -357,9 +357,7 @@ def _production_findings() -> dict:
         path = str(py.relative_to(_REPO_ROOT))
         if path == _VALIDATION_MODULE:
             continue
-        _classify_module(
-            ast.parse(_read_source(py), filename=path), path, findings
-        )
+        _classify_module(ast.parse(_read_source(py), filename=path), path, findings)
     return findings
 
 
@@ -370,7 +368,9 @@ def test_all_shared_key_setting_sites_are_classified():
     # A scanner that matched nothing would trivially pass the emptiness checks.
     assert f["floored_validate"], "scanner found no floored validate_shared_key sites"
     assert f["floored_create"], "scanner found no floored create_connection sites"
-    assert f["generated_create"], "scanner found no generated-key create_connection sites"
+    assert f["generated_create"], (
+        "scanner found no generated-key create_connection sites"
+    )
     assert f["legacy_validate"], "scanner found no legacy weak-default site"
 
     # Fail on unclassified sites. A brand-new route under a novel name that
@@ -387,11 +387,11 @@ def test_all_shared_key_setting_sites_are_classified():
 
 def test_structural_detector_flags_novel_weak_key_route():
     """Proof the detector catches the novel route the old ratchet missed."""
-    novel = '''
+    novel = """
 async def import_connection(request):
     body = await request.json()
     return manager.create_connection(shared_key=body["shared_key"])
-'''
+"""
     f = _findings()
     _classify_module(ast.parse(novel), "<synthetic>", f)
     assert ("<synthetic>", "import_connection") in f["unclassified_create"], (
@@ -402,12 +402,12 @@ async def import_connection(request):
 
 def test_structural_detector_accepts_floored_route():
     """The detector is not vacuously rejecting every novel setter."""
-    novel = '''
+    novel = """
 async def import_connection(request):
     body = await request.json()
     key = validate_shared_key(body["shared_key"], require_strong=True)
     return manager.create_connection(shared_key=key)
-'''
+"""
     f = _findings()
     _classify_module(ast.parse(novel), "<synthetic>", f)
     assert ("<synthetic>", "import_connection") in f["floored_create"]

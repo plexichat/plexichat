@@ -10,7 +10,17 @@ This module aggregates opcode handlers from sub-modules:
 - sum.py: PlexiSum real-time fabric handlers (workbook subscribe, op, sync)
 """
 
-from typing import Awaitable, Callable, Optional, Dict, Any, List, Tuple, TYPE_CHECKING, cast
+from typing import (
+    Awaitable,
+    Callable,
+    Optional,
+    Dict,
+    Any,
+    List,
+    Tuple,
+    TYPE_CHECKING,
+    cast,
+)
 
 import time
 
@@ -157,64 +167,148 @@ _HandlerResult = Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]
 _DispatchMethod = Callable[..., Awaitable[_HandlerResult]]
 
 _OPCODE_DISPATCH_TABLE: Dict[GatewayOpcode, _OpcodeRoute] = {
-    GatewayOpcode.HEARTBEAT: ("_connection_handler", "handle_heartbeat", False, False, ""),
-    GatewayOpcode.IDENTIFY: ("_connection_handler", "handle_identify", False, False, ""),
+    GatewayOpcode.HEARTBEAT: (
+        "_connection_handler",
+        "handle_heartbeat",
+        False,
+        False,
+        "",
+    ),
+    GatewayOpcode.IDENTIFY: (
+        "_connection_handler",
+        "handle_identify",
+        False,
+        False,
+        "",
+    ),
     GatewayOpcode.RESUME: ("_connection_handler", "handle_resume", False, False, ""),
     GatewayOpcode.PRESENCE_UPDATE: (
-        "_presence_handler", "handle_presence_update", False, False, "",
+        "_presence_handler",
+        "handle_presence_update",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.TYPING_START: (
-        "_presence_handler", "handle_typing_start", False, False, "",
+        "_presence_handler",
+        "handle_typing_start",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_STATE_UPDATE: (
-        "_voice_handler", "handle_voice_state_update", False, False, "",
+        "_voice_handler",
+        "handle_voice_state_update",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.REQUEST_GUILD_MEMBERS: (
-        "_guild_handler", "handle_request_guild_members", False, False, "",
+        "_guild_handler",
+        "handle_request_guild_members",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_CONNECT: (
-        "_voice_handler", "handle_voice_connect", False, False, "",
+        "_voice_handler",
+        "handle_voice_connect",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_DISCONNECT: (
-        "_voice_handler", "handle_voice_disconnect", False, False, "",
+        "_voice_handler",
+        "handle_voice_disconnect",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_SDP_OFFER: (
-        "_voice_handler", "handle_voice_sdp_offer", False, False, "",
+        "_voice_handler",
+        "handle_voice_sdp_offer",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_SDP_ANSWER: (
-        "_voice_handler", "handle_voice_sdp_answer", False, False, "",
+        "_voice_handler",
+        "handle_voice_sdp_answer",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_ICE_CANDIDATE: (
-        "_voice_handler", "handle_voice_ice_candidate", False, False, "",
+        "_voice_handler",
+        "handle_voice_ice_candidate",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_SPEAKING: (
-        "_voice_handler", "handle_voice_speaking", False, False, "",
+        "_voice_handler",
+        "handle_voice_speaking",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.VOICE_QUALITY: (
-        "_voice_handler", "handle_voice_quality", False, False, "",
+        "_voice_handler",
+        "handle_voice_quality",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.TYPING_STOP: (
-        "_presence_handler", "handle_typing_stop", False, False, "",
+        "_presence_handler",
+        "handle_typing_stop",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.ARTIFACT_SUBSCRIBE: (
-        "_artifact_handler", "handle_artifact_subscribe", True, False, "",
+        "_artifact_handler",
+        "handle_artifact_subscribe",
+        True,
+        False,
+        "",
     ),
     GatewayOpcode.ARTIFACT_UNSUBSCRIBE: (
-        "_artifact_handler", "handle_artifact_unsubscribe", False, False, "",
+        "_artifact_handler",
+        "handle_artifact_unsubscribe",
+        False,
+        False,
+        "",
     ),
     # Ordered-log writes + fan-out: a missing dispatcher is a config gap, so
     # soft-reject rather than force a reconnect loop (see comment above).
     GatewayOpcode.ARTIFACT_OP: (
-        "_artifact_handler", "handle_artifact_op", True, True, "frame ignored",
+        "_artifact_handler",
+        "handle_artifact_op",
+        True,
+        True,
+        "frame ignored",
     ),
     GatewayOpcode.SUM_SUBSCRIBE: (
-        "_sum_handler", "handle_sum_subscribe", True, True, "request denied",
+        "_sum_handler",
+        "handle_sum_subscribe",
+        True,
+        True,
+        "request denied",
     ),
     GatewayOpcode.SUM_UNSUBSCRIBE: (
-        "_sum_handler", "handle_sum_unsubscribe", False, False, "",
+        "_sum_handler",
+        "handle_sum_unsubscribe",
+        False,
+        False,
+        "",
     ),
     GatewayOpcode.SUM_OP: (
-        "_sum_handler", "handle_sum_op", True, True, "frame ignored",
+        "_sum_handler",
+        "handle_sum_op",
+        True,
+        True,
+        "frame ignored",
     ),
 }
 
@@ -494,7 +588,9 @@ class OpcodeHandler:
             )
             return None, None, None
 
-        method = cast("_DispatchMethod", getattr(getattr(self, handler_attr), method_name))
+        method = cast(
+            "_DispatchMethod", getattr(getattr(self, handler_attr), method_name)
+        )
         if pass_dispatcher:
             return await method(connection, data, self._dispatcher)
         return await method(connection, data)

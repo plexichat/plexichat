@@ -94,9 +94,7 @@ class _FakeDB:
 
 
 @pytest.mark.parametrize("force", [False, True])
-def test_ensure_admin_user_installs_policy_compliant_credential(
-    monkeypatch, force
-):
+def test_ensure_admin_user_installs_policy_compliant_credential(monkeypatch, force):
     import src.core.admin.auth.auth_mixin as auth_mixin
 
     captured = []

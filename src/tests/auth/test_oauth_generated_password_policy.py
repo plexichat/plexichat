@@ -67,9 +67,7 @@ def test_oauth_auto_registration_accepts_token_without_special_chars(
             return "a" * 43
         return real_token_urlsafe(n)
 
-    monkeypatch.setattr(
-        passwords_module.secrets, "token_urlsafe", force_one_bad_draw
-    )
+    monkeypatch.setattr(passwords_module.secrets, "token_urlsafe", force_one_bad_draw)
 
     result = auth_manager.oauth_login(
         provider="google",
@@ -90,4 +88,7 @@ def test_oauth_auto_registration_is_stable_across_draws(db, auth_manager):
             email=f"oauth_st_{uuid.uuid4().hex[:8]}@test.local",
             email_verified=True,
         )
-        assert result.status == AuthStatus.SUCCESS, (i, getattr(result, "message", None))
+        assert result.status == AuthStatus.SUCCESS, (
+            i,
+            getattr(result, "message", None),
+        )

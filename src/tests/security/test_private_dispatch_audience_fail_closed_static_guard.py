@@ -504,7 +504,9 @@ def _is_documented(
 
 def _unexpected(risks, allowlist=DOCUMENTED_PUBLIC_DISPATCHES):
     return [
-        r for r in risks if r.outcome == "fail_open" and not _is_documented(r, allowlist)
+        r
+        for r in risks
+        if r.outcome == "fail_open" and not _is_documented(r, allowlist)
     ]
 
 
@@ -527,7 +529,9 @@ def test_committed_tree_sweep_is_not_vacuous():
     assert len(_committed_python_paths()) > 100, "committed-tree scope regressed"
     risks, files = _whole_tree_risks()
     known_files = {path for path, _ in KNOWN_PRIVATE_EMITTERS}
-    assert known_files <= set(files), f"dispatch-bearing files missed: {known_files - set(files)}"
+    assert known_files <= set(files), (
+        f"dispatch-bearing files missed: {known_files - set(files)}"
+    )
     seen = {(r.rel_path, r.func) for r in risks}
     assert set(KNOWN_PRIVATE_EMITTERS) <= seen, (
         "detector went blind on documented private emitters: "
@@ -571,7 +575,10 @@ def test_documented_allowlist_entries_are_concrete():
     """Hygiene: every allowlist entry names a real file, function and reason."""
     seen: set[tuple[str, str]] = set()
     for entry in DOCUMENTED_PUBLIC_DISPATCHES:
-        assert entry.rel_path in _committed_dispatch_paths() or entry.rel_path == "synthetic.py"
+        assert (
+            entry.rel_path in _committed_dispatch_paths()
+            or entry.rel_path == "synthetic.py"
+        )
         assert isinstance(entry.func, str) and entry.func
         assert len(entry.why.strip()) > 25, entry.why
         key = (entry.rel_path, entry.func)

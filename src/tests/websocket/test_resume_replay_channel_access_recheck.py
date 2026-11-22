@@ -45,7 +45,9 @@ def _connection(session_manager, mock_websocket):
 
 
 def _sent_types(connection):
-    return [call.args[0].get("t") for call in connection.websocket.send_json.call_args_list]
+    return [
+        call.args[0].get("t") for call in connection.websocket.send_json.call_args_list
+    ]
 
 
 def _message_event(content, *, server_id, channel_id):
@@ -85,11 +87,14 @@ async def test_resume_replay_withholds_channel_event_after_access_loss(
     # While disconnected, the viewer loses access to the channel.
     servers = Mock()
     servers.get_channel = Mock(return_value=None)
-    with patch("src.api.get_servers", return_value=servers), patch(
-        "src.api.get_messaging", return_value=None
+    with (
+        patch("src.api.get_servers", return_value=servers),
+        patch("src.api.get_messaging", return_value=None),
     ):
         resumed = _connection(session_manager, mock_websocket)
-        assert session_manager.resume_session(resumed, session.session_id, 0) is not None
+        assert (
+            session_manager.resume_session(resumed, session.session_id, 0) is not None
+        )
         resumed.websocket.send_json.reset_mock()
         await dispatcher.replay_events(resumed, 0)
 
@@ -117,11 +122,14 @@ async def test_resume_replay_keeps_channel_event_when_access_retained(
 
     servers = Mock()
     servers.get_channel = Mock(return_value=Mock(id=CHANNEL_ID))
-    with patch("src.api.get_servers", return_value=servers), patch(
-        "src.api.get_messaging", return_value=None
+    with (
+        patch("src.api.get_servers", return_value=servers),
+        patch("src.api.get_messaging", return_value=None),
     ):
         resumed = _connection(session_manager, mock_websocket)
-        assert session_manager.resume_session(resumed, session.session_id, 0) is not None
+        assert (
+            session_manager.resume_session(resumed, session.session_id, 0) is not None
+        )
         resumed.websocket.send_json.reset_mock()
         await dispatcher.replay_events(resumed, 0)
 
@@ -145,11 +153,14 @@ async def test_resume_replay_withholds_dm_event_after_participant_removal(
 
     messaging = Mock()
     messaging.is_participant = Mock(return_value=False)
-    with patch("src.api.get_servers", return_value=None), patch(
-        "src.api.get_messaging", return_value=messaging
+    with (
+        patch("src.api.get_servers", return_value=None),
+        patch("src.api.get_messaging", return_value=messaging),
     ):
         resumed = _connection(session_manager, mock_websocket)
-        assert session_manager.resume_session(resumed, session.session_id, 0) is not None
+        assert (
+            session_manager.resume_session(resumed, session.session_id, 0) is not None
+        )
         resumed.websocket.send_json.reset_mock()
         await dispatcher.replay_events(resumed, 0)
 

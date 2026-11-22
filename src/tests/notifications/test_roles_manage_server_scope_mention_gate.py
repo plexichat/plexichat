@@ -86,7 +86,15 @@ def _protected_role_mention():
 
 
 def _validate(servers):
-    db = _DB({PROTECTED_ROLE_ID: {"id": PROTECTED_ROLE_ID, "server_id": SERVER_ID, "mentionable": False}})
+    db = _DB(
+        {
+            PROTECTED_ROLE_ID: {
+                "id": PROTECTED_ROLE_ID,
+                "server_id": SERVER_ID,
+                "mentionable": False,
+            }
+        }
+    )
     return _Harness(db, servers).validate_mentions(
         USER_ID, _protected_role_mention(), server_id=SERVER_ID, channel_id=CHANNEL_ID
     )

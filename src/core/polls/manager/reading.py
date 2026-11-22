@@ -342,7 +342,9 @@ class ReadingMixin(PollManagerBase):
             )
         return True  # ALWAYS or unknown -> visible
 
-    def _results_from_poll(self, poll: Poll, vote_rows, user_id: SnowflakeID) -> PollResults:
+    def _results_from_poll(
+        self, poll: Poll, vote_rows, user_id: SnowflakeID
+    ) -> PollResults:
         """Build ``PollResults`` from one poll's pre-aggregated vote rows.
 
         Mirrors the single-message ``get_results`` construction line for line
@@ -497,7 +499,9 @@ class ReadingMixin(PollManagerBase):
                 poll = self._row_to_poll(row, options=options_by_poll.get(poll_id, []))
                 total_voters, _viewer_voted = voter_stats.get(poll_id, (0, False))
                 poll.total_votes = (
-                    total_voters if self._can_view_results(poll, bool(_viewer_voted)) else None
+                    total_voters
+                    if self._can_view_results(poll, bool(_viewer_voted))
+                    else None
                 )
                 # The single path derives ``user_voted`` from poll_votes; use
                 # the same rows here so hidden results stay hidden identically.

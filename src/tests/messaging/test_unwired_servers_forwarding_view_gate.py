@@ -66,6 +66,7 @@ class _NoBackingChannel:
 class _WiredAliasNoGrant:
     def get_channel_by_conversation(self, conversation_id):
         return {"id": CHANNEL}
+
     # no get_channel -> cannot prove channels.view -> must deny
 
 

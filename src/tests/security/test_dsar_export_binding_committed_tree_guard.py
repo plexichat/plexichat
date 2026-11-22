@@ -52,10 +52,14 @@ _OWNER_PARAMS = "(request_id, user_id)"
 # The uid-binding check in UrlSigner.verify_url, verbatim from HEAD.
 _UID_PARSE = 'user_id_str = params.get("uid", [None])[0]'
 _UID_INT = "user_id = int(user_id_str) if user_id_str else None"
-_UID_GUARD_COMMENT = "# SECURITY: Verify that the current user matches the signed user_id"
+_UID_GUARD_COMMENT = (
+    "# SECURITY: Verify that the current user matches the signed user_id"
+)
 _UID_GUARD_OUTER = "if user_id is not None:"
 _UID_GUARD_INNER = "if current_user_id is None or int(current_user_id) != user_id:"
-_UID_GUARD_RAISE = 'raise SignatureInvalidError("User not authorized to access this URL")'
+_UID_GUARD_RAISE = (
+    'raise SignatureInvalidError("User not authorized to access this URL")'
+)
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -150,9 +154,7 @@ def _owner_bound_fetch_one(fn: ast.AST) -> bool:
         sql = _literal_text(call.args[0])
         if sql is None:
             continue
-        if not (
-            "dsar_requests" in sql and "id = ?" in sql and "user_id = ?" in sql
-        ):
+        if not ("dsar_requests" in sql and "id = ?" in sql and "user_id = ?" in sql):
             continue
         params = call.args[1]
         if not isinstance(params, (ast.Tuple, ast.List)):
@@ -296,12 +298,17 @@ def _evaluate_signing(source: str) -> tuple[bool, str]:
         test = ast.unparse(node.test)
         if "current_user_id" not in test or "user_id" not in test:
             continue
-        body = "\n".join(ast.unparse(n) for n in ast.walk(node) if isinstance(n, ast.Raise))
+        body = "\n".join(
+            ast.unparse(n) for n in ast.walk(node) if isinstance(n, ast.Raise)
+        )
         if "SignatureInvalidError" in body and "User not authorized" in body:
             guarded_raise = True
     if not guarded_raise:
         return False, "uid rejection is not guarded by a current_user_id comparison"
-    return True, "signed uid is checked against current_user_id before the URL is honoured"
+    return (
+        True,
+        "signed uid is checked against current_user_id before the URL is honoured",
+    )
 
 
 def test_signed_url_uid_binding_pinned_at_head(commit_sha: str) -> None:

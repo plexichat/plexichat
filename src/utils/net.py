@@ -71,11 +71,7 @@ def _ip_matches_trusted(ip_str: str, trusted_proxies: List[str]) -> bool:
         candidate = entry.strip()
         if "/" in candidate:
             network = _normalize_network(candidate)
-            if (
-                network is not None
-                and ip.version == network.version
-                and ip in network
-            ):
+            if network is not None and ip.version == network.version and ip in network:
                 return True
         elif ip == _normalize_ip(candidate):
             return True

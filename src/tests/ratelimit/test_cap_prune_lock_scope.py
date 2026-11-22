@@ -68,7 +68,9 @@ class _ScopeTrackingClient:
         state = dict(self.data.get(key, {}))
         tokens = float(state.get("tokens", capacity))
         last_update = float(state.get("last_update", now))
-        tokens = min(float(capacity), tokens + max(0.0, now - last_update) * refill_rate)
+        tokens = min(
+            float(capacity), tokens + max(0.0, now - last_update) * refill_rate
+        )
         allowed = tokens >= cost
         if allowed:
             tokens -= cost

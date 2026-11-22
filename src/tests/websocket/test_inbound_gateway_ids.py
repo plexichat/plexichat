@@ -120,9 +120,9 @@ async def test_guild_request_members_rejects_non_canonical_id(
     dispatcher.dispatch_to_connection = AsyncMock(return_value=True)
     monkeypatch.setattr(websocket_mod, "get_dispatcher", lambda: dispatcher)
 
-    _, _, close = await GuildHandler(servers_module=servers).handle_request_guild_members(
-        _authed(), {"guild_id": malformed}
-    )
+    _, _, close = await GuildHandler(
+        servers_module=servers
+    ).handle_request_guild_members(_authed(), {"guild_id": malformed})
 
     assert close == int(GatewayCloseCode.DECODE_ERROR)
     servers.get_server.assert_not_called()

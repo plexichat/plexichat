@@ -30,9 +30,7 @@ from .protocol import AuthManagerProtocol
 # that cannot assert BOTH a verified email AND a trusted provider must never be
 # able to attach its identity to an existing local account by echoing that
 # account's address.
-TRUSTED_OAUTH_EMAIL_PROVIDERS = frozenset(
-    {"google", "github", "gitlab", "microsoft"}
-)
+TRUSTED_OAUTH_EMAIL_PROVIDERS = frozenset({"google", "github", "gitlab", "microsoft"})
 
 
 class OAuthMixin(AuthManagerProtocol):

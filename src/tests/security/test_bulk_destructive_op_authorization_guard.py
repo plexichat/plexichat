@@ -97,6 +97,7 @@ def _tracked_files(commit: str, prefix: str) -> tuple[str, ...]:
 # Scope + naming vocabulary
 # ---------------------------------------------------------------------------
 
+
 # ``src/core/**/manager*`` and ``src/core/**/services/**``.
 def _in_scope(path: str) -> bool:
     if not (path.startswith("src/core/") and path.endswith(".py")):
@@ -1039,10 +1040,9 @@ def _discover(commit: str, reader) -> set[tuple[str, str]]:
             continue
         tree = _tree(commit, path, reader)
         for node in ast.walk(tree):
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and _is_bulk_name(node.name)
-            ):
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and _is_bulk_name(node.name):
                 found.add((path, node.name))
     return found
 
@@ -1092,9 +1092,9 @@ def test_self_test_gated_and_self_scoped_callers_are_accepted():
         )
         assert len(callers) == 1
         assert _ungated_callers(callers) == []
-        assert (
-            _assess(None, "def purge_all_X(self, request): ...", callers) == []
-        ), "gated/self-scoped callers must not be flagged"
+        assert _assess(None, "def purge_all_X(self, request): ...", callers) == [], (
+            "gated/self-scoped callers must not be flagged"
+        )
 
 
 def test_self_test_internal_gate_suppresses_route_concern():
@@ -1193,9 +1193,7 @@ def test_scan_is_not_vacuous(commit_sha):
     reader = _make_blob_reader(commit_sha)
     # The reader really returns committed content: these contested files must
     # still carry their gates in HEAD regardless of parallel working copies.
-    assert "WHERE user_id = ?" in reader(
-        "src/core/auth/managers/session/lifecycle.py"
-    )
+    assert "WHERE user_id = ?" in reader("src/core/auth/managers/session/lifecycle.py")
     assert "_check_server_permission" in reader(
         "src/core/reactions/manager/reactions.py"
     )
@@ -1219,10 +1217,12 @@ def test_every_documented_op_keeps_its_gate_or_scope(commit_sha):
     for op in BULK_OPS:
         tree = _tree(commit_sha, op.rel_path, reader)
         fn = _find_function(tree, op.func)
-        callers = _route_callers(commit_sha, op.func, reader) if op.verdict == "route_gated" else []
-        problems = _assess(
-            op, ast.unparse(fn), callers, fn=fn
+        callers = (
+            _route_callers(commit_sha, op.func, reader)
+            if op.verdict == "route_gated"
+            else []
         )
+        problems = _assess(op, ast.unparse(fn), callers, fn=fn)
         assert not problems, f"{op.rel_path}:{op.func}(): " + "; ".join(problems)
 
 

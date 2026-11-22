@@ -77,9 +77,7 @@ def test_parse_user_id_rejects_hostile_id(raw):
     with pytest.raises(HTTPException) as exc:
         AdminUsersRouterBase()._parse_user_id(raw)
     assert exc.value.status_code == 400
-    assert exc.value.detail == {
-        "error": {"code": 400, "message": "Invalid user ID"}
-    }
+    assert exc.value.detail == {"error": {"code": 400, "message": "Invalid user ID"}}
 
 
 @pytest.mark.parametrize("raw,expected", list(CANONICAL_IDS.items()))
@@ -158,22 +156,36 @@ _HELPER = _methods(_CLASS).get("_parse_user_id") if _CLASS is not None else None
 
 def test_ast_detector_distinguishes_old_and_new_helper():
     """Self-test: the detector flags the pre-fix helper, not the hardened one."""
-    old = _methods(_find_class(ast.parse(textwrap.dedent("""
+    old = _methods(
+        _find_class(
+            ast.parse(
+                textwrap.dedent("""
         class M:
             def _parse_user_id(self, user_id):
                 try:
                     return int(user_id)
                 except ValueError:
                     raise HTTPException(status_code=400)
-    """)), "M"))["_parse_user_id"]
-    new = _methods(_find_class(ast.parse(textwrap.dedent("""
+    """)
+            ),
+            "M",
+        )
+    )["_parse_user_id"]
+    new = _methods(
+        _find_class(
+            ast.parse(
+                textwrap.dedent("""
         class M:
             def _parse_user_id(self, user_id):
                 try:
                     return parse_id(user_id, "user_id")
                 except HardeningViolation:
                     raise HTTPException(status_code=400)
-    """)), "M"))["_parse_user_id"]
+    """)
+            ),
+            "M",
+        )
+    )["_parse_user_id"]
     assert _uses_bare_int(old) and not _uses_parse_id(old)
     assert not _uses_bare_int(new) and _uses_parse_id(new)
 

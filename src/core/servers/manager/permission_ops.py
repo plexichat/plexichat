@@ -94,9 +94,8 @@ class PermissionOpsMixin(ServerProtocol):
             # Coercing a malformed-but-coercible value with int() ("05"->5,
             # 5.9->5, True->1) would mark a non-owner as owner and grant the
             # full owner permission set. Fail closed (type() rejects bool).
-            is_owner[sid] = (
-                type(row["owner_id"]) is int
-                and row["owner_id"] == int(user_id)
+            is_owner[sid] = type(row["owner_id"]) is int and row["owner_id"] == int(
+                user_id
             )
 
         # One query: every assigned, non-deleted role for those memberships.
@@ -236,7 +235,9 @@ class PermissionOpsMixin(ServerProtocol):
                 )
             )
             for rstart in range(0, len(all_role_ids), _CHANNEL_VIEW_BULK_CHUNK_SIZE):
-                role_chunk = all_role_ids[rstart : rstart + _CHANNEL_VIEW_BULK_CHUNK_SIZE]
+                role_chunk = all_role_ids[
+                    rstart : rstart + _CHANNEL_VIEW_BULK_CHUNK_SIZE
+                ]
                 rph = ",".join("?" for _ in role_chunk)
                 role_override_rows = (
                     self._db.fetch_all(

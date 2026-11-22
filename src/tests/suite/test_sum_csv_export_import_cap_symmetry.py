@@ -49,8 +49,7 @@ def _large_sheet(db, two_users, server_manager):
     # the cell count is inside MAX_OPERATION_CELLS.
     value = os.urandom(MAX_CELL_VALUE_LENGTH // 2).hex()[:MAX_CELL_VALUE_LENGTH]
     cells = [
-        {"row": 0, "column": c, "value": value, "value_type": "text"}
-        for c in range(24)
+        {"row": 0, "column": c, "value": value, "value_type": "text"} for c in range(24)
     ]
     assert all(len(c["value"]) <= MAX_CELL_VALUE_LENGTH for c in cells)
     rev = int(manager.get_workbook(owner.id, wb_id)["current_revision"])

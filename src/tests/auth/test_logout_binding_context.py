@@ -182,7 +182,6 @@ def test_binding_disabled_keeps_legacy_behavior():
 
 def test_wrong_secret_still_fails():
     secret = tokens.generate_token_secret()
-    token = f"{SID}.{secret}"
     host = _LogoutHost(_bound_row(secret))
 
     forged = f"{SID}.{tokens.generate_token_secret()}"

@@ -148,7 +148,13 @@ def test_self_test_documenting_a_print_is_required_to_allow_it():
     files = ("src/core/auth/managers/_synthetic.py",)
     reader = lambda path: textwrap.dedent(source)  # noqa: E731 - synthetic reader
     assert _offenders(files, reader)  # undocumented: flagged
-    documented = (("src/core/auth/managers/_synthetic.py", "print('DBG', repr(code))", "CLI entry point"),)
+    documented = (
+        (
+            "src/core/auth/managers/_synthetic.py",
+            "print('DBG', repr(code))",
+            "CLI entry point",
+        ),
+    )
     assert _offenders(files, reader, documented) == []
 
 

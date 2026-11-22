@@ -90,16 +90,15 @@ async def test_live_dispatch_withholds_channel_event_after_access_loss(
     servers.channel_exists = Mock(return_value=True)
     servers.get_channel = Mock(return_value=Mock(id=CHANNEL_ID))
 
-    with patch("src.api.get_servers", return_value=servers), patch(
-        "src.api.get_messaging", return_value=None
+    with (
+        patch("src.api.get_servers", return_value=servers),
+        patch("src.api.get_messaging", return_value=None),
     ):
         # While authorized the frame is delivered (also proves non-vacuity).
-        assert await dispatcher.dispatch_event(
-            _channel_message("visible"), [VIEWER]
-        ) == 1
-        assert any(
-            f.get("t") == "MESSAGE_CREATE" for f in _sent(viewer)
-        ), _sent(viewer)
+        assert (
+            await dispatcher.dispatch_event(_channel_message("visible"), [VIEWER]) == 1
+        )
+        assert any(f.get("t") == "MESSAGE_CREATE" for f in _sent(viewer)), _sent(viewer)
         viewer.websocket.send_json.reset_mock()
 
         # Access revoked while the socket stays open.
@@ -145,8 +144,9 @@ async def test_live_dispatch_filters_only_revoked_viewer_in_shared_audience(
         side_effect=lambda cid, uid: Mock(id=cid) if uid == OTHER else None
     )
 
-    with patch("src.api.get_servers", return_value=servers), patch(
-        "src.api.get_messaging", return_value=None
+    with (
+        patch("src.api.get_servers", return_value=servers),
+        patch("src.api.get_messaging", return_value=None),
     ):
         count = await dispatcher.dispatch_event(
             _channel_message("restricted content"), [VIEWER, OTHER]
@@ -171,8 +171,9 @@ async def test_live_dispatch_withholds_dm_event_after_participant_removal(
     messaging = Mock()
     messaging.is_participant = Mock(return_value=False)
 
-    with patch("src.api.get_servers", return_value=None), patch(
-        "src.api.get_messaging", return_value=messaging
+    with (
+        patch("src.api.get_servers", return_value=None),
+        patch("src.api.get_messaging", return_value=messaging),
     ):
         count = await dispatcher.dispatch_event(
             _dm_message_via_alias("dm secret"), [VIEWER]
@@ -194,8 +195,9 @@ async def test_live_dispatch_keeps_dm_event_when_participant_retained(
     messaging = Mock()
     messaging.is_participant = Mock(return_value=True)
 
-    with patch("src.api.get_servers", return_value=None), patch(
-        "src.api.get_messaging", return_value=messaging
+    with (
+        patch("src.api.get_servers", return_value=None),
+        patch("src.api.get_messaging", return_value=messaging),
     ):
         count = await dispatcher.dispatch_event(
             _dm_message_via_alias("still visible"), [VIEWER]
@@ -220,8 +222,9 @@ async def test_live_dispatch_scope_less_event_unaffected(
     )
     servers = Mock()
     servers.get_channel = Mock(return_value=None)
-    with patch("src.api.get_servers", return_value=servers), patch(
-        "src.api.get_messaging", return_value=None
+    with (
+        patch("src.api.get_servers", return_value=servers),
+        patch("src.api.get_messaging", return_value=None),
     ):
         count = await dispatcher.dispatch_event(alert, [VIEWER])
 

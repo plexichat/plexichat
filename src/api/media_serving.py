@@ -183,14 +183,20 @@ def _admin_session_is_authoritative(token: str, admin_mod) -> bool:
     except Exception:
         return False
     for row in rows or ():
-        raw = row.get("permissions") if isinstance(row, dict) else (row[0] if row else None)
+        raw = (
+            row.get("permissions")
+            if isinstance(row, dict)
+            else (row[0] if row else None)
+        )
         permissions = raw
         if isinstance(raw, str):
             try:
                 permissions = json.loads(raw)
             except (TypeError, ValueError):
                 continue
-        if isinstance(permissions, dict) and any(v is True for v in permissions.values()):
+        if isinstance(permissions, dict) and any(
+            v is True for v in permissions.values()
+        ):
             return True
     return False
 
@@ -449,7 +455,11 @@ def register_attachment_route(app: FastAPI) -> None:
                 is_privileged = False
                 try:
                     admin_mod = api_module.get_admin()
-                    if admin_mod and _admin_session_is_authoritative(token, admin_mod):
+                    if (
+                        admin_mod
+                        and token
+                        and _admin_session_is_authoritative(token, admin_mod)
+                    ):
                         is_privileged = True
                 except Exception as e:
                     logger.debug(f"Admin session validation failed for {filename}: {e}")
@@ -667,4 +677,3 @@ def register_attachment_route(app: FastAPI) -> None:
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
-

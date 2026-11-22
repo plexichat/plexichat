@@ -74,8 +74,7 @@ class _Servers:
     def get_member_roles(self, server_id, user_id):
         self.role_queries += 1
         return [
-            SimpleNamespace(id=rid)
-            for rid in self.roles.get((server_id, user_id), [])
+            SimpleNamespace(id=rid) for rid in self.roles.get((server_id, user_id), [])
         ]
 
     def has_permission(self, user_id, server_id, permission):

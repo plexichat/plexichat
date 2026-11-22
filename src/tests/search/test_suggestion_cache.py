@@ -95,9 +95,7 @@ def test_expired_entry_is_pruned_before_a_live_one(monkeypatch):
     """
     search_route._clear_suggestion_cache()
     now = [1000.0]
-    monkeypatch.setattr(
-        search_route, "time", SimpleNamespace(monotonic=lambda: now[0])
-    )
+    monkeypatch.setattr(search_route, "time", SimpleNamespace(monotonic=lambda: now[0]))
     monkeypatch.setattr(search_route, "_SUGGESTION_CACHE_TTL_SECONDS", 2.0)
     monkeypatch.setattr(search_route, "_SUGGESTION_CACHE_MAX_ENTRIES", 2)
     mod = _FakeSearch()

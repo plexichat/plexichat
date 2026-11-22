@@ -110,16 +110,16 @@ def _reference_check_host_restriction(client_ip, allowed_hosts):
 @pytest.mark.parametrize(
     "client_ip, allowed",
     [
-        ("198.51.100.5", ALLOWED),       # CIDR hit
-        ("203.0.113.99", ALLOWED),       # second CIDR hit
-        ("192.0.2.7", ALLOWED),          # exact host hit
-        ("8.8.8.8", ALLOWED),            # miss
-        ("127.0.0.1", ALLOWED),          # loopback peer, no loopback in list
-        ("127.0.0.1", ["127.0.0.1"]),    # loopback peer + loopback list
-        ("127.0.0.1", ["localhost"]),    # loopback variant in list
-        ("203.0.113.10", []),            # empty allowlist -> fail closed
-        ("not-an-ip", ALLOWED),          # malformed client -> literal membership
-        ("not-an-ip", ["not-an-ip"]),    # malformed client literal hit
+        ("198.51.100.5", ALLOWED),  # CIDR hit
+        ("203.0.113.99", ALLOWED),  # second CIDR hit
+        ("192.0.2.7", ALLOWED),  # exact host hit
+        ("8.8.8.8", ALLOWED),  # miss
+        ("127.0.0.1", ALLOWED),  # loopback peer, no loopback in list
+        ("127.0.0.1", ["127.0.0.1"]),  # loopback peer + loopback list
+        ("127.0.0.1", ["localhost"]),  # loopback variant in list
+        ("203.0.113.10", []),  # empty allowlist -> fail closed
+        ("not-an-ip", ALLOWED),  # malformed client -> literal membership
+        ("not-an-ip", ["not-an-ip"]),  # malformed client literal hit
         ("198.51.100.5", ["not-a-net/xx", "198.51.100.0/24"]),  # bad entry fallback
     ],
 )

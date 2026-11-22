@@ -64,7 +64,7 @@ def _validate_interaction_data(data: Any) -> None:
         )
 
     nodes = 0
-    stack = [(data, 0)]
+    stack: list[tuple[Any, int]] = [(data, 0)]
     while stack:
         node, depth = stack.pop()
         nodes += 1
@@ -82,7 +82,8 @@ def _validate_interaction_data(data: Any) -> None:
             for key, value in node.items():
                 if not isinstance(key, str) or len(key) > MAX_INTERACTION_STRING_LENGTH:
                     raise InteractionValidationError(
-                        "Invalid interaction data key", ["key is too long or non-string"]
+                        "Invalid interaction data key",
+                        ["key is too long or non-string"],
                     )
                 stack.append((value, depth + 1))
         elif isinstance(node, list):
@@ -117,10 +118,15 @@ def _validate_interaction_data(data: Any) -> None:
                     "Invalid interaction option", ["option must be an object"]
                 )
             value = option.get("value")
-            if isinstance(value, str) and len(value) > MAX_INTERACTION_OPTION_VALUE_LENGTH:
+            if (
+                isinstance(value, str)
+                and len(value) > MAX_INTERACTION_OPTION_VALUE_LENGTH
+            ):
                 raise InteractionValidationError(
                     "Interaction option value is too long",
-                    [f"option value exceeds {MAX_INTERACTION_OPTION_VALUE_LENGTH} characters"],
+                    [
+                        f"option value exceeds {MAX_INTERACTION_OPTION_VALUE_LENGTH} characters"
+                    ],
                 )
             nested = option.get("options")
             if nested is not None and not isinstance(nested, list):

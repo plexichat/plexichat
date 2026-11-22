@@ -159,7 +159,9 @@ def commit_sha() -> str:
 
 def _committed_source(commit: str, path: str) -> str:
     proc = _git("show", f"{commit}:{path}")
-    assert proc.returncode == 0, f"cannot read committed blob {path}: {proc.stderr.strip()}"
+    assert proc.returncode == 0, (
+        f"cannot read committed blob {path}: {proc.stderr.strip()}"
+    )
     return proc.stdout
 
 
@@ -198,7 +200,9 @@ def _status_value(node: ast.AST) -> int | None:
 
 def _literal(node: ast.AST):
     """Return a pure-literal Python value for a body expression, else raise."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, (str, int, float, bool, type(None))):
+    if isinstance(node, ast.Constant) and isinstance(
+        node.value, (str, int, float, bool, type(None))
+    ):
         return node.value
     if isinstance(node, ast.Dict):
         if any(k is None for k in node.keys):
@@ -233,7 +237,11 @@ def _evaluate(mapping: RouteErrorMapping, source: str) -> tuple[bool, str]:
         return False, f"{mapping.path}: route function {mapping.func}() not found"
 
     handler = next(
-        (h for h in ast.walk(func) if isinstance(h, ast.ExceptHandler) and _handler_catches(h, mapping.error)),
+        (
+            h
+            for h in ast.walk(func)
+            if isinstance(h, ast.ExceptHandler) and _handler_catches(h, mapping.error)
+        ),
         None,
     )
     if handler is None:
@@ -295,10 +303,14 @@ def _evaluate(mapping: RouteErrorMapping, source: str) -> tuple[bool, str]:
             f"{mapping.path}:{mapping.func} maps {mapping.error} -> {status} "
             f"with static message {message!r}"
         )
-    return False, f"{mapping.path}:{mapping.func} -- {mapping.error} arm mismatch: {last_detail}"
+    return (
+        False,
+        f"{mapping.path}:{mapping.func} -- {mapping.error} arm mismatch: {last_detail}",
+    )
 
 
 # --- committed-tree presence checks -----------------------------------------
+
 
 @pytest.mark.parametrize(
     "mapping", ROUTE_ERROR_MAPPINGS, ids=[m.key for m in ROUTE_ERROR_MAPPINGS]
@@ -329,7 +341,9 @@ def test_registry_is_complete_and_well_formed() -> None:
 def test_route_functions_are_the_expected_paths() -> None:
     """Each key still points at the route file the campaign actually fixed."""
     by_key = {m.key: m for m in ROUTE_ERROR_MAPPINGS}
-    assert by_key["n746-create-bot-user-exists"].path == "src/api/routes/applications.py"
+    assert (
+        by_key["n746-create-bot-user-exists"].path == "src/api/routes/applications.py"
+    )
     assert by_key["n746-create-bot-limit"].func == "create_bot"
     assert by_key["n758-create-app-invalid-name"].func == "create_application"
     assert by_key["n781-pin-limit"].path == "src/api/routes/messages/pins.py"
@@ -338,7 +352,7 @@ def test_route_functions_are_the_expected_paths() -> None:
 
 # --- non-vacuity: the evaluator must reject every broken form ----------------
 
-_SYNTH_CORRECT = '''
+_SYNTH_CORRECT = """
 def {func}():
     try:
         do_work()
@@ -347,9 +361,9 @@ def {func}():
             status_code={status},
             detail={{"error": {{"code": {status}, "message": "{message}"}}}},
         )
-'''
+"""
 
-_SYNTH_UNHANDLED = '''
+_SYNTH_UNHANDLED = """
 def {func}():
     try:
         do_work()
@@ -358,9 +372,9 @@ def {func}():
             status_code=500,
             detail={{"error": {{"code": 500, "message": "Internal server error"}}}},
         )
-'''
+"""
 
-_SYNTH_LEAK = '''
+_SYNTH_LEAK = """
 def {func}():
     try:
         do_work()
@@ -369,7 +383,7 @@ def {func}():
             status_code={status},
             detail={{"error": {{"code": {status}, "message": str(exc)}}}},
         )
-'''
+"""
 
 
 @pytest.mark.parametrize(

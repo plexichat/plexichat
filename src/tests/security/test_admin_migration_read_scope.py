@@ -95,9 +95,7 @@ def test_narrow_admin_is_denied_before_any_data_read(monkeypatch, handler, args)
     monkeypatch.setattr(migrations_routes, "require_admin_permission", _deny)
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(
-            handler(_request(), *args, manager=_NoTouchManager(), admin_user=1)
-        )
+        asyncio.run(handler(_request(), *args, manager=_NoTouchManager(), admin_user=1))
     assert exc.value.status_code == 403
     assert calls == [SCOPE]
 

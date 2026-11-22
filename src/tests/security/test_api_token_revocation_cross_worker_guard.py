@@ -187,7 +187,9 @@ def _problems(functions: dict[str, str]) -> list[str]:
 
 def test_committed_tree_pins_cross_worker_fail_closed(commit_sha: str) -> None:
     """The committed api_token.py carries the fail-closed re-check markers."""
-    functions = _functions_in_blob(_committed_blob(commit_sha, _API_TOKEN_PATH), _API_TOKEN_PATH)
+    functions = _functions_in_blob(
+        _committed_blob(commit_sha, _API_TOKEN_PATH), _API_TOKEN_PATH
+    )
     assert set(REQUIRED_MARKERS) <= functions.keys(), (
         "guard is vacuous: expected functions not found in committed blob"
     )
@@ -197,7 +199,9 @@ def test_committed_tree_pins_cross_worker_fail_closed(commit_sha: str) -> None:
 
 def test_pins_are_load_bearing(commit_sha: str) -> None:
     """Self-test: removing each marker from the committed source is detected."""
-    functions = _functions_in_blob(_committed_blob(commit_sha, _API_TOKEN_PATH), _API_TOKEN_PATH)
+    functions = _functions_in_blob(
+        _committed_blob(commit_sha, _API_TOKEN_PATH), _API_TOKEN_PATH
+    )
     probes = 0
     for name, markers in REQUIRED_MARKERS.items():
         src = functions[name]

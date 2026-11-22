@@ -147,4 +147,7 @@ class TestCiphertextFieldsNeverExported:
         redacted = redact_internal_fields(payload)
         assert "content_preview_encrypted" not in json.dumps(redacted)
         assert redacted["sessions"][0]["rows"][0]["level2"]["ok"] == 1
-        assert payload["sessions"][0]["rows"][0]["level2"]["content_preview_encrypted"] == "CIPHER"
+        assert (
+            payload["sessions"][0]["rows"][0]["level2"]["content_preview_encrypted"]
+            == "CIPHER"
+        )

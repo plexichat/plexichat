@@ -13,7 +13,7 @@ All helpers are intentionally non-raising: a failure to dispatch must never
 break the underlying REST/CRUD operation that triggered it.
 """
 
-from typing import Any, Callable, Dict, List, Optional, ParamSpec
+from typing import Any, Callable, Dict, List, Mapping, Optional, ParamSpec, cast
 
 import functools
 import sys
@@ -337,9 +337,8 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
     bulk_lookup = getattr(relationships, "get_all_blocked_ids_bulk", None)
     if callable(bulk_lookup):
         try:
-            blocked_by_id = {
-                int(uid): values for uid, values in bulk_lookup(participant_ids).items()
-            }
+            bulk = cast(Mapping[Any, Any], bulk_lookup(participant_ids))
+            blocked_by_id = {int(uid): values for uid, values in bulk.items()}
         except Exception as e:
             logger.debug(f"bulk blocked-id lookup failed for DM audience: {e}")
             # Fail closed: without authoritative sets no participant can be
@@ -538,7 +537,9 @@ def resolve_channel_event_recipients(
         except Exception:
             channel = None
         if channel is not None:
-            server_id = _coerce_scope_id(getattr(channel, "server_id", None)) or server_id
+            server_id = (
+                _coerce_scope_id(getattr(channel, "server_id", None)) or server_id
+            )
         elif guild_id is not None and actor_id is not None:
             # FAIL CLOSED: the authoritative lookup says the actor cannot see
             # this channel (unknown, deleted, non-member or no channels.view).

@@ -195,7 +195,10 @@ class RelationshipHelpersMixin(BaseManager):
         # tier decoupled from the gateway at module load (writes are rare).
         # The single-line router import is kept verbatim so the committed-tree
         # guard's 70cd4627 presence-eviction pin still matches.
-        from src.core.events.router import clear_presence_audience_cache, clear_dm_participant_cache
+        from src.core.events.router import (
+            clear_presence_audience_cache,
+            clear_dm_participant_cache,
+        )
         from src.core.events.gateway_emit import clear_channel_recipient_cache
 
         clear_presence_audience_cache()

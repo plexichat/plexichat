@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 from src.core.security.hardening.text import CONTROL_CHARACTERS
-from src.core.security.hardening.text import CONTROL_CHARACTERS
 
 _db: Any = None
 _setup_complete = False

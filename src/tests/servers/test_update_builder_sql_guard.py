@@ -393,6 +393,7 @@ def test_dead_nested_defect_primitives_do_not_flag_a_clean_builder():
             for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.FunctionDef)
         )
+
         def has_statement(nodes):
             return any(
                 isinstance(n, ast.Constant)
@@ -400,6 +401,7 @@ def test_dead_nested_defect_primitives_do_not_flag_a_clean_builder():
                 and UPDATED_AT_AFTER_COLUMN in _normalise_sql(n.value)
                 for n in nodes
             )
+
         assert has_statement(ast.walk(fn)), "old logic was fooled by the dead def"
         assert not has_statement(_own_body_nodes(fn)), "dead def is not own-body"
 

@@ -48,11 +48,7 @@ HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "opti
 
 
 def _is_id_or_cursor(name: str) -> bool:
-    return (
-        name == "id"
-        or name.endswith("_id")
-        or name in {"cursor", "after", "before"}
-    )
+    return name == "id" or name.endswith("_id") or name in {"cursor", "after", "before"}
 
 
 def _annotation_is_str(annotation) -> bool:
@@ -200,9 +196,7 @@ def test_server_route_modules_use_parse_id_and_scan_is_not_vacuous():
     # Every known adopter still calls the helper, and the scan really covers
     # route handlers -- otherwise the "no bare int()" assertion is vacuous.
     missing = [
-        rel
-        for rel, _, calls in _SCAN
-        if rel in _KNOWN_SERVER_ID_MODULES and calls == 0
+        rel for rel, _, calls in _SCAN if rel in _KNOWN_SERVER_ID_MODULES and calls == 0
     ]
     assert not missing, f"parse_id missing from: {missing}"
     assert sum(calls for _, _, calls in _SCAN) >= 15

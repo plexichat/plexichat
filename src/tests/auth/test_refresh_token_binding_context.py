@@ -221,7 +221,6 @@ def test_module_wrapper_threads_ip_and_ua():
     """The public wrapper must forward context to the manager (route contract)."""
     from src.core.auth import sessions as sessions_mod
 
-    sentinel = object()
     with patch.object(sessions_mod, "_get_auth_manager") as get_mgr:
         instance = get_mgr.return_value.get_instance.return_value
         instance.refresh_session.return_value = "new.token"

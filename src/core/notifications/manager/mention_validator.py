@@ -106,6 +106,9 @@ class MentionValidationMixin(NotificationProtocol):
             return roles_by_id[role_id]
 
         def _is_all_member_role(role_id: SnowflakeID) -> bool:
+            if server_id is None:
+                # No server scope: nothing can be proven to cover its members.
+                return False
             if role_id not in all_member_roles:
                 # Exclude the author: create_notifications always skips the
                 # author when fanning a role mention out, so a role held by
@@ -246,12 +249,8 @@ class MentionValidationMixin(NotificationProtocol):
                         m.valid = False
                         m.error = "Role not in this server"
                     elif (
-                        (
-                            role.get("is_default")
-                            or _is_all_member_role(mention.target_id)
-                        )
-                        and mass_mention_error is not None
-                    ):
+                        role.get("is_default") or _is_all_member_role(role["id"])
+                    ) and mass_mention_error is not None:
                         # Mentioning the default (@everyone) role -- or any
                         # role held by every OTHER member -- pings the whole
                         # server, an @everyone-equivalent mass ping. Gate it

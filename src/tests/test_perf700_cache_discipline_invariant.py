@@ -76,7 +76,10 @@ def _find_class(tree, name):
 
 def _find_function(node, name):
     for child in ast.walk(node):
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == name:
+        if (
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child.name == name
+        ):
             return child
     return None
 
@@ -114,7 +117,9 @@ def _init_missing(cls):
     if init is None:
         return ["__init__ method"]
     joined = " ".join(_raised_messages(init))
-    return [f"{limit} guard" for limit in sorted(REQUIRED_LIMITS) if limit not in joined]
+    return [
+        f"{limit} guard" for limit in sorted(REQUIRED_LIMITS) if limit not in joined
+    ]
 
 
 def _set_missing(cls):
@@ -266,7 +271,9 @@ def _real_invalidation_problems():
     return problems, scanned
 
 
-_CORE_CLASS = _find_class(_parse((ROOT / CORE).read_text(encoding="utf-8")), "BoundedLRU")
+_CORE_CLASS = _find_class(
+    _parse((ROOT / CORE).read_text(encoding="utf-8")), "BoundedLRU"
+)
 _ADOPTIONS = _adoptions()
 _INVALIDATION_PROBLEMS, _INVALIDATION_SCANNED = _real_invalidation_problems()
 _CACHE_BOUND_PROBLEMS, _CACHE_BOUND_SCANNED = _real_cache_bound_problems()
@@ -324,12 +331,16 @@ def test_self_test_bounded_lru_detectors_catch_synthetic_violations():
     assert "eviction loop" in _set_missing(bad)
     assert "pop" in _get_missing(bad)
 
-    assert _construction_keywords(
-        "c = BoundedLRU(max_entries=10, max_bytes=100, ttl_seconds=5)"
-    ) == REQUIRED_LIMITS
-    assert _construction_keywords(
-        "c = BoundedLRU(max_entries=10, max_bytes=100)"
-    ) == {"max_entries", "max_bytes"}
+    assert (
+        _construction_keywords(
+            "c = BoundedLRU(max_entries=10, max_bytes=100, ttl_seconds=5)"
+        )
+        == REQUIRED_LIMITS
+    )
+    assert _construction_keywords("c = BoundedLRU(max_entries=10, max_bytes=100)") == {
+        "max_entries",
+        "max_bytes",
+    }
 
 
 def test_self_test_cache_invalidation_detector_catches_synthetic_violation():
@@ -410,10 +421,12 @@ def test_self_test_cache_bound_detector_catches_synthetic_violation():
     missing = "def invalidate():\n    pass\n"
     assert _check_cache_bound_source(good, "_INVALIDATE_DELETE_BATCH") == []
     assert any(
-        "range" in p for p in _check_cache_bound_source(oversized, "_INVALIDATE_DELETE_BATCH")
+        "range" in p
+        for p in _check_cache_bound_source(oversized, "_INVALIDATE_DELETE_BATCH")
     )
     assert any(
-        "missing" in p for p in _check_cache_bound_source(missing, "_INVALIDATE_DELETE_BATCH")
+        "missing" in p
+        for p in _check_cache_bound_source(missing, "_INVALIDATE_DELETE_BATCH")
     )
 
 

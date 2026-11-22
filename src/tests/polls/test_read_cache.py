@@ -59,8 +59,20 @@ class _CountingDB:
             "results_visibility": PollResultsVisibility.ALWAYS.value,
         }
         self.option_rows = [
-            {"id": 10, "poll_id": POLL, "text": "a", "text_encrypted": None, "position": 0},
-            {"id": 11, "poll_id": POLL, "text": "b", "text_encrypted": None, "position": 1},
+            {
+                "id": 10,
+                "poll_id": POLL,
+                "text": "a",
+                "text_encrypted": None,
+                "position": 0,
+            },
+            {
+                "id": 11,
+                "poll_id": POLL,
+                "text": "b",
+                "text_encrypted": None,
+                "position": 1,
+            },
         ]
         self.voter_stats = {
             USER_A: {"count": 2, "mine": 1},
@@ -284,7 +296,10 @@ def test_every_mutation_invalidates_warm_reads_real_db(
     # change_vote -> per-option tallies must refresh for the other viewer.
     poll_manager.get_results(poll.id, creator.id)
     poll_manager.change_vote(viewer.id, poll.id, [opt_b])
-    tallies = {o.id: o.vote_count for o in poll_manager.get_results(poll.id, creator.id).options}
+    tallies = {
+        o.id: o.vote_count
+        for o in poll_manager.get_results(poll.id, creator.id).options
+    }
     assert tallies == {opt_a: 0, opt_b: 1}
 
     # remove_vote -> headcount must refresh.

@@ -131,9 +131,7 @@ def _domain_errors() -> frozenset[str]:
         for node in tree.body:
             if not isinstance(node, ast.ClassDef):
                 continue
-            bases = [
-                getattr(b, "id", getattr(b, "attr", "")) for b in node.bases
-            ]
+            bases = [getattr(b, "id", getattr(b, "attr", "")) for b in node.bases]
             if any("Error" in b or "Exception" in b for b in bases):
                 names.add(node.name)
     # WebSocket domain errors are raised by dispatch call chains too.
@@ -157,8 +155,7 @@ def _global_mapping_suffixes() -> frozenset[str]:
     tree = ast.parse(_committed("src/api/middleware/error_handling.py"))
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "ERROR_MAPPINGS"
-            for t in node.targets
+            isinstance(t, ast.Name) and t.id == "ERROR_MAPPINGS" for t in node.targets
         ):
             if isinstance(node.value, ast.Dict):
                 return frozenset(
@@ -374,9 +371,7 @@ KNOWN_DYNAMIC_MESSAGE_SITES: frozenset[str] = frozenset(
 )
 
 
-def _dynamic_message_violations(
-    handler: ast.ExceptHandler, source: str
-) -> list[str]:
+def _dynamic_message_violations(handler: ast.ExceptHandler, source: str) -> list[str]:
     """Client-visible messages in a handler that interpolate the exception."""
     bound = _bound_names(handler)
     out: list[str] = []
@@ -572,8 +567,7 @@ def test_service_registry_is_reachable_on_committed_tree():
         fn = next(
             n
             for n in ast.walk(tree)
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and n.name == func
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func
         )
         calls = {_call_name(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}
         assert service in calls, f"{path}::{func} no longer calls {service}()"
@@ -618,12 +612,8 @@ def test_each_campaign_route_handles_its_call_chain_errors():
             )
         # Every handler on the audited routes must use a static response body.
         source = _committed(key[0])
-        _, routed_violations = analyze_source(
-            source, key[0], check_all_handlers=True
-        )
-        dynamic = [
-            v for v in routed_violations if v.kind == "dynamic-error-message"
-        ]
+        _, routed_violations = analyze_source(source, key[0], check_all_handlers=True)
+        dynamic = [v for v in routed_violations if v.kind == "dynamic-error-message"]
         assert not dynamic, (
             f"{info.route}: domain-error handler interpolates the exception "
             f"into a client-visible body: {dynamic}"
@@ -635,9 +625,7 @@ def test_each_campaign_route_handles_its_call_chain_errors():
 # ---------------------------------------------------------------------------
 
 
-def _route_source(
-    body: str, exc: str = "Exception"
-) -> str:
+def _route_source(body: str, exc: str = "Exception") -> str:
     return (
         "from fastapi import APIRouter, HTTPException\n"
         "router = APIRouter()\n"
@@ -667,9 +655,7 @@ def test_synthetic_unhandled_domain_error_is_flagged():
 def test_synthetic_mapped_and_static_cases_pass():
     """Globally-mapped errors and explicit static handlers are accepted."""
     # (a) ApplicationLimitError is globally mapped (LimitError family).
-    mapped = _route_source(
-        "        app = applications.create_application(name='x')"
-    )
+    mapped = _route_source("        app = applications.create_application(name='x')")
     # create_application also raises InvalidApplicationNameError (unmapped),
     # so handle it explicitly with a static message.
     mapped = mapped.replace(

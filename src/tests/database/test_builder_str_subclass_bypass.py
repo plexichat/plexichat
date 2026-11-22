@@ -66,7 +66,10 @@ def test_identifier_lying_split_cannot_smuggle_sql_into_table():
 
 def test_identifier_lying_format_cannot_smuggle_sql_into_table():
     sql, _ = (
-        QueryBuilder(object(), db_type="sqlite").table(LyingFormat("users")).select().build()
+        QueryBuilder(object(), db_type="sqlite")
+        .table(LyingFormat("users"))
+        .select()
+        .build()
     )
     assert sql == "SELECT * FROM users"
     assert "DROP" not in sql
@@ -91,10 +94,7 @@ def test_choke_points_return_plain_canonical_strings():
     assert sql_identifier(LyingSplit("users; DROP TABLE x"), "table") == "users"
     assert type(sql_operator(LyingOperator("anything"))) is str
     assert sql_operator(LyingOperator("anything")) == "="
-    assert (
-        sql_condition("id", LyingOperator("= 1 OR 1=1 --"))
-        == "id = ?"
-    )
+    assert sql_condition("id", LyingOperator("= 1 OR 1=1 --")) == "id = ?"
 
 
 def test_valid_identifiers_and_operators_still_work():

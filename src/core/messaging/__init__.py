@@ -425,9 +425,7 @@ def get_message(user_id: int, message_id: int) -> Optional[Message]:
     return _get_manager().get_message(user_id, message_id)
 
 
-def get_messages_by_ids(
-    user_id: int, message_ids: List[int]
-) -> Dict[int, Message]:
+def get_messages_by_ids(user_id: int, message_ids: List[int]) -> Dict[int, Message]:
     """Batch-load viewable messages by ID with bounded IN chunks.
 
     Returns a mapping keyed by message id; ids that are missing or not

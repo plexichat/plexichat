@@ -112,7 +112,9 @@ def _install_fakes(monkeypatch, *, prefetch_returns_all=True):
         if isinstance(content, str) and content.startswith("ENC:3:"):
             # Mirror production: the v3 branch resolves its interval through
             # the manager's store once per message it decrypts.
-            return ratchet_manager.decrypt(conversation_id, message_id, content).decode()
+            return ratchet_manager.decrypt(
+                conversation_id, message_id, content
+            ).decode()
         return content
 
     monkeypatch.setattr(encryption, "get_ratchet_manager", fake_get_ratchet_manager)

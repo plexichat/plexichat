@@ -59,8 +59,7 @@ _MALFORMED = [
 @pytest.mark.parametrize("owner_value, coerced_id", _MALFORMED)
 def test_malformed_owner_row_does_not_grant_restore(owner_value, coerced_id):
     assert _restore_allowed(owner_value, coerced_id) is False, (
-        f"malformed owner_id {owner_value!r} granted item restore to "
-        f"user {coerced_id}"
+        f"malformed owner_id {owner_value!r} granted item restore to user {coerced_id}"
     )
 
 

@@ -21,7 +21,6 @@ token. Run with::
 
 import asyncio
 import inspect
-from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException

@@ -43,7 +43,14 @@ BASELINE_INDEX_DDL = (
 INDEX_NAME = "idx_admin_audit_created_status_action"
 TODAY = 1_760_000_000_000
 FAMILIES = (
-    "login", "user", "admin", "config", "approval", "security", "plexijoin", "license",
+    "login",
+    "user",
+    "admin",
+    "config",
+    "approval",
+    "security",
+    "plexijoin",
+    "license",
 )
 
 # The exact shapes the stats route issues. The family query is the hot one: the
@@ -53,19 +60,16 @@ FAMILY_COUNT_QUERY = (
     "WHERE created_at >= ? AND action LIKE ?"
 )
 STATUS_COUNT_QUERY = (
-    "SELECT COUNT(*) as count FROM admin_audit_log "
-    "WHERE created_at >= ? AND status = ?"
+    "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ? AND status = ?"
 )
 TOTAL_COUNT_QUERY = (
     "SELECT COUNT(*) as count FROM admin_audit_log WHERE created_at >= ?"
 )
 ADMIN_FILTER_QUERY = (
-    "SELECT id FROM admin_audit_log WHERE admin_id = ? "
-    "ORDER BY created_at DESC LIMIT ?"
+    "SELECT id FROM admin_audit_log WHERE admin_id = ? ORDER BY created_at DESC LIMIT ?"
 )
 ACTION_FEED_QUERY = (
-    "SELECT id FROM admin_audit_log WHERE action = ? "
-    "ORDER BY created_at DESC LIMIT ?"
+    "SELECT id FROM admin_audit_log WHERE action = ? ORDER BY created_at DESC LIMIT ?"
 )
 
 
@@ -200,7 +204,9 @@ class TestAdminAuditStatsCoveringIndex:
             (ACTION_FEED_QUERY, ("login.do", 20), "idx_admin_audit_action_created"),
         ],
     )
-    def test_other_filters_keep_their_index(self, indexed_db, query, params, expected_index):
+    def test_other_filters_keep_their_index(
+        self, indexed_db, query, params, expected_index
+    ):
         _seed(indexed_db)
         plan = _plan(indexed_db, query, params)
         assert expected_index in plan, f"expected {expected_index} in plan:\n{plan}"

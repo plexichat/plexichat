@@ -83,11 +83,14 @@ def test_server_hydration_single_mget_replaces_n_gets():
     """Warm cache: one bulk read, no per-user GET round-trips, no SQL."""
     cache = {f"user:servers:{uid}": [10 + uid] for uid in (1, 2, 3)}
     mgr, db = _manager({})
-    with patch("src.core.database.valkey_available", return_value=True), patch(
-        "src.core.database.cache_get_many",
-        side_effect=lambda keys: {k: cache[k] for k in keys if k in cache},
-    ) as mget, patch("src.core.database.cache_get") as single_get, patch(
-        "src.core.database.cache_set"
+    with (
+        patch("src.core.database.valkey_available", return_value=True),
+        patch(
+            "src.core.database.cache_get_many",
+            side_effect=lambda keys: {k: cache[k] for k in keys if k in cache},
+        ) as mget,
+        patch("src.core.database.cache_get") as single_get,
+        patch("src.core.database.cache_set"),
     ):
         result = mgr._get_user_servers_map([1, 2, 3])
 
@@ -114,10 +117,14 @@ def test_server_hydration_cold_and_warm_paths_agree_and_do_not_leak():
         cold = cold_mgr._get_user_servers_map([1, 2, 3])
 
     warm_mgr, warm_db = _manager(members)
-    with patch("src.core.database.valkey_available", return_value=True), patch(
-        "src.core.database.cache_get_many",
-        side_effect=lambda keys: {k: cache[k] for k in keys if k in cache},
-    ), patch("src.core.database.cache_set"):
+    with (
+        patch("src.core.database.valkey_available", return_value=True),
+        patch(
+            "src.core.database.cache_get_many",
+            side_effect=lambda keys: {k: cache[k] for k in keys if k in cache},
+        ),
+        patch("src.core.database.cache_set"),
+    ):
         warm = warm_mgr._get_user_servers_map([1, 2, 3])
 
     assert warm == cold == {1: {10, 20}, 2: {30}, 3: set()}
@@ -131,10 +138,14 @@ def test_server_hydration_malformed_cache_value_fails_closed():
     members = {1: [10], 2: [20]}
     cache = {"user:servers:1": "not-a-list"}
     mgr, db = _manager(members)
-    with patch("src.core.database.valkey_available", return_value=True), patch(
-        "src.core.database.cache_get_many",
-        side_effect=lambda keys: {k: cache[k] for k in keys if k in cache},
-    ), patch("src.core.database.cache_set"):
+    with (
+        patch("src.core.database.valkey_available", return_value=True),
+        patch(
+            "src.core.database.cache_get_many",
+            side_effect=lambda keys: {k: cache[k] for k in keys if k in cache},
+        ),
+        patch("src.core.database.cache_set"),
+    ):
         result = mgr._get_user_servers_map([1, 2])
 
     assert result == {1: {10}, 2: {20}}

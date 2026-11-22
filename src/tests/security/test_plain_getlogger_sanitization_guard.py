@@ -154,7 +154,17 @@ _GETTER_BASES = frozenset({"logging", "_logging", "py_logging", "log"})
 _PROXY_LOGGER_NAMES = frozenset({"AppLogger", "admin"})
 
 _LOG_METHODS = frozenset(
-    {"debug", "info", "warning", "warn", "error", "critical", "exception", "log", "fatal"}
+    {
+        "debug",
+        "info",
+        "warning",
+        "warn",
+        "error",
+        "critical",
+        "exception",
+        "log",
+        "fatal",
+    }
 )
 
 # Names that mark an interpolated log value as request/user/DB-controlled.
@@ -438,10 +448,18 @@ DOCUMENTED_LOGGERS: tuple[DocumentedLogger, ...] = (
     _s("src/core/migrations/migrations/004_id_identity_defaults.py", _R_MIGRATIONS),
     _s("src/core/migrations/migrations/005_approved_by_text.py", _R_MIGRATIONS),
     _s("src/core/migrations/migrations/006_report_queue_indexes.py", _R_MIGRATIONS),
-    _s("src/core/migrations/migrations/007_hot_lookup_composite_indexes.py", _R_MIGRATIONS),
+    _s(
+        "src/core/migrations/migrations/007_hot_lookup_composite_indexes.py",
+        _R_MIGRATIONS,
+    ),
     _s("src/core/migrations/migrations/008_auth_lookup_indexes.py", _R_MIGRATIONS),
-    _s("src/core/migrations/migrations/009_relationship_lookup_indexes.py", _R_MIGRATIONS),
-    _s("src/core/migrations/migrations/010_server_hot_lookup_indexes.py", _R_MIGRATIONS),
+    _s(
+        "src/core/migrations/migrations/009_relationship_lookup_indexes.py",
+        _R_MIGRATIONS,
+    ),
+    _s(
+        "src/core/migrations/migrations/010_server_hot_lookup_indexes.py", _R_MIGRATIONS
+    ),
     _s(
         "src/core/migrations/migrations/011_admin_audit_action_created_index.py",
         _R_MIGRATIONS,
@@ -477,6 +495,7 @@ DOCUMENTED_LOGGERS: tuple[DocumentedLogger, ...] = (
     _s("src/utils/encryption/kek_migration/protocol.py", _R_KEK),
     _s("src/utils/system_alerts.py", _R_SYSTEM_ALERTS),
 )
+
 
 # The ONLY unfiltered "user-data-hint" interpolations allowed. Each is a
 # locally-derived path / DB id from an offline, operator-controlled code path
@@ -568,7 +587,12 @@ def _unsafe_calls(
                 continue
             findings.append(
                 UnsafeLogCall(
-                    path, var, _enclosing_function(tree, call.lineno), call.lineno, expr, hints
+                    path,
+                    var,
+                    _enclosing_function(tree, call.lineno),
+                    call.lineno,
+                    expr,
+                    hints,
                 )
             )
     return findings
@@ -624,7 +648,9 @@ def _sweep(
     return loggers, offenders
 
 
-REGISTRY: dict[tuple[str, str], DocumentedLogger] = {r.key: r for r in DOCUMENTED_LOGGERS}
+REGISTRY: dict[tuple[str, str], DocumentedLogger] = {
+    r.key: r for r in DOCUMENTED_LOGGERS
+}
 SAFE_HITS: set[tuple[str, str, str]] = {
     (s.path, s.func, s.expr) for s in DOCUMENTED_SAFE_INTERPOLATIONS
 }
@@ -697,7 +723,9 @@ def test_self_test_static_and_proxy_cases_are_accepted():
             logger.info(f"starting migration {version}")
         """
     )
-    _, offenders = _evaluate_module(static, "src/api/_synthetic.py", REGISTRY, SAFE_HITS)
+    _, offenders = _evaluate_module(
+        static, "src/api/_synthetic.py", REGISTRY, SAFE_HITS
+    )
     assert offenders == []
 
     # A documented safe local path interpolation is accepted at its own site.
@@ -802,7 +830,9 @@ def test_known_limitation_novel_value_name_is_not_detected() -> None:
     _, inline_offenders = _evaluate_module(
         inline, "src/api/_synthetic.py", {}, SAFE_HITS
     )
-    assert renamed_offenders == [], "vocabulary/taint behaviour changed: revisit this note"
+    assert renamed_offenders == [], (
+        "vocabulary/taint behaviour changed: revisit this note"
+    )
     assert inline_offenders, "the inline request expression must still be detectable"
 
 
@@ -900,7 +930,9 @@ def test_no_unfiltered_user_controlled_log_interpolation(commit_sha: str) -> Non
         "unfiltered user/request/DB-controlled log interpolation(s) in "
         "production (install SanitizingFilter on the module logger, route "
         "through the AppLogger proxy, or document the local value as safe):\n  "
-        + "\n  ".join(str(o) for o in sorted(offenders, key=lambda o: (o.path, o.lineno)))
+        + "\n  ".join(
+            str(o) for o in sorted(offenders, key=lambda o: (o.path, o.lineno))
+        )
     )
 
 

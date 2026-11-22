@@ -27,9 +27,7 @@ from src.core.servers.handlers.members.invites import MemberInviteMixin
 
 pytestmark = [pytest.mark.security, pytest.mark.unit]
 
-_URLSAFE = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-)
+_URLSAFE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 # urlsafe base64 draws from a 64-symbol alphabet => 6 bits of entropy per char.
 _BITS_PER_URLSAFE_CHAR = math.log2(64)
 
@@ -130,6 +128,6 @@ def test_generator_uses_token_urlsafe_not_short_secrets_choice():
 
 def test_entropy_detector_is_not_vacuous():
     """The floor check distinguishes the old weak scheme from the new one."""
-    assert _entropy_bits("A" * 8) < 128   # 48 bits: old 8-char generator
+    assert _entropy_bits("A" * 8) < 128  # 48 bits: old 8-char generator
     assert _entropy_bits("A" * 12) < 128  # 72 bits: old 12-char generator
     assert _entropy_bits("A" * 22) >= 128  # 132 bits: token_urlsafe(16)

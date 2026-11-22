@@ -68,9 +68,7 @@ def test_removed_reaction_not_served_from_cached_message_list(
     _clear_caches()
     viewer = _token_info(owner)
 
-    first = asyncio.run(
-        ml.get_channel_messages(str(group.id), 50, None, None, viewer)
-    )
+    first = asyncio.run(ml.get_channel_messages(str(group.id), 50, None, None, viewer))
     assert _pill(first) is not None
     assert _field(_pill(first), "count") == 1
     assert _field(_pill(first), "me") is False  # owner did not react
@@ -105,9 +103,7 @@ def test_added_reaction_me_flag_not_stale_in_cached_message_list(
 
     _clear_caches()
     viewer = _token_info(owner)
-    first = asyncio.run(
-        ml.get_channel_messages(str(group.id), 50, None, None, viewer)
-    )
+    first = asyncio.run(ml.get_channel_messages(str(group.id), 50, None, None, viewer))
     assert _pill(first) is None
 
     reactions.add_reaction(owner.id, msg.id, "\U0001f44d")

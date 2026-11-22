@@ -18,7 +18,6 @@ These tests assert:
 
 from types import SimpleNamespace
 
-import pytest
 
 from src.core.messaging.services.bookmarks import BookmarkService
 from src.core.messaging.services.message.retrieval import (
@@ -112,9 +111,7 @@ def test_listing_uses_one_bulk_call_and_matches_legacy_enrichment():
     assert bulk.legacy_calls == 0
     assert bulk.bulk_arg_len == n
     assert len(got) == n - 1
-    assert [r["message_id"] for r in got] == [
-        5000 + i for i in range(n) if i != 3
-    ]
+    assert [r["message_id"] for r in got] == [5000 + i for i in range(n) if i != 3]
     assert got[0]["content_preview"] == "m0"
     assert got[0]["author_id"] == 42
     assert got[0]["message_created_at"] == 1700000000001

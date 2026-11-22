@@ -194,6 +194,7 @@ CLIENT_KEYED_ALLOWLIST: tuple[tuple[str, int], ...] = ()
 
 # --- source / AST helpers --------------------------------------------------
 
+
 @lru_cache(maxsize=None)
 def _source(rel_path: str) -> str:
     return (SRC / rel_path).read_text(encoding="utf-8")
@@ -310,7 +311,11 @@ def _client_keyed_calls(sources):
             for key_node in _key_args(node):
                 if _is_client_keyed(key_node):
                     flagged.append(
-                        (rel_path, node.lineno, ast.get_source_segment(source, key_node) or "")
+                        (
+                            rel_path,
+                            node.lineno,
+                            ast.get_source_segment(source, key_node) or "",
+                        )
                     )
     return flagged
 
@@ -336,6 +341,7 @@ def _swept_call_count():
 
 
 # --- half 1: documented key sites ------------------------------------------
+
 
 def test_documented_key_sites_are_real_and_authoritative():
     """Every audited site still builds its key from the recorded authoritative source."""
@@ -387,9 +393,9 @@ def test_password_reset_throttle_uses_resolved_user_id():
     assert "blind_index" in src and "email_index" in src, (
         "password reset no longer resolves the submitted email to an authoritative id"
     )
-    assert "user_id = ?" in src and (
-        'user["id"]' in src or "user['id']" in src
-    ), "reset throttle lost its user-id key"
+    assert "user_id = ?" in src and ('user["id"]' in src or "user['id']" in src), (
+        "reset throttle lost its user-id key"
+    )
     assert not _name_in_key_string(fn, "email"), (
         "reset throttle now builds a key from the raw, client-supplied email"
     )
@@ -421,6 +427,7 @@ def test_documented_sites_have_reasons_and_distinct_locators():
 
 
 # --- half 2: whole-tree client-keyed sweep ---------------------------------
+
 
 def test_no_client_keyed_limiter_calls():
     """A limiter keyed from a request field/header/client id must not exist."""
@@ -462,8 +469,8 @@ def test_detector_flags_novel_client_keyed_call_site():
 def test_classifier_distinguishes_authoritative_from_client_keys():
     """Self-test: trusted keys accepted, raw request fields rejected."""
     good = [
-        "allowed, _ = check_rate_limit(f\"login:{get_client_ip(request)}\", 5, 60)",
-        "allowed, _ = check_rate_limit(f\"invites:creation:{user_id}\", 20, 60)",
+        'allowed, _ = check_rate_limit(f"login:{get_client_ip(request)}", 5, 60)',
+        'allowed, _ = check_rate_limit(f"invites:creation:{user_id}", 20, 60)',
         "allowed, _ = check_rate_limit(_share_link_verify_key(token), 10, 60)",
         "result = await ratelimit.acheck_rate_limit(\n"
         "    ip_address=cached_client_ip(request, resolver=get_client_ip)\n"
@@ -471,8 +478,8 @@ def test_classifier_distinguishes_authoritative_from_client_keys():
     ]
     bad = [
         "allowed, _ = check_rate_limit(f\"login:{request.headers['X-Forwarded-For']}\", 5, 60)",
-        "allowed, _ = check_rate_limit(f\"op:{body.user_id}\", 5, 60)",
-        "allowed, _ = check_rate_limit(f\"op:{client_supplied_id}\", 5, 60)",
+        'allowed, _ = check_rate_limit(f"op:{body.user_id}", 5, 60)',
+        'allowed, _ = check_rate_limit(f"op:{client_supplied_id}", 5, 60)',
         "allowed, _ = check_rate_limit(f\"op:{request.query_params['id']}\", 5, 60)",
     ]
     for code in good:
@@ -508,6 +515,7 @@ def test_detector_flags_in_memory_mutation_of_real_key():
 
 # --- half 3: central limiter fail-closed marker ----------------------------
 
+
 def test_central_limiter_fails_closed_on_store_outage():
     """The store-outage result builder must exist and deny; it must be wired in."""
     results_src = _source("core/ratelimit/manager/results.py")
@@ -524,7 +532,8 @@ def test_central_limiter_fails_closed_on_store_outage():
         uses = [
             n
             for n in ast.walk(tree)
-            if isinstance(n, ast.Call) and _call_name(n) == "create_store_unavailable_result"
+            if isinstance(n, ast.Call)
+            and _call_name(n) == "create_store_unavailable_result"
         ]
         assert uses, f"{rel} no longer calls create_store_unavailable_result"
 

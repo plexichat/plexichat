@@ -47,9 +47,7 @@ def _resolve_view_audit_server_ids(servers_mod, user_id, server_ids):
             if perms.get("server.view_audit_log", False):
                 visible.append(sid)
         except Exception as perm_error:
-            logger.debug(
-                f"audit log permission check failed for {sid}: {perm_error}"
-            )
+            logger.debug(f"audit log permission check failed for {sid}: {perm_error}")
             continue
     return visible
 

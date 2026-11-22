@@ -36,11 +36,15 @@ def wired_relationships(db):
 
 @pytest.mark.messaging
 class TestGroupDmSendBlockEnforcement:
-    def test_block_closes_group_dm_send(self, messaging_manager, wired_relationships, three_users):
+    def test_block_closes_group_dm_send(
+        self, messaging_manager, wired_relationships, three_users
+    ):
         owner, attacker, victim = three_users
         # Create the group while both are still on speaking terms: create_group
         # itself rejects a blocked pair, so the block must come afterwards.
-        group = messaging_manager.create_group(owner.id, "Group", [attacker.id, victim.id])
+        group = messaging_manager.create_group(
+            owner.id, "Group", [attacker.id, victim.id]
+        )
 
         wired_relationships.block_user(victim.id, attacker.id)
 
@@ -51,7 +55,9 @@ class TestGroupDmSendBlockEnforcement:
         self, messaging_manager, wired_relationships, three_users, monkeypatch
     ):
         owner, attacker, victim = three_users
-        group = messaging_manager.create_group(owner.id, "Group", [attacker.id, victim.id])
+        group = messaging_manager.create_group(
+            owner.id, "Group", [attacker.id, victim.id]
+        )
         wired_relationships.block_user(victim.id, attacker.id)
 
         # The authoritative rel_blocked row survives a relationships outage;
@@ -65,7 +71,9 @@ class TestGroupDmSendBlockEnforcement:
         self, messaging_manager, wired_relationships, three_users, monkeypatch
     ):
         owner, attacker, victim = three_users
-        group = messaging_manager.create_group(owner.id, "Group", [attacker.id, victim.id])
+        group = messaging_manager.create_group(
+            owner.id, "Group", [attacker.id, victim.id]
+        )
         wired_relationships.block_user(victim.id, attacker.id)
 
         real_fetch_one = messaging_manager._db.fetch_one
@@ -99,7 +107,9 @@ class TestGroupDmSendBlockEnforcement:
         layer, not DM privacy. The core gate must stay scoped to (group) DMs,
         so a block between two members must not deny their channel sends.
         """
-        owner, member1, member2, server, channel, server_manager, _tm = server_with_channel
+        owner, member1, member2, server, channel, server_manager, _tm = (
+            server_with_channel
+        )
         wired_relationships.block_user(member1.id, member2.id)
 
         msg = messaging_manager.send_message(

@@ -45,7 +45,9 @@ class _FakeManager:
         return {"id": 4242}
 
 
-def _request(body: bytes, *, content_length: int | None = None, seen: List[bytes] | None = None) -> Request:
+def _request(
+    body: bytes, *, content_length: int | None = None, seen: List[bytes] | None = None
+) -> Request:
     """Build a real Starlette Request whose stream yields ``body`` in chunks."""
     headers = [(b"content-type", b"application/json")]
     if content_length is not None:
@@ -132,7 +134,9 @@ class TestAdminConnectionBodyCap:
         with _patched(manager):
             assert _call(request)["connection_id"] == 4242
         assert len(manager.calls) == 1
-        assert manager.calls[0]["remote_instance_id"] == VALID_BODY["remote_instance_id"]
+        assert (
+            manager.calls[0]["remote_instance_id"] == VALID_BODY["remote_instance_id"]
+        )
         assert manager.calls[0]["remote_url"] == VALID_BODY["remote_url"]
         assert manager.calls[0]["note"] == VALID_BODY["note"]
 
