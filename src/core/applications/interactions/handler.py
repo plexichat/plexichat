@@ -35,6 +35,111 @@ from .components import validate_components
 
 INTERACTION_TOKEN_EXPIRY = 900
 
+# SECURITY: ``data`` is attacker-influenced (command options, resolved bodies,
+# custom ids, ...) and is forwarded verbatim to ``json.dumps`` -> ``encrypt_data``
+# -> the ``app_interactions`` row and then dispatched to bots.  Without ceilings
+# a single crafted payload can force an unbounded allocation during
+# serialization/encryption and persist/dispatch an arbitrarily large blob.  The
+# bounds below fail closed at the core boundary; they match the callback-side
+# ceilings used for interaction responses.
+MAX_INTERACTION_DATA_LENGTH = 64 * 1024
+MAX_INTERACTION_OPTIONS = 25
+MAX_INTERACTION_OPTION_VALUE_LENGTH = 6000
+MAX_INTERACTION_NESTING_DEPTH = 12
+MAX_INTERACTION_NODE_COUNT = 2048
+MAX_INTERACTION_LIST_LENGTH = 256
+MAX_INTERACTION_STRING_LENGTH = 8192
+
+
+def _validate_interaction_data(data: Any) -> None:
+    """Fail closed on malformed or oversized interaction data.
+
+    Runs *before* any serialization/allocation so a hostile payload cannot
+    exhaust memory/CPU through a huge flat list, deep nesting or long strings.
+    Raises :class:`InteractionValidationError` on the first violation.
+    """
+    if not isinstance(data, dict):
+        raise InteractionValidationError(
+            "Invalid interaction data", ["data must be an object"]
+        )
+
+    nodes = 0
+    stack = [(data, 0)]
+    while stack:
+        node, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_INTERACTION_NODE_COUNT:
+            raise InteractionValidationError(
+                "Interaction data exceeds the node limit",
+                [f"more than {MAX_INTERACTION_NODE_COUNT} nodes"],
+            )
+        if depth > MAX_INTERACTION_NESTING_DEPTH:
+            raise InteractionValidationError(
+                "Interaction data is nested too deeply",
+                [f"depth exceeds {MAX_INTERACTION_NESTING_DEPTH}"],
+            )
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if not isinstance(key, str) or len(key) > MAX_INTERACTION_STRING_LENGTH:
+                    raise InteractionValidationError(
+                        "Invalid interaction data key", ["key is too long or non-string"]
+                    )
+                stack.append((value, depth + 1))
+        elif isinstance(node, list):
+            if len(node) > MAX_INTERACTION_LIST_LENGTH:
+                raise InteractionValidationError(
+                    "Interaction data list is too large",
+                    [f"more than {MAX_INTERACTION_LIST_LENGTH} entries"],
+                )
+            for item in node:
+                stack.append((item, depth + 1))
+        elif isinstance(node, str):
+            if len(node) > MAX_INTERACTION_STRING_LENGTH:
+                raise InteractionValidationError(
+                    "Interaction data string is too long",
+                    [f"string exceeds {MAX_INTERACTION_STRING_LENGTH} characters"],
+                )
+
+    options = data.get("options")
+    if options is not None:
+        if not isinstance(options, list):
+            raise InteractionValidationError(
+                "Invalid interaction options", ["options must be a list"]
+            )
+        if len(options) > MAX_INTERACTION_OPTIONS:
+            raise InteractionValidationError(
+                "Too many interaction options",
+                [f"more than {MAX_INTERACTION_OPTIONS} options"],
+            )
+        for option in options:
+            if not isinstance(option, dict):
+                raise InteractionValidationError(
+                    "Invalid interaction option", ["option must be an object"]
+                )
+            value = option.get("value")
+            if isinstance(value, str) and len(value) > MAX_INTERACTION_OPTION_VALUE_LENGTH:
+                raise InteractionValidationError(
+                    "Interaction option value is too long",
+                    [f"option value exceeds {MAX_INTERACTION_OPTION_VALUE_LENGTH} characters"],
+                )
+            nested = option.get("options")
+            if nested is not None and not isinstance(nested, list):
+                raise InteractionValidationError(
+                    "Invalid nested interaction options", ["options must be a list"]
+                )
+
+    try:
+        serialized = json.dumps(data, separators=(",", ":"))
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise InteractionValidationError(
+            "Interaction data is not serializable", [str(exc)]
+        ) from exc
+    if len(serialized) > MAX_INTERACTION_DATA_LENGTH:
+        raise InteractionValidationError(
+            "Interaction data exceeds the allowed size",
+            [f"data exceeds {MAX_INTERACTION_DATA_LENGTH} bytes"],
+        )
+
 
 class InteractionHandler:
     """Handles interaction processing and responses."""
@@ -91,6 +196,9 @@ class InteractionHandler:
         full_token, token_hash = generate_interaction_token(interaction_id)
 
         if data:
+            # SECURITY: validate/bound the attacker-influenced payload before
+            # any serialization or persistence (fail closed).
+            _validate_interaction_data(data)
             plaintext = json.dumps(data)
             try:
                 data_json = encrypt_data(
