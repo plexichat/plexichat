@@ -786,6 +786,15 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="02f08707-private-index-audit-pin",
+        path="src/api/routes/docs/openapi.py",
+        marker='def _ensure_page_language(markup: str) -> str:',
+        why=(
+            'Private-index commit 02f08707 pinned by a distinctive line it introduced. '
+            'Falsifiable by the guard synthetic-revert test.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
