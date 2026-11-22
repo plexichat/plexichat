@@ -195,6 +195,44 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                     ["invalid_thread"],
                 )
             if thread_row and thread_row["conversation_id"]:
+                # SECURITY (channel scope): the server check above alone let a
+                # token holder redirect a webhook bound to channel A into a
+                # thread of SIBLING channel B on the same server (e.g. a
+                # private/admin-only channel), bypassing the webhook's channel
+                # scope. A thread's authoritative parent is the DB row in
+                # ``thread_threads`` (``channel_id`` = the channel that owns
+                # the thread). Whenever this target would move the delivery
+                # conversation, require that parent to be the webhook's own
+                # channel -- otherwise fail closed. Ids that resolve to no
+                # channel never move the conversation and are left untouched.
+                try:
+                    thread_pk = int(thread_id)
+                    webhook_channel_pk = int(row["channel_id"])
+                except (TypeError, ValueError):
+                    raise InvalidWebhookContentError(
+                        "Invalid thread target for this webhook", ["invalid_thread"]
+                    )
+                if thread_pk != webhook_channel_pk:
+                    parent_channel: Optional[int] = None
+                    try:
+                        parent_row = self._db.fetch_one(
+                            "SELECT channel_id FROM thread_threads WHERE id = ?",
+                            (thread_pk,),
+                        )
+                        if parent_row and parent_row.get("channel_id") is not None:
+                            parent_channel = int(parent_row["channel_id"])
+                    except Exception as exc:
+                        # No authoritative parent -> we cannot prove the
+                        # thread belongs to this webhook's channel.
+                        logger.warning(
+                            f"Webhook thread scope lookup failed for {thread_pk}: {exc}"
+                        )
+                        parent_channel = None
+                    if parent_channel != webhook_channel_pk:
+                        raise InvalidWebhookContentError(
+                            "Thread does not belong to the webhook's channel",
+                            ["invalid_thread"],
+                        )
                 conversation_id = thread_row["conversation_id"]
 
         now = self._get_timestamp()
