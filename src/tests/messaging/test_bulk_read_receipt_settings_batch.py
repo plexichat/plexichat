@@ -161,3 +161,33 @@ def test_receipt_settings_lookup_chunks_large_conversation_sets():
     assert repo.get_read_receipts_enabled(ids) == {}
     assert len(db.fetch_calls) == 3
     assert all(len(params) <= _MAX_BULK_CHUNK for _, params in db.fetch_calls)
+
+
+@pytest.mark.messaging
+def test_bulk_ack_settings_probes_stay_flat_as_audience_grows():
+    """Per-channel setting probes must not scale with the bulk audience.
+
+    ``mark_read_bulk`` used to call ``servers.get_channel`` once per
+    conversation just to read ``read_receipts_enabled`` -- a membership and
+    ``channels.view`` check per channel. Doubling the audience doubled those
+    probes. With the bounded bulk fetch the count is one settings lookup and
+    zero per-channel probes no matter how large the audience (below the chunk
+    cap), so the query count stays flat.
+    """
+
+    def _probes(n):
+        convs = list(range(10_000, 10_000 + n))
+        status_repo = _FakeStatusRepo()
+        participant_repo = _FakeParticipantRepo()
+        message_repo = _FakeMessageRepo()
+        servers = _FakeServers()
+        _service(
+            status_repo, participant_repo, message_repo, servers
+        ).mark_read_bulk(USER, [(cid, None) for cid in convs])
+        return len(servers.get_channel_calls), len(status_repo.settings_calls)
+
+    # Before the fix: (4, 0) and (60, 0) -- the first number grows with N.
+    # After the fix: exactly one bounded settings lookup and no get_channel
+    # probes for either audience size.
+    assert _probes(4) == (0, 1)
+    assert _probes(60) == (0, 1)
