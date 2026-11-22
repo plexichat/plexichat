@@ -267,10 +267,10 @@ GET /api/v1/servers/{server_id}/permissions
 
 ```json
 {
-  "server.view": true,
-  "channel.create": false,
-  "message.send": true,
-  "message.manage": false,
+  "channels.view": true,
+  "channels.manage": false,
+  "messages.send": true,
+  "messages.manage": false,
   "server.manage": false
 }
 ```
@@ -318,7 +318,7 @@ Results are cached for 30 seconds.
 
 ### Create a channel
 
-Create a channel in a server. Requires the `channel.create` or `channels.manage` permission.
+Create a channel in a server. Requires the `channels.manage` permission.
 
 ```
 POST /api/v1/servers/{server_id}/channels
@@ -431,7 +431,7 @@ PATCH /api/v1/servers/{server_id}/members/{member_id}
 
 ### Kick a member
 
-Remove a member from a server. Requires the `member.kick` permission.
+Remove a member from a server. Requires the `members.kick` permission.
 
 ```
 DELETE /api/v1/servers/{server_id}/members/{member_id}
@@ -553,7 +553,7 @@ The API emits `GUILD_ROLE_DELETE`.
 
 ### List server bans
 
-Get all bans in a server. Requires the `member.ban` permission. Bans are enriched with the banned user's public profile so clients can render real usernames.
+Get all bans in a server. Requires the `members.ban` permission. Bans are enriched with the banned user's public profile so clients can render real usernames.
 
 ```
 GET /api/v1/servers/{server_id}/bans
@@ -577,7 +577,7 @@ GET /api/v1/servers/{server_id}/bans
 
 ### Ban a user
 
-Ban a user from a server. Requires the `member.ban` permission.
+Ban a user from a server. Requires the `members.ban` permission.
 
 ```
 PUT /api/v1/servers/{server_id}/bans/{user_id}
@@ -594,7 +594,7 @@ The API emits `GUILD_BAN_ADD`.
 
 ### Unban a user
 
-Unban a user. Requires the `member.ban` permission.
+Unban a user. Requires the `members.ban` permission.
 
 ```
 DELETE /api/v1/servers/{server_id}/bans/{user_id}
