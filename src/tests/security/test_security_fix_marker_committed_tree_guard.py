@@ -122,6 +122,74 @@ _WS_TICKET_UA_BINDING_COMPARE = (
 )
 
 
+# --- OAuth invariant anchors (e85eab23 / N654 / N689) ---
+# The state cookie clear must mirror issuance in every protective attribute,
+# and the redirect_uri allow-list must stay a literal exact-string match.
+# These multi-line anchors are distinctive to the repaired blobs, so a stale
+# staged copy that restores a bare delete_cookie or a normalising/prefix
+# comparison is caught by name.
+_OAUTH_STATE_COOKIE_ISSUANCE_BLOCK = (
+    "    return {\n"
+    '        "max_age": max_age,\n'
+    '        "httponly": True,\n'
+    '        "secure": session_cookie_secure(),\n'
+    '        "samesite": "lax",\n'
+    "        # Covers both /auth/oauth/{provider}/login and .../callback.\n"
+    '        "path": f"{api_prefix}/auth/oauth",\n'
+    "    }"
+)
+
+_OAUTH_STATE_COOKIE_CLEAR_BLOCK = (
+    "    response.delete_cookie(\n"
+    "        OAUTH_STATE_COOKIE,\n"
+    '        path=params["path"],\n'
+    '        httponly=params["httponly"],\n'
+    '        secure=params["secure"],\n'
+    '        samesite=params["samesite"],\n'
+    "    )"
+)
+
+_OAUTH_REDIRECT_LITERAL_MATCH_BLOCK = (
+    "    if any(ch in redirect_uri for ch in _REDIRECT_PATTERN_CHARS):\n"
+    "        return False\n"
+    "    for candidate in _provider_allowed_redirects(provider, oauth_config):\n"
+    "        if not isinstance(candidate, str) or any(\n"
+    "            ch in candidate for ch in _REDIRECT_PATTERN_CHARS\n"
+    "        ):\n"
+    "            continue\n"
+    "        # Deliberately plain equality: no rstrip(), no normalisation at all.\n"
+    "        if candidate == redirect_uri:\n"
+    "            return True\n"
+    "    return False"
+)
+
+_OAUTH_APP_REDIRECT_CANONICAL_BLOCK = (
+    "    canonical = require_oauth_redirect_url(text, field=field)\n"
+    "    if canonical != text:\n"
+    '        raise HardeningViolation(f"{field} must be an exact registered URI")\n'
+    "    if _contains_redirect_pattern(text):\n"
+    '        raise HardeningViolation(f"{field} must not contain wildcard characters")'
+)
+
+_OAUTH_APP_REDIRECT_LITERAL_MATCH_BLOCK = (
+    "        if entry == text:\n"
+    "            return text\n"
+    '    raise HardeningViolation(f"{field} is not registered")'
+)
+
+_OAUTH_STATE_REDIRECT_BINDING_BLOCK = (
+    "        # Verify redirect URI matches\n"
+    '        if row["redirect_uri"] != redirect_uri:\n'
+    "            logger.warning(f\"OAuth state redirect_uri mismatch for state {row['id']}\")\n"
+    '            return False, None, "State token redirect URI mismatch"'
+)
+
+_OAUTH_CODE_REDIRECT_BINDING_BLOCK = (
+    '        if code_record["redirect_uri"] != redirect_uri:\n'
+    '            raise InvalidGrantError("Redirect URI mismatch")'
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -841,7 +909,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "against the outdated position"
         ),
     ),
-)
     # N663 (4986e8a9): recipient DM privacy is re-checked at send time. Every
     # user-facing send path (REST, forward, scheduled dispatch, reaction
     # mentions) funnels through send_message, so a stale working-tree copy of
@@ -883,6 +950,97 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "group DM keep delivering messages into it"
         ),
     ),
+    # --- OAuth invariant pins (e85eab23 / N654 / N689) ---
+    # The state cookie, the literal redirect allow-list and the
+    # state/code -> redirect_uri bindings are what stop an attacker swapping
+    # the callback target or replaying one state across callbacks. Every entry
+    # is a positive marker, so the parametrized
+    # test_synthetic_reverted_blob_is_flagged proves its non-vacuity.
+    CommittedFixMarker(
+        key="e85eab23-oauth-state-cookie-issuance-attributes",
+        path="src/api/routes/auth/oauth.py",
+        marker=_OAUTH_STATE_COOKIE_ISSUANCE_BLOCK,
+        why=(
+            "e85eab23: the OAuth state cookie is issued HttpOnly/Secure/"
+            "SameSite=Lax on the OAuth-scoped path; the clear must mirror those "
+            "exact attributes or the browser keeps the real Secure cookie"
+        ),
+    ),
+    CommittedFixMarker(
+        key="e85eab23-oauth-state-cookie-clear-attributes",
+        path="src/api/routes/auth/oauth.py",
+        marker=_OAUTH_STATE_COOKIE_CLEAR_BLOCK,
+        why=(
+            "e85eab23: _clear_oauth_state_cookie deletes the state cookie with "
+            "path/httponly/secure/samesite copied from issuance; a stale staged "
+            "copy restores the bare delete_cookie and both fails to clear the "
+            "real cookie and emits an unprotected Set-Cookie"
+        ),
+    ),
+    CommittedFixMarker(
+        key="oauth-provider-redirect-pattern-chars-rejected",
+        path="src/api/routes/auth/oauth.py",
+        marker='_REDIRECT_PATTERN_CHARS = frozenset("*[]{}()|\\\\^$+")',
+        why=(
+            "the provider callback allow-list treats wildcard/regex characters "
+            "as data, never patterns; dropping the metacharacter set turns the "
+            "literal allow-list into an open redirector / code-interception "
+            "primitive"
+        ),
+    ),
+    CommittedFixMarker(
+        key="oauth-provider-redirect-literal-equality",
+        path="src/api/routes/auth/oauth.py",
+        marker=_OAUTH_REDIRECT_LITERAL_MATCH_BLOCK,
+        why=(
+            "_redirect_uri_is_allowed rejects pattern characters and compares "
+            "the candidate with plain == (no rstrip/case folding); a stale "
+            "staged copy that folds or prefixes the URI accepts a look-alike "
+            "callback and hands the authorization code to it"
+        ),
+    ),
+    CommittedFixMarker(
+        key="oauth-app-redirect-canonical-no-normalisation",
+        path="src/core/applications/validation.py",
+        marker=_OAUTH_APP_REDIRECT_CANONICAL_BLOCK,
+        why=(
+            "require_exact_redirect_match rejects any canonicalisation "
+            "(canonical != text) and wildcard entries; without it a normalised "
+            "look-alike callback passes the application allow-list"
+        ),
+    ),
+    CommittedFixMarker(
+        key="oauth-app-redirect-literal-equality",
+        path="src/core/applications/validation.py",
+        marker=_OAUTH_APP_REDIRECT_LITERAL_MATCH_BLOCK,
+        why=(
+            "require_exact_redirect_match returns only on literal entry == "
+            "text and otherwise raises; a stale staged copy using "
+            "startswith/substring matching reopens the open-redirector"
+        ),
+    ),
+    CommittedFixMarker(
+        key="oauth-state-redirect-uri-binding",
+        path="src/core/auth/oauth/state.py",
+        marker=_OAUTH_STATE_REDIRECT_BINDING_BLOCK,
+        why=(
+            "verify_state checks row[\"redirect_uri\"] != redirect_uri before "
+            "the atomic consume, binding the state to the exact callback that "
+            "minted it; a stale staged copy drops the check and lets a valid "
+            "state be replayed against a different redirect_uri"
+        ),
+    ),
+    CommittedFixMarker(
+        key="oauth-app-code-redirect-uri-binding",
+        path="src/core/applications/oauth/flows.py",
+        marker=_OAUTH_CODE_REDIRECT_BINDING_BLOCK,
+        why=(
+            "the application authorization-code exchange rejects a code whose "
+            "recorded redirect_uri differs from the presented one; without it "
+            "a code issued for one callback is redeemable from another"
+        ),
+    ),
+)
 
 
 def _git(*args: str, cwd: Path = _REPO_ROOT) -> subprocess.CompletedProcess[str]:
@@ -975,6 +1133,24 @@ WS_TICKET_BINDING_KEYS: frozenset[str] = frozenset(
         "3e35a337-ws-ticket-ua-binding-tickets",
         "6b4e443c-ws-ticket-ip-binding-lifecycle-mirror",
         "6b4e443c-ws-ticket-ua-binding-lifecycle-mirror",
+    }
+)
+
+
+# OAuth invariant pins from the N689/N654 follow-up. Kept explicit so a later
+# edit cannot quietly drop one of them and leave only a partial guard. All are
+# positive markers; non-vacuity comes from both the parametrized
+# synthetic-removal test and the live-HEAD check below.
+OAUTH_INVARIANT_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "e85eab23-oauth-state-cookie-issuance-attributes",
+        "e85eab23-oauth-state-cookie-clear-attributes",
+        "oauth-provider-redirect-pattern-chars-rejected",
+        "oauth-provider-redirect-literal-equality",
+        "oauth-app-redirect-canonical-no-normalisation",
+        "oauth-app-redirect-literal-equality",
+        "oauth-state-redirect-uri-binding",
+        "oauth-app-code-redirect-uri-binding",
     }
 )
 
@@ -1497,3 +1673,35 @@ def test_reader_returns_committed_blob_not_stale_working_tree(
     )
     present, detail = _evaluate(record, reader)
     assert present, detail
+
+
+def test_oauth_invariant_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The OAuth state/redirect pins are registered, live and falsifiable.
+
+    Each key resolves to a committed blob whose exact text carries the marker;
+    a synthetic blob with the fix erased must be flagged by the same evaluator.
+    This complements the parametrized synthetic-removal test with a live-HEAD
+    tie, so a key that was registered but never matched anything fails here.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert OAUTH_INVARIANT_PIN_KEYS <= set(keys), (
+        "OAuth invariant key set references keys missing from the registry: "
+        f"{sorted(OAUTH_INVARIANT_PIN_KEYS - set(keys))}"
+    )
+    assert len(OAUTH_INVARIANT_PIN_KEYS) == 8
+    reader = _make_blob_reader(commit_sha)
+    for key in sorted(OAUTH_INVARIANT_PIN_KEYS):
+        record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def reverted_blob(path: str) -> str:
+            return f"# stale committed copy of {path}\n# OAuth fix erased\n"
+
+        present, detail = _evaluate(record, reverted_blob)
+        assert not present, f"synthetic committed revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
