@@ -75,12 +75,23 @@ class ScheduledMessageService:
         guard a member could queue content into a channel they cannot post to.
         Deny whenever the channel/permission data cannot be resolved rather
         than treating an unavailable checker as permission.
+
+        The reverse lookup must recognise BOTH id forms. Besides the linked
+        ``conversation_id``, these APIs also accept a server channel's own
+        ``id`` in the conversation slot (``ParticipantService.is_participant``
+        falls back to ``srv_channels WHERE conversation_id = ? OR id = ?``,
+        and the poll/bookmark/attachment gates probe for that alias). A lookup
+        keyed only on ``conversation_id`` misses that alias, skips this gate
+        entirely, and lets a member denied view/send queue content that
+        dispatch later posts through the membership-only send path. Resolve
+        the authoritative channel row by either id so the same live gate is
+        applied to both create and dispatch.
         """
         try:
             channel_row = self._db.fetch_one(
                 "SELECT id, server_id FROM srv_channels "
-                "WHERE conversation_id = ? AND deleted = 0 LIMIT 1",
-                (conversation_id,),
+                "WHERE (conversation_id = ? OR id = ?) AND deleted = 0 LIMIT 1",
+                (conversation_id, conversation_id),
             )
         except Exception:
             raise PermissionError("Cannot verify channel access")
