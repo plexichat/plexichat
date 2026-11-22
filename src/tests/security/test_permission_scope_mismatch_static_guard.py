@@ -499,27 +499,61 @@ def _resolve_wrapper(fn, aliases):
 def _resolve_alias_definitions(tree):
     """Return ``(aliases, unresolved_names)`` for one parsed source tree.
 
-    ``aliases`` maps a local check name to ``(canonical, layout)``. Support both
-    wrappers (``def _check_permission(...): return ...has_permission(...)``) and
-    plain module-level aliases (``check = has_permission``).
+    ``aliases`` maps a local check name to ``(canonical, layout)``. Support
+    wrappers (``def _check_permission(...): return ...has_permission(...)``),
+    plain module-level aliases (``check = has_permission``) and *import*
+    renames (``from ... import has_permission as hp``).
+
+    Import renames matter: the local name need not even look like a check
+    (``hp``), so a detector keyed on the literal callee name records zero calls
+    and silently skips a scope-mismatched check hidden behind ``import as``.
+    That is the same name-resolution fail-open N713 closed for the approval
+    gate, and it lets the 72d3f648 escalation pass unnoticed.
     """
     functions = {}
-    aliases = {}
-    for node in ast.walk(tree):
+    aliases: dict[str, tuple[str, CheckLayout]] = {}
+    nodes = list(ast.walk(tree))
+
+    for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if _looks_like_check(node.name):
                 functions[node.name] = node
-        elif isinstance(node, ast.Assign):
+        elif isinstance(node, ast.ImportFrom):
+            # ``from ... import has_permission as hp`` binds the canonical
+            # check to a local name that carries no scope information. Resolve
+            # it before scanning call sites so ``hp(..., cid)`` is inspected.
+            for imported in node.names:
+                if imported.name in CHECK_NAMES:
+                    aliases[imported.asname or imported.name] = (
+                        imported.name,
+                        CANONICAL_LAYOUT,
+                    )
+
+    # Plain aliases and chains resolve to a fixpoint so source order cannot
+    # hide a rename (``import as a; b = a`` vs ``b = a; import as a``). The RHS
+    # proves the binding, so the target name need not look like a check either.
+    for _ in range(8):
+        changed = False
+        for node in nodes:
+            if not isinstance(node, ast.Assign):
+                continue
+            rhs = node.value
+            canonical = None
+            if isinstance(rhs, ast.Name):
+                if rhs.id in CHECK_NAMES:
+                    canonical = (rhs.id, CANONICAL_LAYOUT)
+                elif rhs.id in aliases:
+                    canonical = aliases[rhs.id]
+            elif isinstance(rhs, ast.Attribute) and rhs.attr in CHECK_NAMES:
+                canonical = (rhs.attr, CANONICAL_LAYOUT)
+            if canonical is None:
+                continue
             for target in node.targets:
-                # The RHS proves this is an alias regardless of the target's
-                # name (e.g. ``check = has_permission``), so no name filter here.
-                if not isinstance(target, ast.Name):
-                    continue
-                rhs = node.value
-                if isinstance(rhs, ast.Name) and rhs.id in CHECK_NAMES:
-                    aliases[target.id] = (rhs.id, CANONICAL_LAYOUT)
-                elif isinstance(rhs, ast.Attribute) and rhs.attr in CHECK_NAMES:
-                    aliases[target.id] = (rhs.attr, CANONICAL_LAYOUT)
+                if isinstance(target, ast.Name) and aliases.get(target.id) != canonical:
+                    aliases[target.id] = canonical
+                    changed = True
+        if not changed:
+            break
 
     # Bounded transitive resolution (a wrapper may delegate via another alias).
     for _ in range(8):
@@ -1088,6 +1122,60 @@ def test_selftest_assignment_alias_is_scanned():
         "channels.manage",
         _CHANNEL,
     )
+
+
+def test_selftest_import_alias_mismatch_is_flagged():
+    """A scope-mismatched check behind ``import ... as`` is not skipped.
+
+    The local alias name need not even look like a check. A detector matching
+    only the literal callee name records zero checks and zero findings here,
+    letting the exact 72d3f648 escalation pass silently -- the N713 hole.
+    """
+    source = '''
+    from src.core.servers.permission_utils import has_permission as hp
+
+    def delete_channel(servers, user, server_id, channel_id):
+        hp(user, server_id, "channels.manage", channel_id)
+    '''
+    aliases, _ = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
+    assert aliases["hp"][0] == "has_permission"
+    findings, stats = _analyze_source(source, _NOVEL_PATH)
+    assert stats.permission_checks == 1, "the aliased call must be inspected"
+    assert len(findings) == 1, "an aliased channel-scoped server perm must be flagged"
+    f = findings[0]
+    assert (f.call, f.permission, f.scope, f.intended) == (
+        "hp",
+        "channels.manage",
+        _CHANNEL,
+        _SERVER,
+    )
+    assert not _is_documented(f), "a novel aliased mismatch must fail closed"
+
+    # Non-vacuity: the very same alias at the correct scope is accepted, so the
+    # detector is not merely flagging every call through an alias.
+    bound = source.replace(
+        'hp(user, server_id, "channels.manage", channel_id)',
+        'hp(user, server_id, "channels.manage")',
+    )
+    findings, stats = _analyze_source(bound, _NOVEL_PATH)
+    assert stats.permission_checks == 1 and findings == []
+
+
+def test_selftest_chained_import_and_assignment_alias_is_flagged():
+    """``import as`` followed by ``x = alias`` resolves through the chain."""
+    source = '''
+    from src.core.servers.permission_utils import has_permission as _real
+    check = _real
+
+    def delete_channel(servers, user, server_id, channel_id):
+        check(user, server_id, "channels.manage", channel_id)
+    '''
+    aliases, _ = _resolve_alias_definitions(ast.parse(textwrap.dedent(source)))
+    assert aliases["check"][0] == "has_permission"
+    findings, stats = _analyze_source(source, _NOVEL_PATH)
+    assert stats.permission_checks == 1
+    assert len(findings) == 1
+    assert (findings[0].permission, findings[0].scope) == ("channels.manage", _CHANNEL)
 
 
 def test_selftest_unresolvable_check_alias_fails_closed():
