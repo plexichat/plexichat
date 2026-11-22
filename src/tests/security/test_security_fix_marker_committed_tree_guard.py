@@ -1020,25 +1020,37 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     # bb824009 (private-index repair): the REST logout/revoke-all and 2FA-enable
-    # paths close live gateway sockets.  All three files are stale in a peer's
-    # working tree/index, so a whole-file stage would re-open authenticated
-    # sockets after a credential transition.
+    # paths close live gateway sockets.  The route-level calls were refactored
+    # into the lifecycle manager: logout now routes through revoke_session, and
+    # revoke-all through logout_all, both in lifecycle.py.  A stale staged copy
+    # of lifecycle.py would re-open authenticated sockets after a credential
+    # transition, so the pins follow the fix to its current home (a revert that
+    # drops either close_* call removes the marker and still trips this guard).
     CommittedFixMarker(
         key="bb824009-logout-closes-user-sockets",
-        path="src/api/routes/auth/sessions.py",
-        marker='close_user_gateway_connections(current_user.user_id, "Logged out")',
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=(
+            "            # proves the row belonged to ``user_id`` before we touch any socket.\n"
+            '            close_session_gateway_connections(user_id, session_id, "Session revoked")'
+        ),
         why=(
-            "bb824009: an explicit REST logout closes live gateway sockets; a "
+            "bb824009: an explicit REST logout calls revoke_session, which now "
+            "closes the live socket bound to the revoked session server-side; a "
             "cookie clear alone leaves the socket authenticated server-side"
         ),
     ),
     CommittedFixMarker(
         key="bb824009-revoke-all-closes-user-sockets",
-        path="src/api/routes/auth/sessions.py",
-        marker='current_user.user_id, "All sessions revoked"',
+        path="src/core/auth/managers/session/lifecycle.py",
+        marker=(
+            "        # See the except-branch above: the frame is a hint, the close is the\n"
+            "        # guarantee. Covers the account-level revocation callers of logout_all.\n"
+            '        close_user_gateway_connections(user_id, "All sessions revoked")'
+        ),
         why=(
-            "bb824009: revoke-all sessions closes live gateway sockets; a stale "
-            "staged copy revokes the rows but keeps the user's sockets live"
+            "bb824009: revoke-all sessions now closes live gateway sockets from "
+            "logout_all in lifecycle.py; a stale staged copy revokes the rows but "
+            "keeps the user's sockets live"
         ),
     ),
     CommittedFixMarker(
