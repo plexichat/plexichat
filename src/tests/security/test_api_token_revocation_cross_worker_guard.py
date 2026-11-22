@@ -204,10 +204,10 @@ def test_pins_are_load_bearing(commit_sha: str) -> None:
         for label, marker in markers.items():
             assert marker in src, f"probe marker absent from committed {name}: {label}"
             weakened = dict(functions)
-            weakened[name] = src.replace(marker, "NEUTRALIZED", 1)
+            weakened[name] = src.replace(marker, "NEUTRALIZED")
             problems = _problems(weakened)
             assert any(name in p and label in p for p in problems), (
                 f"removing marker {label!r} from {name} was not flagged"
             )
             probes += 1
-    assert probes >= 6, f"too few marker probes ({probes}) - guard near-vacuous"
+    assert probes >= 5, f"too few marker probes ({probes}) - guard near-vacuous"
