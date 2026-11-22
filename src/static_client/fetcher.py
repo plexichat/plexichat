@@ -19,11 +19,13 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
+from urllib.parse import urljoin, urlparse
 
 import requests
 
 import utils.logger as logger
+from src.core.security.outbound import parse_outbound_url
 from src.utils.common_utils.utils.version.core import (
     Version,
     format_version,
@@ -51,6 +53,13 @@ _UNCOMPRESSED_FACTOR = 20
 _MAX_ARCHIVE_ENTRIES = 20_000
 _MAX_EXPANSION_RATIO = 256
 _RATIO_MIN_OUTPUT_BYTES = 8 * 1024 * 1024
+# Redirects are resolved by us, never by the HTTP client. Bound the chain and
+# re-run the shared SSRF gate on every hop so a public release endpoint cannot
+# steer a credentialed request to loopback or the cloud metadata service.
+_MAX_SAFE_REDIRECTS = 5
+_CREDENTIAL_HEADERS = frozenset(
+    {"authorization", "proxy-authorization", "private-token", "cookie"}
+)
 # A SHA256 digest is exactly 32 bytes rendered as 64 lowercase hex characters.
 _SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -215,6 +224,88 @@ def _safe_extract_zip(
         raise
 
 
+def _origin(url: str) -> str:
+    """Scheme+authority of *url*, used to decide when to drop credentials."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme.lower()}://{(parsed.netloc or '').lower()}"
+
+
+def _follow_safe_redirects(
+    response: Any,
+    url: str,
+    *,
+    headers: Optional[dict] = None,
+    timeout: int = 30,
+    verify: bool = True,
+    stream: bool = False,
+    params: Optional[dict] = None,
+) -> Any:
+    """Follow 3xx hops from *response*, re-validating each target.
+
+    Callers issue the initial (operator-configured) request themselves with
+    ``allow_redirects=False`` and hand the response here. ``requests`` follows
+    redirects by default and preserves custom headers (including
+    ``PRIVATE-TOKEN``) across a cross-host redirect, so a public endpoint that
+    answers ``302 Location: http://169.254.169.254/...`` would otherwise turn
+    one approved request into a credentialed request to an address no gate ever
+    approved. The asset URLs are worse: they arrive in the GitLab API response,
+    so a compromised release feed can point straight at an internal target.
+
+    Every hop is resolved, checked against the shared outbound gate and fetched
+    with auto-follow still disabled. Credentials are dropped when the origin
+    changes and the chain is bounded. Legitimate redirects to other public
+    hosts still work; unsafe ones fail closed.
+    """
+    current = response
+    current_url = url
+    current_headers = dict(headers or {})
+    initial_origin = _origin(url)
+
+    for _ in range(_MAX_SAFE_REDIRECTS):
+        if not 300 <= current.status_code < 400:
+            return current
+        location = current.headers.get("Location")
+        if not location:
+            return current
+
+        next_url = urljoin(current_url, str(location))
+        try:
+            parse_outbound_url(next_url, "static client redirect URL")
+        except Exception as exc:
+            # Never echo the target (or its resolved IP) into logs; only the
+            # fact that the redirect was refused is useful here.
+            logger.warning(f"Refusing unsafe static-client redirect: {exc}")
+            raise FetchError(
+                "Refusing static-client redirect to a forbidden address"
+            ) from exc
+
+        if _origin(next_url) != initial_origin:
+            # A release token must never be replayed to a different origin --
+            # even one that passed the gate.
+            current_headers = {
+                name: value
+                for name, value in current_headers.items()
+                if name.lower() not in _CREDENTIAL_HEADERS
+            }
+        close = getattr(current, "close", None)
+        if callable(close):
+            close()
+        current_url = next_url
+        current = requests.get(
+            current_url,
+            headers=current_headers,
+            params=params,
+            timeout=timeout,
+            verify=verify,
+            stream=stream,
+            allow_redirects=False,
+        )
+
+    if 300 <= current.status_code < 400:
+        raise FetchError("Too many redirects while fetching a static client release")
+    return current
+
+
 def _download_to_stream(
     url: str,
     out_fp: io.BufferedIOBase,
@@ -229,8 +320,21 @@ def _download_to_stream(
     Raises :class:`FetchError` on HTTP error or oversize.
     """
     try:
-        with requests.get(
-            url, headers=headers, timeout=timeout, verify=verify, stream=True
+        first = requests.get(
+            url,
+            headers=headers,
+            timeout=timeout,
+            verify=verify,
+            stream=True,
+            allow_redirects=False,
+        )
+        with _follow_safe_redirects(
+            first,
+            url,
+            headers=headers,
+            timeout=timeout,
+            verify=verify,
+            stream=True,
         ) as resp:
             if resp.status_code >= 400:
                 raise FetchError(f"GET {url} -> {resp.status_code}: {resp.reason}")
@@ -301,6 +405,15 @@ class GitLabReleaseClient:
         for page in range(1, _MAX_PAGES + 1):
             try:
                 resp = requests.get(
+                    url,
+                    headers=self._headers(),
+                    params={"per_page": _PER_PAGE, "page": page},
+                    timeout=self._cfg.request_timeout_seconds,
+                    verify=self._cfg.verify_tls,
+                    allow_redirects=False,
+                )
+                resp = _follow_safe_redirects(
+                    resp,
                     url,
                     headers=self._headers(),
                     params={"per_page": _PER_PAGE, "page": page},
