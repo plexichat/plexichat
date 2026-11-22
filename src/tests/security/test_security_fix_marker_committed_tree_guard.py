@@ -618,6 +618,62 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="0752a44f-edit-unwired-view-gate-restore",
+        path="src/api/routes/messages/messages_crud/edit.py",
+        marker='The backing-channel lookup cannot be evaluated without the servers',
+        why=(
+            '0752a44f re-lands the cd9bcf44 fail-closed edit gate after a stale-index revert; pinned by its distinctive restored comment.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="7eaf64f0-edit-unwired-view-gate-reliand",
+        path="src/api/routes/messages/messages_crud/edit.py",
+        marker='The backing-channel lookup cannot be evaluated without the servers',
+        why=(
+            '7eaf64f0 is a second byte-identical re-landing of the cd9bcf44 fail-closed edit gate; pinned by the same introduced comment under its own SHA.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="cee6940a-n459-structural-sweep-restore",
+        path="src/tests/security/test_server_route_id_parse_boundary.py",
+        marker='_KNOWN_SERVER_ID_MODULES = frozenset(',
+        why=(
+            'cee6940a restores the N459 whole routes/servers structural sweep after a stale-index revert; pinned by the distinctive floor anchor it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="ced42c1a-assign-role-owner-recheck",
+        path="src/core/servers/handlers/roles/assignments.py",
+        marker='fresh_owner_id = fresh_owner["owner_id"]',
+        why=(
+            'ced42c1a re-derives ownership under advisory locks in assign_role; pinned by the strict-int fresh_owner_id check it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="93e3a1f9-n987-reflog-audit-pins",
+        path="src/tests/security/test_security_fix_marker_committed_tree_guard.py",
+        marker='N987_REFLOG_PIN_SHAS: dict[str, str] = {',
+        why=(
+            '93e3a1f9 is a test-only guard change that added the N987 reflog audit pins; pinned by the declaration it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="2eedd2c6-plexisum-segment-range-acl-fix",
+        path="src/core/suite/sum/manager_workbooks.py",
+        marker='The viewport renders a merged view: sum_cells rows plus',
+        why=(
+            '2eedd2c6 closes a PlexiSum range-ACL bypass by comparing the merged viewport view; pinned by the distinctive merged-view comment it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
+        key="3f1d3334-admin-migration-e2e-test-pin",
+        path="src/tests/security/test_admin_migration_read_scope_e2e.py",
+        marker='def test_real_permission_chain_enforces_delegated_read_scope(',
+        why=(
+            '3f1d3334 is a test-only re-landing of the admin migration read-scope e2e test; pinned by the distinctive test function it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
@@ -2603,7 +2659,12 @@ PRIVATE_INDEX_NON_SECURITY_SHAS: frozenset[str] = frozenset(
         # pinned to introduced text; each is named explicitly here, never a
         # blanket exemption. The reflog unknown-fix test still flags any other
         # unpinned SHA.
-        "47b03e2a", "e7562b9b",
+        # 35430e0f is a docs-only private-index commit (clamav sidecar image
+        # pin in docs/deployment/docker/architecture.md). The guard registry
+        # only accepts src/ paths, so it cannot carry a marker; name it here
+        # explicitly, never a blanket exemption. The reflog unknown-fix test
+        # still flags any other unpinned SHA.
+        "47b03e2a", "e7562b9b", "35430e0f",
     }
 )
 
