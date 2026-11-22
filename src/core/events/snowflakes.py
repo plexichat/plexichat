@@ -11,14 +11,12 @@ dispatcher applies it again at the wire boundary as a backstop so a
 hand-built ``Event`` cannot leak a numeric id.
 """
 
-from functools import lru_cache
 from typing import Any, Dict
 
 # Explicit id keys that do not match the suffix rules below.
 _ID_FIELDS = frozenset({"id"})
 
 
-@lru_cache(maxsize=1024)
 def is_id_field(key: str) -> bool:
     """Return True when a payload key carries a snowflake id value.
 
@@ -27,12 +25,6 @@ def is_id_field(key: str) -> bool:
     the suite launcher's ``channelId``/``serverId``/``conversationId``).
     The capital ``I`` keeps plain words ending in lowercase ``id`` (such
     as ``valid`` or ``grid``) from matching.
-
-    This pure check runs for every dict key of every outbound payload, so the
-    same small key vocabulary is classified on each fan-out recipient. A
-    bounded LRU memoizes the result: the suffix probes run once per distinct
-    key, then become a C-level dict lookup. The cache is bounded so hostile
-    payloads with many unique keys cannot grow it without limit.
     """
     return (
         key in _ID_FIELDS

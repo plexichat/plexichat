@@ -29,6 +29,31 @@ class ThreadMembershipMixin(ThreadProtocol):
         )
         return row is not None
 
+    @staticmethod
+    def _invalidate_thread_audience_caches() -> None:
+        """Retire cached gateway audiences after a thread membership write.
+
+        ``resolve_channel_event_recipients`` memoizes a channel's fully
+        resolved recipient list in ``_channel_recipient_cache`` keyed by the
+        *server's RBAC epoch*. A thread membership write (join / leave /
+        add / remove) changes the exact audience of that thread's
+        channel-scoped events (typing, reactions, read receipts, message
+        activity) but does NOT bump the server epoch, so without an explicit
+        flush the cached list is still keyed to the old membership: a member
+        removed from a private thread stays in the warm recipient list for the
+        whole TTL and keeps receiving events from a thread they no longer
+        belong to. Evict on every membership write so no stale audience can be
+        replayed, mirroring the server-level membership funnel
+        (``invalidate_member_count_cache``). Lazy import keeps the member tier
+        decoupled from the event layer at module load.
+        """
+        try:
+            from src.core.events.gateway_emit import clear_channel_recipient_cache
+
+            clear_channel_recipient_cache()
+        except Exception:  # pragma: no cover - event layer optional
+            pass
+
     def get_all_member_user_ids(self, thread_id: int) -> List[int]:
         """Internal-only: every user id that is a member of ``thread_id``.
 
@@ -130,6 +155,7 @@ class ThreadMembershipMixin(ThreadProtocol):
         )
 
         self._update_member_count(thread_id)
+        self._invalidate_thread_audience_caches()
 
         logger.debug(f"User {user_id} joined thread {thread_id}")
 
@@ -156,6 +182,7 @@ class ThreadMembershipMixin(ThreadProtocol):
         )
 
         self._update_member_count(thread_id)
+        self._invalidate_thread_audience_caches()
 
         logger.debug(f"User {user_id} left thread {thread_id}")
 
@@ -233,6 +260,7 @@ class ThreadMembershipMixin(ThreadProtocol):
         )
 
         self._update_member_count(thread_id)
+        self._invalidate_thread_audience_caches()
 
         logger.debug(f"User {member_user_id} added to thread {thread_id} by {user_id}")
 
@@ -273,6 +301,7 @@ class ThreadMembershipMixin(ThreadProtocol):
         )
 
         self._update_member_count(thread_id)
+        self._invalidate_thread_audience_caches()
 
         logger.debug(
             f"User {member_user_id} removed from thread {thread_id} by {user_id}"

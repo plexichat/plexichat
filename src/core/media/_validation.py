@@ -7,6 +7,7 @@ These are methods of MediaManager – kept in a mixin class for clean separation
 
 import os
 import logging
+from types import MappingProxyType
 
 from .models import MediaType
 from .exceptions import FileTypeError, FileSizeError
@@ -60,6 +61,56 @@ _DOCUMENT_CONTENT_TYPES = frozenset(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     }
+)
+
+
+# Content type -> (magic byte signatures, shortest signature length).
+#
+# ``_validate_magic_bytes`` runs on every media upload (direct and chunked).
+# This table is static operator data, so build it once at import time instead
+# of allocating a 19-entry dict plus a ``min(len(s) ...)`` generator on every
+# call. Signatures are tuples (immutable) and the whole mapping is a
+# ``MappingProxyType`` so callers cannot mutate the shared state. Precomputing
+# the minimum length preserves the exact short-circuit behaviour of the old
+# ``len(file_data) < shortest_sig_len`` guard.
+_MAGIC_SIGNATURES: MappingProxyType[str, tuple[tuple[bytes, ...], int]] = (
+    MappingProxyType(
+        {
+            ct: (sigs, min((len(s) for s in sigs), default=0))
+            for ct, sigs in {
+                "image/jpeg": (b"\xff\xd8\xff",),
+                "image/png": (b"\x89PNG\r\n\x1a\n",),
+                "image/gif": (b"GIF87a", b"GIF89a"),
+                "image/webp": (b"RIFF",),
+                "image/bmp": (b"BM",),
+                "image/tiff": (b"II*\x00", b"MM\x00*"),
+                "video/mp4": (
+                    b"\x00\x00\x00\x18ftypmp4",
+                    b"\x00\x00\x00\x1cftypmp4",
+                    b"\x00\x00\x00 ftypisom",
+                    b"ftyp",
+                ),
+                "video/webm": (b"\x1a\x45\xdf\xa3",),
+                "video/quicktime": (b"\x00\x00\x00\x14ftypqt", b"ftypqt"),
+                "audio/mpeg": (
+                    b"\xff\xfb",
+                    b"\xff\xfa",
+                    b"\xff\xf3",
+                    b"\xff\xf2",
+                    b"ID3",
+                ),
+                "audio/ogg": (b"OggS",),
+                "audio/wav": (b"RIFF",),
+                "audio/webm": (b"\x1a\x45\xdf\xa3",),
+                "application/pdf": (b"%PDF",),
+                "application/zip": (b"PK\x03\x04", b"PK\x05\x06"),
+                "text/plain": (),
+                "text/markdown": (),
+                "text/csv": (),
+                "application/json": (),
+            }.items()
+        }
+    )
 )
 
 
@@ -121,39 +172,13 @@ class _ValidationMixin:
 
     def _validate_magic_bytes(self, file_data: bytes, content_type: str) -> bool:
         """Validate file content matches declared content type using magic bytes."""
-        magic_signatures = {
-            "image/jpeg": [b"\xff\xd8\xff"],
-            "image/png": [b"\x89PNG\r\n\x1a\n"],
-            "image/gif": [b"GIF87a", b"GIF89a"],
-            "image/webp": [b"RIFF"],
-            "image/bmp": [b"BM"],
-            "image/tiff": [b"II*\x00", b"MM\x00*"],
-            "video/mp4": [
-                b"\x00\x00\x00\x18ftypmp4",
-                b"\x00\x00\x00\x1cftypmp4",
-                b"\x00\x00\x00 ftypisom",
-                b"ftyp",
-            ],
-            "video/webm": [b"\x1a\x45\xdf\xa3"],
-            "video/quicktime": [b"\x00\x00\x00\x14ftypqt", b"ftypqt"],
-            "audio/mpeg": [b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2", b"ID3"],
-            "audio/ogg": [b"OggS"],
-            "audio/wav": [b"RIFF"],
-            "audio/webm": [b"\x1a\x45\xdf\xa3"],
-            "application/pdf": [b"%PDF"],
-            "application/zip": [b"PK\x03\x04", b"PK\x05\x06"],
-            "text/plain": [],
-            "text/markdown": [],
-            "text/csv": [],
-            "application/json": [],
-        }
         ct_lower = content_type.lower()
-        if ct_lower not in magic_signatures:
+        entry = _MAGIC_SIGNATURES.get(ct_lower)
+        if entry is None:
             return True
-        signatures = magic_signatures[ct_lower]
+        signatures, shortest_sig_len = entry
         if not signatures:
             return True
-        shortest_sig_len = min(len(s) for s in signatures)
         if len(file_data) < shortest_sig_len:
             return False
         for sig in signatures:

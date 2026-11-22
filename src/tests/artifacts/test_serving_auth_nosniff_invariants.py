@@ -107,9 +107,6 @@ def test_authenticated_attachment_get_pins_nosniff():
         "image/png",
     )
     db = MagicMock()
-    # Cold-path metadata row. ``_load_servable_metadata`` selects scan_status in
-    # the first statement and derives the fresh scan/deleted gate from it, so
-    # the row handed back by fetch_one must carry it or the endpoint 500s.
     db.fetch_one.side_effect = [
         {
             "id": 1,
@@ -117,7 +114,6 @@ def test_authenticated_attachment_get_pins_nosniff():
             "storage_path": "serve.png",
             "content_type": "image/png",
             "original_filename": "serve.png",
-            "scan_status": "clean",
         },
         {"scan_status": "clean", "deleted": 0},
     ]
