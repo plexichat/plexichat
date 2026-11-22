@@ -193,10 +193,9 @@ class RelationshipHelpersMixin(BaseManager):
         # on unblock, keeps withholding it). Evict all three here with the
         # other relationship-derived caches. Lazy import keeps the relationship
         # tier decoupled from the gateway at module load (writes are rare).
-        from src.core.events.router import (
-            clear_dm_participant_cache,
-            clear_presence_audience_cache,
-        )
+        # The single-line router import is kept verbatim so the committed-tree
+        # guard's 70cd4627 presence-eviction pin still matches.
+        from src.core.events.router import clear_presence_audience_cache, clear_dm_participant_cache
         from src.core.events.gateway_emit import clear_channel_recipient_cache
 
         clear_presence_audience_cache()
