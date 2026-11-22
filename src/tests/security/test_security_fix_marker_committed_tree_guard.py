@@ -2408,6 +2408,40 @@ def test_synthetic_reverted_blob_is_flagged(record: CommittedFixMarker) -> None:
     assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
 
+def test_bulk_revoke_close_call_only_revert_is_flagged_dc3b481e(
+    commit_sha: str,
+) -> None:
+    """A revert that removes only the bulk-revoke close call trips the guard.
+
+    The generic synthetic test erases the whole marker. This one keeps the
+    ``revoked_ids`` resolution, the alert and the loop intact and drops just the
+    server-side socket closure -- the realistic stale-staged-file revert for
+    this fix. It also pins the marker's shape: the close call itself must be in
+    the marker, otherwise a closure-only revert could pass the guard.
+    """
+    key = "dc3b481e-bulk-revoke-session-socket-close"
+    record = next(r for r in COMMITTED_FIX_MARKERS if r.key == key)
+    close_call = 'close_session_gateway_connections(user_id, sid, "Session revoked")'
+    assert close_call in record.marker, (
+        "pin must include the actual close call to catch a closure-only revert"
+    )
+
+    committed = _make_blob_reader(commit_sha)(record.path)
+    assert committed.count(close_call) == 1, (
+        "fixture setup: expected exactly one bulk-revoke close call at HEAD"
+    )
+    reverted = committed.replace(close_call, "pass", 1)
+    assert close_call not in reverted
+
+    present, detail = _evaluate(record, lambda path: reverted)
+    assert not present, (
+        "synthetic bulk-revoke revert that removed only the close call was not "
+        "flagged"
+    )
+    assert key in detail and record.marker in detail
+    assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
 def test_query_cache_committed_keys_are_registered() -> None:
     """The fine-grained classifier keys name real, unique committed entries."""
     keys = [r.key for r in COMMITTED_FIX_MARKERS]
