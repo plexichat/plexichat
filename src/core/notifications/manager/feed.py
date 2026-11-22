@@ -296,21 +296,35 @@ class FeedMixin(NotificationProtocol):
         if not notif:
             raise NotificationNotFoundError("Notification not found")
 
-        # Owner-scoped delete: the write itself carries the ownership
-        # predicate so a race between the scoped read above and this DELETE
-        # cannot turn a cross-user lookup into a cross-user deletion. Side
-        # effects run only after the delete is confirmed to have touched the
-        # caller's own row.
+        # Owner-scoped, read-state-guarded delete. The decrement decision must
+        # be made by the DELETE itself, not by ``notif.read`` from the fetch
+        # above: that snapshot is stale the moment the SELECT commits. If a
+        # concurrent mark-read flips the row to read=1 (and already
+        # decremented) before this DELETE lands, a bare DELETE followed by
+        # ``if not notif.read`` would decrement the SAME notification twice
+        # and leave the badge too low. Gating the first DELETE on ``read = 0``
+        # makes only the caller that actually transitions an unread row earn
+        # the right to decrement. The predicate also carries the ownership
+        # check, so a cross-user race cannot delete or decrement another
+        # user's row.
         cursor = self._db.execute(
-            "DELETE FROM notif_notifications WHERE id = ? AND user_id = ?",
+            "DELETE FROM notif_notifications WHERE id = ? AND user_id = ? AND read = 0",
             (notification_id, user_id),
         )
-        if getattr(cursor, "rowcount", 0) == 0:
-            raise NotificationNotFoundError("Notification not found")
-
-        if not notif.read:
+        if getattr(cursor, "rowcount", 0) > 0:
             self._decrement_mention_count(user_id, notif.conversation_id)
             self._decrement_unread_count(user_id, notif.conversation_id)
+        else:
+            # The row is either already read (a legitimate dismiss of a read
+            # notification) or was deleted by a competing request. Delete it
+            # without touching the counters -- ownership is still enforced in
+            # the write, so a concurrent reassignment is a no-op here too.
+            cursor = self._db.execute(
+                "DELETE FROM notif_notifications WHERE id = ? AND user_id = ?",
+                (notification_id, user_id),
+            )
+            if getattr(cursor, "rowcount", 0) == 0:
+                raise NotificationNotFoundError("Notification not found")
 
         self._dispatch_notification_event(
             user_id,
