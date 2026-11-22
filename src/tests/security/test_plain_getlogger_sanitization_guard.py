@@ -91,11 +91,15 @@ def commit_sha() -> str:
 BlobReader = Callable[[str], str]
 
 
-def _make_blob_reader(commit: str) -> BlobReader:
-    """Return a reader that fetches ``<commit>:<path>`` with ``git show``."""
+def _make_blob_reader(commit: str, cwd: Path = ROOT) -> BlobReader:
+    """Return a reader that fetches ``<commit>:<path>`` with ``git show``.
+
+    ``cwd`` is injectable so the non-vacuity test can prove the reader returns
+    committed content from a throwaway repo whose working tree has diverged.
+    """
 
     def read(path: str) -> str:
-        proc = _git("show", f"{commit}:{path}")
+        proc = _git("show", f"{commit}:{path}", cwd=cwd)
         assert proc.returncode == 0, f"blob missing from {commit}: {path}"
         return proc.stdout
 
@@ -848,3 +852,36 @@ def test_no_unfiltered_user_controlled_log_interpolation(commit_sha: str) -> Non
         "through the AppLogger proxy, or document the local value as safe):\n  "
         + "\n  ".join(str(o) for o in sorted(offenders, key=lambda o: (o.path, o.lineno)))
     )
+
+
+def test_reader_returns_committed_blob_not_stale_working_tree(tmp_path: Path) -> None:
+    """Non-vacuity: the reader returns HEAD, not a peer's stale working copy."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "sink.py"
+    target.write_text("logger.addFilter(SanitizingFilter())\n", encoding="utf-8")
+
+    assert _git("init", "-q", cwd=repo).returncode == 0
+    assert _git("add", "sink.py", cwd=repo).returncode == 0
+    committed = _git(
+        "-c",
+        "user.email=guard@example.invalid",
+        "-c",
+        "user.name=guard",
+        "commit",
+        "-qm",
+        "sink",
+        cwd=repo,
+    )
+    assert committed.returncode == 0, committed.stderr
+    sha = _git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+    assert sha
+
+    # Peer-style stale working copy: the filter is gone from disk only.
+    target.write_text("# filter removed from working tree\n", encoding="utf-8")
+    assert "SanitizingFilter" not in target.read_text(encoding="utf-8")
+
+    reader = _make_blob_reader(sha, cwd=repo)
+    blob = reader("sink.py")
+    assert "SanitizingFilter" in blob
+    assert "filter removed" not in blob
