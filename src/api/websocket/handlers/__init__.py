@@ -23,7 +23,12 @@ from src.api.websocket.opcodes import (
     SERVER_ONLY_OPCODES,
     coerce_opcode,
 )
-from src.api.websocket.boundaries import requires_authentication
+from src.api.websocket.boundaries import (
+    GLOBAL_FRAME_BUCKET_KEY,
+    INBOUND_FRAME_WINDOW_S,
+    MAX_INBOUND_FRAMES_PER_CONNECTION,
+    requires_authentication,
+)
 from src.api.websocket.connection import Connection
 from src.api.websocket.session import SessionManager
 
@@ -283,12 +288,14 @@ class OpcodeHandler:
         return visible_user_ids
 
     def _allow_inbound(self, connection: Connection, opcode: int) -> bool:
-        """Cheap per-connection sliding-window check for rate-limited opcodes."""
-        limit = INBOUND_RATE_LIMITS.get(int(opcode))
-        if limit is None:
-            return True
+        """Cheap per-connection sliding-window admission for one inbound frame.
 
-        max_events, window = limit
+        Every frame first consumes an aggregate, opcode-independent budget so
+        the overall frame COUNT is bounded even for soft-rejected opcodes that
+        have no per-opcode ceiling. Frames whose opcode is expensive then also
+        consume their per-opcode budget. Both checks fail closed (an
+        over-budget frame is dropped, never admitted).
+        """
         now = time.monotonic()
 
         # Defensive: the real Connection always defines the bucket map, but a
@@ -303,6 +310,21 @@ class OpcodeHandler:
             except Exception:  # pragma: no cover - read-only stub
                 pass
 
+        # Aggregate ceiling: applies to ALL frames, including opcodes with no
+        # per-opcode limit. Without it a client can loop max-size frames at
+        # line rate; per-opcode ceilings alone do not bound the count.
+        global_bucket = buckets.setdefault(GLOBAL_FRAME_BUCKET_KEY, [])
+        while global_bucket and now - global_bucket[0] > INBOUND_FRAME_WINDOW_S:
+            global_bucket.pop(0)
+        if len(global_bucket) >= MAX_INBOUND_FRAMES_PER_CONNECTION:
+            return False
+        global_bucket.append(now)
+
+        limit = INBOUND_RATE_LIMITS.get(int(opcode))
+        if limit is None:
+            return True
+
+        max_events, window = limit
         timestamps = buckets.setdefault(int(opcode), [])
         while timestamps and now - timestamps[0] > window:
             timestamps.pop(0)
@@ -342,10 +364,12 @@ class OpcodeHandler:
         if int(op) not in CLIENT_OPCODES and int(op) not in SERVER_ONLY_OPCODES:
             return None, None, int(GatewayCloseCode.UNKNOWN_OPCODE)
 
-        # Cheap per-connection throttle for heavy opcodes runs BEFORE any
-        # handler dispatch; over-budget frames are dropped (no close) so a
-        # burst cannot amplify into DB/threadpool work or tear the socket.
-        if int(op) in INBOUND_RATE_LIMITS and not self._allow_inbound(connection, op):
+        # Per-connection admission runs BEFORE any handler dispatch, for EVERY
+        # opcode. The aggregate frame ceiling applies to all frames (including
+        # soft-rejected ones); expensive opcodes additionally consume their
+        # per-opcode budget. Over-budget frames are dropped (no close) so a
+        # burst cannot amplify into CPU/DB/threadpool work or tear the socket.
+        if not self._allow_inbound(connection, op):
             logger.debug(
                 f"Connection {connection.connection_id}: "
                 f"rate-limited inbound opcode {op}"

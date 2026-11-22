@@ -116,6 +116,27 @@ def decode_gateway_frame(raw: bytes) -> dict:
     return value
 
 
+# --- Aggregate inbound frame ceiling ---------------------------------------
+# Per-opcode throttles (``handlers.INBOUND_RATE_LIMITS``) cap the expensive work
+# done by each opcode, and the completeness guard keeps that table exhaustive
+# for *routed* opcodes. They do not, however, bound the overall NUMBER of frames
+# a single connection may push in a window: soft-rejected opcodes have no
+# per-opcode ceiling, and even fully throttled ones can be rotated to sum their
+# budgets. Every frame still costs a byte-limit check, UTF-8 decode,
+# ``json.loads`` and a recursive structural walk before it is dropped, so an
+# unbounded count is an unbounded CPU/log amplifier regardless of the per-frame
+# size cap. This is the only ceiling that applies to EVERY inbound frame.
+#
+# The budget is deliberately generous (well above the sum of all per-opcode
+# budgets) so legitimate aggregate traffic is unaffected; over-budget frames
+# are dropped fail-closed, never admitted "just this once".
+MAX_INBOUND_FRAMES_PER_CONNECTION = 1000
+INBOUND_FRAME_WINDOW_S = 10.0
+#: Reserved key in ``Connection._inbound_rate_buckets`` for the aggregate
+#: budget. Opcodes are non-negative, so a negative key cannot collide with one.
+GLOBAL_FRAME_BUCKET_KEY = -1
+
+
 # --- Subscription caps (commit 3) ------------------------------------------
 
 #: A single connection may hold at most this many artifact/workbook
