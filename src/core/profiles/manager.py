@@ -23,6 +23,16 @@ from src.core.security.hardening import (
     require_http_url,
 )
 
+# Bulk profile hydration (fan-out of friend/server/member lists) must never
+# bind an unbounded IN list: SQLite caps variables per statement and a giant
+# list also produces a poor plan. Same budget as the other bulk-id paths.
+_BULK_ID_CHUNK = 500
+
+
+def _iter_id_chunks(ids: List[int], size: int = _BULK_ID_CHUNK):
+    for start in range(0, len(ids), size):
+        yield ids[start : start + size]
+
 
 # Profile strings are rendered to other users and stored verbatim. Bound every
 # one of them before it reaches the database or a response, and refuse control
@@ -572,29 +582,32 @@ class ProfileManager:
             return {}
 
         results = {}
-        # Batch fetch from user_profiles
-        placeholders = ",".join(["?"] * len(user_ids))
-        rows = self._db.fetch_all(
-            f"SELECT * FROM user_profiles WHERE user_id IN ({placeholders})",
-            tuple(user_ids),
-        )
-        for row in rows:
-            data = dict(row)
-            uid = data["user_id"]
-            if data.get("social_links") and isinstance(data["social_links"], str):
-                try:
-                    data["social_links"] = json.loads(data["social_links"])
-                except (json.JSONDecodeError, TypeError):
+        # Batch fetch from user_profiles with bounded IN lists. Dedupe in
+        # first-seen order so a repeated id cannot inflate the bind count.
+        unique_ids = list(dict.fromkeys(user_ids))
+        for chunk in _iter_id_chunks(unique_ids):
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = self._db.fetch_all(
+                f"SELECT * FROM user_profiles WHERE user_id IN ({placeholders})",
+                tuple(chunk),
+            )
+            for row in rows:
+                data = dict(row)
+                uid = data["user_id"]
+                if data.get("social_links") and isinstance(data["social_links"], str):
+                    try:
+                        data["social_links"] = json.loads(data["social_links"])
+                    except (json.JSONDecodeError, TypeError):
+                        data["social_links"] = []
+                elif not data.get("social_links"):
                     data["social_links"] = []
-            elif not data.get("social_links"):
-                data["social_links"] = []
-            if data.get("custom_status_expires_at"):
-                if data["custom_status_expires_at"] < self._get_timestamp():
-                    data["custom_status_text"] = None
-                    data["custom_status_emoji"] = None
-                    data["custom_status_expires_at"] = None
-                    data["_custom_status_expired"] = True
-            results[uid] = _strip_internal_keys(data)
+                if data.get("custom_status_expires_at"):
+                    if data["custom_status_expires_at"] < self._get_timestamp():
+                        data["custom_status_text"] = None
+                        data["custom_status_emoji"] = None
+                        data["custom_status_expires_at"] = None
+                        data["_custom_status_expired"] = True
+                results[uid] = _strip_internal_keys(data)
 
         # In-memory defaults for missing users (no DB write).
         for uid in user_ids:
