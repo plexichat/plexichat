@@ -209,6 +209,28 @@ _OAUTH_CODE_REDIRECT_BINDING_BLOCK = (
 )
 
 
+# --- N699 (c6ebc44b): artifact-management bot-token owner-confusion ---
+# A bot token's user_id is its human owner. The require_user_token gate in each
+# owner-scoped artifact mutating handler stops a narrow bot credential from
+# wielding the owner's server/conversation authority through _authorize_scope
+# and authoring the row as the owner. Pin the distinctive comment+call block in
+# each file so a stale staged copy that drops the gate is caught by name.
+_ARTIFACT_CRUD_BOT_TOKEN_OWNER_GUARD = (
+    "    # A bot token's user_id is its human owner. Without this gate a narrow\n"
+    "    # bot credential wields the owner's server/conversation authority through\n"
+    "    # _authorize_scope and charges the authored row to the owner's identity.\n"
+    "    # Match the emoji, sticker and soundboard management routes.\n"
+    "    require_user_token(current_user)"
+)
+
+_ARTIFACT_UPLOAD_BOT_TOKEN_OWNER_GUARD = (
+    "    # A bot token's user_id is its human owner. Without this gate a narrow\n"
+    "    # bot credential wields the owner's server/conversation authority through\n"
+    "    # _authorize_scope and authors the converted row as the owner.\n"
+    "    require_user_token(current_user)"
+)
+
+
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
@@ -1250,6 +1272,18 @@ N699_ARTIFACT_BOT_TOKEN_PIN_KEYS: frozenset[str] = frozenset(
 )
 
 
+# N690 (627accb2) alias-automod pins. Kept explicit so neither the base.py
+# definition nor the send.py call-site pin can be dropped without this check
+# failing. Both are positive markers; non-vacuity comes from the guard's
+# parametrized synthetic-removal test plus the live-HEAD tie below.
+ALIAS_AUTOMOD_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "627accb2-alias-automod-enforcement",
+        "627accb2-alias-automod-send-call",
+    }
+)
+
+
 def _make_blob_reader(commit: str, repo_root: Path = _REPO_ROOT):
     """Return a reader that fetches ``<commit>:<path>`` with ``git show``."""
 
@@ -1847,6 +1881,50 @@ def test_oauth_invariant_pins_live_at_head_and_non_vacuous(
 
         present, detail = _evaluate(record, reverted_blob)
         assert not present, f"synthetic committed revert of {key} was not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+def test_alias_automod_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """Both N690 alias-automod pins are registered, live and falsifiable.
+
+    Each key resolves to a real committed blob carrying its distinctive
+    _enforce_alias_automod definition/call, points at the expected file, and is
+    rejected by a synthetic stale blob with the fix erased. Per-entry
+    parametrized synthetic-removal coverage is already provided by
+    ``test_synthetic_reverted_blob_is_flagged``.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert ALIAS_AUTOMOD_PIN_KEYS <= set(keys), (
+        "alias-automod pin set references keys missing from the registry: "
+        f"{sorted(ALIAS_AUTOMOD_PIN_KEYS - set(keys))}"
+    )
+    assert len(ALIAS_AUTOMOD_PIN_KEYS) == 2
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "627accb2-alias-automod-enforcement": (
+            "src/api/routes/messages/messages_crud/base.py"
+        ),
+        "627accb2-alias-automod-send-call": (
+            "src/api/routes/messages/messages_crud/send.py"
+        ),
+    }
+    for key in sorted(ALIAS_AUTOMOD_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_alias_automod_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# alias automod gate erased\n"
+
+        present, detail = _evaluate(record, stale_alias_automod_blob)
+        assert not present, f"synthetic stale alias-automod revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
 
