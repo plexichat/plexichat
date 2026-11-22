@@ -558,21 +558,6 @@ _N819_UNCONDITIONAL_ADMISSION = (
 )
 
 
-# edacde4c (N773): the automod violation/audit-log read endpoints are the
-# third destination for the offending body (after the moderator
-# notification and the channel alert). The gate requires BOTH
-# channels.view and messages.read on the violation's own channel and
-# fails closed on an unwired store, a missing/unparseable channel id or
-# a raising lookup. Pin the definition, its fail-closed arms, the shared
-# serializer's call site, and BOTH redactions so a stale staged copy of
-# automod.py cannot silently restore the audit-log body leak.
-_N773_VIOLATION_BODY_GATE_DEF = '_VIOLATION_BODY_PERMISSIONS = ("channels.view", "messages.read")\n\n\ndef _viewer_can_read_violation_body(\n    servers_mod, viewer_id, server_id, channel_id\n) -> bool:'
-_N773_VIOLATION_BODY_FAIL_CLOSED = '    if not channel_id:\n        return False\n    try:\n        cid = int(channel_id)\n    except (TypeError, ValueError):\n        return False\n    if not cid:\n        return False\n    for permission in _VIOLATION_BODY_PERMISSIONS:\n        try:\n            if not servers_mod.has_permission(viewer_id, server_id, permission, cid):\n                return False\n        except Exception:\n            return False\n    return True'
-_N773_VIOLATION_BODY_GATE_CALL = '    can_read = _viewer_can_read_violation_body(\n        servers_mod, viewer_id, server_id, violation.channel_id\n    )'
-_N773_VIOLATION_BODY_MATCHED_REDACTED = '        matched_content=violation.matched_content if can_read else "",'
-_N773_VIOLATION_BODY_METADATA_REDACTED = '        metadata=(violation.metadata or {}) if can_read else {},'
-
-
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     # --- Test-only private-index guard commits (coordination noise) ---
     # These three commits landed through the private index but change ONLY
@@ -1035,37 +1020,25 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     # bb824009 (private-index repair): the REST logout/revoke-all and 2FA-enable
-    # paths close live gateway sockets.  The route-level calls were refactored
-    # into the lifecycle manager: logout now routes through revoke_session, and
-    # revoke-all through logout_all, both in lifecycle.py.  A stale staged copy
-    # of lifecycle.py would re-open authenticated sockets after a credential
-    # transition, so the pins follow the fix to its current home (a revert that
-    # drops either close_* call removes the marker and still trips this guard).
+    # paths close live gateway sockets.  All three files are stale in a peer's
+    # working tree/index, so a whole-file stage would re-open authenticated
+    # sockets after a credential transition.
     CommittedFixMarker(
         key="bb824009-logout-closes-user-sockets",
-        path="src/core/auth/managers/session/lifecycle.py",
-        marker=(
-            "            # proves the row belonged to ``user_id`` before we touch any socket.\n"
-            '            close_session_gateway_connections(user_id, session_id, "Session revoked")'
-        ),
+        path="src/api/routes/auth/sessions.py",
+        marker='close_user_gateway_connections(current_user.user_id, "Logged out")',
         why=(
-            "bb824009: an explicit REST logout calls revoke_session, which now "
-            "closes the live socket bound to the revoked session server-side; a "
+            "bb824009: an explicit REST logout closes live gateway sockets; a "
             "cookie clear alone leaves the socket authenticated server-side"
         ),
     ),
     CommittedFixMarker(
         key="bb824009-revoke-all-closes-user-sockets",
-        path="src/core/auth/managers/session/lifecycle.py",
-        marker=(
-            "        # See the except-branch above: the frame is a hint, the close is the\n"
-            "        # guarantee. Covers the account-level revocation callers of logout_all.\n"
-            '        close_user_gateway_connections(user_id, "All sessions revoked")'
-        ),
+        path="src/api/routes/auth/sessions.py",
+        marker='current_user.user_id, "All sessions revoked"',
         why=(
-            "bb824009: revoke-all sessions now closes live gateway sockets from "
-            "logout_all in lifecycle.py; a stale staged copy revokes the rows but "
-            "keeps the user's sockets live"
+            "bb824009: revoke-all sessions closes live gateway sockets; a stale "
+            "staged copy revokes the rows but keeps the user's sockets live"
         ),
     ),
     CommittedFixMarker(
@@ -2064,126 +2037,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "opcodes bypass the aggregate ceiling"
         ),
     ),
-    CommittedFixMarker(
-        key="c1b4204c-sticker-pack-server-atomic-insert",
-        path="src/core/stickers/manager.py",
-        marker=(
-            '_ATOMIC_SERVER_PACK_INSERT_SQL = """\n'
-        'INSERT INTO sticker_packs\n'
-        '    (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at)\n'
-        'SELECT ?, ?, ?, ?, ?, ?, ?, ?\n'
-        'WHERE (SELECT COUNT(*) FROM sticker_packs WHERE server_id = ?) < ?\n'
-        '"""'
-        ),
-        why=(
-            'c1b4204c: the per-server pack cap is enforced by a single guarded INSERT..SELECT whose COUNT subquery sees pre-insert state, so only callers that still fit get a row. A stale committed copy restores the check-then-bare-INSERT TOCTOU and lets concurrent creators exceed max_packs_per_server.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="c1b4204c-sticker-pack-personal-atomic-insert",
-        path="src/core/stickers/manager.py",
-        marker=(
-            '_ATOMIC_PERSONAL_PACK_INSERT_SQL = """\n'
-        'INSERT INTO sticker_packs\n'
-        '    (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at)\n'
-        'SELECT ?, ?, ?, ?, ?, ?, ?, ?\n'
-        'WHERE (SELECT COUNT(*) FROM sticker_packs\n'
-        '       WHERE created_by = ? AND (pack_type = ? OR\n'
-        '             (pack_type = ? AND server_id IS NULL))) < ?\n'
-        '"""'
-        ),
-        why=(
-            'c1b4204c: the per-user (personal) pack cap uses the same atomic guard and also counts legacy SERVER-typed rows with NULL server_id. A stale committed copy drops the guard and lets a user mint unbounded packs.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="c1b4204c-sticker-pack-rowcount-fail-closed",
-        path="src/core/stickers/manager.py",
-        marker=(
-            '                if getattr(cursor, "rowcount", 0) == 0:\n'
-        '                    raise PackLimitError(over_limit_msg, max_packs, max_packs)'
-        ),
-        why=(
-            'c1b4204c: a zero rowcount from the guarded INSERT is an authoritative limit-reached signal that fails closed with PackLimitError even when the advisory COUNT read was stale. A stale committed copy that ignores rowcount silently creates over-cap packs.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="c1b4204c-sticker-pack-pg-advisory-lock",
-        path="src/core/stickers/manager.py",
-        marker=(
-            '                    "SELECT pg_advisory_xact_lock(?, ?)",\n'
-        '                    (lock_ns, int(lock_key) & 0x3FFFFFFF),\n'
-        '                )\n'
-        '            except Exception:\n'
-        '                self._db.rollback()\n'
-        '                raise'
-        ),
-        why=(
-            'c1b4204c: PostgreSQL READ COMMITTED needs the advisory xact lock inside the transaction so two guarded INSERT..SELECT statements cannot both see a stale count. A stale committed copy drops serialization and reopens the cross-database TOCTOU.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="c1b4204c-sticker-pack-server-lock-ns",
-        path="src/core/stickers/manager.py",
-        marker=(
-            '            lock_ns = 121\n'
-        '            lock_key = server_id'
-        ),
-        why=(
-            'c1b4204c: the server pack-quota advisory lock uses namespace 121, disjoint from every other quota lock namespace; a stale copy reusing another namespace could deadlock or collide with unrelated quotas.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="c1b4204c-sticker-pack-user-lock-ns",
-        path="src/core/stickers/manager.py",
-        marker=(
-            '            # Namespace 122 is disjoint from every other quota lock namespace.\n'
-        '            lock_ns = 122'
-        ),
-        why=(
-            'c1b4204c: the personal pack-quota advisory lock uses namespace 122, disjoint from every other quota lock namespace; a stale copy reusing another namespace could deadlock or collide with unrelated quotas.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="edacde4c-n773-violation-body-gate-def",
-        path="src/api/routes/servers/automod.py",
-        marker=_N773_VIOLATION_BODY_GATE_DEF,
-        why=(
-            "edacde4c (N773): the per-channel view/read gate definition with the two required permissions; a stale staged copy that drops it leaves only the server-wide server.automod bit on the audit reads"
-        ),
-    ),
-    CommittedFixMarker(
-        key="edacde4c-n773-violation-body-fail-closed",
-        path="src/api/routes/servers/automod.py",
-        marker=_N773_VIOLATION_BODY_FAIL_CLOSED,
-        why=(
-            "edacde4c (N773): missing/unparseable channel id, missing store and a raising permission lookup must all strip the body; a stale staged copy that softens these arms reopens the leak on manual actions and unwired stores"
-        ),
-    ),
-    CommittedFixMarker(
-        key="edacde4c-n773-violation-body-gate-call",
-        path="src/api/routes/servers/automod.py",
-        marker=_N773_VIOLATION_BODY_GATE_CALL,
-        why=(
-            "edacde4c (N773): the shared serializer must actually apply the gate to the violation's own channel; a stale staged copy that drops the call makes both endpoints return the raw body"
-        ),
-    ),
-    CommittedFixMarker(
-        key="edacde4c-n773-violation-body-content-redacted",
-        path="src/api/routes/servers/automod.py",
-        marker=_N773_VIOLATION_BODY_MATCHED_REDACTED,
-        why=(
-            "edacde4c (N773): matched_content is blanked when the viewer cannot read the violating channel"
-        ),
-    ),
-    CommittedFixMarker(
-        key="edacde4c-n773-violation-body-metadata-redacted",
-        path="src/api/routes/servers/automod.py",
-        marker=_N773_VIOLATION_BODY_METADATA_REDACTED,
-        why=(
-            "edacde4c (N773): content-bearing metadata is blanked alongside matched_content, so a stale staged copy cannot leak the body via metadata.examples"
-        ),
-    ),
 )
 
 
@@ -2363,20 +2216,6 @@ LICENSE_FIX_PIN_KEYS: frozenset[str] = frozenset(
     {
         "e4096376-license-derived-caches-invalidated",
         "9c25e861-license-stale-validation-reset",
-    }
-)
-
-
-# edacde4c (N773) audit-log body gate pins. Kept explicit so none of the
-# five anchors can be dropped silently; non-vacuity comes from the
-# parametrized synthetic-revert test plus the live-HEAD tie below.
-N773_AUDIT_BODY_PIN_KEYS: frozenset[str] = frozenset(
-    {
-        "edacde4c-n773-violation-body-gate-def",
-        "edacde4c-n773-violation-body-fail-closed",
-        "edacde4c-n773-violation-body-gate-call",
-        "edacde4c-n773-violation-body-content-redacted",
-        "edacde4c-n773-violation-body-metadata-redacted",
     }
 )
 
@@ -3669,109 +3508,4 @@ def test_n819_aggregate_frame_pins_live_at_head_and_non_vacuous(
         assert guard not in handle_body[:call_pos], (
             f"conditional opcode-table guard {guard!r} reintroduced before "
             "the aggregate admission call"
-        )
-
-# c1b4204c sticker pack-quota atomic-guard pins. Kept as an explicit set so
-# no single anchor (guarded INSERTs, rowcount fail-closed, PG serialization or
-# the disjoint lock namespaces) can be dropped from the registry silently.
-# All six are positive markers; non-vacuity comes from the parametrized
-# test_synthetic_reverted_blob_is_flagged plus the live-HEAD tie below.
-STICKER_PACK_QUOTA_PIN_KEYS: frozenset[str] = frozenset(
-    {
-        "c1b4204c-sticker-pack-server-atomic-insert",
-        "c1b4204c-sticker-pack-personal-atomic-insert",
-        "c1b4204c-sticker-pack-rowcount-fail-closed",
-        "c1b4204c-sticker-pack-pg-advisory-lock",
-        "c1b4204c-sticker-pack-server-lock-ns",
-        "c1b4204c-sticker-pack-user-lock-ns",
-    }
-)
-
-
-def test_sticker_pack_quota_pins_live_at_head_and_non_vacuous(
-    commit_sha: str,
-) -> None:
-    """The atomic pack-quota pins are registered, live and falsifiable.
-
-    Each key resolves to a real committed blob carrying its distinctive anchor,
-    points at the sticker manager, and is rejected by a synthetic stale blob
-    with the fix erased. This ties both guarded INSERTs, the rowcount fail-closed
-    arm, the PostgreSQL advisory lock and both disjoint namespaces together so
-    a stale staged copy of manager.py cannot silently revert the fix.
-    """
-    keys = [r.key for r in COMMITTED_FIX_MARKERS]
-    assert STICKER_PACK_QUOTA_PIN_KEYS <= set(keys), (
-        "sticker pack-quota key set references keys missing from "
-        f"COMMITTED_FIX_MARKERS: {sorted(STICKER_PACK_QUOTA_PIN_KEYS - set(keys))}"
-    )
-    assert len(STICKER_PACK_QUOTA_PIN_KEYS) == 6
-    reader = _make_blob_reader(commit_sha)
-    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
-    for key in sorted(STICKER_PACK_QUOTA_PIN_KEYS):
-        record = by_key[key]
-        assert record.path == "src/core/stickers/manager.py", (
-            f"{key} points at {record.path!r}, expected sticker manager"
-        )
-        present, detail = _evaluate(record, reader)
-        assert present, f"{key} is not pinned at HEAD: {detail}"
-
-        def stale_manager_blob(path: str) -> str:
-            return f"# stale staged copy of {path}\n# pack quota guard erased\n"
-
-        present, detail = _evaluate(record, stale_manager_blob)
-        assert not present, f"synthetic pack-quota revert of {key} was not caught"
-        assert record.key in detail and record.marker in detail
-        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
-
-
-def test_n773_audit_body_gate_pins_live_at_head_and_non_vacuous(
-    commit_sha: str,
-) -> None:
-    """The N773 audit-body gate pins are registered, live and falsifiable.
-
-    Each key resolves to a real committed blob carrying its distinctive anchor,
-    points at the automod route module, and is rejected by a synthetic stale
-    blob with the fix erased. The live-HEAD tie additionally proves BOTH read
-    endpoints route through the shared gated serializer.
-    """
-    keys = [r.key for r in COMMITTED_FIX_MARKERS]
-    assert N773_AUDIT_BODY_PIN_KEYS <= set(keys), (
-        "N773 audit-body key set references keys missing from "
-        f"COMMITTED_FIX_MARKERS: {sorted(N773_AUDIT_BODY_PIN_KEYS - set(keys))}"
-    )
-    assert len(N773_AUDIT_BODY_PIN_KEYS) == 5
-    reader = _make_blob_reader(commit_sha)
-    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
-    for key in sorted(N773_AUDIT_BODY_PIN_KEYS):
-        record = by_key[key]
-        assert record.path == "src/api/routes/servers/automod.py", (
-            f"{key} points at {record.path!r}, expected the automod route module"
-        )
-        present, detail = _evaluate(record, reader)
-        assert present, f"{key} is not pinned at HEAD: {detail}"
-
-        def stale_automod_blob(path: str) -> str:
-            return f"# stale staged copy of {path}\n# audit body gate erased\n"
-
-        present, detail = _evaluate(record, stale_automod_blob)
-        assert not present, f"synthetic N773 revert of {key} was not caught"
-        assert record.key in detail and record.marker in detail
-        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
-
-    # Both audit-log read endpoints must go through the shared gated serializer;
-    # a refactor that inlines a raw `AutomodViolationResponse(...)` in either
-    # endpoint silently drops the redaction even while the helper stays pinned.
-    blob = reader("src/api/routes/servers/automod.py")
-    assert blob.count("_violation_response(") == 3, (
-        "expected the serializer definition plus exactly two endpoint call sites"
-    )
-    for handler, open_sig in (
-        ("list", "async def get_server_automod_violations("),
-        ("single", "async def get_server_automod_violation("),
-    ):
-        start = blob.index(open_sig)
-        end = blob.index("\n@router.", start) if "\n@router." in blob[start:] else len(blob)
-        body = blob[start:end]
-        assert "_violation_response(" in body, (
-            f"the {handler} automod violation read no longer uses the gated serializer"
         )

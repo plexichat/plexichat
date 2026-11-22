@@ -9,6 +9,7 @@ import logging
 import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple, cast
+from urllib.parse import urlparse
 
 from src.core.admin.logging import AdminLogEntry
 
@@ -18,7 +19,6 @@ from .validation import (
     bound_message_count,
     bound_pagination,
     bound_text,
-    parse_page_cursor,
     validate_nonce,
     validate_room_payload,
     validate_shared_key,
@@ -233,7 +233,6 @@ class PlexiJoinManager:
         page: int = 1,
         per_page: int = 50,
         *,
-        before: Optional[str] = None,
         decrypt_keys: bool = True,
     ) -> Dict[str, Any]:
         """List all outbound federation connections.
@@ -243,13 +242,6 @@ class PlexiJoinManager:
         pure work (O(page size) AEAD calls) on a hot endpoint. Callers that
         actually federate (``artifacts``, outbound transport) keep the default
         ``True`` and still receive the plaintext key.
-
-        ``before`` is an optional ``"created_at:id"`` cursor (the two fields
-        already present on every returned row). When supplied, the page is
-        seeked by the indexed ``(created_at, id)`` tuple instead of walking an
-        ``OFFSET``: deep pages cost O(page size) rather than O(offset). The
-        OFFSET/paged contract is untouched for every existing caller, and the
-        status filter, COUNT and response shape are identical on both paths.
         """
         page, per_page = bound_pagination(page, per_page)
         where = ""
@@ -268,42 +260,14 @@ class PlexiJoinManager:
             "SELECT COUNT(*) AS total FROM plexijoin_connections" + where, params
         )["total"]
 
-        if before is not None:
-            # Validate the cursor before it can reach SQL. ``parse_page_cursor``
-            # bounds both halves with the shared hardening gates; the HTTP route
-            # calls this too, so a direct core caller is equally protected.
-            before_created_at, before_id = parse_page_cursor(before)
-            # A row-value tuple comparison lets SQLite/Postgres seek straight
-            # into the (created_at, id) index. The equivalent OR expansion
-            # ("created_at < ? OR (created_at = ? AND id < ?)") defeats the
-            # planner and turns into a full scan, so keep the tuple form.
-            key_pred = (
-                " AND (created_at, id) < (?, ?)"
-                if where
-                else " WHERE (created_at, id) < (?, ?)"
-            )
-            query = (
-                "SELECT * FROM plexijoin_connections"
-                + where
-                + key_pred
-                + " ORDER BY created_at DESC, id DESC LIMIT ?"
-            )
-            page_params: List[Any] = [
-                *params,
-                before_created_at,
-                before_id,
-                per_page,
-            ]
-        else:
-            # Legacy path, byte-for-byte unchanged for existing callers.
-            query = (
-                "SELECT * FROM plexijoin_connections"
-                + where
-                + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-            )
-            page_params = [*params, per_page, (page - 1) * per_page]
-
-        connections = self.db.fetch_all(query, page_params)
+        query = (
+            "SELECT * FROM plexijoin_connections"
+            + where
+            + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+        connections = self.db.fetch_all(
+            query, [*params, per_page, (page - 1) * per_page]
+        )
         if decrypt_keys:
             connections = [self._materialize_connection(c) for c in connections]
 

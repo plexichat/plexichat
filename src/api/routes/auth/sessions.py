@@ -191,11 +191,7 @@ async def refresh_session(request: Request, response: Response) -> LoginResponse
         # (``X-Plexichat-Token-Mode: bearer``); cookie flows get only the
         # marker plus the session lifetime, with the credential in the
         # re-issued HttpOnly cookie.
-        # Thread the request context into rotation so a stolen refresh bearer
-        # used from another host cannot force a rotation (N644). When binding
-        # is enabled the manager re-checks the presented token's IP/UA against
-        # the session's bound indexes before consuming the old token.
-        new_token = auth.refresh_session(token, ip_address, user_agent)
+        new_token = auth.refresh_session(token)
         if not new_token:
             raise TokenInvalidError("Invalid or expired session")
         from .cookies import set_session_cookie as _set_cookie

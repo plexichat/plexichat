@@ -171,28 +171,6 @@ def bound_pagination(page: Any, per_page: Any) -> tuple[int, int]:
     )
 
 
-def parse_page_cursor(value: Any) -> tuple[int, int]:
-    """Parse a ``"created_at:id"`` keyset cursor for connection listing.
-
-    The cursor is the ``created_at`` + ``id`` tuple of the last row of the
-    previous page (both fields are already part of the list response). Each
-    half goes through the shared bounded-int / snowflake gates before it can
-    reach SQL, so a malformed, homoglyph or oversized cursor is rejected here
-    rather than becoming a live range predicate. ``HardeningViolation`` is
-    raised for any invalid value.
-    """
-    if isinstance(value, bool) or not isinstance(value, str):
-        raise HardeningViolation("page cursor must be a string")
-    parts = value.split(":")
-    if len(parts) != 2 or not all(parts):
-        raise HardeningViolation("page cursor must be 'created_at:id'")
-    created_at = bounded_int(
-        parts[0], "cursor.created_at", minimum=0, maximum=2**63 - 1
-    )
-    row_id = bound_id(parts[1], "cursor.id")
-    return created_at, row_id
-
-
 def bound_direction(value: Any) -> str:
     """Only the two traffic directions we record are accepted."""
     if value not in _DIRECTIONS:
@@ -274,7 +252,6 @@ __all__ = [
     "bound_message_count",
     "bound_pagination",
     "bound_text",
-    "parse_page_cursor",
     "validate_join_code",
     "validate_join_envelope",
     "validate_nonce",

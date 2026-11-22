@@ -32,12 +32,6 @@ CREATE INDEX IF NOT EXISTS idx_plexijoin_connections_created ON plexijoin_connec
 -- created_at DESC`` and the matching COUNT can both be served from one index
 -- range instead of sorting the whole table.
 CREATE INDEX IF NOT EXISTS idx_plexijoin_connections_status_created ON plexijoin_connections(status, created_at);
--- Keyset (cursor) path for the hot admin list. ``id`` is appended as a
--- deterministic tiebreak so ``(created_at, id) < (?, ?)`` can seek straight to
--- a deep page in O(page size) instead of walking the whole OFFSET. One index
--- for the unfiltered list and one for the status-filtered list.
-CREATE INDEX IF NOT EXISTS idx_plexijoin_connections_created_id ON plexijoin_connections(created_at, id);
-CREATE INDEX IF NOT EXISTS idx_plexijoin_connections_status_created_id ON plexijoin_connections(status, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_plexijoin_connections_last_activity ON plexijoin_connections(last_activity);
 
 -- PlexiJoin Inbound Requests table
@@ -112,8 +106,6 @@ def drop_tables(db):
         "idx_plexijoin_connections_status",
         "idx_plexijoin_connections_created",
         "idx_plexijoin_connections_status_created",
-        "idx_plexijoin_connections_created_id",
-        "idx_plexijoin_connections_status_created_id",
         "idx_plexijoin_connections_last_activity",
         "idx_plexijoin_inbound_status",
         "idx_plexijoin_inbound_requested",
