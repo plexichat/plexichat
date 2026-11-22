@@ -268,14 +268,21 @@ class RegistrationMixin(AuthManagerProtocol):
         # Concurrent replays both pass the SELECT but only one UPDATE finds
         # an unconsumed, unexpired row (rowcount 1). All other outcomes
         # (already-used/invalid/expired/type-changed) yield rowcount 0 and
-        # fail closed without marking the user verified. The expiry bound
-        # is re-checked in the UPDATE so a token expiring between SELECT
-        # and UPDATE cannot be consumed.
+        # fail closed without marking the user verified.
+        #
+        # The expiry predicate of the authoritative write must be evaluated
+        # against the clock at the moment of the write, not the ``now``
+        # snapshot captured for the validity SELECT above. Reusing the stale
+        # snapshot lets a token that expires between validation and the write
+        # still be redeemed (the same TOCTOU class as invite redemption).
+        # Re-read the clock here so the guarded UPDATE fails closed if the
+        # token is no longer live when the consumption lands.
+        consume_now = self._get_timestamp()
         cursor = self._db.execute(
             "UPDATE auth_email_tokens SET used = 1 "
             "WHERE id = ? AND used = 0 AND token_type = 'verify_email' "
             "AND expires_at >= ?",
-            (rec_id, now),
+            (rec_id, consume_now),
         )
         try:
             rowcount = getattr(cursor, "rowcount", 0)
