@@ -144,7 +144,10 @@ class BlacklistManager(BaseManager):
 
         with self._plan_lock:
             plan = self._plan
-            if plan is not None and time.monotonic() - plan.built_at < _PLAN_TTL_SECONDS:
+            if (
+                plan is not None
+                and time.monotonic() - plan.built_at < _PLAN_TTL_SECONDS
+            ):
                 return plan.patterns
 
             rows = self.get_blacklist()

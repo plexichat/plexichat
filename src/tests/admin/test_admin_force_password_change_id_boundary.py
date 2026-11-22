@@ -38,9 +38,7 @@ def patched_route(monkeypatch):
     monkeypatch.setattr(
         admin_auth, "require_admin_permission", lambda request, permission: 7
     )
-    monkeypatch.setattr(
-        "src.core.admin.force_password_change", calls, raising=False
-    )
+    monkeypatch.setattr("src.core.admin.force_password_change", calls, raising=False)
     monkeypatch.setattr("src.utils.net.get_client_ip", lambda request: "127.0.0.1")
     return calls
 
@@ -58,9 +56,7 @@ def patched_route(monkeypatch):
         "12abc",  # trailing garbage
     ],
 )
-async def test_non_canonical_target_id_is_rejected_without_mutation(
-    patched_route, raw
-):
+async def test_non_canonical_target_id_is_rejected_without_mutation(patched_route, raw):
     with pytest.raises(HTTPException) as exc:
         await admin_auth.admin_force_password_change(object(), raw)
     assert exc.value.status_code == 400

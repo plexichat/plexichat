@@ -37,6 +37,40 @@ DEFAULT_CLEANUP_ON_VERIFY = True
 DEFAULT_MAX_STATES_PER_IP = 10
 
 
+# Authoritative, race-free enforcement of ``max_states_per_ip``. The previous
+# code did a plain ``SELECT COUNT(*) ... >= max`` (_check_ip_rate_limit) and a
+# separate INSERT later in create_state(). Under concurrency two creators could
+# both observe ``count == max - 1`` and both insert, exceeding the cap by the
+# number of racing workers. Folding the count guard into the INSERT makes the
+# compare and the "increment" a single statement: the database serialises the
+# check with the write, so exactly ``max`` states can be pending at once.
+# ``?`` placeholders are converted to ``%s`` for PostgreSQL by the Database
+# layer (same as every other query in this module).
+_ATOMIC_STATE_INSERT_SQL = """
+INSERT INTO auth_oauth_states
+    (id, state_hash, provider, redirect_uri, created_at, expires_at,
+     nonce_hash, pkce_challenge, ip_address, cookie_issued)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE (
+    SELECT COUNT(*) FROM auth_oauth_states
+    WHERE ip_address = ? AND used = 0 AND expires_at > ?
+) < ?
+"""
+
+
+def _ip_advisory_lock_pair(ip_address: str) -> Tuple[int, int]:
+    """Stable int4 pair for ``pg_advisory_xact_lock(int, int)``.
+
+    The per-IP pending-state cap must be serialised under PostgreSQL's READ
+    COMMITTED isolation: two concurrent INSERTs would otherwise evaluate the
+    guard subquery against the same snapshot before either commits. A hash of
+    the IP keeps unrelated IPs from contending; collisions only over-serialise.
+    """
+    digest = hashlib.sha256(ip_address.encode("utf-8")).digest()
+    value = int.from_bytes(digest[:8], "big")
+    return (value & 0x7FFFFFFF, (value >> 31) & 0x7FFFFFFF)
+
+
 @dataclass
 class OAuthState:
     """OAuth state record for CSRF protection."""
@@ -270,8 +304,18 @@ class OAuthStateManager:
             OAuthState with state_token set (only available on creation),
             or None if rate limited.
         """
-        # Check IP rate limit
-        if not self._check_ip_rate_limit(ip_address):
+        # The per-IP pending-state cap is enforced AUTHORITATIVELY by the
+        # guarded INSERT below. _check_ip_rate_limit used to be a separate
+        # SELECT here; combined with the later plain INSERT it was a
+        # check-then-write TOCTOU (N racing creators could all observe
+        # `count == max - 1` and all insert). Keep it as a cheap advisory
+        # fast-fail only -- the guarded write is the one that counts.
+        max_states = self._get_config("max_states_per_ip", DEFAULT_MAX_STATES_PER_IP)
+        try:
+            max_states = int(max_states)
+        except (TypeError, ValueError):
+            max_states = DEFAULT_MAX_STATES_PER_IP
+        if max_states > 0 and not self._check_ip_rate_limit(ip_address):
             return None
 
         state_id = self._generate_id()
@@ -307,25 +351,80 @@ class OAuthStateManager:
             nonce_value = secrets.token_urlsafe(nonce_token_bytes)
             nonce_hash = self._hash_token(nonce_value)
 
-        # Store in database
-        self._db.execute(
-            """INSERT INTO auth_oauth_states
-               (id, state_hash, provider, redirect_uri, created_at, expires_at,
-                nonce_hash, pkce_challenge, ip_address, cookie_issued)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                state_id,
-                state_hash,
-                provider,
-                redirect_uri,
-                now,
-                expires_at,
-                nonce_hash,
-                pkce_challenge,
-                ip_address,
-                1 if cookie_issued else 0,
-            ),
-        )
+        # Store in database. The per-IP cap guard lives IN the INSERT, so the
+        # compare and the "increment" cannot be split by another worker.
+        # PostgreSQL READ COMMITTED needs an explicit per-IP advisory xact lock
+        # so two INSERTs cannot both evaluate the guard against one snapshot;
+        # SQLite's single-writer transaction already serialises the statement.
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        guarded = bool(ip_address) and max_states > 0
+        if is_postgres and guarded:
+            self._db.begin_transaction()
+        try:
+            if is_postgres and guarded:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    _ip_advisory_lock_pair(ip_address),
+                )
+            if guarded:
+                cursor = self._db.execute(
+                    _ATOMIC_STATE_INSERT_SQL,
+                    (
+                        state_id,
+                        state_hash,
+                        provider,
+                        redirect_uri,
+                        now,
+                        expires_at,
+                        nonce_hash,
+                        pkce_challenge,
+                        ip_address,
+                        1 if cookie_issued else 0,
+                        # Guard params: count still-pending states for this IP.
+                        ip_address,
+                        now,
+                        max_states,
+                    ),
+                )
+                inserted = getattr(cursor, "rowcount", 0) == 1
+            else:
+                self._db.execute(
+                    """INSERT INTO auth_oauth_states
+                       (id, state_hash, provider, redirect_uri, created_at, expires_at,
+                        nonce_hash, pkce_challenge, ip_address, cookie_issued)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        state_id,
+                        state_hash,
+                        provider,
+                        redirect_uri,
+                        now,
+                        expires_at,
+                        nonce_hash,
+                        pkce_challenge,
+                        ip_address,
+                        1 if cookie_issued else 0,
+                    ),
+                )
+                inserted = True
+            if is_postgres and guarded:
+                self._db.commit()
+        except Exception:
+            if is_postgres and guarded:
+                try:
+                    self._db.rollback()
+                except Exception as rollback_error:
+                    logger.debug(
+                        f"oauth state insert rollback failed: {rollback_error}"
+                    )
+            raise
+
+        if not inserted:
+            logger.warning(
+                f"OAuth state rate limit exceeded for IP {ip_address}: "
+                f"{max_states} pending states"
+            )
+            return None
 
         logger.debug(
             f"Created OAuth state for {provider}, expires in {ttl_seconds}s, IP={ip_address}"

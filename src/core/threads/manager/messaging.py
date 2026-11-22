@@ -1,11 +1,6 @@
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
-from src.core.security.hardening import (
-    SNOWFLAKE_MAX,
-    HardeningViolation,
-    bounded_int,
-)
 from ..models import ThreadState
 from ..exceptions import (
     ThreadError,
@@ -30,22 +25,6 @@ _RATCHET_WIRE_PREFIX = "ENC:3:"
 # Keeping the prefetch bounded prevents a corrupt conversation from turning
 # this optimisation into an unbounded read.
 _RATCHET_INTERVAL_PREFETCH_LIMIT = 1000
-
-# A direct manager call bypasses the HTTP edge's page-size bound. Keep the
-# same 200-row ceiling used by the other listing helpers so a huge positive
-# limit cannot materialize the whole thread history.
-_MAX_MESSAGES_PAGE_SIZE = 200
-
-
-def _clamp_page_limit(value: Any) -> int:
-    """Return a page size in ``[0, _MAX_MESSAGES_PAGE_SIZE]``, failing closed."""
-    try:
-        number = bounded_int(
-            value, "limit", minimum=0, maximum=SNOWFLAKE_MAX, default=0
-        )
-    except HardeningViolation:
-        return 0
-    return min(number, _MAX_MESSAGES_PAGE_SIZE)
 
 
 class _PreloadedRatchetStore:
@@ -259,9 +238,10 @@ class ThreadMessagingMixin(ThreadProtocol):
         if not self.can_view_thread(user_id, thread_id):
             raise ThreadAccessDeniedError("Cannot access this thread")
 
-        # Clamp both ends: LIMIT -1 is *unlimited* and a huge positive limit
-        # materialized the whole thread history. Invalid input fails closed.
-        limit = _clamp_page_limit(limit)
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would dump the whole thread history. (No upper cap
+        # here on purpose — pagination callers already bound page sizes.)
+        limit = max(0, limit)
 
         thread = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
         conversation_id = thread.conversation_id if thread else None

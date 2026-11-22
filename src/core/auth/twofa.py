@@ -25,9 +25,7 @@ def confirm_2fa(user_id: int, code: str, except_session_id=None) -> bool:
     password-only sessions are revoked; pass None to revoke every session.
     """
     return (
-        _get_auth_manager()
-        .get_instance()
-        .confirm_2fa(user_id, code, except_session_id)
+        _get_auth_manager().get_instance().confirm_2fa(user_id, code, except_session_id)
     )
 
 

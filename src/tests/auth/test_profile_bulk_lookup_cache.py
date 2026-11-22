@@ -141,6 +141,7 @@ def test_cold_l1_warm_shared_cache_resolves_without_sql(env):
     """Bulk shared-cache hits seed L1 and skip the DB entirely."""
     mixin, db, valkey_batches = env
     ids = (11, 12, 13)
+
     # Override the bulk fetch: the shared cache already holds every profile.
     def _warm_bulk(keys):
         valkey_batches.append(list(keys))

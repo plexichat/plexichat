@@ -70,14 +70,14 @@ def test_ipv6_spelling_rotation_cannot_evade_global_budget(
         auth_manager.login(username, "TestPass123!", ip_address=_SPELLINGS[3])
 
 
-def test_ipv6_spelling_rotation_cannot_fake_distinct_ips(
-    db, auth_manager, monkeypatch
-):
+def test_ipv6_spelling_rotation_cannot_fake_distinct_ips(db, auth_manager, monkeypatch):
     manager = auth_manager._get_manager()
     monkeypatch.setitem(manager._config["security"], "lockout_min_distinct_ips", 2)
     monkeypatch.setitem(manager._config["security"], "max_failed_attempts", 3)
     # Keep the global per-IP budget out of the way; this test targets lockout.
-    monkeypatch.setitem(manager._config["security"], "credential_stuffing_ip_limit", 100)
+    monkeypatch.setitem(
+        manager._config["security"], "credential_stuffing_ip_limit", 100
+    )
     username = _register(auth_manager)
 
     with patch.object(encryption, "verify_password", return_value=False):

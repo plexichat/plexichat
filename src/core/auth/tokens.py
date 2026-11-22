@@ -211,9 +211,7 @@ def safe_token_cache_key(token: Any) -> str:
     return f"token_verify:str:{hashlib.sha256(token.encode('utf-8')).hexdigest()}"
 
 
-def safe_token_binding_key(
-    ip_address: Optional[str], user_agent: Optional[str]
-) -> str:
+def safe_token_binding_key(ip_address: Optional[str], user_agent: Optional[str]) -> str:
     """Return a bounded, hash-only suffix scoping a verify-cache key to IP/UA.
 
     ``verify_token`` enforces IP/User-Agent binding against the session row when
@@ -281,8 +279,10 @@ def create_api_access_token(
 def list_api_access_tokens(
     include_revoked: bool = True, limit: int = 200, offset: int = 0
 ) -> List[AccessToken]:
-    return _get_auth_manager().get_instance().list_api_access_tokens(
-        include_revoked, limit, offset
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .list_api_access_tokens(include_revoked, limit, offset)
     )
 
 

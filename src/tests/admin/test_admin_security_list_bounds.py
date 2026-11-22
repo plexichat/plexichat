@@ -38,9 +38,7 @@ class _RecordingDB:
 
 def _route(name):
     return next(
-        r
-        for r in routes.router.routes
-        if isinstance(r, APIRoute) and r.name == name
+        r for r in routes.router.routes if isinstance(r, APIRoute) and r.name == name
     )
 
 

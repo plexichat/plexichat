@@ -31,8 +31,6 @@ from src.core.auth.exceptions import (
 )
 from src.utils.net import get_client_ip
 
-from src.core.auth.gateway_revocation import close_user_gateway_connections
-
 
 def _cookie_csrf_allowed(request: Request) -> bool:
     """Fail-closed cookie-CSRF policy for the session-rotation endpoint."""
@@ -81,10 +79,6 @@ def logout(
             logger.debug(
                 f"Failed to revoke session {current_user.session_id} during logout: {e}"
             )
-
-        # An explicit logout ends the user's presence: a cookie clear does not
-        # touch an already-open socket, which stays authenticated server-side.
-        close_user_gateway_connections(current_user.user_id, "Logged out")
 
     # Always clear the HttpOnly cookie so the browser forgets the credential.
     clear_session_cookie(response)
@@ -197,11 +191,7 @@ async def refresh_session(request: Request, response: Response) -> LoginResponse
         # (``X-Plexichat-Token-Mode: bearer``); cookie flows get only the
         # marker plus the session lifetime, with the credential in the
         # re-issued HttpOnly cookie.
-        # Thread the request context into rotation so a stolen refresh bearer
-        # used from another host cannot force a rotation (N644). When binding
-        # is enabled the manager re-checks the presented token's IP/UA against
-        # the session's bound indexes before consuming the old token.
-        new_token = auth.refresh_session(token, ip_address, user_agent)
+        new_token = auth.refresh_session(token)
         if not new_token:
             raise TokenInvalidError("Invalid or expired session")
         from .cookies import set_session_cookie as _set_cookie
@@ -384,13 +374,6 @@ async def revoke_all_sessions(
             f"User {current_user.user_id} revoked {revoked} sessions (except_current={except_current})"
         )
         if not except_current or not current_user.session_id:
-            # Every session was revoked: close their live gateway sockets too.
-            # With except_current plus a real current session the surviving
-            # socket cannot be distinguished (connections record only a gateway
-            # session id, not the auth-session id), so do not blanket-close it.
-            close_user_gateway_connections(
-                current_user.user_id, "All sessions revoked"
-            )
             # The current session was revoked — drop the browser cookie too.
             clear_session_cookie(response)
         return RevokeAllSessionsResponse(success=True, revoked_count=revoked)

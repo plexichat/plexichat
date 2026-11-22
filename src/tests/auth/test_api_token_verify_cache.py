@@ -126,7 +126,9 @@ def test_binding_context_is_part_of_cache_key(auth_manager, monkeypatch):
         token.token, ip_address="203.0.113.11", user_agent=_UA
     )
     assert calls["n"] == 2
-    assert mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent="other/1")
+    assert mgr.verify_api_access_token(
+        token.token, ip_address=_IP, user_agent="other/1"
+    )
     assert calls["n"] == 3
 
 
@@ -137,17 +139,26 @@ def test_ip_scope_enforcement_survives_cache_hit(auth_manager):
     mgr.add_api_access_token_scope(token.id, "cidr", "198.51.100.0/24", 1)
 
     # Allowed IP: warm a positive verdict.
-    assert mgr.verify_api_access_token(
-        token.token, ip_address="198.51.100.5", user_agent=_UA
-    ) is True
+    assert (
+        mgr.verify_api_access_token(
+            token.token, ip_address="198.51.100.5", user_agent=_UA
+        )
+        is True
+    )
     # A different IP must not ride the cached positive verdict.
-    assert mgr.verify_api_access_token(
-        token.token, ip_address="203.0.113.8", user_agent=_UA
-    ) is False
+    assert (
+        mgr.verify_api_access_token(
+            token.token, ip_address="203.0.113.8", user_agent=_UA
+        )
+        is False
+    )
     # Original IP still works (the denial was keyed to its own context).
-    assert mgr.verify_api_access_token(
-        token.token, ip_address="198.51.100.5", user_agent=_UA
-    ) is True
+    assert (
+        mgr.verify_api_access_token(
+            token.token, ip_address="198.51.100.5", user_agent=_UA
+        )
+        is True
+    )
 
 
 def test_revocation_drops_cached_verdict(auth_manager):
@@ -155,12 +166,17 @@ def test_revocation_drops_cached_verdict(auth_manager):
     mgr = _mgr(auth_manager)
     token = mgr.create_api_access_token("revoked", created_by=1)
 
-    assert mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA) is True
+    assert (
+        mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA) is True
+    )
 
     assert mgr.revoke_api_access_token(token.id, revoked_by=1) is True
 
     # Without invalidation this would still return the cached True.
-    assert mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA) is False
+    assert (
+        mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA)
+        is False
+    )
 
 
 def test_expiry_rechecked_on_cache_hit(auth_manager, monkeypatch):
@@ -171,11 +187,16 @@ def test_expiry_rechecked_on_cache_hit(auth_manager, monkeypatch):
     )
     calls = _count_introspections(monkeypatch, mgr)
 
-    assert mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA) is True
+    assert (
+        mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA) is True
+    )
     time.sleep(0.25)
 
     # Cache TTL is 10s, but the cached expiry is already past: denied on the hit.
-    assert mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA) is False
+    assert (
+        mgr.verify_api_access_token(token.token, ip_address=_IP, user_agent=_UA)
+        is False
+    )
     assert calls["n"] == 1  # the denial came from the cache-hit re-check
 
 
@@ -186,9 +207,18 @@ def test_exact_secret_still_required(auth_manager):
     raw = token.token
 
     assert mgr.verify_api_access_token(raw, ip_address=_IP, user_agent=_UA) is True
-    assert mgr.verify_api_access_token(raw.lower(), ip_address=_IP, user_agent=_UA) is False
-    assert mgr.verify_api_access_token(raw.upper(), ip_address=_IP, user_agent=_UA) is False
-    assert mgr.verify_api_access_token(f"  {raw}  ", ip_address=_IP, user_agent=_UA) is False
+    assert (
+        mgr.verify_api_access_token(raw.lower(), ip_address=_IP, user_agent=_UA)
+        is False
+    )
+    assert (
+        mgr.verify_api_access_token(raw.upper(), ip_address=_IP, user_agent=_UA)
+        is False
+    )
+    assert (
+        mgr.verify_api_access_token(f"  {raw}  ", ip_address=_IP, user_agent=_UA)
+        is False
+    )
     assert mgr.verify_api_access_token(raw, ip_address=_IP, user_agent=_UA) is True
 
 

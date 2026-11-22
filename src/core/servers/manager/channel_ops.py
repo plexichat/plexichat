@@ -146,9 +146,7 @@ class ChannelOpsMixin(ServerProtocol):
                 "Missing messages.send permission", "messages.send"
             )
 
-        retry_after = self.check_channel_slowmode(
-            user_id, channel_id, channel=channel, permissions=permissions
-        )
+        retry_after = self.check_channel_slowmode(user_id, channel_id)
         if retry_after:
             from src.core.ratelimit.exceptions import RateLimitError
 
@@ -173,11 +171,7 @@ class ChannelOpsMixin(ServerProtocol):
         )
 
     def check_channel_slowmode(
-        self,
-        user_id: SnowflakeID,
-        channel_id: SnowflakeID,
-        channel: Optional[Any] = None,
-        permissions: Optional[Dict[str, bool]] = None,
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
     ) -> Optional[float]:
         """Return the seconds a user must wait before posting, or None.
 
@@ -185,52 +179,24 @@ class ChannelOpsMixin(ServerProtocol):
         the same interval with the same moderator exemptions.  Returns None
         when the channel has no slowmode, the user may bypass it, or the
         channel cannot be resolved (fails open, never blocks a send).
-
-        ``channel`` and ``permissions`` are values the same request's send path
-        already resolved. Reusing them removes a duplicate ``get_channel``
-        (which issues an uncached ``SELECT 1 FROM srv_members`` membership probe
-        plus a channel-view check) and permission lookup on every message.
-
-        A supplied ``channel`` is only trusted when its id matches the channel
-        being posted to; a stale or mismatched object falls back to the
-        authoritative lookup so it can never narrow the membership/authz check
-        or carry a different slowmode interval. Nothing is cached across
-        requests, so there is no cross-user leak or cross-node stale window.
         """
-        if channel is None:
-            supplied_id = None
-        elif isinstance(channel, dict):
-            supplied_id = channel.get("id")
-        else:
-            supplied_id = getattr(channel, "id", None)
         try:
-            trusted = supplied_id is not None and int(supplied_id) == int(channel_id)
-        except (TypeError, ValueError):
-            trusted = False
-
-        if not trusted:
-            try:
-                channel = self.get_channel(channel_id, user_id)
-            except Exception as e:
-                logger.debug(f"Slowmode channel lookup failed for {channel_id}: {e}")
-                return None
+            channel = self.get_channel(channel_id, user_id)
+        except Exception as e:
+            logger.debug(f"Slowmode channel lookup failed for {channel_id}: {e}")
+            return None
 
         slowmode_seconds = getattr(channel, "slowmode_seconds", 0) or 0
         if slowmode_seconds <= 0:
             return None
 
+        permissions = {}
         server_id = getattr(channel, "server_id", None)
-        if permissions is None:
-            permissions = {}
-            if server_id is not None:
-                try:
-                    permissions = (
-                        self.get_permissions(user_id, server_id, channel_id) or {}
-                    )
-                except Exception as e:
-                    logger.debug(
-                        f"Slowmode permission lookup failed for {channel_id}: {e}"
-                    )
+        if server_id is not None:
+            try:
+                permissions = self.get_permissions(user_id, server_id, channel_id) or {}
+            except Exception as e:
+                logger.debug(f"Slowmode permission lookup failed for {channel_id}: {e}")
 
         for bypass in (
             "messages.bypass_slowmode",

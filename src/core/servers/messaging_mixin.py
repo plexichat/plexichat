@@ -27,11 +27,7 @@ class MessagingMixin:
         )
 
     def check_channel_slowmode(
-        self,
-        user_id: SnowflakeID,
-        channel_id: SnowflakeID,
-        channel: Optional[Any] = None,
-        permissions: Optional[Dict[str, bool]] = None,
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
     ) -> Optional[float]:
         """Return the seconds *user_id* must wait before posting, or None.
 
@@ -41,11 +37,7 @@ class MessagingMixin:
         entirely. The interval and the staff exemptions come from the
         sub-manager, so both send paths stay identical.
         """
-        if channel is None and permissions is None:
-            return self._manager.check_channel_slowmode(user_id, channel_id)
-        return self._manager.check_channel_slowmode(
-            user_id, channel_id, channel=channel, permissions=permissions
-        )
+        return self._manager.check_channel_slowmode(user_id, channel_id)
 
     def get_channel_messages(
         self,

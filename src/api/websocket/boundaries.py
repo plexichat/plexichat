@@ -295,9 +295,12 @@ class _PayloadSizeMemo:
                 self._entries.popitem(last=False)
 
     def record_hit(self) -> None:
+        """Record a served hit. ``lookup`` only counts a miss when there is no
+        live entry, so this call must not decrement ``_misses`` (doing so drove
+        the observability counter negative on every hit).
+        """
         with self._lock:
             self._hits += 1
-            self._misses -= 1  # lookup counted this call as a miss
 
     def clear(self) -> None:
         with self._lock:

@@ -138,7 +138,9 @@ def get_feedback_tickets(
         else:
             # Handle tuple rows (legacy)
             internal_notes = (
-                None if not include_internal_notes or encrypt_internal_notes else row[10]
+                None
+                if not include_internal_notes or encrypt_internal_notes
+                else row[10]
             )
             if (
                 include_internal_notes

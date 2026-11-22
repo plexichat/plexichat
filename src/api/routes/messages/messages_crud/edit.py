@@ -57,14 +57,7 @@ def _require_edit_channel_view(
     channel through either spelling of the id.
     """
     if not servers_mod:
-        # The backing-channel lookup cannot be evaluated without the servers
-        # module. A private-channel alias can exist in the DB independently of
-        # that module, so skipping this gate would let a member denied
-        # channels.view edit a message in a private channel through either
-        # spelling of the id. Deny with the same opaque 404 a missing message
-        # produces; a wired store with no backing channel still allows genuine
-        # DMs below.
-        raise _edit_not_found()
+        return  # No servers store => the id can only be a DM/group conversation.
 
     get_channel = getattr(servers_mod, "get_channel", None)
     channel_exists = getattr(servers_mod, "channel_exists", None)

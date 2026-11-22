@@ -67,6 +67,25 @@ def test_large_repeated_payload_is_measured_once():
     assert stats["size"] == 1
 
 
+def test_hits_never_decrement_the_miss_counter():
+    """``record_hit`` must not rewind ``misses`` that ``lookup`` never counted.
+
+    ``lookup`` increments ``misses`` only when no live entry exists. A hit
+    therefore has no matching miss to undo; subtracting one drives ``misses``
+    negative and corrupts the cache's hit/miss observability stats.
+    """
+    event = _large_event()
+    assert payload_size(event) == _fresh(event)  # the one and only miss
+
+    for _ in range(32):
+        assert payload_size(event) == _fresh(event)  # served from the memo
+
+    stats = get_payload_size_cache_stats()
+    assert stats["hits"] == 32
+    assert stats["misses"] == 1
+    assert stats["misses"] >= 0
+
+
 def test_cheap_payloads_are_not_memoized():
     """Validating a small frame costs more than just measuring it again."""
     event = _event(1, "small body")
