@@ -268,12 +268,19 @@ async def redeem_download_ticket(
         # shared counter is keyed on the authoritative canonical client IP (and
         # secondarily the validated user) and fails closed on limiter faults.
         _enforce_download_ticket_redeem_guess_limit(current_user.user_id, request)
-        # Resolve and sign the media URL *before* the ticket is consumed so a
-        # transient media-storage failure does not burn a one-time ticket with
-        # nothing returned.
-        resolved = _manager().resolve_download_ticket(current_user.user_id, body.ticket)
+        # Claim the one-time ticket FIRST with the atomic ``redeemed_at IS NULL``
+        # CAS, so exactly one concurrent redemption becomes the single winner
+        # BEFORE the expensive side effect (minting a signed download grant)
+        # runs. The old ordering resolved (non-consuming) and signed the URL
+        # first, then redeemed: two concurrent callers could both reach
+        # ``sign_url`` and produce two usable signed grants from a ticket that
+        # is strictly single-use. ``result`` carries the same target/expiry the
+        # old resolve step returned. Signing after the claim means a transient
+        # media-storage failure fails closed (the ticket is already burned)
+        # rather than handing out an unbacked one-time capability.
+        result = _manager().redeem_download_ticket(current_user.user_id, body.ticket)
         media_url = None
-        media_object_id = resolved.get("media_object_id")
+        media_object_id = result.get("media_object_id")
         if media_object_id:
             media = api.get_media()
             if media is None:
@@ -294,7 +301,7 @@ async def redeem_download_ticket(
             # Bound the signed URL by the ticket's remaining lifetime so a
             # redeemed ticket cannot outlive its own expiry window (sign_url
             # caps at 1h).
-            remaining_ms = resolved.get("expires_at", 0)
+            remaining_ms = result.get("expires_at", 0)
             now_ms = int(time.time() * 1000)
             expires_in = 3600
             if remaining_ms:
@@ -307,7 +314,6 @@ async def redeem_download_ticket(
             )
             media_url = signed.url
 
-        result = _manager().redeem_download_ticket(current_user.user_id, body.ticket)
         result["media_url"] = media_url
         # The API returns only the safe signed URL, not the opaque storage
         # reference that was used to resolve it.
