@@ -35,11 +35,39 @@ class UserSearchMixin(SearchManagerBase):
             # caught wholly non-numeric values, not coercible-malformed ones.
             # Fail closed: only exact integer ids from live rows may satisfy
             # the gate.
-            return int(user_id) in {
-                uid for uid in server_members if type(uid) is int
-            }
+            return int(user_id) in {uid for uid in server_members if type(uid) is int}
         except (TypeError, ValueError):
             return False
+
+    def _blocked_user_ids_for_viewer(self, user_id: int) -> Optional[Set[int]]:
+        """Authoritative two-way block set for the caller.
+
+        The union of "users the caller blocked" and "users who blocked the
+        caller" is a hard visibility deny on every other cross-user read path
+        (profiles, presence, DMs, typing, voice, reactions). User search must
+        apply the same boundary or a blocked counterparty stays enumerable
+        through ``/search/users``.
+
+        Read the authoritative ``rel_blocked`` rows directly from the bound
+        database, matching ``get_all_blocked_ids``' UNION query, so the answer
+        is fresh (a just-blocked user is hidden on the very next request, with
+        no cache TTL to outlive) and independent of relationship-module setup.
+
+        Returns ``None`` when the lookup fails: callers must fail closed (emit
+        no results) rather than silently widening visibility to a blocked user.
+        """
+        try:
+            rows = self._db.fetch_all(
+                "SELECT blocked_id AS user_id FROM rel_blocked WHERE blocker_id = ? "
+                "UNION "
+                "SELECT blocker_id AS user_id FROM rel_blocked WHERE blocked_id = ?",
+                (user_id, user_id),
+            )
+            # Malformed ids must not widen the deny set: propagate so the
+            # caller fails closed instead of dropping that user from the set.
+            return {int(row["user_id"]) for row in rows or []}
+        except Exception:
+            return None
 
     # Bound the directory pool fetched when a server scope is enforced. The
     # membership set is filtered in Python rather than splatted into an
@@ -152,6 +180,7 @@ class UserSearchMixin(SearchManagerBase):
         limit: int,
         offset: int = 0,
         allowed_user_ids: Optional[Set[int]] = None,
+        blocked_user_ids: Optional[Set[int]] = None,
     ) -> List[UserSearchResult]:
         """Append directory matches for users the indexer missed.
 
@@ -159,12 +188,18 @@ class UserSearchMixin(SearchManagerBase):
         previous page already consumed; without it, offset pagination would
         resurrect skipped users on every page. ``allowed_user_ids`` is the
         optional caller scope that the fallback must not escape.
+        ``blocked_user_ids`` are two-way blocks folded into ``seen`` so the
+        directory fallback cannot re-introduce a user the visibility gate
+        already excluded (and cannot spend bounded pool slots on them).
         """
         if len(results) >= limit:
             return results
+        exclude = {r.user_id for r in results}
+        if blocked_user_ids:
+            exclude |= set(blocked_user_ids)
         supplemental = self._supplemental_user_results(
             query,
-            {r.user_id for r in results},
+            exclude,
             limit - len(results),
             offset=offset,
             allowed_user_ids=allowed_user_ids,
@@ -213,6 +248,14 @@ class UserSearchMixin(SearchManagerBase):
             if not self._scope_allows_viewer(user_id, server_members):
                 return []
 
+        # Resolve the caller's two-way block set on every request and fold it
+        # into the authz key, exactly like the scope: a just-blocked user must
+        # disappear immediately (no stale cache entry) and a failed lookup must
+        # fail closed before any cache read or write.
+        blocked_ids = self._blocked_user_ids_for_viewer(user_id)
+        if blocked_ids is None:
+            return []
+
         # Repeated identical directory queries used to replay the FTS lookup,
         # the supplemental LIKE scan, per-user server/friend hydration and
         # ranking on every call. Memoize the final page for the short TTL the
@@ -220,8 +263,8 @@ class UserSearchMixin(SearchManagerBase):
         scope = tuple(sorted(server_members)) if server_members is not None else ()
         cache = get_result_cache(self, "users")
         cache_key = make_key(
-            "users.v1",
-            (user_id, scope),
+            "users.v2",
+            (user_id, scope, tuple(sorted(blocked_ids))),
             query=query,
             server_id=server_id,
             limit=limit,
@@ -236,12 +279,21 @@ class UserSearchMixin(SearchManagerBase):
         # Apply the resolved scope to every source of results. The supplemental
         # directory fallback used to run after this filter with no scope of its
         # own, so a server-scoped search could return users who are not members
-        # of that server (scope/IDOR bypass).
+        # of that server (scope/IDOR bypass). Two-way blocks are an equally
+        # hard visibility boundary: neither a caller's block nor a block by the
+        # hit may surface that user through search.
         if server_members is not None:
             results = [r for r in results if r.user_id in server_members]
+        if blocked_ids:
+            results = [r for r in results if r.user_id not in blocked_ids]
 
         results = self._merge_supplemental_users(
-            query, results, limit, offset=offset, allowed_user_ids=server_members
+            query,
+            results,
+            limit,
+            offset=offset,
+            allowed_user_ids=server_members,
+            blocked_user_ids=blocked_ids,
         )
         results = self._enrich_user_results(results, user_id)
 
@@ -285,11 +337,16 @@ class UserSearchMixin(SearchManagerBase):
             if not self._scope_allows_viewer(user_id, server_members):
                 return UserSearchResultPage(results=[], next_cursor=None)
 
+        # Same per-request, fail-closed block gate as the offset path.
+        blocked_ids = self._blocked_user_ids_for_viewer(user_id)
+        if blocked_ids is None:
+            return UserSearchResultPage(results=[], next_cursor=None)
+
         scope = tuple(sorted(server_members)) if server_members is not None else ()
         cache = get_result_cache(self, "users_page")
         cache_key = make_key(
-            "users_page.v1",
-            (user_id, scope),
+            "users_page.v2",
+            (user_id, scope, tuple(sorted(blocked_ids))),
             query=query,
             server_id=server_id,
             limit=limit,
@@ -302,12 +359,19 @@ class UserSearchMixin(SearchManagerBase):
         results, next_cursor = self._indexer.search_users_page(query, limit, cursor)
 
         # Mirror the offset path: the scope applies to the supplemental
-        # directory fallback too, not just to the indexer hits.
+        # directory fallback too, not just to the indexer hits, and two-way
+        # blocks hide a counterparty from the paged directory as well.
         if server_members is not None:
             results = [r for r in results if r.user_id in server_members]
+        if blocked_ids:
+            results = [r for r in results if r.user_id not in blocked_ids]
 
         results = self._merge_supplemental_users(
-            query, results, limit, allowed_user_ids=server_members
+            query,
+            results,
+            limit,
+            allowed_user_ids=server_members,
+            blocked_user_ids=blocked_ids,
         )
         results = self._enrich_user_results(results, user_id)
         results = self._ranking_engine.rank_user_results(results, query, user_id)
