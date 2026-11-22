@@ -21,6 +21,19 @@ from ..permissions import has_permission
 from .protocol import AuthManagerProtocol
 
 
+# SECURITY: silent email auto-link is a documented account-takeover primitive.
+# Only these providers are trusted to have performed real ownership verification
+# of the asserted address before the login route hands it to ``oauth_login``
+# (see api/routes/auth/oauth.py). Keep in sync with OAUTH_PROVIDERS; a new
+# provider must be vetted before silent linking is enabled for it. A caller
+# that cannot assert BOTH a verified email AND a trusted provider must never be
+# able to attach its identity to an existing local account by echoing that
+# account's address.
+TRUSTED_OAUTH_EMAIL_PROVIDERS = frozenset(
+    {"google", "github", "gitlab", "microsoft"}
+)
+
+
 class OAuthMixin(AuthManagerProtocol):
     def has_capability(self, token_info: TokenInfo, capability: str) -> bool:
         return has_permission(token_info.permissions, capability)
@@ -48,6 +61,7 @@ class OAuthMixin(AuthManagerProtocol):
         user_agent: Optional[str] = None,
         age: Optional[int] = None,
         dob: Optional[str] = None,
+        email_verified: bool = False,
     ) -> AuthResult:
         row = self._db.fetch_one(
             "SELECT user_id FROM auth_external_accounts WHERE provider = ? AND external_id = ?",
@@ -58,7 +72,13 @@ class OAuthMixin(AuthManagerProtocol):
         if row:
             user_id = row["user_id"]
         else:
-            if email:
+            # SECURITY: an unverified address or an untrusted/unknown provider
+            # must never silently link to an existing account. Without this
+            # gate, any caller able to echo the victim's email could attach its
+            # own identity and mint a session for the victim -- without ever
+            # controlling that inbox. Fail closed; the HTTP callback sets
+            # email_verified only after its provider-specific verification.
+            if email and email_verified and provider in TRUSTED_OAUTH_EMAIL_PROVIDERS:
                 email_index = self.crypto.blind_index(email, "user_email")
                 user_row = self._db.fetch_one(
                     "SELECT id FROM auth_users WHERE email_index = ?", (email_index,)

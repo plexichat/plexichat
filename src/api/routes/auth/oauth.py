@@ -954,6 +954,11 @@ async def oauth_callback(
         external_id = None
         email = None
         username_hint = None
+        # Set True only in the provider branches below once that provider's
+        # ownership signal (email_verified / verified / confirmed_at / OIDC)
+        # has actually been checked. Passed to oauth_login so the link boundary
+        # fails closed on an unverified or unknown assertion.
+        email_verified = False
 
         if provider == "google":
             external_id = user_info.get("sub")
@@ -969,6 +974,7 @@ async def oauth_callback(
                 )
             email = user_info.get("email")
             username_hint = user_info.get("name")
+            email_verified = True  # Google email_verified checked above
         elif provider == "github":
             external_id = str(user_info.get("id"))
             email = user_info.get("email") if user_info.get("verified") else None
@@ -1004,6 +1010,7 @@ async def oauth_callback(
                         }
                     },
                 )
+            email_verified = True  # profile flag or verified primary/email above
         elif provider == "gitlab":
             # SECURITY: link by verified email only. GitLab signals email
             # verification through its OIDC userinfo endpoint (the ``openid``
@@ -1043,6 +1050,7 @@ async def oauth_callback(
                         }
                     },
                 )
+            email_verified = True  # OIDC email_verified or confirmed_at above
         elif provider == "microsoft":
             external_id = user_info.get("id")
             username_hint = user_info.get("displayName")
@@ -1076,6 +1084,9 @@ async def oauth_callback(
                         )
                 except Exception as e:
                     logger.warning(f"Failed to verify Microsoft email claim: {e}")
+            # Only an address actually accepted above counts as verified; never
+            # let an inner OIDC flag alone mark a rejected/mismatched address.
+            email_verified = email is not None
 
         if not external_id:
             logger.error(f"Could not identify user from {provider} response")
@@ -1101,6 +1112,7 @@ async def oauth_callback(
                 username_hint=username_hint,
                 ip_address=ip_address,
                 user_agent=user_agent,
+                email_verified=email_verified,
             )
         except Exception as e:
             logger.error(f"OAuth login failed for {provider}:{external_id}: {e}")

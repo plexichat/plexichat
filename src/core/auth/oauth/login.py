@@ -19,12 +19,15 @@ def oauth_login(
     user_agent: Optional[str] = None,
     age: Optional[int] = None,
     dob: Optional[str] = None,
+    email_verified: bool = False,
 ) -> AuthResult:
     """
     Login or register via OAuth provider.
 
     If user exists with this OAuth link, logs them in.
-    If email matches existing user, links OAuth and logs in.
+    If email matches existing user, links OAuth and logs in -- but only when
+    ``email_verified`` is set and ``provider`` is a trusted provider; the
+    linking boundary fails closed otherwise.
     Otherwise creates new account.
     """
     return (
@@ -39,6 +42,7 @@ def oauth_login(
             user_agent=user_agent,
             age=age,
             dob=dob,
+            email_verified=email_verified,
         )
     )
 

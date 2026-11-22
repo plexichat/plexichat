@@ -47,7 +47,10 @@ class TestOAuthLinkRetiredOnEmailChange:
         # The attacker controls the old inbox, so an OAuth assertion carrying
         # that address auto-links to the victim (oauth_login matches by email).
         first = auth_manager.oauth_login(
-            provider="google", external_id=external_id, email=old_email
+            provider="google",
+            external_id=external_id,
+            email=old_email,
+            email_verified=True,
         )
         assert first.status == AuthStatus.SUCCESS
         assert first.user.id == victim.id
@@ -61,7 +64,10 @@ class TestOAuthLinkRetiredOnEmailChange:
         assert _links(db, victim.id) == []
 
         second = auth_manager.oauth_login(
-            provider="google", external_id=external_id, email=old_email
+            provider="google",
+            external_id=external_id,
+            email=old_email,
+            email_verified=True,
         )
         # The assertion can no longer reach the reclaimed account: with no link
         # and no matching local address it only mints a fresh, unrelated user.
@@ -73,7 +79,10 @@ class TestOAuthLinkRetiredOnEmailChange:
         victim, old_email = _register(auth_manager, "oauth_keep")
         external_id = f"legit-sub-{uuid.uuid4().hex[:10]}"
         first = auth_manager.oauth_login(
-            provider="google", external_id=external_id, email=old_email
+            provider="google",
+            external_id=external_id,
+            email=old_email,
+            email_verified=True,
         )
         assert first.status == AuthStatus.SUCCESS
         assert first.user.id == victim.id
@@ -82,7 +91,10 @@ class TestOAuthLinkRetiredOnEmailChange:
 
         assert len(_links(db, victim.id)) == 1
         again = auth_manager.oauth_login(
-            provider="google", external_id=external_id, email=old_email
+            provider="google",
+            external_id=external_id,
+            email=old_email,
+            email_verified=True,
         )
         assert again.status == AuthStatus.SUCCESS
         assert again.user.id == victim.id

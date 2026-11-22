@@ -39,6 +39,7 @@ def test_oauth_login_rejects_unverified_email(auth_manager, db):
                 provider="google",
                 external_id="google-oauth-gate-unverified",
                 email=email,
+                email_verified=True,
             )
 
         sessions = db.fetch_one(
@@ -61,6 +62,7 @@ def test_oauth_login_allows_verified_email(auth_manager, db):
             provider="google",
             external_id="google-oauth-gate-verified",
             email=email,
+            email_verified=True,
         )
         assert result.status == AuthStatus.SUCCESS
         assert result.token
