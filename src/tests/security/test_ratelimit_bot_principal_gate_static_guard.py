@@ -34,6 +34,10 @@ It is a pure-AST, whole-tree check (no app import/config/DB) with four halves:
    a CU-derived principal must have the gate before the helper call. A gate
    *after* the spend is a finding. Non-owner principals are accepted only when
    structurally authoritative AND documented in ``DOCUMENTED_AUTHORITATIVE``.
+   Authority normally comes from a fingerprint marker in the key helper's own
+   source; a fixed-scheme helper or constant floor key may instead be named in
+   the narrow ``DOCUMENTED_AUTHORITATIVE_*`` sets below (identifier-for-identifier,
+   never a broad pattern), so this exception cannot mask other sites.
 
 4. Non-vacuity: synthetic ungated / gated / gate-after / authoritative cases
    all flow through the same auditor, real sources are mutated in memory to
@@ -110,6 +114,21 @@ DOCUMENTED_AUTHORITATIVE: dict[tuple[str, str], tuple[str, str]] = {
         "current_user.user_id principal to gate on this path.",
     ),
     (
+        "api/routes/channels/invites.py",
+        "_enforce_invite_redeem_guess_limit",
+    ): (
+        "canonical client IP + fixed global-floor scope key",
+        "Invite redemption is authorized by the bearer invite code, not by an "
+        "owner-scoped resource. _invite_redeem_guess_key builds the per-source "
+        "bucket from the canonicalised client IP (primary) and the authenticated "
+        "user id (secondary correlator); the guessed code is never part of the "
+        "key, so no owner quota is being spent. The instance-wide floor uses the "
+        "fixed literal 'invites:redeem-guess:global' scope key, a constant that "
+        "is neither token-derived nor attacker-controlled. Both bucket schemes "
+        "are non-owner and the limiter fails closed, so a bot token cannot "
+        "select or inflate a distinct owner bucket on this path.",
+    ),
+    (
         "api/routes/suite/stash/share_links.py",
         "_enforce_share_link_verify_limit",
     ): (
@@ -141,6 +160,27 @@ DOCUMENTED_AUTHORITATIVE: dict[tuple[str, str], tuple[str, str]] = {
         "so there is no current_user.user_id spend to guard here.",
     ),
 }
+
+# Narrow, named exceptions for authoritative keys whose own source does NOT
+# carry a sha256/fingerprint marker. These are identifier-for-identifier: a key
+# helper is listed only because its bucket is a fixed non-owner scheme, and a
+# literal only because it is a constant scope string. Listing them here does
+# NOT relax detection for any other limiter site or helper name.
+DOCUMENTED_AUTHORITATIVE_KEY_HELPERS = frozenset(
+    {
+        # Canonicalised client IP (primary) + authenticated user (secondary
+        # correlator). The guessed invite code is never in the key; the user id
+        # is not an owner quota a bot could drain or evade (see docs entry).
+        "_invite_redeem_guess_key",
+    }
+)
+DOCUMENTED_AUTHORITATIVE_LITERAL_KEYS = frozenset(
+    {
+        # Fixed, instance-wide floor scope: a constant, never token-derived or
+        # attacker-controlled, shared by every caller by design.
+        "invites:redeem-guess:global",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -444,11 +484,16 @@ def _expr_is_authoritative(expr: ast.AST, helper_sources: dict[str, str]) -> boo
     for sub in ast.walk(expr):
         if isinstance(sub, ast.Call):
             name = _call_name(sub.func).lower()
+            if name in DOCUMENTED_AUTHORITATIVE_KEY_HELPERS:
+                return True
             src = helper_sources.get(name, "")
             if any(
                 m in name or m in src
                 for m in ("sha256", "fingerprint", "blind_index", "digest")
             ):
+                return True
+        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            if sub.value in DOCUMENTED_AUTHORITATIVE_LITERAL_KEYS:
                 return True
         elif isinstance(sub, ast.Name):
             if any(m in sub.id.lower() for m in ("sha256", "fingerprint")):
