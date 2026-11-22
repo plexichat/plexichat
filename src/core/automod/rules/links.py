@@ -328,7 +328,10 @@ class ExternalLinkRule(BaseRule):
     a port (``example.com:8080/path``) is read as that host too -- the port is
     dropped, not mistaken for a scheme separator. A trailing DNS-root dot
     (``example.com./path``) is stripped as well, since it resolves to the
-    same host. Note that any
+    same host. A literal backslash in the authority is treated as a path
+    separator (as browsers do): ``https://evil.example\\@trusted.example/`` is
+    judged on ``evil.example``, not on the ``@``-suffix a stdlib parser reports.
+    Note that any
     domain-shaped token (two-plus dot-separated labels with an alphabetic
     TLD) is treated as a link; whitelist mode will therefore also match
     bare filenames such as ``file.txt``.
@@ -450,6 +453,33 @@ class ExternalLinkRule(BaseRule):
             candidate = token.strip("\"'()[]{}<>,;:!?.")
             if not candidate:
                 return None
+
+            # WHATWG URL parsers (browsers, http(s) clients) treat a literal
+            # backslash in a special URL as an authority/path separator, so
+            # ``https://evil.example\@trusted.example/`` opens ``evil.example``
+            # (the host on the LEFT of the backslash) and demotes
+            # ``@trusted.example`` to path data. A plain ``urlsplit``-style
+            # parser instead keeps the backslash in the authority and reports
+            # the host to the RIGHT of ``@`` -- exactly what this extractor
+            # used to do. That parser differential let a denylisted host pass
+            # in blacklist mode and a non-allowlisted host pass in whitelist
+            # mode while the browser opened the blocked/unlisted host.
+            # Canonicalize backslashes to slashes BEFORE authority parsing so
+            # the moderation decision and the consumer agree on the host.
+            # Percent-encoded ``%5C`` and backslashes in the path are data,
+            # not authority separators, and are deliberately left untouched.
+            candidate = candidate.replace("\\", "/")
+            # Browsers collapse any run of '/' or '\' after a special scheme's
+            # colon into the authority delimiter: ``https:\host`` and
+            # ``https:///host`` both open ``host``. After the replacement above
+            # that is a run of one or more slashes, which a urlsplit-style
+            # parser would treat as an empty host/path. Normalize it to ``//``
+            # so the authority is parsed instead of silently dropped. Runs with
+            # no slash at all (``host:8080``) are left alone -- those are the
+            # bare host:port shape handled below.
+            candidate = re.sub(
+                r"^([a-zA-Z][a-zA-Z0-9+.\-]*:)/+", r"\1//", candidate, count=1
+            )
 
             scheme_match = self._SCHEME_PREFIX.match(candidate)
             has_scheme = scheme_match is not None
