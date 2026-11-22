@@ -118,6 +118,7 @@ PERMISSION_SCOPES = {
     "admin.security.sessions": "Force logout and lock/unlock user accounts",
     "admin.security.logout_all": "Invalidate every user session platform-wide",
     "admin.security.usernames": "Manage banned username patterns",
+    "admin.security.devices": "View device-trust state and effective session durations across all users",
     # Platform-wide moderation
     "admin.moderation.bans": "Ban and unban users platform-wide",
     "admin.moderation.hashes": "Write and remove blocked content hashes",
