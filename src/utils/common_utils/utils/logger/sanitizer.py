@@ -216,6 +216,75 @@ def _scrub_log_control_characters(value: Any) -> str:
     return _CONTROL_CHARACTER_RE.sub(_escape, text)
 
 
+# Query-string parameters whose VALUES are bearer credentials or secret
+# material. The keyword patterns in ``sanitize_log_message`` only fire when one
+# of their trigger words appears anywhere in the line and only mask a fixed set
+# of key names, so a bare ``?code=...``, ``&sig=...`` or ``&state=...`` survived
+# verbatim into the world-readable log files (redirect URLs, proxy URLs, signed
+# media URLs, OAuth/federation URLs, Referers). Redact by key instead, but only
+# in a query-like context so ordinary diagnostics such as ``error code=500`` or
+# ``AdminID=5 Action=login`` keep their values.
+_QUERY_SECRET_KEYS = frozenset(
+    {
+        "code",
+        "sig",
+        "signature",
+        "state",
+        "token",
+        "access_token",
+        "refresh_token",
+        "password",
+        "secret",
+        "api_key",
+        "key",
+        "auth",
+        # Unambiguous aliases already covered by the keyword pass; included so
+        # a query context is redacted even when no keyword trigger is present.
+        "authorization",
+        "client_secret",
+        "session_id",
+        "cookie",
+        "passwd",
+    }
+)
+_QUERY_SECRET_MARKER = "********"
+
+# A ``key=value`` pair introduced by ``?``/``&``, at a token boundary (start of
+# string, whitespace, quote, parenthesis), with an optional quoted value. The
+# value stops at ``&``/``#``/whitespace/quotes so a pair never swallows the next
+# one. Bounded character classes keep the scan linear-time.
+_QUERY_PARAM_RE = re.compile(
+    r"""(?ix)
+    (?P<lead>[?&]|^|(?<=[\s"'(]))
+    (?P<key>[A-Za-z0-9_.\-]+)
+    =
+    (?P<value>"[^"]*"|'[^']*'|[^&#\s"'<>]*)
+    """
+)
+
+
+def _redact_query_secrets(message: str) -> str:
+    """Mask values of sensitive keys in query-like ``key=value`` pairs.
+
+    "Query-like" means the pair is introduced by ``?`` or ``&``, or it is the
+    first pair of an ``&``-separated run (a bare decoded query string). A lone
+    ``key=value`` with no query marker is left alone -- the keyword pass above
+    already handles that diagnostic shape by key.
+    """
+
+    def repl(match):
+        key = match.group("key").lower()
+        if key not in _QUERY_SECRET_KEYS:
+            return match.group(0)
+        lead = match.group("lead")
+        query_like = lead in ("?", "&") or message[match.end() : match.end() + 1] == "&"
+        if not query_like:
+            return match.group(0)
+        return f"{lead}{match.group('key')}={_QUERY_SECRET_MARKER}"
+
+    return _QUERY_PARAM_RE.sub(repl, message)
+
+
 def sanitize_log_message(message: str) -> str:
     """Sanitizes sensitive information from a log message string."""
     if not isinstance(message, str):
@@ -248,6 +317,14 @@ def sanitize_log_message(message: str) -> str:
         ]
         for pattern, repl in patterns:
             message = re.sub(pattern, repl, message)
+
+    # Query-string credentials (``?code=``, ``&sig=``, ``&state=``, ...) are not
+    # covered by the keyword pass above: those keys are not trigger words and
+    # their values are not keyword-shaped. Redact by key in query-like pairs.
+    # Runs unconditionally -- there is no cheap substring trigger that covers
+    # all of ``code``/``sig``/``state`` without over-matching ordinary text.
+    if "=" in message:
+        message = _redact_query_secrets(message)
 
     # Final step: no matter what the redaction passes produced, never let raw
     # control characters or escape sequences reach a log sink where they could
