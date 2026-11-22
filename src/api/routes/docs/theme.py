@@ -439,6 +439,13 @@ def build_brand_styles(conf: DocsConfig) -> str:
             padding: var(--spacing-sm) var(--spacing-md);
             text-align: left;
             font-size: 0.9rem;
+            /* Parameter tables carry long descriptions with inline code paths.
+               Without wrapping, one unbreakable token sets the column's
+               min-content width and the whole table overflows its scroll
+               wrapper. Top alignment keeps short cells readable when a
+               neighbouring description wraps to several lines. */
+            overflow-wrap: anywhere;
+            vertical-align: top;
         }
 
         th {
