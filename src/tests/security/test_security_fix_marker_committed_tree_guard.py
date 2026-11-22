@@ -559,6 +559,45 @@ _N819_UNCONDITIONAL_ADMISSION = (
 
 
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
+    # --- Test-only private-index guard commits (coordination noise) ---
+    # These three commits landed through the private index but change ONLY
+    # test/guard files: they add or harden committed-tree guards, not runtime
+    # security behavior. They are pinned here so the reflog enumeration can
+    # distinguish them from a real, unpinned security fix. Each key is specific
+    # to one SHA and pins distinctive committed text that commit introduced;
+    # no blanket exemption is granted to other private-index commits.
+    CommittedFixMarker(
+        key="bc72a5fa-delegated-verifier-family-binding-test",
+        path="src/tests/security/test_token_audience_binding_structural_guard.py",
+        marker="def _target_binds_family(",
+        why=(
+            "bc72a5fa is a test-only guard change: it makes the delegated "
+            "verifier test require its family-binding target to resolve to a "
+            "real binding verifier and adds the unbound-delegation self-test. "
+            "Pinned by the distinctive _target_binds_family helper it added, "
+            "so a stale staged copy of that test file is caught."
+        ),
+    ),
+    CommittedFixMarker(
+        key="684d0461-n757-live-dispatch-committed-pin",
+        path="src/tests/security/test_security_fix_marker_committed_tree_guard.py",
+        marker="_N757_LIVE_GATE_DEF = (",
+        why=(
+            "684d0461 is a test-only guard change: it added the N757 live-"
+            "dispatch committed-tree pins to this guard. Pinned by the "
+            "distinctive _N757_LIVE_GATE_DEF anchor it introduced."
+        ),
+    ),
+    CommittedFixMarker(
+        key="76831f28-n812-replacement-range-acl-committed-pin",
+        path="src/tests/security/test_sum_replacement_range_acl_committed_guard.py",
+        marker="COMMITTED REPLACEMENT-RANGE ACL MARKER MISSING",
+        why=(
+            "76831f28 is a test-only guard change: it added the N812 whole-"
+            "file-replacement range-ACL committed-tree guard. Pinned by that "
+            "guard's distinctive violation message in its committed blob."
+        ),
+    ),
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
@@ -2538,6 +2577,32 @@ def test_private_index_pinned_keys_tie_to_real_commits(commit_sha: str) -> None:
             f"pinned key {key!r} names commit {prefix!r} that is not an "
             "ancestor of HEAD"
         )
+
+
+def test_private_index_reflog_unknown_fix_is_still_flagged(monkeypatch) -> None:
+    """Non-vacuity of the reflog enumeration at the COMMIT level.
+
+    A real security fix landed through the private index creates a fresh
+    empty-reflog entry whose 8-hex prefix is NOT one of the test-only commits
+    pinned above. Inject such an entry in-process and prove the enumeration
+    still raises, so pinning coordination noise cannot turn the audit into a
+    rubber stamp.
+    """
+    import subprocess as _subprocess
+
+    fake_sha = "deadbeef" + "0" * 32
+    real_git = globals()["_git"]
+
+    def fake_git(*args, **kwargs):
+        if args and args[0] == "reflog":
+            return _subprocess.CompletedProcess(args, 0, f"{fake_sha}\t\n", "")
+        if args and args[0] == "merge-base":
+            return _subprocess.CompletedProcess(args, 0, "", "")
+        return real_git(*args, **kwargs)
+
+    monkeypatch.setitem(globals(), "_git", fake_git)
+    with pytest.raises(AssertionError, match="deadbeef"):
+        test_private_index_reflog_enumeration_has_no_unpinned_security_fix()
 
 
 def test_private_index_reflog_enumeration_has_no_unpinned_security_fix() -> None:
