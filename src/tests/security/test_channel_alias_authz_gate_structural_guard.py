@@ -462,6 +462,24 @@ GATE_REGISTRY: tuple[GateEntry, ...] = (
         "central dual-form resolver now catches a channel-id alias, so the "
         "messages.send/view/timeout gates cannot be skipped.",
     ),
+    # Pin/unpin service-layer view gate. HEAD still carries the miss-as-allow
+    # branch (``info is None -> True``), but the lookup delegates to the same
+    # central dual-form resolver fixed in 3cc3ba7b, so a channel-id alias can
+    # no longer miss that branch: ``conversation_id OR id`` (conversation-first)
+    # resolves it to the backing channel and the channels.view check runs.
+    # A working tree is free to drop this helper; the entry documents the gate
+    # while it remains in the committed tree.
+    GateEntry(
+        "pin service view gate (central-resolver fixed)",
+        "src/core/messaging/services/pin.py",
+        "_can_view_conversation_messages",
+        "central",
+        ("get_channel_by_conversation",),
+        "conversation_id is caller-supplied at the service layer. The gate "
+        "delegates to get_channel_by_conversation, which now matches "
+        "conversation_id OR id (conversation-first), so a channel-id alias "
+        "cannot miss and skip the channels.view grant check.",
+    ),
 )
 
 
@@ -892,15 +910,22 @@ def test_central_resolver_resolves_both_id_forms(commit_sha):
 
 
 def test_prior_findings_are_now_central_fixed(commit_sha):
-    """All four N735 gates are promoted from findings to central-fixed."""
+    """The four N735 gates stay promoted to central-fixed.
+
+    Other gates may also be fixed via the central resolver (e.g. the pin
+    service view gate), so assert the required four are present rather than
+    pinning the exact size of the central set.
+    """
     central = [e for e in GATE_REGISTRY if e.resolution == "central"]
-    assert len(central) == 4, "the four centrally-fixed N735 gates were lost"
-    assert {e.path for e in central} == {
-        "src/api/routes/features/forwarding.py",
-        "src/core/messaging/services/forwarding.py",
-        "src/api/routes/features/voice.py",
-        "src/api/routes/artifacts_helpers.py",
+    required_central = {
+        ("src/api/routes/features/forwarding.py", "_require_target_send_access"),
+        ("src/core/messaging/services/forwarding.py", "_require_channel_view"),
+        ("src/api/routes/features/voice.py", "_require_voice_send_access"),
+        ("src/api/routes/artifacts_helpers.py", "_can_emit_artifact_message"),
     }
+    assert required_central <= {e.key() for e in central}, (
+        "the four centrally-fixed N735 gates were lost"
+    )
     # No finding may remain disguised as fixed: every remaining finding must
     # still be a real, documented miss-as-allow bypass in committed HEAD.
     reader = _make_blob_reader(commit_sha)
@@ -914,3 +939,61 @@ def test_prior_findings_are_now_central_fixed(commit_sha):
         source = reader(entry.path)
         assert "get_channel_by_conversation" in source
         assert DUAL_SQL_MARKER not in source
+
+
+def test_pin_gate_central_evidence_is_non_vacuous(commit_sha):
+    """Reverting the pin gate to single-form SQL must be flagged.
+
+    A ``central`` entry is only meaningful if it rejects a silent revert to a
+    conversation-id-only lookup. Revert the committed pin gate in memory to
+    that shape and show both halves fail: the central evidence check rejects
+    the missing delegation, and the detector still enumerates the single-form
+    miss-as-allow gate (so an unregistered copy trips the whole-tree sweep).
+    """
+    entry = next(
+        e
+        for e in GATE_REGISTRY
+        if e.key()
+        == ("src/core/messaging/services/pin.py", "_can_view_conversation_messages")
+    )
+    assert entry.resolution == "central"
+    source = _make_blob_reader(commit_sha)(entry.path)
+    # The committed gate satisfies the central-fixed evidence check.
+    _assert_entry_evidence(entry, source)
+
+    old_block = (
+        '    reverse = getattr(servers, "get_channel_by_conversation", None)\n'
+        "    if not callable(reverse):\n"
+        "        return True  # legacy/stub store: only the participation gate is available\n"
+        "    try:\n"
+        "        info = reverse(int(conversation_id))\n"
+        "    except Exception:\n"
+        "        return False  # unproven alias must never grant access\n"
+    )
+    new_block = (
+        "    try:\n"
+        "        info = servers._db.fetch_one(\n"
+        '            "SELECT id FROM srv_channels WHERE conversation_id = ?",\n'
+        "            (int(conversation_id),),\n"
+        "        )\n"
+        "    except Exception:\n"
+        "        return False\n"
+    )
+    assert source.count(old_block) == 1, "pin gate central delegation not found"
+    reverted = source.replace(old_block, new_block)
+    assert "get_channel_by_conversation" not in reverted
+
+    # The central marker is gone -> the registered gate fails evidence review.
+    with pytest.raises(AssertionError, match="no longer delegates"):
+        _assert_entry_evidence(entry, reverted)
+
+    # The single-form lookup is independently detected as a miss-as-allow gate,
+    # so an uncovered copy would be reported by the whole-tree sweep.
+    tree = ast.parse(reverted)
+    fn = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == entry.func
+    )
+    gates = _reverse_lookup_gates(fn, entry.path)
+    assert len(gates) == 1 and gates[0].key() == entry.key(), gates
