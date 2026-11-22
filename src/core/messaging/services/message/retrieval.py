@@ -21,6 +21,75 @@ from .protocol import MessageServiceProtocol
 _BULK_ID_CHUNK = 500
 
 
+def _get_servers_module():
+    """Return the servers module without importing the whole API app.
+
+    Mirrors the lazy-resolution strategy in edit_delete.py / message_status.py:
+    prefer the already-configured ``src.api`` provider, fall back to the light
+    ``src.core.servers`` import.
+    """
+    import sys
+
+    api_mod = sys.modules.get("src.api")
+    if api_mod is not None:
+        get_servers = getattr(api_mod, "get_servers", None)
+        if get_servers is not None:
+            try:
+                servers = get_servers()
+                if servers:
+                    return servers
+            except Exception as lookup_error:
+                logger.debug(f"servers module lookup failed: {lookup_error}")
+    try:
+        from src.core import servers
+
+        return servers
+    except ImportError:
+        return None
+
+
+def _resolve_authoritative_server_scope(conversation_id) -> Optional[tuple]:
+    """Resolve ``(channel_id, server_id)`` from a SERVER conversation id.
+
+    The search route derives its ``messages.read`` server id from the
+    client-supplied URL id via ``get_channel(url_id)``/``channel_exists``. That
+    id may be the conversation-id alias of a server channel, which those
+    channel probes cannot see as a channel, so the route silently treats the
+    alias as a DM and SKIPS its per-channel read gate -- a member denied
+    ``messages.read`` can then search a private channel's messages simply by
+    addressing it through its linked conversation id. Derive the scope here
+    from the authoritative conversation id the server stored, which the caller
+    cannot spoof, and enforce the gate on that scope. This also covers service
+    callers that bypass the route entirely. ``None`` means the conversation
+    has no backing server channel (a genuine DM/group) and carries no
+    server-scoped read gate.
+    """
+    servers = _get_servers_module()
+    if servers is None:
+        return None
+    lookup = getattr(servers, "get_channel_by_conversation", None)
+    if not callable(lookup):
+        return None
+    try:
+        info = lookup(int(conversation_id))
+    except Exception:
+        return None
+    if not info:
+        return None
+    if isinstance(info, dict):
+        channel_id = info.get("id")
+        server_id = info.get("server_id")
+    else:
+        channel_id = getattr(info, "id", None)
+        server_id = getattr(info, "server_id", None)
+    if channel_id is None or server_id is None:
+        return None
+    try:
+        return int(channel_id), int(server_id)
+    except (TypeError, ValueError):
+        return None
+
+
 # L6: the rebuild previously did DELETE + RPUSH as two separate commands,
 # so a concurrent send (lpush) or a concurrent rebuild could interleave and
 # leave a partially-built list that readers then trusted via the llen
@@ -136,7 +205,9 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
         # ``get_message`` (deleted tombstones remain readable to participants).
         rows: List[Dict[str, Any]] = []
         for start in range(0, len(unique_ids), _BULK_ID_CHUNK):
-            rows.extend(self._repo.get_batch_by_ids(unique_ids[start : start + _BULK_ID_CHUNK]))
+            rows.extend(
+                self._repo.get_batch_by_ids(unique_ids[start : start + _BULK_ID_CHUNK])
+            )
         if not rows:
             return {}
 
@@ -345,6 +416,34 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
             raise ConversationAccessDeniedError(
                 "Not a participant in this conversation"
             )
+
+        # Authoritative server scope: participants of a server channel are
+        # granted by mere server membership, which is NOT a ``messages.read``
+        # gate. The search route derives its server id from get_channel(url_id),
+        # which returns None for a channel's linked conversation-id alias and
+        # silently skips the read grant. Enforce it here against the backing
+        # channel/server resolved from this authoritative conversation id,
+        # failing closed when the check itself is unproven. A DM/group has no
+        # backing channel and is not gated.
+        authoritative_scope = _resolve_authoritative_server_scope(conversation_id)
+        if authoritative_scope is not None:
+            channel_id, server_id = authoritative_scope
+            servers = _get_servers_module()
+            has_permission = getattr(servers, "has_permission", None) if servers else None
+            if not callable(has_permission):
+                raise ConversationAccessDeniedError(
+                    "Cannot verify channel read access"
+                )
+            try:
+                allowed = bool(
+                    has_permission(user_id, server_id, "messages.read", channel_id)
+                )
+            except Exception:
+                allowed = False  # unproven -> fail closed
+            if not allowed:
+                raise ConversationAccessDeniedError(
+                    "Cannot read messages in this channel"
+                )
 
         # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
         # negative limit would return every match instead of an empty page.

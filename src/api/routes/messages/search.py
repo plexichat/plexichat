@@ -199,6 +199,29 @@ async def search_messages(
         if servers_mod:
             channel = servers_mod.get_channel(cid, current_user.user_id)
 
+        # Message routes also accept a server channel's linked conversation id
+        # as the URL id. get_channel/channel_exists only know channel ids, so
+        # they report "not a channel" for that alias and the code below would
+        # treat it as a DM -- skipping the live messages.read gate that runs
+        # before the cached read. Resolve the alias membership-agnostically and
+        # re-gate on the REAL channel (see _require_edit_channel_view for the
+        # same pattern). The authoritative service layer enforces this too, for
+        # callers that bypass the route; this live check additionally protects
+        # a warm search cache entry.
+        alias_channel_id = None
+        if channel is None and servers_mod:
+            reverse = getattr(servers_mod, "get_channel_by_conversation", None)
+            if callable(reverse):
+                try:
+                    backing = reverse(cid)
+                except Exception:
+                    backing = None
+                if isinstance(backing, dict) and backing.get("id") is not None:
+                    alias_channel_id = int(backing["id"])
+                    channel = servers_mod.get_channel(
+                        alias_channel_id, current_user.user_id
+                    )
+
         # A server channel's messages require a per-channel read grant, not
         # merely membership of the parent server. The participant check below
         # (is_participant) only proves DM participation or server membership,
@@ -208,7 +231,7 @@ async def search_messages(
         # channel grant live here, before the cached read, and fail closed when
         # the backing channel or its permission cannot be established.
         channel_exists = getattr(servers_mod, "channel_exists", None)
-        is_server_channel = (
+        is_server_channel = alias_channel_id is not None or (
             bool(channel_exists(cid))
             if callable(channel_exists)
             else channel is not None
@@ -219,13 +242,16 @@ async def search_messages(
             server_id = getattr(channel, "server_id", None)
             if not server_id:
                 raise _not_found()
+            # Gate the REAL backing channel id, not the URL alias, so the
+            # permission lookup targets the id the channel table knows.
+            gate_channel_id = alias_channel_id if alias_channel_id is not None else cid
             try:
                 can_read = bool(
                     servers_mod.has_permission(
                         current_user.user_id,
                         server_id,
                         "messages.read",
-                        cid,
+                        gate_channel_id,
                     )
                 )
             except Exception as perm_error:
