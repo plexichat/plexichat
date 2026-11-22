@@ -168,35 +168,61 @@ def get_role(db, role_id: SnowflakeID) -> Optional[Dict]:
 
 
 def role_covers_all_members(
-    db, role_id: SnowflakeID, server_id: SnowflakeID
+    db,
+    role_id: SnowflakeID,
+    server_id: SnowflakeID,
+    exclude_user_id: Optional[SnowflakeID] = None,
 ) -> bool:
-    """Whether every member of ``server_id`` holds ``role_id``.
+    """Whether the role reaches the entire audience an @everyone would reach.
 
-    A non-default role that has been assigned to the whole server is an
-    @everyone-equivalent mass ping: ``NotificationCreatorMixin.create_notifications``
-    fans a ROLE mention out to all of that role's members, exactly like the
-    default ``is_default = 1`` role.  Checking the ``is_default`` flag alone
-    lets such a "recreated everyone" role evade the mass-mention gate.
+    A non-default role assigned to the whole server is an @everyone-equivalent
+    mass ping: ``NotificationCreatorMixin.create_notifications`` fans a ROLE
+    mention out to all of that role's members, exactly like the default
+    ``is_default = 1`` role.  Checking the ``is_default`` flag alone lets such
+    a "recreated everyone" role evade the mass-mention gate.
+
+    The fan-out always skips the message author, so a role held by every member
+    *except the author* reaches precisely the same audience as @everyone.
+    ``exclude_user_id`` is therefore removed from BOTH counts: the verdict is
+    true when the role covers every member the fan-out could actually notify.
+    Omitting it measures literal full-server coverage (useful for callers that
+    do not have an author).
 
     Bounded set-based counts keep this to a fixed number of round trips (no
-    per-member scans).  A well-formed ``COUNT(*)`` always returns a row with
-    the ``n`` alias; a query failure fails closed (treat as covering everyone,
-    so an unverifiable audience cannot authorize a mass ping).  A backend that
-    cannot answer these counts at all (e.g. a minimal stub) keeps the
-    pre-existing role-mention behaviour rather than denying legitimate pings.
+    per-member scans), independent of member/role counts.  A well-formed
+    ``COUNT(*)`` always returns a row with the ``n`` alias; a query failure
+    fails closed (treat as covering everyone, so an unverifiable audience
+    cannot authorize a mass ping).  A backend that cannot answer these counts
+    at all (e.g. a minimal stub) keeps the pre-existing role-mention behaviour
+    rather than denying legitimate pings.  A server with no other members is
+    not classified as a mass ping (nothing to fan out to).
     """
     try:
-        total = db.fetch_one(
-            "SELECT COUNT(*) AS n FROM srv_members WHERE server_id = ?",
-            (server_id,),
-        )
-        covered = db.fetch_one(
-            """SELECT COUNT(DISTINCT m.user_id) AS n
-               FROM srv_member_roles mr
-               JOIN srv_members m ON mr.member_id = m.id
-               WHERE mr.role_id = ? AND m.server_id = ?""",
-            (role_id, server_id),
-        )
+        if exclude_user_id is None:
+            total = db.fetch_one(
+                "SELECT COUNT(*) AS n FROM srv_members WHERE server_id = ?",
+                (server_id,),
+            )
+            covered = db.fetch_one(
+                """SELECT COUNT(DISTINCT m.user_id) AS n
+                   FROM srv_member_roles mr
+                   JOIN srv_members m ON mr.member_id = m.id
+                   WHERE mr.role_id = ? AND m.server_id = ?""",
+                (role_id, server_id),
+            )
+        else:
+            total = db.fetch_one(
+                "SELECT COUNT(*) AS n FROM srv_members "
+                "WHERE server_id = ? AND user_id != ?",
+                (server_id, exclude_user_id),
+            )
+            covered = db.fetch_one(
+                """SELECT COUNT(DISTINCT m.user_id) AS n
+                   FROM srv_member_roles mr
+                   JOIN srv_members m ON mr.member_id = m.id
+                   WHERE mr.role_id = ? AND m.server_id = ? AND m.user_id != ?""",
+                (role_id, server_id, exclude_user_id),
+            )
     except Exception:
         return True
     if (

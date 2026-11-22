@@ -40,7 +40,7 @@ class MentionValidationMixin(NotificationProtocol):
         # missing row still marks the mention invalid, and the
         # cross-server / non-mentionable checks still run against the same row.
         roles_by_id: Dict[SnowflakeID, Optional[dict]] = {}
-        # Memo of the "role covers every server member" verdict. The
+        # Memo of the "role covers every *other* server member" verdict. The
         # mass-mention gate and the per-mention decision below must agree, so
         # the (single) anti-join query is shared through this memo.
         all_member_roles: Dict[SnowflakeID, bool] = {}
@@ -52,8 +52,13 @@ class MentionValidationMixin(NotificationProtocol):
 
         def _is_all_member_role(role_id: SnowflakeID) -> bool:
             if role_id not in all_member_roles:
+                # Exclude the author: create_notifications always skips the
+                # author when fanning a role mention out, so a role held by
+                # every OTHER member pings the exact @everyone audience and
+                # must clear the same gate. The author is fixed for this call,
+                # so keying the memo by role id alone is sufficient.
                 all_member_roles[role_id] = role_covers_all_members(
-                    self._db, role_id, server_id
+                    self._db, role_id, server_id, user_id
                 )
             return all_member_roles[role_id]
 
@@ -62,10 +67,12 @@ class MentionValidationMixin(NotificationProtocol):
 
             Every member holds the default (``is_default = 1``) role, so a
             ``<@&default_role_id>`` mention fans out to the entire server.
-            A non-default role explicitly assigned to every member has the
-            same fan-out (``create_notifications`` pings all of a role's
-            members), so it must clear the same gate -- otherwise a "recreated
-            everyone" role evades detection simply by lacking ``is_default``.
+            A non-default role assigned to every member OTHER THAN the author
+            has the same fan-out: ``create_notifications`` pings all of a
+            role's members except the author, exactly as it does for
+            @everyone.  It must clear the same gate -- otherwise a "recreated
+            everyone" role that merely omits the author evades detection by
+            lacking ``is_default`` and by failing a literal all-members count.
             Restrict the verdict to a role that exists and belongs to this
             server; the role row is memoised by ``_role_row`` (the validation
             loop below needs it too), so the flag check adds no extra query.
@@ -84,8 +91,8 @@ class MentionValidationMixin(NotificationProtocol):
         # SECURITY: an explicit ``@everyone``/``@here``, a mention of the
         # CURRENT channel (``<#this-channel>``), a mention of the server's
         # default ``@everyone`` role (``<@&default_role_id>``), AND a mention of
-        # any role held by every server member all fan out to every member who
-        # can view the channel (see
+        # any role held by every other server member all fan out to every
+        # member who can view the channel (see
         # NotificationCreatorMixin.create_notifications). Each is therefore an
         # @everyone-equivalent mass ping and must clear the SAME fail-closed
         # permission gate. Compute that verdict once from the existing gate
@@ -191,11 +198,12 @@ class MentionValidationMixin(NotificationProtocol):
                         and mass_mention_error is not None
                     ):
                         # Mentioning the default (@everyone) role -- or any
-                        # role held by every member -- pings the whole server,
-                        # an @everyone-equivalent mass ping. Gate it with the
-                        # SAME fail-closed permission as @everyone/@here and a
-                        # self-channel mention, even when the role is marked
-                        # mentionable or the author holds roles.manage.
+                        # role held by every OTHER member -- pings the whole
+                        # server, an @everyone-equivalent mass ping. Gate it
+                        # with the same fail-closed permission as
+                        # @everyone/@here and a self-channel mention, even
+                        # when the role is marked mentionable or the author
+                        # holds roles.manage.
                         m.valid = False
                         m.error = mass_mention_error
                     elif not bool(role["mentionable"]):
