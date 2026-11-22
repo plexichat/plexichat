@@ -121,7 +121,7 @@ The following scopes are defined in `src/core/admin/permissions.py`. Only these 
 | `servers.delete` | Delete servers |
 | `servers.transfer` | Transfer server ownership |
 
-There is no `servers.ban` scope. To ban or unban users platform-wide, use `admin.moderation.bans` (see [Platform moderation](#platform-moderation)).
+There is no `servers.ban` scope. To ban or unban users platform-wide, use `admin.moderation.bans` (see [Platform moderation](#moderation)).
 
 ### Moderation
 
