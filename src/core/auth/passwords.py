@@ -5,6 +5,8 @@ This module handles password changes, reset requests, resets, and validation.
 """
 
 import re
+import secrets
+import string
 import unicodedata
 from pathlib import Path
 from typing import List, Tuple, Set
@@ -22,6 +24,47 @@ from ._lazy import _get_auth_manager
 # operator misconfigures ``password.max_length`` or an internal caller skips
 # the API schema. This matches the request-schema cap of 1024 characters.
 _ABSOLUTE_MAX_PASSWORD_LENGTH = 1024
+
+# Every glyph here is a member of the ``require_special`` regex enforced by
+# ``validate_password`` below, so a password carrying one of them can never be
+# rejected for lacking a special character.
+_GENERATED_PASSWORD_SPECIALS = "!@#$%^&*"
+
+
+def generate_policy_compliant_password(token_bytes: int = 32) -> str:
+    """Return a CSPRNG password that always satisfies ``validate_password``.
+
+    ``secrets.token_urlsafe(32)`` carries ~256 bits of entropy, but its
+    base64url alphabet only *probabilistically* contains the classes the
+    policy requires. Only ``-`` and ``_`` count as "special" and ~26% of draws
+    contain neither, so callers that hand the raw token to ``register`` (most
+    notably OAuth auto-link/registration) intermittently get a
+    ``WeakPasswordError`` even though the token is cryptographically strong.
+    Appending one guaranteed character from every class the policy requires
+    preserves the full entropy of the token while making compliance
+    deterministic.
+    """
+    base = secrets.token_urlsafe(token_bytes)
+    policy = get_password_config()
+
+    guaranteed: List[str] = []
+    if policy.get("require_uppercase", True):
+        guaranteed.append(secrets.choice(string.ascii_uppercase))
+    if policy.get("require_lowercase", True):
+        guaranteed.append(secrets.choice(string.ascii_lowercase))
+    if policy.get("require_digit", True):
+        guaranteed.append(secrets.choice(string.digits))
+    if policy.get("require_special", True):
+        guaranteed.append(secrets.choice(_GENERATED_PASSWORD_SPECIALS))
+    suffix = "".join(guaranteed)
+
+    password = base + suffix
+    # Respect the configured ceiling; trim only the CSPRNG tail if the
+    # guaranteed suffix would otherwise push the password over max_length.
+    max_length = min(policy.get("max_length", 128), _ABSOLUTE_MAX_PASSWORD_LENGTH)
+    if len(password) > max_length:
+        password = base[: max(0, max_length - len(suffix))] + suffix
+    return password
 
 
 def _password_policy_forms(value: str) -> Set[str]:

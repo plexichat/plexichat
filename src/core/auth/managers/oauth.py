@@ -16,6 +16,7 @@ from ..models import (
     AuthStatus,
 )
 from ..permissions import has_permission
+from ..passwords import generate_policy_compliant_password
 
 
 from .protocol import AuthManagerProtocol
@@ -128,7 +129,13 @@ class OAuthMixin(AuthManagerProtocol):
                 username = f"{base_username}{secrets.token_hex(2)}"
                 attempts += 1
 
-            random_password = secrets.token_urlsafe(32)
+            # A raw token_urlsafe(32) draw has ~256 bits of entropy but only a
+            # ~74% chance of containing any character the policy counts as
+            # "special", so it intermittently failed ``register``'s password
+            # validation and broke OAuth auto-link/registration. Use the
+            # generator that guarantees every required class while keeping the
+            # full CSPRNG strength of the token.
+            random_password = generate_policy_compliant_password()
 
             try:
                 user = self.register(
