@@ -105,17 +105,32 @@ class TypingAudienceCache:
             if cached is not _MISSING:
                 self._hits += 1
                 self._entries.move_to_end(key)
-                return list(cached)  # type: ignore[arg-type]
+                # Defence in depth: a value written before the type guard in
+                # ``put`` was added must never launder a non-int viewer into a
+                # genuine principal on a warm read.
+                return [uid for uid in cached if type(uid) is int]  # type: ignore[union-attr]
             self._misses += 1
             return None
 
     def put(self, server_id: int, channel_id: int, viewers: Iterable[int]) -> None:
-        """Store a channel's full viewer set under the current epochs."""
+        """Store a channel's full viewer set under the current epochs.
+
+        Only genuine integer ids are admitted. ``get_member_user_ids`` is the
+        raw ``srv_members.user_id`` projection with no type filtering, and the
+        permission resolver coerces ids with ``int()``; a malformed-but-coercible
+        value (``"05"``, ``" 8 "``, ``True``, ``5.9``) can pass ``channels.view``
+        and reach this boundary. Coercing it here with ``int(uid)`` would launder
+        it into a principal that never proved view rights, and because a warm
+        ``get`` returns plain ints it would then sail past the fan-out boundary's
+        ``type(uid) is int`` filter — admitting the wrong viewer to
+        TYPING_START/STOP. Reject non-int values instead (``type()`` also rejects
+        bool). Genuine integer members are preserved verbatim.
+        """
         rbac = self._rbac_epoch(server_id)
         if rbac is None:
             return
         key = (self._epoch(), rbac, int(server_id), int(channel_id))
-        stored = tuple(int(uid) for uid in viewers)
+        stored = tuple(uid for uid in viewers if type(uid) is int)
         with self._lock:
             self._prune_stale_locked()
             self._entries[key] = stored
