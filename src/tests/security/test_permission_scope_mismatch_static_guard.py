@@ -45,6 +45,17 @@ closes that gap by reading the source instead of executing it:
    same analyser to prove it flags the canonical bug, the reverse mismatch, the
    loop variable form, and that it accepts correct scope and documented cases.
 
+5. PERMISSION-DICT GATES -- ``get_permissions(user, server[, channel])``
+   returns a permission dict that call sites gate with ``[perm]`` or
+   ``.get(perm)``, often via an assigned local (exactly the form N662 used).
+   Those dict gates are invisible to the ``has_permission``-based scan above,
+   which is how ``messages.export_transcript`` was resolved at channel scope
+   unnoticed. They are analysed separately: the permission key is resolved
+   from a literal (or a loop enum) and the catalog supplies its scope. A
+   server-scoped permission resolved with a ``channel_id``/``cid`` is a
+   finding, unless the (permission, scope) pair is allowlisted with a written
+   reason (see :data:`DICT_GATE_SCOPE_ALLOWLIST`).
+
 No files are mutated; all self-test inputs are in-memory strings.
 """
 
@@ -91,6 +102,68 @@ EXPECTED_CHANNEL_SCOPED = frozenset(
     }
 )
 
+# Permission/scope pairs that are legitimately produced by a *dict* gate on a
+# channel-scoped ``get_permissions`` result. The catalog groups voice rights
+# under a plain ``# Voice permissions`` section (no ``(per channel)`` marker),
+# so a bare catalog lookup would classify them as server-scoped and flag the
+# entirely correct ``get_permissions(user, server, cid)["voice.connect"]``
+# pattern. Voice participation is a per-channel right enforced against that
+# channel's overrides, so it is documented here. The ``messages.*`` entries are
+# already channel-scoped in the catalog (no finding on their own); they are
+# listed for completeness so the channel-scoped message/voice set is explicit.
+DICT_GATE_SCOPE_ALLOWLIST = {
+    ("voice.connect", _CHANNEL): (
+        "Joining a voice channel is a per-channel participation right resolved "
+        "against that channel's overrides; the catalog groups voice rights "
+        "without a '(per channel)' marker, but channel scope is required."
+    ),
+    ("voice.speak", _CHANNEL): (
+        "Speaking/streaming is a per-voice-channel participation right "
+        "evaluated against that channel's overrides."
+    ),
+    ("voice.mute_members", _CHANNEL): (
+        "Moderating members in a voice channel is bounded to that channel's "
+        "overrides; channel scope is intentional."
+    ),
+    ("voice.deafen_members", _CHANNEL): (
+        "Deafening members in a voice channel is bounded to that channel's "
+        "overrides; channel scope is intentional."
+    ),
+    ("voice.move_members", _CHANNEL): (
+        "Moving members between voice channels is evaluated against the "
+        "source channel's overrides; channel scope is intentional."
+    ),
+    ("messages.send", _CHANNEL): (
+        "Sending is a per-channel message right (catalog '(per channel)' "
+        "section); a channel-scoped dict gate is the correct scope."
+    ),
+    ("messages.read", _CHANNEL): (
+        "Reading is a per-channel message right; channel scope is correct."
+    ),
+    ("messages.manage", _CHANNEL): (
+        "Deleting others' messages is a per-channel message right; channel "
+        "scope is correct."
+    ),
+    ("messages.embed_links", _CHANNEL): (
+        "Embedding links is a per-channel message right; channel scope is correct."
+    ),
+    ("messages.attach_files", _CHANNEL): (
+        "Attaching files is a per-channel message right; channel scope is correct."
+    ),
+    ("messages.mention_everyone", _CHANNEL): (
+        "Mentions are a per-channel message right; channel scope is correct."
+    ),
+    ("messages.add_reactions", _CHANNEL): (
+        "Reactions are a per-channel message right; channel scope is correct."
+    ),
+    ("messages.use_external_emojis", _CHANNEL): (
+        "External emoji use is a per-channel message right; channel scope is correct."
+    ),
+    ("messages.bypass_slowmode", _CHANNEL): (
+        "Slowmode bypass is a per-channel message right; channel scope is correct."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -120,6 +193,7 @@ class Stats:
 
     permission_checks: int = 0
     manage_calls: int = 0
+    dict_gates: int = 0
     parsed_files: int = 0
 
 
@@ -353,6 +427,13 @@ class CheckLayout:
 
 CANONICAL_LAYOUT = CheckLayout()
 
+# ``get_permissions(user, server, channel_id=None)`` carries the channel at
+# positional index 2 (not 3 like the check functions). Its result is a dict
+# that call sites gate directly, so only the channel argument matters here.
+GET_PERMISSIONS_LAYOUT = CheckLayout(
+    perm_index=None, perm_kwarg=None, channel_index=2
+)
+
 
 def _arg_at(call, index, kwarg=None, kwargs=frozenset()):
     """Return the expression passed in a given argument slot, or None."""
@@ -455,6 +536,33 @@ def _resolve_alias_definitions(tree):
     return aliases, set(functions) - set(aliases)
 
 
+def _perm_literals(expr, ancestors, scopes):
+    """Resolve one expression to catalog permission keys (or an empty list).
+
+    Literal strings and ``for name in ("a", "b")`` enum literals are supported.
+    Anything that cannot be tied to a catalog key is skipped so wrappers /
+    forwarders never produce findings. Shared by the call-based scan and the
+    permission-dict-gate scan below.
+    """
+    perms = []
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        perms.append(expr.value)
+    elif isinstance(expr, ast.Name):
+        for ancestor in ancestors:
+            if (
+                isinstance(ancestor, (ast.For, ast.AsyncFor))
+                and isinstance(ancestor.target, ast.Name)
+                and ancestor.target.id == expr.id
+                and isinstance(ancestor.iter, (ast.Tuple, ast.List))
+            ):
+                for element in ancestor.iter.elts:
+                    if isinstance(element, ast.Constant) and isinstance(
+                        element.value, str
+                    ):
+                        perms.append(element.value)
+    return list(dict.fromkeys(p for p in perms if p in scopes))
+
+
 def _resolve_permissions(call, ancestors, scopes, layout=CANONICAL_LAYOUT):
     """Resolve a call's permission to catalog literals (or an empty list).
 
@@ -475,22 +583,8 @@ def _resolve_permissions(call, ancestors, scopes, layout=CANONICAL_LAYOUT):
 
     perms = []
     for cand in candidates:
-        if isinstance(cand, ast.Constant) and isinstance(cand.value, str):
-            perms.append(cand.value)
-        elif isinstance(cand, ast.Name):
-            for ancestor in ancestors:
-                if (
-                    isinstance(ancestor, (ast.For, ast.AsyncFor))
-                    and isinstance(ancestor.target, ast.Name)
-                    and ancestor.target.id == cand.id
-                    and isinstance(ancestor.iter, (ast.Tuple, ast.List))
-                ):
-                    for element in ancestor.iter.elts:
-                        if isinstance(element, ast.Constant) and isinstance(
-                            element.value, str
-                        ):
-                            perms.append(element.value)
-    return list(dict.fromkeys(p for p in perms if p in scopes))
+        perms.extend(_perm_literals(cand, ancestors, scopes))
+    return list(dict.fromkeys(perms))
 
 
 def _call_scope(call, layout=CANONICAL_LAYOUT):
@@ -500,6 +594,119 @@ def _call_scope(call, layout=CANONICAL_LAYOUT):
     if any(kw.arg in layout.channel_kwargs for kw in call.keywords):
         return _CHANNEL
     return _SERVER
+
+
+def _analyze_permission_dict_gates(
+    tree, walked, ancestors_of, path, scopes, findings, stats
+):
+    """Analyse dict gates applied to ``get_permissions(...)`` results.
+
+    ``get_permissions(user, server[, channel])`` returns a permission dict that
+    call sites gate with ``[perm]`` / ``.get(perm)``. N662 fixed one such gate
+    that was resolved at channel scope, but this form was invisible to the
+    ``has_permission``-based scan. For every gate we resolve the permission key
+    (literal or loop enum) and the scope of the originating ``get_permissions``
+    call; a server-scoped permission resolved with a channel argument (or the
+    reverse) is a finding unless documented/allowlisted.
+
+    Both the direct form (``get_permissions(...)[perm]``) and the assigned-local
+    form (``perms = get_permissions(...) or {}; perms.get(perm)``) are handled,
+    as is the ``or {}`` wrapper. All self-test inputs flow through this same
+    function, so they exercise the production logic.
+    """
+    seen = set()
+
+    for gp, gp_anc in walked:
+        if not isinstance(gp, ast.Call) or _call_name(gp) != "get_permissions":
+            continue
+        scope = _call_scope(gp, GET_PERMISSIONS_LAYOUT)
+        funcs = [
+            a for a in gp_anc if isinstance(a, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        function = funcs[-1].name if funcs else "<module>"
+        scope_node = funcs[-1] if funcs else tree
+
+        # Walk through an ``or {}`` (or similar) wrapper to find the actual
+        # gate expression / assignment that consumes this result.
+        wrapper = gp
+        parent = gp_anc[-1] if gp_anc else None
+        while isinstance(parent, ast.BoolOp):
+            wrapper = parent
+            w_anc = ancestors_of[id(parent)]
+            parent = w_anc[-1] if w_anc else None
+
+        gate_exprs = []  # (permission expression, its ancestor chain)
+
+        # Direct: ``get_permissions(...)[perm]`` / ``get_permissions(...).get(perm)``.
+        if isinstance(parent, ast.Subscript) and parent.value is wrapper:
+            gate_exprs.append((parent.slice, ancestors_of[id(parent)]))
+        # ``get_permissions(...).get(perm)``: the call is the *value* of the
+        # ``.get`` attribute, whose parent is the outer call.
+        if (
+            isinstance(parent, ast.Attribute)
+            and parent.attr == "get"
+            and parent.value is wrapper
+        ):
+            p_anc = ancestors_of[id(parent)]
+            grandparent = p_anc[-1] if p_anc else None
+            if (
+                isinstance(grandparent, ast.Call)
+                and grandparent.func is parent
+                and grandparent.args
+            ):
+                gate_exprs.append((grandparent.args[0], ancestors_of[id(grandparent)]))
+        # ``(get_permissions(...) or {}).get(perm)`` handled above via wrapper,
+        # plus the already-unwrapped ``Call(func=Attribute(get))`` parent form.
+        if (
+            isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Attribute)
+            and parent.func.attr == "get"
+            and parent.func.value is wrapper
+            and parent.args
+        ):
+            gate_exprs.append((parent.args[0], ancestors_of[id(parent)]))
+
+        # Assigned local: ``perms = get_permissions(...)[or {}]; perms[perm]``.
+        target = None
+        if isinstance(parent, ast.Assign) and len(parent.targets) == 1:
+            if isinstance(parent.targets[0], ast.Name):
+                target = parent.targets[0].id
+        elif isinstance(parent, ast.NamedExpr) and isinstance(parent.target, ast.Name):
+            target = parent.target.id
+        if target:
+            for use in ast.walk(scope_node):
+                if (
+                    isinstance(use, ast.Call)
+                    and isinstance(use.func, ast.Attribute)
+                    and use.func.attr == "get"
+                    and isinstance(use.func.value, ast.Name)
+                    and use.func.value.id == target
+                    and use.args
+                ):
+                    gate_exprs.append((use.args[0], ancestors_of[id(use)]))
+                if (
+                    isinstance(use, ast.Subscript)
+                    and isinstance(use.value, ast.Name)
+                    and use.value.id == target
+                ):
+                    gate_exprs.append((use.slice, ancestors_of[id(use)]))
+
+        for perm_expr, gate_anc in gate_exprs:
+            for perm in _perm_literals(perm_expr, gate_anc, scopes):
+                if (id(gp), perm) in seen:
+                    continue
+                seen.add((id(gp), perm))
+                stats.dict_gates += 1
+                intended = scopes[perm]
+                if scope == intended:
+                    continue
+                if (perm, scope) in DICT_GATE_SCOPE_ALLOWLIST:
+                    continue
+                finding = Finding(
+                    path, function, "get_permissions", perm, scope, intended
+                )
+                if not _is_documented(finding):
+                    findings.append(finding)
 
 
 def _analyze_source(source, path, scopes=None):
@@ -516,7 +723,9 @@ def _analyze_source(source, path, scopes=None):
     aliases, unresolved = _resolve_alias_definitions(tree)
     findings = []
     stats = Stats(parsed_files=1)
-    for node, ancestors in _walk_with_ancestors(tree):
+    walked = list(_walk_with_ancestors(tree))
+    ancestors_of = {id(node): ancestors for node, ancestors in walked}
+    for node, ancestors in walked:
         if not isinstance(node, ast.Call):
             continue
         name = _call_name(node)
@@ -559,6 +768,10 @@ def _analyze_source(source, path, scopes=None):
                 findings.append(
                     Finding(path, function, name, perm, scope, intended)
                 )
+
+    _analyze_permission_dict_gates(
+        tree, walked, ancestors_of, path, scopes, findings, stats
+    )
     return findings, stats
 
 
@@ -572,12 +785,17 @@ def _scan_tree():
             if "__pycache__" in path.parts:
                 continue
             rel = str(path.relative_to(SRC))
-            file_findings, stats = _analyze_source(
-                path.read_text(encoding="utf-8"), rel, scopes
-            )
+            try:
+                source_text = path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                # A concurrent writer may atomically replace a file between the
+                # glob and the read; skip it rather than fail the whole guard.
+                continue
+            file_findings, stats = _analyze_source(source_text, rel, scopes)
             findings.extend(file_findings)
             total.permission_checks += stats.permission_checks
             total.manage_calls += stats.manage_calls
+            total.dict_gates += stats.dict_gates
             total.parsed_files += stats.parsed_files
     return findings, total
 
@@ -631,6 +849,7 @@ def test_permission_scope_guard_has_no_unexpected_mismatch():
     assert stats.parsed_files > 200
     assert stats.permission_checks > 100
     assert stats.manage_calls > 0
+    assert stats.dict_gates > 0, "permission-dict-gate scan must not be vacuous"
     assert findings, "the analyser must actually detect known scope mismatches"
 
     unexpected = [f for f in findings if not _is_documented(f)]
@@ -901,3 +1120,99 @@ def test_alias_resolution_is_active_on_real_tree():
     assert alias_findings, "no alias checks enumerated -- resolution is vacuous"
     assert all(_is_documented(f) for f in alias_findings)
     assert {f.permission for f in alias_findings} >= {"channels.view", "threads.manage"}
+
+
+# ---------------------------------------------------------------------------
+# Permission-dict-gate self-tests -- the N662 form through the same analyser
+# ---------------------------------------------------------------------------
+
+
+def test_selftest_dict_gate_flags_server_perm_with_channel_scope():
+    """The exact N662 bug: assigned-local dict gate with a channel id."""
+    source = '''
+    def request_transcript_export(servers, user, server_id, cid):
+        permissions = servers.get_permissions(user, server_id, cid) or {}
+        if not permissions.get("messages.export_transcript"):
+            return None
+        if not permissions["administrator"]:
+            return None
+        return "exported"
+    '''
+    findings, stats = _analyze_source(source, _NOVEL_PATH)
+    gate_findings = [f for f in findings if f.call == "get_permissions"]
+    assert stats.dict_gates == 2
+    assert {(f.permission, f.scope, f.intended) for f in gate_findings} == {
+        ("messages.export_transcript", _CHANNEL, _SERVER),
+        ("administrator", _CHANNEL, _SERVER),
+    }
+    assert all(f.function == "request_transcript_export" for f in gate_findings)
+    assert all(not _is_documented(f) for f in gate_findings), (
+        "a novel server-scoped dict gate at channel scope must fail closed"
+    )
+
+
+def test_selftest_dict_gate_direct_subscript_and_get_are_flagged():
+    """Both direct gate forms are recognised, not just the assigned-local form."""
+    source = '''
+    def gate(servers, user, server_id, cid):
+        assert servers.get_permissions(user, server_id, cid)["messages.export_transcript"]
+        assert servers.get_permissions(user, server_id, cid).get("administrator")
+    '''
+    findings, stats = _analyze_source(source, _NOVEL_PATH)
+    gate_findings = [f for f in findings if f.call == "get_permissions"]
+    assert stats.dict_gates == 2
+    assert {f.permission for f in gate_findings} == {
+        "messages.export_transcript",
+        "administrator",
+    }
+    assert all(f.scope == _CHANNEL and f.intended == _SERVER for f in gate_findings)
+
+
+def test_selftest_dict_gate_accepts_correct_scopes():
+    """Correct server scope and channel scope are both accepted."""
+    source = '''
+    def ok(servers, user, server_id, cid):
+        server_perms = servers.get_permissions(user, server_id)
+        assert server_perms["messages.export_transcript"]
+        assert server_perms.get("administrator")
+        channel_perms = servers.get_permissions(user, server_id, cid) or {}
+        assert channel_perms["messages.send"]
+        assert channel_perms.get("messages.bypass_slowmode")
+    '''
+    findings, stats = _analyze_source(source, _NOVEL_PATH)
+    assert stats.dict_gates == 4
+    assert [f for f in findings if f.call == "get_permissions"] == []
+
+
+def test_selftest_dict_gate_allowlist_is_precise_and_non_vacuous():
+    """Documented channel-scoped message/voice perms are allowed; others are not."""
+    for (perm, scope), reason in DICT_GATE_SCOPE_ALLOWLIST.items():
+        assert scope == _CHANNEL
+        assert perm in catalog_scopes(), "allowlisted perm must be real"
+        assert perm in EXPECTED_CHANNEL_SCOPED or perm.startswith("voice.")
+        assert isinstance(reason, str) and len(reason.strip()) >= 30
+
+    source = '''
+    def join(servers, user, server_id, cid):
+        perms = servers.get_permissions(user, server_id, cid) or {}
+        assert perms.get("voice.connect")          # allowlisted voice perm
+        assert perms["messages.send"]              # catalog channel-scoped
+        assert not perms.get("messages.export_transcript")  # real finding
+    '''
+    findings, _ = _analyze_source(source, _NOVEL_PATH)
+    gate_findings = [f for f in findings if f.call == "get_permissions"]
+    assert len(gate_findings) == 1, "only the unallowlisted server perm is flagged"
+    f = gate_findings[0]
+    assert (f.permission, f.scope, f.intended) == (
+        "messages.export_transcript",
+        _CHANNEL,
+        _SERVER,
+    )
+    # Removing the allowlist key would make the voice gate a finding too.
+    assert ("voice.connect", _CHANNEL) in DICT_GATE_SCOPE_ALLOWLIST
+
+
+def test_dict_gate_scan_is_active_on_real_tree():
+    """Dict gates exist in the real tree, so the new scan is not vacuous."""
+    _, stats = _scan_tree()
+    assert stats.dict_gates >= 3
