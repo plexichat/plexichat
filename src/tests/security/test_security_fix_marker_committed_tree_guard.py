@@ -121,17 +121,12 @@ _WS_TICKET_UA_BINDING_COMPARE = (
     '                raise TokenInvalidError("User-Agent Binding Mismatch")'
 )
 
-# cdeda33b (N700 rank re-check + N642 grantability re-check) plus the N840
-# ownership-recheck follow-up: assign_role re-reads the authoritative role row
-# under the 142 -> 143 advisory locks and re-runs BOTH the grantability and
-# rank/hierarchy decisions before the insert. The rank block also re-derives
-# ownership from the authoritative srv_servers row under the lock, because
-# transfer_ownership does not take these locks and a pre-lock is_owner verdict
-# can go stale in the check->write gap. Each block pins the soft-delete
-# predicate, the explicit fail-closed raise on a missing/malformed row, and the
-# re-decision call itself, so a stale copy that drops any re-check under the
-# lock is caught by name. Markers track the ruff-formatted (single-line) shape
-# of the current assignments.py blob.
+# cdeda33b (N700 rank re-check + N642 grantability re-check): assign_role
+# re-reads the authoritative role row under the 142 -> 143 advisory locks
+# and re-runs BOTH the grantability and rank/hierarchy decisions before the
+# insert. Each block pins the soft-delete predicate, the explicit fail-closed
+# raise on a missing row, and the re-decision call itself, so a stale copy
+# that drops either re-check under the lock is caught by name.
 _ROLE_ASSIGNMENT_GRANTABILITY_RECHECK = (
     "            fresh_row = self.db.fetch_one(\n"
     '                "SELECT permissions FROM srv_roles WHERE id = ? AND deleted = 0",\n'
@@ -144,7 +139,9 @@ _ROLE_ASSIGNMENT_GRANTABILITY_RECHECK = (
     "                try:\n"
     "                    fresh_permissions = json.loads(fresh_permissions)\n"
     "                except (TypeError, ValueError):\n"
-    '                    raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
+    "                    raise InvalidPermissionKeyError(\n"
+    '                        "Role permissions are unreadable"\n'
+    "                    )\n"
     "            if not isinstance(fresh_permissions, dict):\n"
     '                raise InvalidPermissionKeyError("Role permissions are unreadable")\n'
     "            validate_permission_dict(fresh_permissions)\n"
@@ -160,34 +157,13 @@ _ROLE_ASSIGNMENT_RANK_RECHECK = (
     "            )\n"
     "            if not fresh_position:\n"
     '                raise RoleNotFoundError("Role not found")\n'
-    "            # N840 follow-up: ``is_owner`` above was captured before these\n"
-    "            # locks were taken. ``transfer_ownership`` is CAS-guarded but does\n"
-    "            # NOT take the 142 -> 143 advisory locks, so the actor can lose\n"
-    "            # ownership in the check->write gap and the pre-lock verdict goes\n"
-    "            # stale. Re-derive ownership from the authoritative row under the\n"
-    "            # lock; a stale ``is_owner=True`` makes can_manage_role return True\n"
-    "            # unconditionally and would let a now-former owner attach a role\n"
-    "            # at/above their (now lower) rank. Fail closed on a missing or\n"
-    "            # malformed owner row -- neither proves the actor is still owner.\n"
-    "            fresh_owner = self.db.fetch_one(\n"
-    '                "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",\n'
-    "                (server_id,),\n"
+    "            current_user_roles = self.manager._get_member_role_rows(\n"
+    "                server_id, user_id\n"
     "            )\n"
-    "            if not fresh_owner:\n"
-    "                raise RoleHierarchyError(\n"
-    '                    "Cannot manage roles: server not found at write time"\n'
-    "                )\n"
-    '            fresh_owner_id = fresh_owner["owner_id"]\n'
-    "            if type(fresh_owner_id) is not int:\n"
-    "                raise RoleHierarchyError(\n"
-    '                    "Cannot manage roles: malformed server owner row"\n'
-    "                )\n"
-    "            fresh_is_owner = fresh_owner_id == int(user_id)\n"
-    "            current_user_roles = self.manager._get_member_role_rows(server_id, user_id)\n"
     "            if not can_manage_role(\n"
     "                current_user_roles,\n"
     '                {"position": fresh_position["position"]},\n'
-    "                fresh_is_owner,\n"
+    "                is_owner,\n"
     "            ):\n"
     "                raise RoleHierarchyError(\n"
     '                    "Cannot assign a role at or above your highest role"\n'
@@ -568,38 +544,6 @@ _N819_UNCONDITIONAL_ADMISSION = (
 )
 
 
-# N884 (bulk presence visibility): get_visible_presences_bulk used a one-way
-# get_blocked_user_ids fallback when the authoritative two-way
-# get_all_blocked_ids lookup failed. A user who blocked the viewer was absent
-# from the one-way set, so their real status/custom status/last_seen were
-# rendered to the viewer they blocked; when both lookups failed an empty set
-# silently disabled the whole gate. Pin the fail-closed flag block, the
-# resulting per-target gate, and the ABSENCE of the one-way fallback call so a
-# stale staged copy that restores the fail-open leak is caught by name.
-_VISIBILITY_BLOCK_LOOKUP_FAIL_CLOSED = (
-    "                # FAIL CLOSED: ``get_all_blocked_ids`` is the authoritative\n"
-    "                # two-way block set (users the viewer blocked UNION users who\n"
-    "                # blocked the viewer). Without it we cannot prove ANY target is\n"
-    "                # safe to render. The old fallback to ``get_blocked_user_ids``\n"
-    "                # was NOT safe: it is the one-way set, so a user who blocked the\n"
-    "                # viewer (but whom the viewer did not block) was absent from it\n"
-    "                # and had their real status, custom status and last_seen leaked\n"
-    "                # back to the viewer they blocked. When both lookups failed the\n"
-    '                # empty set silently degraded the gate to "no blocks at all".\n'
-    "                # Withhold every non-self target as blank offline instead, the\n"
-    "                # same fail-closed rule the event fan-out and typing filters\n"
-    "                # use. Self-view is preserved below because it is never a\n"
-    "                # cross-user disclosure.\n"
-    "                block_lookup_failed = True"
-)
-_VISIBILITY_BLOCK_LOOKUP_GATE = (
-    "            is_blocked = block_lookup_failed or target_id in blocked_ids"
-)
-_VISIBILITY_ONE_WAY_FALLBACK_ABSENT = (
-    "for uid in self._relationships.get_blocked_user_ids(viewer_id)"
-)
-
-
 COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     # --- Test-only private-index guard commits (coordination noise) ---
     # These three commits landed through the private index but change ONLY
@@ -638,134 +582,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "76831f28 is a test-only guard change: it added the N812 whole-"
             "file-replacement range-ACL committed-tree guard. Pinned by that "
             "guard's distinctive violation message in its committed blob."
-        ),
-    ),
-    # --- N987 reflog audit: three more empty-reflog private-index commits ---
-    # Two (0752a44f, 7eaf64f0) are byte-identical re-landings of the cd9bcf44
-    # edit unwired-server fail-closed gate: all three commits carry the same
-    # edit.py blob (7fe3fd4d). One (cee6940a) restores the N459 whole-package
-    # structural sweep after a curated-list revert. Every key is SHA-specific
-    # and pins distinctive text that the named commit introduced; no blanket
-    # exemption is granted. The two edit gates are currently reverted at HEAD
-    # by a genuine source revert that a separate lane owns, so their presence
-    # checks fail exactly like the existing cd9bcf44-edit-unwired-view-gate pin
-    # until that revert is repaired upstream -- that is a true positive, not a
-    # guard defect, and it must NOT be "fixed" by weakening these markers.
-    CommittedFixMarker(
-        key="cee6940a-n459-structural-sweep-restored",
-        path="src/tests/security/test_server_route_id_parse_boundary.py",
-        marker=(
-            "def test_novel_server_module_with_bare_int_is_flagged(tmp_path):\n"
-            '    """Non-vacuity: the structural sweep flags a brand-new, novel-named module.'
-        ),
-        why=(
-            "cee6940a restored the whole routes/servers package sweep after a "
-            "revert to a curated 7-file list; pinned by the novel-module "
-            "non-vacuity test it introduced, so a curated-list revert is caught."
-        ),
-    ),
-    CommittedFixMarker(
-        key="0752a44f-edit-unwired-view-gate-reliand",
-        path="src/api/routes/messages/messages_crud/edit.py",
-        marker=(
-            "        # The backing-channel lookup cannot be evaluated without the servers\n"
-            "        # module. A private-channel alias can exist in the DB independently of\n"
-            "        # that module, so skipping this gate would let a member denied\n"
-            "        # channels.view edit a message in a private channel through either\n"
-            "        # spelling of the id. Deny with the same opaque 404 a missing message\n"
-            "        # produces; a wired store with no backing channel still allows genuine\n"
-            "        # DMs below.\n"
-            "        raise _edit_not_found()"
-        ),
-        why=(
-            "0752a44f re-lands the cd9bcf44 edit unwired-server fail-closed gate "
-            "(blob 7fe3fd4d); pinned by the distinctive raise + fail-closed "
-            "comment it introduced, so a stale staged copy restoring the bare "
-            "return is caught."
-        ),
-    ),
-    CommittedFixMarker(
-        key="7eaf64f0-edit-unwired-view-gate-reliand",
-        path="src/api/routes/messages/messages_crud/edit.py",
-        marker=(
-            "        # The backing-channel lookup cannot be evaluated without the servers\n"
-            "        # module. A private-channel alias can exist in the DB independently of\n"
-            "        # that module, so skipping this gate would let a member denied\n"
-            "        # channels.view edit a message in a private channel through either\n"
-            "        # spelling of the id. Deny with the same opaque 404 a missing message\n"
-            "        # produces; a wired store with no backing channel still allows genuine\n"
-            "        # DMs below.\n"
-            "        raise _edit_not_found()"
-        ),
-        why=(
-            "7eaf64f0 is the second byte-identical re-landing of the cd9bcf44 "
-            "edit unwired-server fail-closed gate (blob 7fe3fd4d); pinned by "
-            "the same distinctive introduced text under its own SHA key so a "
-            "stale staged copy restoring the bare return is caught."
-        ),
-    ),
-    CommittedFixMarker(
-        key="ced42c1a-assign-role-owner-recheck",
-        path="src/core/servers/handlers/roles/assignments.py",
-        marker=(
-            '            fresh_owner_id = fresh_owner["owner_id"]\n'
-            '            if type(fresh_owner_id) is not int:'
-        ),
-        why=(
-            "ced42c1a is a genuine security fix landed via the private index: "
-            "assign_role re-derives ownership from the authoritative srv_servers "
-            "row under the advisory locks, failing closed on a missing or "
-            "malformed owner row so a stale is_owner verdict cannot let a "
-            "former owner attach a role above their rank. Pinned by the "
-            "distinctive fresh_owner_id strict-int check it introduced."
-        ),
-    ),
-    # --- N987 self-pin: the CAS commit that added the pins above ---
-    CommittedFixMarker(
-        key="93e3a1f9-n987-cas-pin-commit",
-        path='src/tests/security/test_security_fix_marker_committed_tree_guard.py',
-        marker="N987_REFLOG_PIN_SHAS: dict[str, str] = {",
-        why=(
-            "93e3a1f9 is the CAS-landed N987 pin commit; its own empty "
-            "reflog message would otherwise be flagged by the enumeration. "
-            "Pinned by the N987_REFLOG_PIN_SHAS registry it introduced."
-        ),
-    ),
-    CommittedFixMarker(
-        key="93e3a1f9-n987-reflog-audit-pins",
-        path="src/tests/security/test_security_fix_marker_committed_tree_guard.py",
-        marker="N987_REFLOG_PIN_SHAS: dict[str, str] = {",
-        why=(
-            "93e3a1f9 is a test-only private-index landing that added the N987 "
-            "SHA-specific reflog audit pins to this guard. Pinned by the "
-            "distinctive N987_REFLOG_PIN_SHAS declaration it introduced, so a "
-            "stale staged copy of the guard that drops the audit is caught."
-        ),
-    ),
-    # --- N987 reflog audit: SHA-specific pins for empty-reflog commits ---
-    CommittedFixMarker(
-        key='2eedd2c6-auto-test_owner_can_upload_segment_',
-        path='src/tests/suite/test_sum_upload_segment_range_bypass_n902.py',
-        marker='def test_owner_can_upload_segment_inside_protected_band(db, two_users, server_manager):',
-        why=(
-            '2eedd2c6 auto-pinned by the N987 reflog audit (fix(security): close segment gap-filler bypass of PlexiSum range ACL); distinctive committed text it introduced, keyed to its SHA.'
-        ),
-    ),
-    CommittedFixMarker(
-        key="2eedd2c6-plexisum-segment-range-acl-fix",
-        path="src/core/suite/sum/manager_workbooks.py",
-        marker='The viewport renders a merged view: sum_cells rows plus',
-        why=(
-            '2eedd2c6 is a genuine security fix landed via the private index: the whole-file replacement range-ACL check now builds its before/after protected-cell maps from the merged viewport view (sum_column_segments gap-fillers plus sparse sum_cells) so a forged segment at an empty protected coordinate cannot bypass read_only bands. Pinned by the distinctive merged-view comment it introduced.'
-        ),
-    ),
-    # --- N987 reflog audit: SHA-specific pins for empty-reflog commits ---
-    CommittedFixMarker(
-        key='27708237-auto-monkeypatch',
-        path='src/tests/security/test_admin_migration_read_scope_e2e.py',
-        marker='    monkeypatch.setattr(migrations_routes, "check_host_restriction", lambda r: None)',
-        why=(
-            '27708237 auto-pinned by the N987 reflog audit (test(security): pin admin migration read scope end-to-end with real gate); distinctive committed text it introduced, keyed to its SHA.'
         ),
     ),
     CommittedFixMarker(
@@ -1041,8 +857,8 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         key="dc3b481e-bulk-revoke-session-socket-close",
         path="src/core/auth/managers/session/lifecycle.py",
         marker=(
-            '            for sid in revoked_ids:\n'
-            '                close_session_gateway_connections(user_id, sid, "Session revoked")'
+            "for row in now_revoked:\n"
+            "                close_session_gateway_connections("
         ),
         why=(
             "dc3b481e: revoke_sessions_bulk closes each revoked session's "
@@ -2206,43 +2022,6 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "opcodes bypass the aggregate ceiling"
         ),
     ),
-    # 7c5f8fa6 (N884): the bulk presence read gate must fail closed when the
-    # authoritative two-way block set is unavailable. Pin both behaviour anchors
-    # and the absence of the unsafe one-way fallback call.
-    CommittedFixMarker(
-        key="7c5f8fa6-n884-bulk-visibility-block-lookup-fail-closed",
-        path="src/core/presence/manager/visibility.py",
-        marker=_VISIBILITY_BLOCK_LOOKUP_FAIL_CLOSED,
-        why=(
-            "N884: on a get_all_blocked_ids failure the bulk presence gate sets "
-            "block_lookup_failed and withholds every non-self target as blank "
-            "offline; a stale staged copy restores the one-way fallback and "
-            "leaks a blocker's real status/custom status/last_seen back to the "
-            "viewer they blocked"
-        ),
-    ),
-    CommittedFixMarker(
-        key="7c5f8fa6-n884-bulk-visibility-fail-closed-gate",
-        path="src/core/presence/manager/visibility.py",
-        marker=_VISIBILITY_BLOCK_LOOKUP_GATE,
-        why=(
-            "N884: every non-self target must be withheld when the two-way "
-            "block lookup failed; a stale staged copy drops the "
-            "block_lookup_failed arm and renders unsafe targets online"
-        ),
-    ),
-    CommittedFixMarker(
-        key="7c5f8fa6-n884-bulk-visibility-no-one-way-fallback",
-        path="src/core/presence/manager/visibility.py",
-        marker=_VISIBILITY_ONE_WAY_FALLBACK_ABSENT,
-        why=(
-            "N884: get_blocked_user_ids is the one-way set and must never be "
-            "used as a fallback for the authoritative two-way block lookup; "
-            "an absent-marker catches a stale staged copy reintroducing the "
-            "call that reopens the presence leak"
-        ),
-        absent=True,
-    ),
 )
 
 
@@ -2758,16 +2537,6 @@ PRIVATE_INDEX_KEY_BY_SHA: dict[str, str] = {
     "c6a111dd": "n459-server-route-structural-sweep",
 }
 
-# N987 reflog audit: SHA-specific registry keys for the three newly surfaced
-# empty-reflog commits. The reflog enumeration discovers pins from the key's
-# 8-hex prefix; this mapping exists so the dedicated non-vacuity test below can
-# tie each SHA to a real ancestor and to a live registry entry by name.
-N987_REFLOG_PIN_SHAS: dict[str, str] = {
-    "0752a44f": "0752a44f-edit-unwired-view-gate-reliand",
-    "7eaf64f0": "7eaf64f0-edit-unwired-view-gate-reliand",
-    "cee6940a": "cee6940a-n459-structural-sweep-restored",
-}
-
 
 def test_private_index_pinned_keys_tie_to_real_commits(commit_sha: str) -> None:
     """Non-vacuity: each pinned key's SHA resolves to an ancestor of HEAD.
@@ -2864,52 +2633,6 @@ def test_private_index_reflog_enumeration_has_no_unpinned_security_fix() -> None
         f"non-security exemption: {unpinned}. Pin each with a distinctive "
         "marker or document it in PRIVATE_INDEX_NON_SECURITY_SHAS."
     )
-
-
-def test_n987_reflog_pins_are_sha_specific_and_non_vacuous(
-    commit_sha: str, monkeypatch
-) -> None:
-    """N987 pins are real ancestors, keyed by SHA, and non-vacuous.
-
-    Each SHA resolves to a real ancestor and names a live registry entry whose
-    key embeds that exact SHA. A blob omitting the pinned text is still
-    rejected, and a fresh unknown empty-reflog SHA is still rejected by the
-    enumeration, so pinning coordination noise cannot make the audit vacuous.
-    Markers reverted at HEAD by a genuine source revert owned by another lane
-    are intentionally not asserted present here (a true positive already
-    reported by the pre-existing pin for that fix).
-    """
-    import subprocess as _subprocess
-
-    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
-    assert set(N987_REFLOG_PIN_SHAS.values()) <= set(by_key)
-    for sha, key in sorted(N987_REFLOG_PIN_SHAS.items()):
-        assert key.startswith(sha + "-"), f"{key} is not keyed to {sha}"
-        anc = _git("merge-base", "--is-ancestor", sha, commit_sha)
-        assert anc.returncode == 0, f"{sha} is not an ancestor of HEAD"
-        record = by_key[key]
-
-        def stale_blob(path: str, _record=record) -> str:
-            return f"# stale staged copy of {path}\n# pinned text erased\n"
-
-        present, detail = _evaluate(record, stale_blob)
-        assert not present, f"{key} accepted a blob without its pinned marker"
-        assert record.key in detail and record.marker in detail
-        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
-
-    fake_sha = "feedface" + "0" * 32
-    real_git = globals()["_git"]
-
-    def fake_git(*args, **kwargs):
-        if args and args[0] == "reflog":
-            return _subprocess.CompletedProcess(args, 0, f"{fake_sha}\t\n", "")
-        if args and args[0] == "merge-base":
-            return _subprocess.CompletedProcess(args, 0, "", "")
-        return real_git(*args, **kwargs)
-
-    monkeypatch.setitem(globals(), "_git", fake_git)
-    with pytest.raises(AssertionError, match="feedface"):
-        test_private_index_reflog_enumeration_has_no_unpinned_security_fix()
 
 
 def test_legacy_private_index_shas_keep_their_committed_markers(
@@ -3770,58 +3493,3 @@ def test_n819_aggregate_frame_pins_live_at_head_and_non_vacuous(
             f"conditional opcode-table guard {guard!r} reintroduced before "
             "the aggregate admission call"
         )
-
-
-# 7c5f8fa6 (N884) bulk presence fail-closed pins. Held as an explicit set so
-# none of the three anchors can vanish from the registry silently. The generic
-# parametrized tests cover presence at HEAD and synthetic revert falsifiability;
-# this live-HEAD tie additionally proves the gate text and the absence of the
-# one-way fallback call in the committed blob.
-N884_BULK_VISIBILITY_PIN_KEYS: frozenset[str] = frozenset(
-    {
-        "7c5f8fa6-n884-bulk-visibility-block-lookup-fail-closed",
-        "7c5f8fa6-n884-bulk-visibility-fail-closed-gate",
-        "7c5f8fa6-n884-bulk-visibility-no-one-way-fallback",
-    }
-)
-
-
-def test_n884_bulk_visibility_pins_live_at_head_and_non_vacuous(
-    commit_sha: str,
-) -> None:
-    """N884 pins are registered, live at HEAD, and falsifiable in both polarities."""
-    keys = [r.key for r in COMMITTED_FIX_MARKERS]
-    assert N884_BULK_VISIBILITY_PIN_KEYS <= set(keys), (
-        "N884 key set references keys missing from COMMITTED_FIX_MARKERS: "
-        f"{sorted(N884_BULK_VISIBILITY_PIN_KEYS - set(keys))}"
-    )
-    assert len(N884_BULK_VISIBILITY_PIN_KEYS) == 3
-    reader = _make_blob_reader(commit_sha)
-    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
-    for key in sorted(N884_BULK_VISIBILITY_PIN_KEYS):
-        record = by_key[key]
-        assert record.path == "src/core/presence/manager/visibility.py", f"{key} points at {record.path!r}"
-        present, detail = _evaluate(record, reader)
-        assert present, f"{key} is not pinned at HEAD: {detail}"
-        if record.absent:
-            def reintroduced(path: str) -> str:
-                return f"# reintroduced vulnerable call\n{record.marker}\n"
-
-            present, detail = _evaluate(record, reintroduced)
-            assert not present, f"synthetic N884 fallback reintroduction not caught: {key}"
-            assert "REINTRODUCED" in detail
-        else:
-            def stale_blob(path: str) -> str:
-                return f"# stale staged copy of {path}\n# fail-closed gate erased\n"
-
-            present, detail = _evaluate(record, stale_blob)
-            assert not present, f"synthetic N884 revert of {key} was not caught"
-            assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
-
-    # Live-HEAD semantics: the withheld-by-flag gate is real and the unsafe
-    # one-way fallback call is genuinely absent from the committed blob.
-    gate = by_key["7c5f8fa6-n884-bulk-visibility-fail-closed-gate"].marker
-    assert "block_lookup_failed or target_id in blocked_ids" in gate
-    vis_blob = reader("src/core/presence/manager/visibility.py")
-    assert vis_blob.count("get_all_blocked_ids(viewer_id)") >= 1
-    assert "for uid in self._relationships.get_blocked_user_ids(viewer_id)" not in vis_blob

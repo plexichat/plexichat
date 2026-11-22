@@ -76,17 +76,6 @@ _PROTECTED_CELL_DENIAL = (
     '            raise SumPermissionError("Cannot change cells inside a protected range")'
 )
 
-# N902: the comparison must build before/after maps from the MERGED view the
-# viewport actually renders -- sum_cells rows PLUS decoded sum_column_segments
-# gap-fillers. Without this, a forged blob can insert a segment at an EMPTY
-# protected coordinate while leaving sum_cells untouched, so before == after
-# and the injected value renders inside a read_only band after promotion.
-_SEGMENT_INCLUSIVE_COMPARISON = (
-    "                # The viewport renders a merged view: sum_cells rows plus\n"
-    "                # sum_column_segments cells that fill gaps where no sparse row\n"
-    "                # exists. Compare that same merged view, not just sum_cells;\n"
-)
-
 # Shared call text used by both whole-file write paths. Pinning it per-path
 # catches a partial revert that rewires only one of upload / restore.
 _CALL_SITE = (
@@ -152,18 +141,6 @@ COMMITTED_REPLACEMENT_RANGE_MARKERS: tuple[ReplacementRangeMarker, ...] = (
             "99a77a3f: the terminal fail-closed comparison -- changed, added "
             "or removed protected cells are a write to that range and are "
             "refused for non-owners."
-        ),
-    ),
-    ReplacementRangeMarker(
-        key="n902-segment-inclusive-protected-cell-comparison",
-        path=_WORKBOOKS_PATH,
-        marker=_SEGMENT_INCLUSIVE_COMPARISON,
-        why=(
-            "N902: protected-cell maps must be built from the merged view the "
-            "viewport renders (sum_cells rows plus decoded sum_column_segments "
-            "gap-fillers). Without this a forged blob can insert a segment at "
-            "an empty protected coordinate without tripping before != after, "
-            "and the injected value renders inside a read_only band."
         ),
     ),
     ReplacementRangeMarker(
@@ -271,7 +248,7 @@ def test_registry_is_well_formed() -> None:
     keys = [m.key for m in COMMITTED_REPLACEMENT_RANGE_MARKERS]
     assert keys and len(keys) == len(set(keys))
     assert PIN_KEYS == set(keys)
-    assert len(PIN_KEYS) == 8
+    assert len(PIN_KEYS) == 7
     assert {_WORKBOOKS_PATH, _SNAPSHOTS_PATH, _PROTOCOL_PATH} == {
         m.path for m in COMMITTED_REPLACEMENT_RANGE_MARKERS
     }

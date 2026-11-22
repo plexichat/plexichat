@@ -51,13 +51,6 @@ CONTROL_CHARACTERS = re.compile(
 def reject_control_characters(value: Any, field: str = "value") -> str:
     """Return ``value`` as a string, refusing embedded control characters."""
     text = str(value or "")
-    # Fast path: every codepoint in CONTROL_CHARACTERS is non-printable, so a
-    # fully printable value cannot contain one. isprintable() is a C-level
-    # scan that skips the regex engine on the overwhelmingly common case
-    # (ordinary headers, log fields, URLs). Fails closed: a value with any
-    # forbidden character is non-printable and still goes through the regex.
-    if text.isprintable():
-        return text
     if CONTROL_CHARACTERS.search(text):
         raise HardeningViolation(f"{field} contains control characters")
     return text

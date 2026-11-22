@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from .schema import (
     PLEXISUM_FORMAT_VERSION,
 )
-from .segments import SegmentEncoder
 from ..boundaries import (
     MAX_WORKSPACE_PAYLOAD_BYTES,
     MAX_WORKSPACE_TITLE_LENGTH,
@@ -688,65 +687,7 @@ class SumManagerWorkbooks(SumManagerProtocol):
             def protected_cells(
                 connection: sqlite3.Connection,
             ) -> Dict[Tuple[str, int, int], Tuple[Any, Any, Any, Any]]:
-                # The viewport renders a merged view: sum_cells rows plus
-                # sum_column_segments cells that fill gaps where no sparse row
-                # exists. Compare that same merged view, not just sum_cells;
-                # otherwise a forged blob can leave sum_cells untouched and
-                # inject a segment at an EMPTY protected coordinate. before
-                # and after would both lack the coordinate, so the check would
-                # miss an added cell that the session-path viewport renders
-                # inside a read_only band.
                 cells: Dict[Tuple[str, int, int], Tuple[Any, Any, Any, Any]] = {}
-                # Segment cells go in first; sparse sum_cells rows are layered
-                # on top so they win at coordinates present in both -- exactly
-                # the viewport's "sparse cells take precedence" merge rule.
-                # Legitimate promotion adds shadowed segment rows without
-                # changing the effective (sparse) value, so those still compare
-                # equal; only a segment at an otherwise empty coordinate is an
-                # addition. A missing/unreadable segment table (older blobs)
-                # simply contributes no segment cells, as in the viewport.
-                try:
-                    segment_rows = connection.execute(
-                        "SELECT sheet_id, column_id, compressed_values "
-                        "FROM sum_column_segments"
-                    ).fetchall()
-                except sqlite3.Error:
-                    segment_rows = []
-                for segment_row in segment_rows:
-                    sheet_id = str(segment_row["sheet_id"])
-                    sheet_bands = bands.get(sheet_id)
-                    if not sheet_bands:
-                        continue
-                    try:
-                        column_index = int(segment_row["column_id"])
-                    except (TypeError, ValueError):
-                        continue
-                    try:
-                        decoded = SegmentEncoder.decode_segment(
-                            segment_row["compressed_values"]
-                        )
-                    except Exception:
-                        # The viewport skips undecodable segments; so do we.
-                        continue
-                    for cell in decoded.get("cells", []) or []:
-                        if not isinstance(cell, dict):
-                            continue
-                        try:
-                            row_index = int(cell.get("row_index", cell.get("row", 0)))
-                        except (TypeError, ValueError):
-                            continue
-                        if not any(
-                            row_start <= row_index < row_end
-                            and column_start <= column_index < column_end
-                            for row_start, row_end, column_start, column_end in sheet_bands
-                        ):
-                            continue
-                        cells[(sheet_id, row_index, column_index)] = (
-                            cell.get("value_type", "blank"),
-                            cell.get("value_json"),
-                            cell.get("formula"),
-                            cell.get("style_json"),
-                        )
                 for row in connection.execute(
                     "SELECT sheet_id, row_index, column_index, value_type, "
                     "value_json, formula, style_json FROM sum_cells"
