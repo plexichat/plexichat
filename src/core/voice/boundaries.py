@@ -73,6 +73,11 @@ def filter_ice_urls(urls: Iterable[object]) -> List[str]:
             valid.append(validate_ice_url(url))
         except ValueError:
             continue
+        # Only the first MAX_ICE_URLS_PER_SERVER valid URLs can be returned.
+        # Validating and retaining the rest of an oversized iterable would
+        # grow work and memory with the input for a fixed-size result.
+        if len(valid) >= MAX_ICE_URLS_PER_SERVER:
+            break
     return valid[:MAX_ICE_URLS_PER_SERVER] or list(DEFAULT_PUBLIC_STUN_URLS)
 
 
