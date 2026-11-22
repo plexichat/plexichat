@@ -176,7 +176,16 @@ class AlertModeratorsAction(BaseAction):
             if conv:
                 conversation_id = conv["conversation_id"]
 
-        content_preview = self._format_alert_message(violation)
+        # The full preview contains the offending message body, which is
+        # private to users who can view the violating channel. Do NOT attach it
+        # unconditionally: ``_create_notification`` bypasses the mention
+        # fan-out's channel-view gate (it is the low-level writer automod and
+        # other direct callers use), so a moderator denied view would otherwise
+        # receive the private body in the websocket NOTIFICATION_CREATE event
+        # and in the device push payload built from ``content_preview``.
+        # Whether to attach it is decided per recipient by the authoritative
+        # view gate below; denied moderators get an empty preview.
+        full_preview = self._format_alert_message(violation)
 
         # Resolve notification preferences for the whole moderator audience in
         # two bounded reads instead of two lookups per moderator. The old loop
@@ -226,6 +235,19 @@ class AlertModeratorsAction(BaseAction):
             ):
                 continue
 
+            # SECURITY: the notification writer below does not re-check channel
+            # view. Gate here, *before* attaching the preview, so a moderator
+            # who cannot view the violating channel receives no private body.
+            # Fail closed: an unwired store, a missing channel, or a raising
+            # permission check all strip the content.
+            content_preview = (
+                full_preview
+                if self._moderator_can_view_channel(
+                    manager, moderator_id, violation.server_id, channel_id
+                )
+                else ""
+            )
+
             notif = manager._create_notification(
                 user_id=moderator_id,
                 author_id=violation.user_id,
@@ -246,6 +268,44 @@ class AlertModeratorsAction(BaseAction):
                     channel_id,
                     is_mention=True,
                 )
+
+    def _moderator_can_view_channel(
+        self, manager, moderator_id, server_id, channel_id
+    ) -> bool:
+        """Authoritative view gate for attaching private content to an alert.
+
+        A moderator may be in the alert audience (owner/mod role) yet lack
+        view access to the specific private channel the violation occurred in.
+        The notification writer ``_create_notification`` does not re-check
+        view, so this is the sole authority for whether the offending message
+        body may be attached. Require BOTH the channel-view bit (the same gate
+        the mention fan-out uses) and the message-read bit (view access to the
+        message body). Fail closed on an unwired store, a missing channel, or
+        any error from the permission lookup.
+        """
+        if not channel_id:
+            return False
+
+        servers = self._servers
+        if servers is None:
+            servers = getattr(manager, "_servers", None)
+        get_manager = getattr(servers, "_get_manager", None)
+        if callable(get_manager):
+            try:
+                servers = get_manager()
+            except Exception:
+                return False
+
+        has_permission = getattr(servers, "has_permission", None)
+        if not callable(has_permission):
+            return False
+        for permission in ("channels.view", "messages.read"):
+            try:
+                if not has_permission(moderator_id, server_id, permission, channel_id):
+                    return False
+            except Exception:
+                return False
+        return True
 
     def _format_alert_message(self, violation: Violation) -> str:
         """Format the alert message."""
