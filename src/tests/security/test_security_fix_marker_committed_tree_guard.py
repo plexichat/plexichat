@@ -759,6 +759,15 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="9f361506-private-index-audit-pin",
+        path="src/core/servers/handlers/roles/permissions.py",
+        marker='# Bulk override hydration must never bind an unbounded IN list: SQLite caps',
+        why=(
+            'Private-index commit 9f361506 pinned by a distinctive line it introduced. '
+            'Falsifiable by the guard synthetic-revert test.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
