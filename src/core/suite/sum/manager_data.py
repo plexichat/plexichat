@@ -282,6 +282,21 @@ class SumManagerData(SumManagerProtocol):
                 [grid.get(row_index, {}).get(col, "") for col in range(max_col)]
             )
         content = buffer.getvalue()
+        # Fail closed on the encode side: ``import_csv`` bounds the decoded
+        # text at ``MAX_CSV_IMPORT_BYTES`` before it ever parses a row. The
+        # row/column caps above do not bound the *rendered* size -- a single
+        # legal cell can carry up to ``MAX_CELL_VALUE_LENGTH`` characters, so
+        # a handful of such cells renders past the 2 MB import ceiling even
+        # though the workbook blob stays well inside the container cap.
+        # Exporting such a sheet "succeeds" but the file can never be
+        # re-imported, breaking copy/backup/restore round trips with a
+        # size-cap failure long after the write was acknowledged. Match the
+        # decode-side byte cap here so an export cannot emit a blob the reader
+        # refuses.
+        if len(content.encode("utf-8")) > MAX_CSV_IMPORT_BYTES:
+            raise SumValidationError(
+                f"Exported CSV exceeds the import size limit of {MAX_CSV_IMPORT_BYTES} bytes"
+            )
         self._audit(
             "export_csv",
             "sheet",
