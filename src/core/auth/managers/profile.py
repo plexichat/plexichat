@@ -6,6 +6,7 @@ import utils.logger as logger
 
 from ..exceptions import (
     UserNotFoundError,
+    UserExistsError,
     InvalidUsernameError,
     InvalidEmailError,
     InvalidPermissionError,
@@ -268,10 +269,29 @@ class ProfileMixin(AuthManagerProtocol):
             updates.append("updated_at = ?")
             params.append(self._get_timestamp())
             params.append(user_id)
-            self._db.execute(
-                f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
-                tuple(params),
-            )
+            try:
+                self._db.execute(
+                    f"UPDATE auth_users SET {', '.join(updates)} WHERE id = ?",
+                    tuple(params),
+                )
+            except Exception as e:
+                # The format/blacklist checks above are advisory: two concurrent
+                # profile edits can both pass them. ``username`` and the blind
+                # ``email_index`` are UNIQUE, so the loser's UPDATE raises a raw
+                # IntegrityError (HTTP 500). Translate a UNIQUE violation to the
+                # same UserExistsError register() surfaces so the profile route's
+                # existing 409 handler is reached; every other DB error propagates.
+                self._db.rollback()
+                msg = str(e).lower()
+                if any(
+                    marker in msg
+                    for marker in ("unique", "duplicate key", "23505")
+                ):
+                    raise UserExistsError(
+                        "Username or email already in use",
+                        "username" if username else "email",
+                    ) from e
+                raise
             invalidate_pattern("token_verify:*")
             invalidate_pattern("user_data:*")
             # The username lookup caches a full ``User`` (permissions
