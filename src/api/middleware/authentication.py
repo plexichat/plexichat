@@ -558,7 +558,16 @@ class AuthenticationMiddleware:
                 # ``urlsplit`` raises only for a malformed authority (bad port,
                 # unbalanced IPv6 bracket). Such a header cannot name an
                 # allowed origin, so it simply contributes no candidate.
-                logger.debug(f"ignoring unparsable Referer origin: {referer!r}")
+                # SECURITY: a Referer is a full URL whose path/query can carry
+                # live credentials (password-reset ``code``, OAuth ``code``,
+                # signed-URL ``sig``, session tokens). Logging the raw value
+                # wrote those straight to the rotated log files and the console
+                # sink; the shared SanitizingFilter only masks a fixed set of
+                # ``key=value`` names, so ``code=``/``sig=`` secrets survived
+                # verbatim (CWE-532). Keep the diagnostic -- an unparsable
+                # Referer was ignored for origin matching -- but never persist
+                # the attacker-controlled URL, query string included.
+                logger.debug("ignoring unparsable Referer origin (value omitted)")
 
         allowed = {str(o).rstrip("/") for o in cors_origins if o}
         return any(c in allowed for c in candidates)
