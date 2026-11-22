@@ -42,6 +42,7 @@ from .utils import (
 )
 from ._summary_cache import get_or_compute
 from src.core.security.hardening.text import strip_control_characters
+from src.core.security.hardening import HardeningViolation, parse_id
 import src.api as api
 import utils.logger as logger
 import utils.config as config
@@ -839,7 +840,21 @@ async def block_user(block_request: BlockUserRequest, request: Request):
     admin_id = require_admin_permission(request, "admin.moderation.bans")
     from src.core import admin
 
-    target_id = int(block_request.user_id)
+    # A platform-wide ban is a privilege mutation. Bind the caller-supplied
+    # user id through the strict ASCII snowflake gate before any hierarchy
+    # check or write: the SnowflakeID schema rejects bool/coercible tokens on
+    # the normal HTTP path, but a directly constructed body or internal caller
+    # bypasses that validation. Bare ``int()`` laundered those tokens
+    # (``True``->1, ``5.9``->5, ``"١٢٣"``->123, ``"1_2"``->12) into a DIFFERENT
+    # target before the ban INSERT. parse_id fails closed with 400 so the
+    # laundered id can never reach the hierarchy gate or admin.block_user.
+    try:
+        target_id = parse_id(block_request.user_id, "user_id")
+    except (HardeningViolation, TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request data"}},
+        )
     _ensure_can_target_admin(admin_id, target_id)
     if not admin.block_user(
         target_id,
