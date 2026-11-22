@@ -584,6 +584,39 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "guard's distinctive violation message in its committed blob."
         ),
     ),
+    # --- N987 reflog audit: SHA-specific pins for empty-reflog commits ---
+    CommittedFixMarker(
+        key='0752a44f-edit-unwired-view-gate-reliand',
+        path='src/api/routes/messages/messages_crud/edit.py',
+        marker='        # The backing-channel lookup cannot be evaluated without the servers\n        # module. A private-channel alias can exist in the DB independently of\n        # that module, so skipping this gate would let a member denied\n        # channels.view edit a message in a private channel through either\n        # spelling of the id. Deny with the same opaque 404 a missing message\n        # produces; a wired store with no backing channel still allows genuine\n        # DMs below.\n        raise _edit_not_found()',
+        why=(
+            '0752a44f re-lands the cd9bcf44 edit unwired-server fail-closed gate (blob 7fe3fd4d); pinned by the distinctive raise + fail-closed comment it introduced, so a stale staged copy restoring the bare return is caught.'
+        ),
+    ),
+    CommittedFixMarker(
+        key='7eaf64f0-edit-unwired-view-gate-reliand',
+        path='src/api/routes/messages/messages_crud/edit.py',
+        marker='        # The backing-channel lookup cannot be evaluated without the servers\n        # module. A private-channel alias can exist in the DB independently of\n        # that module, so skipping this gate would let a member denied\n        # channels.view edit a message in a private channel through either\n        # spelling of the id. Deny with the same opaque 404 a missing message\n        # produces; a wired store with no backing channel still allows genuine\n        # DMs below.\n        raise _edit_not_found()',
+        why=(
+            '7eaf64f0 is the second byte-identical re-landing of the cd9bcf44 edit unwired-server fail-closed gate (blob 7fe3fd4d); pinned by the same distinctive introduced text under its own SHA key.'
+        ),
+    ),
+    CommittedFixMarker(
+        key='ced42c1a-role-assignment-under-lock-ownership-recheck',
+        path='src/core/servers/handlers/roles/assignments.py',
+        marker='            fresh_owner_id = fresh_owner["owner_id"]\n            if type(fresh_owner_id) is not int:\n                raise RoleHierarchyError(\n                    "Cannot manage roles: malformed server owner row"\n                )\n            fresh_is_owner = fresh_owner_id == int(user_id)',
+        why=(
+            'ced42c1a re-derives ownership under the 142/143 advisory locks instead of reusing the stale pre-lock is_owner verdict; pinned by the fresh_owner_id/fresh_is_owner block it introduced, so a stale copy restoring the pre-lock verdict is caught.'
+        ),
+    ),
+    CommittedFixMarker(
+        key='cee6940a-n459-structural-sweep-restored',
+        path='src/tests/security/test_server_route_id_parse_boundary.py',
+        marker='def test_novel_server_module_with_bare_int_is_flagged(tmp_path):\n    """Non-vacuity: the structural sweep flags a brand-new, novel-named module.',
+        why=(
+            'cee6940a restored the whole routes/servers package sweep after a revert to a curated 7-file list; pinned by the novel-module non-vacuity test it introduced, so a curated-list revert is caught.'
+        ),
+    ),
     CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
@@ -2537,6 +2570,17 @@ PRIVATE_INDEX_KEY_BY_SHA: dict[str, str] = {
     "c6a111dd": "n459-server-route-structural-sweep",
 }
 
+# N987 reflog audit: SHA-specific registry keys for the newly surfaced
+# empty-reflog commits. The enumeration discovers pins from the key's
+# 8-hex prefix; this map lets the non-vacuity test tie each SHA to a real
+# ancestor and a live registry entry by name.
+N987_REFLOG_PIN_SHAS: dict[str, str] = {
+    "0752a44f": '0752a44f-edit-unwired-view-gate-reliand',
+    "7eaf64f0": '7eaf64f0-edit-unwired-view-gate-reliand',
+    "ced42c1a": 'ced42c1a-role-assignment-under-lock-ownership-recheck',
+    "cee6940a": 'cee6940a-n459-structural-sweep-restored',
+}
+
 
 def test_private_index_pinned_keys_tie_to_real_commits(commit_sha: str) -> None:
     """Non-vacuity: each pinned key's SHA resolves to an ancestor of HEAD.
@@ -2633,6 +2677,52 @@ def test_private_index_reflog_enumeration_has_no_unpinned_security_fix() -> None
         f"non-security exemption: {unpinned}. Pin each with a distinctive "
         "marker or document it in PRIVATE_INDEX_NON_SECURITY_SHAS."
     )
+
+
+def test_n987_reflog_pins_are_sha_specific_and_non_vacuous(
+    commit_sha: str, monkeypatch
+) -> None:
+    """N987 pins are real ancestors, keyed by SHA, and non-vacuous.
+
+    Each SHA resolves to a real ancestor and names a live registry entry whose
+    key embeds that exact SHA. A blob omitting the pinned text is still
+    rejected, and a fresh unknown empty-reflog SHA is still rejected by the
+    enumeration, so pinning coordination noise cannot make the audit vacuous.
+    Markers reverted at HEAD by a genuine source revert owned by another lane
+    are intentionally not asserted present here (a true positive already
+    reported by the pre-existing pin for that fix).
+    """
+    import subprocess as _subprocess
+
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    assert set(N987_REFLOG_PIN_SHAS.values()) <= set(by_key)
+    for sha, key in sorted(N987_REFLOG_PIN_SHAS.items()):
+        assert key.startswith(sha + "-"), f"{key} is not keyed to {sha}"
+        anc = _git("merge-base", "--is-ancestor", sha, commit_sha)
+        assert anc.returncode == 0, f"{sha} is not an ancestor of HEAD"
+        record = by_key[key]
+
+        def stale_blob(path: str, _record=record) -> str:
+            return f"# stale staged copy of {path}\n# pinned text erased\n"
+
+        present, detail = _evaluate(record, stale_blob)
+        assert not present, f"{key} accepted a blob without its pinned marker"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+    fake_sha = "feedface" + "0" * 32
+    real_git = globals()["_git"]
+
+    def fake_git(*args, **kwargs):
+        if args and args[0] == "reflog":
+            return _subprocess.CompletedProcess(args, 0, f"{fake_sha}\t\n", "")
+        if args and args[0] == "merge-base":
+            return _subprocess.CompletedProcess(args, 0, "", "")
+        return real_git(*args, **kwargs)
+
+    monkeypatch.setitem(globals(), "_git", fake_git)
+    with pytest.raises(AssertionError, match="feedface"):
+        test_private_index_reflog_enumeration_has_no_unpinned_security_fix()
 
 
 def test_legacy_private_index_shas_keep_their_committed_markers(
