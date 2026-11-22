@@ -28,7 +28,7 @@ from ..protocol import AuthManagerProtocol
 from typing import Dict, Tuple
 from src.core.database import cached
 from ...models import AccountType, TokenInfo
-from ...permissions import permissions_from_json
+from ...permissions import has_permission, permissions_from_json
 from ...tokens import create_ws_ticket
 
 
@@ -377,6 +377,29 @@ class LifecycleMixin(AuthManagerProtocol):
         ):
             raise TokenInvalidError("Invalid Bot")
 
+        # Mirror of VerificationMixin._verify_bot_token's delegation ceiling,
+        # kept in sync so a future MRO reorder or a direct caller of this
+        # exported mixin cannot reintroduce the escalation. A bot's permission
+        # map is a DELEGATION of its owner's authority: a scope legitimately
+        # granted while the owner held it must not survive a later demotion.
+        # Intersect with the owner's CURRENT grants on every verification and
+        # fail closed when the owner row is missing or its payload is not a
+        # well-formed permission map.
+        owner_row = self._db.fetch_one(
+            "SELECT permissions FROM auth_users WHERE id = ?", (row["owner_id"],)
+        )
+        if not owner_row:
+            raise TokenInvalidError("Invalid Bot")
+        owner_perms = permissions_from_json(owner_row["permissions"])
+        bot_perms = permissions_from_json(row["permissions"])
+        if not isinstance(owner_perms, dict) or not isinstance(bot_perms, dict):
+            raise TokenInvalidError("Invalid Bot")
+        effective_perms = {
+            perm: allowed
+            for perm, allowed in bot_perms.items()
+            if not allowed or has_permission(owner_perms, perm)
+        }
+
         return TokenInfo(
             valid=True,
             token_type="bot",
@@ -384,7 +407,7 @@ class LifecycleMixin(AuthManagerProtocol):
             user_id=row["owner_id"],
             session_id=None,
             username=row["username"],
-            permissions=permissions_from_json(row["permissions"]),
+            permissions=effective_perms,
             account_type=AccountType.BOT,
             rate_limit_tier="bot",
             expires_at=None,
