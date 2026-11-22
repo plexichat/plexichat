@@ -560,7 +560,14 @@ class InteractionHandler:
         if bot_id:
             self._events.dispatch(event, user_ids=[bot_id])
         else:
-            self._events.dispatch(event)
+            # Fail closed: an unresolved bot-owner audience must NEVER be
+            # handed to events.dispatch as ``None``. The EventRouter treats
+            # ``None`` as "route by scope", and this server-scoped
+            # INTERACTION_CREATE carries the private interaction token and
+            # body -- widening it would deliver that content to every member
+            # of the server, including non-participants. No verifiable
+            # recipient means no recipients.
+            self._events.dispatch(event, user_ids=[])
 
     def _validate_response(
         self,
