@@ -13,7 +13,7 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 
 from .opcodes import GatewayCloseCode, GatewayOpcode
 from .connection import Connection
-from .session import SessionManager
+from .session import REPLAY_SCOPE_KEY, SessionManager, _replay_scope_id
 from .intents import filter_event_by_intents
 from .rendering import PayloadRenderCache, freeze_payload
 
@@ -41,6 +41,10 @@ def _serving_loop() -> Optional[asyncio.AbstractEventLoop]:
 #: arrive without the envelope ``scope`` field and must still be inferred from
 #: event data; a present scope is authoritative and must NOT be re-inferred.
 _SCOPE_UNSET = object()
+
+#: Sentinel distinguishing an absent replay-scope marker from a present-but-
+#: malformed one (both fail closed, but only the latter is logged as tampering).
+_MISSING = object()
 
 
 def _coerce_envelope_scope_id(value: Any) -> Optional[int]:
@@ -90,6 +94,24 @@ def _event_scope_from_data(event_data: Any) -> tuple:
         # Typing and older payloads use the legacy ``guild_id`` alias.
         server_id = _as_id(event_data.get("guild_id"))
     channel_id = _as_id(event_data.get("channel_id"))
+    return server_id, channel_id
+
+
+def _raw_dispatch_scope(data: Any) -> Optional[tuple]:
+    """Derive the ``(server_id, channel_id)`` scope of a raw DISPATCH frame.
+
+    Only channel/conversation-scoped frames need a replay membership re-check;
+    scope-less frames (HELLO, ACKs, status, ...) return ``None`` and keep the
+    existing replay behaviour. ``conversation_id`` is the DM/ratchet alias for
+    the channel scope.
+    """
+    if not isinstance(data, dict):
+        return None
+    server_id, channel_id = _event_scope_from_data(data)
+    if channel_id is None:
+        channel_id = _coerce_envelope_scope_id(data.get("conversation_id"))
+    if channel_id is None:
+        return None
     return server_id, channel_id
 
 
@@ -402,7 +424,16 @@ class GatewayDispatcher:
             )
 
             if connection.session_id:
-                self._session_manager.record_event(connection.session_id, payload)
+                # A raw DISPATCH frame (e.g. RATCHET_UPDATE) also carries
+                # private conversation metadata. Stamp its scope so RESUME can
+                # re-check membership before replaying it.
+                scope = _raw_dispatch_scope(data)
+                if scope is not None:
+                    self._session_manager.record_event(
+                        connection.session_id, payload, authz_scope=scope
+                    )
+                else:
+                    self._session_manager.record_event(connection.session_id, payload)
         else:
             # Non-DISPATCH frames (VOICE_SPEAKING, VOICE_SDP_*, HELLO, ...)
             # carry ids too; stringify id keys so a future caller cannot
@@ -562,11 +593,78 @@ class GatewayDispatcher:
 
         count = 0
         for event_payload in events:
-            success = await self._send_to_connection(connection, event_payload)
+            # Strip the private replay-scope marker before it can cross the
+            # wire, and re-check the resuming principal's CURRENT access to
+            # the event's channel/conversation. Membership/permission can be
+            # revoked while the socket is gone; a frame recorded while the
+            # viewer had access must not be delivered after they lost it.
+            payload = dict(event_payload)
+            scope = payload.pop(REPLAY_SCOPE_KEY, _MISSING)
+            if scope is not _MISSING and not self._replay_scope_authorized(
+                connection.user_id, scope
+            ):
+                logger.debug(
+                    f"Dropping replayed {payload.get('t')} for user "
+                    f"{connection.user_id}: no longer authorized for its scope"
+                )
+                continue
+            success = await self._send_to_connection(connection, payload)
             if success:
                 count += 1
 
         return count
+
+    @staticmethod
+    def _replay_scope_authorized(user_id: Optional[int], scope: Any) -> bool:
+        """Whether ``user_id`` may still receive an event recorded for ``scope``.
+
+        ``scope`` is the ``[server_id, channel_id]`` pair stamped at dispatch.
+        A server channel is re-checked with the same authoritative
+        ``get_channel(channel_id, user_id)`` view gate used for live fan-out;
+        a DM/conversation with ``is_participant``. Fail closed on every path:
+        a missing module, a malformed scope, or a raising lookup withholds the
+        private frame rather than risk delivering it to a former member.
+        """
+        if not isinstance(scope, (list, tuple)) or len(scope) != 2:
+            return False
+        server_id = _replay_scope_id(scope[0])
+        channel_id = _replay_scope_id(scope[1])
+        if channel_id is None:
+            # No channel scope: nothing to re-check (kept for compatibility
+            # with frames recorded before the scope marker existed).
+            return True
+        if not isinstance(user_id, int) or isinstance(user_id, bool):
+            return False
+
+        try:
+            import src.api as api
+        except Exception:
+            return False
+
+        if server_id is not None:
+            servers = api.get_servers()
+            if servers is None:
+                return False
+            get_channel = getattr(servers, "get_channel", None)
+            if not callable(get_channel):
+                return False
+            try:
+                return bool(get_channel(channel_id, user_id))
+            except Exception as e:
+                logger.debug(f"Replay channel re-auth failed for user {user_id}: {e}")
+                return False
+
+        messaging = api.get_messaging()
+        if messaging is None:
+            return False
+        is_participant = getattr(messaging, "is_participant", None)
+        if not callable(is_participant):
+            return False
+        try:
+            return bool(is_participant(channel_id, user_id))
+        except Exception as e:
+            logger.debug(f"Replay DM re-auth failed for user {user_id}: {e}")
+            return False
 
     def _build_dispatch_payload(
         self,
@@ -596,7 +694,18 @@ class GatewayDispatcher:
         }
 
         if connection.session_id:
-            self._session_manager.record_event(connection.session_id, payload)
+            # Record the authoritative routing scope alongside the frame so a
+            # RESUME can re-check the viewer's *current* channel/DM visibility
+            # before replaying this private event. Without it a user who lost
+            # access while disconnected would still receive the queued frame.
+            scope = (
+                (event.server_id, event.channel_id)
+                if event.channel_id is not None
+                else None
+            )
+            self._session_manager.record_event(
+                connection.session_id, payload, authz_scope=scope
+            )
 
         return payload
 
@@ -883,7 +992,11 @@ class GatewayDispatcher:
                 ),
             }
             if conn.session_id:
-                self._session_manager.record_event(conn.session_id, payload)
+                self._session_manager.record_event(
+                    conn.session_id,
+                    payload,
+                    authz_scope=(None, conversation_id),
+                )
             tasks.append(self._send_to_connection(conn, payload))
 
         if tasks:

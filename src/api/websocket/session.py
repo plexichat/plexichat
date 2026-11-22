@@ -21,6 +21,23 @@ from .boundaries import (
 from .intents import PRIVILEGED_INTENTS, filter_event_by_intents, validate_intents
 
 
+#: Private key under which a recorded replay frame carries the authoritative
+#: ``(server_id, channel_id)`` scope it was dispatched for. It lives on the
+#: frame's top level (never inside ``d``), is stripped before any frame is sent
+#: on the wire, and is only ever written by ``SessionManager.record_event``.
+REPLAY_SCOPE_KEY = "__gateway_authz_scope"
+
+
+def _replay_scope_id(value: Any) -> Optional[int]:
+    """Coerce a recorded scope id to int (bools/unparseable values -> None)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _safe_resume_intents(raw: Any) -> int:
     """Return the intent mask a resumed connection is allowed to use.
 
@@ -993,17 +1010,35 @@ class SessionManager:
         except Exception as e:
             logger.debug(f"Valkey connection member drop failed: {e}")
 
-    def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
+    def record_event(
+        self,
+        session_id: str,
+        event: Dict[str, Any],
+        *,
+        authz_scope: Optional[tuple] = None,
+    ) -> None:
         """
         Record an event for potential replay.
 
         Args:
             session_id: Session ID
             event: Event data with sequence number
+            authz_scope: Optional ``(server_id, channel_id)`` routing scope the
+                frame was authorised for at dispatch time. It is stamped onto a
+                *copy* of the frame under ``REPLAY_SCOPE_KEY`` so RESUME can
+                re-check the viewer's current membership/visibility before
+                replaying a private channel event. Storing it on a copy keeps
+                the live frame (and its wire shape) untouched.
         """
         session = self.get_session(session_id)
         if session:
-            session.add_replay_event(event)
+            recorded = dict(event)
+            if authz_scope is not None:
+                recorded[REPLAY_SCOPE_KEY] = [
+                    _replay_scope_id(authz_scope[0]),
+                    _replay_scope_id(authz_scope[1]),
+                ]
+            session.add_replay_event(recorded)
             event_sequence = event.get("s")
             if isinstance(event_sequence, (int, float)):
                 session.sequence = max(session.sequence, int(event_sequence))
