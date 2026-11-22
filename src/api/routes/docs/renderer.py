@@ -455,8 +455,42 @@ def _get_markdown_renderer():
         return None
     if _markdown_renderer is None:
         assert mistune is not None
+        from mistune.renderers.html import escape_text, safe_entity
+
+        class _CopyButtonRenderer(mistune.HTMLRenderer):
+            """Add the copy affordance the fallback renderer already emits.
+
+            Every curl/JSON example on the API reference pages is a fenced code
+            block. The fallback path wraps those in ``.code-block`` with a
+            ``.copy-btn`` button (styled in theme.py and wired up in
+            serving.py), but mistune -- the path actually used in production --
+            emitted a bare ``<pre><code>``. That left the samples without a
+            copy button and the existing CSS/JS handler with nothing to act on.
+            Keep mistune's own escaping so a fence can never inject markup.
+            """
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._code_block_id = 0
+
+            def block_code(self, code, info=None):
+                lang = safe_entity(info.strip()).split(None, 1)[0] if info else ""
+                # A shared, monotonically increasing counter keeps ids unique
+                # both within a page and across the cached renderer's lifetime,
+                # so data-target always resolves to exactly one code block.
+                self._code_block_id += 1
+                code_id = f"code-{self._code_block_id}"
+                lang_class = f' class="language-{lang}"' if lang else ""
+                return (
+                    '<div class="code-block">'
+                    f'<button class="copy-btn" data-target="{code_id}">Copy</button>'
+                    f'<pre><code id="{code_id}"{lang_class}>'
+                    f"{escape_text(code)}</code></pre></div>\n"
+                )
+
         _markdown_renderer = mistune.create_markdown(
             escape=False,  # pages embed generated HTML rows
+            renderer=_CopyButtonRenderer(escape=False),
             plugins=["strikethrough", "footnotes", "table", "task_lists"],
         )
     return _markdown_renderer
