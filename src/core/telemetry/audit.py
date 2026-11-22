@@ -13,6 +13,16 @@ Design guarantees
   (``prev``) and to its own canonical JSON body (``checksum``).  Modifying any
   field breaks that record's checksum; deleting a middle row breaks the next
   row's ``prev``/``seq``.
+* **Keyed (HMAC-SHA256)** -- every checksum is an HMAC over
+  ``prev + canonical(entry)``, and each record names the key id that produced
+  it.  This is the part that makes the chain *tamper-evidence* rather than mere
+  corruption detection: with a plain, unkeyed SHA-256 an actor who can rewrite
+  the JSONL file and its head sidecar can edit any row, recompute every
+  downstream ``prev``/``checksum`` from public data, and pass verification.
+  An operator-supplied ``chain_key`` (preferred) or an auto-generated,
+  ``0600``-mode local key sidecar supplies the secret.  Verification is
+  constant-time and fails closed on a missing/unknown key or an unkeyed row in
+  a keyed chain (downgrade).  A DB-only attacker cannot read either key.
 * **Head commitment** -- a small sidecar file records the row count and the
   last checksum.  It is updated atomically after each append, so *tail*
   truncation (deleting the newest rows) is detected too -- a plain chain
@@ -30,9 +40,11 @@ would defeat the purpose of the audit log.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import threading
 import time
 from contextlib import contextmanager
@@ -49,6 +61,12 @@ from .scrubbing import redact_secrets
 
 GENESIS_HASH = "0" * 64
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+#: HMAC key of an audit chain. Verification must never fall back to an
+#: unkeyed SHA-256 (which a writer with file access can freely recompute).
+_LOCAL_KEY_ID = "local"
+_DEFAULT_KEY_ID = "default"
+_MAX_KEY_CHARS = 256
 
 #: Hard ceilings.  A privileged actor is still an untrusted input source when
 #: it comes to resource usage; nothing here may grow without bound.
@@ -134,6 +152,9 @@ class AuditChain:
         head_path: Optional[str] = None,
         *,
         durable: bool = True,
+        chain_key: Optional[str] = None,
+        chain_key_id: Optional[str] = None,
+        chain_keys: Optional[Dict[str, str]] = None,
     ) -> None:
         self.path = Path(path) if path is not None else Path(_default_audit_path())
         self.head_path = (
@@ -142,6 +163,114 @@ class AuditChain:
         self.durable = bool(durable)
         self._thread_lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._local_key_path().parent.mkdir(parents=True, exist_ok=True)
+        self._key_error: Optional[str] = None
+        self._chain_keys, self._current_key_id = self._resolve_keys(
+            chain_key, chain_key_id, chain_keys
+        )
+
+    # ------------------------------------------------------------------
+    # Chain key management
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _config() -> Dict[str, Any]:
+        """Return the telemetry audit config section (empty if unavailable)."""
+        try:
+            import utils.config as config
+
+            cfg = config.get("telemetry.audit_log", {})
+            return cfg if isinstance(cfg, dict) else {}
+        except Exception:
+            return {}
+
+    def _local_key_path(self) -> Path:
+        """Path of the auto-generated key sidecar (never the log itself)."""
+        return Path(str(self.head_path) + ".key")
+
+    def _chain_has_data(self) -> bool:
+        """Bounded check for existing evidence before minting a fresh key."""
+        try:
+            head = self._read_head()
+            if head["count"] > 0 or head["last_hash"] != GENESIS_HASH:
+                return True
+        except HardeningViolation:
+            return True
+        try:
+            if not self.path.exists():
+                return False
+            with open(self.path, "rb") as handle:
+                return bool(handle.read(8192).strip())
+        except OSError:
+            return True
+
+    def _load_local_key(self) -> Tuple[str, str]:
+        """Load (or first create) the restricted local HMAC key sidecar."""
+        key_path = self._local_key_path()
+        try:
+            raw = key_path.read_bytes()
+            text = raw.decode("ascii").strip()
+            if not text or len(text) > _MAX_KEY_CHARS:
+                raise HardeningViolation("audit chain key sidecar is invalid")
+            return _LOCAL_KEY_ID, text
+        except FileNotFoundError:
+            # Fail closed: a chain that already holds evidence must never
+            # silently mint a new key, which would orphan (and effectively
+            # reset verification of) every existing row. Defer the failure to
+            # verification/append so ``verify_chain`` keeps its return
+            # contract (and strict mode still raises) just like a corrupt
+            # head does.
+            if self._chain_has_data():
+                self._key_error = (
+                    "audit chain key sidecar is missing for a non-empty chain"
+                )
+                return "", ""
+            key = secrets.token_hex(32)
+            try:
+                fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return self._load_local_key()  # another process won the race
+            with os.fdopen(fd, "w", encoding="ascii") as handle:
+                handle.write(key + "\n")
+                handle.flush()
+                if self.durable:
+                    os.fsync(handle.fileno())
+            return _LOCAL_KEY_ID, key
+
+    def _resolve_keys(
+        self,
+        chain_key: Optional[str],
+        chain_key_id: Optional[str],
+        chain_keys: Optional[Dict[str, str]],
+    ) -> Tuple[Dict[str, str], str]:
+        """Resolve configured HMAC keys and the id to use for new rows."""
+        cfg = self._config()
+        raw = chain_keys if chain_keys is not None else cfg.get("chain_keys", {})
+        keys: Dict[str, str] = {}
+        if isinstance(raw, dict):
+            for key_id, key in raw.items():
+                if key_id and key:
+                    keys[str(key_id)] = str(key)[:_MAX_KEY_CHARS]
+
+        active = chain_key if chain_key is not None else cfg.get("chain_key")
+        active_id = (
+            chain_key_id if chain_key_id is not None else cfg.get("chain_key_id")
+        )
+        if active:
+            key_id = str(active_id) if active_id else _DEFAULT_KEY_ID
+            keys[key_id] = str(active)[:_MAX_KEY_CHARS]
+            return keys, key_id
+
+        key_id, key = self._load_local_key()
+        keys[key_id] = key
+        return keys, key_id
+
+    def _chain_checksum(self, prev_hash: str, content: str, key_id: str) -> str:
+        """HMAC-SHA256 over ``prev + content`` under the named chain key."""
+        key = self._chain_keys.get(key_id)
+        if not key:
+            raise HardeningViolation(f"audit chain key {key_id!r} is unavailable")
+        data = (prev_hash + content).encode("utf-8")
+        return hmac.new(key.encode("utf-8"), data, hashlib.sha256).hexdigest()
 
     # ------------------------------------------------------------------
     # Serialisation: an in-process lock plus an advisory OS lock on a
@@ -271,12 +400,16 @@ class AuditChain:
                 "payload": payload,
             }
             content = _canonical(entry)
-            checksum = hashlib.sha256(
-                (head["last_hash"] + content).encode("utf-8")
-            ).hexdigest()
+            checksum = self._chain_checksum(
+                head["last_hash"], content, self._current_key_id
+            )
+            # The key id names the secret that produced ``checksum``. It is
+            # public metadata: an attacker who changes it to another known id
+            # still fails the checksum check (HMACs under different keys differ).
             record = {
                 "prev": head["last_hash"],
                 "checksum": checksum,
+                "key_id": self._current_key_id,
                 "entry": entry,
             }
             line = json.dumps(record, sort_keys=True, separators=(",", ":"))
@@ -289,7 +422,12 @@ class AuditChain:
                 if self.durable:
                     os.fsync(handle.fileno())
             self._write_head(seq, checksum)
-            return {"seq": seq, "checksum": checksum, "prev": head["last_hash"]}
+            return {
+                "seq": seq,
+                "checksum": checksum,
+                "prev": head["last_hash"],
+                "key_id": self._current_key_id,
+            }
 
     # ------------------------------------------------------------------
     # Reads
@@ -419,14 +557,17 @@ class AuditChain:
         false result, for callers that must fail closed.
 
         Detects:
-          * modified payload/metadata (checksum mismatch),
+          * modified payload/metadata (keyed checksum mismatch),
           * deleted or reordered middle rows (``seq``/``prev`` mismatch),
           * tail truncation (head count/hash mismatch),
-          * a missing log file while the head still claims rows.
+          * a missing log file while the head still claims rows,
+          * a missing/unknown chain key or an unkeyed (downgraded) row.
         """
         try:
             with self._exclusive():
                 head = self._read_head()
+                if self._key_error:
+                    return self._fail(strict, 0, self._key_error)
                 if not self.path.exists():
                     if head["count"] != 0:
                         return self._fail(
@@ -448,7 +589,15 @@ class AuditChain:
                             return self._fail(
                                 strict, count, f"invalid JSON at line {line_num}: {exc}"
                             )
+                        if not isinstance(record, dict):
+                            return self._fail(
+                                strict, count, f"invalid record at line {line_num}"
+                            )
                         entry = record.get("entry") or {}
+                        if not isinstance(entry, dict):
+                            return self._fail(
+                                strict, count, f"invalid entry at line {line_num}"
+                            )
                         if entry.get("seq") != count + 1:
                             return self._fail(
                                 strict, count, f"sequence gap at line {line_num}"
@@ -457,14 +606,39 @@ class AuditChain:
                             return self._fail(
                                 strict, count, f"prev_hash mismatch at line {line_num}"
                             )
-                        calculated = hashlib.sha256(
-                            (expected_prev + _canonical(entry)).encode("utf-8")
-                        ).hexdigest()
-                        if calculated != record.get("checksum"):
+                        # Every row must name a key we actually hold. A row with
+                        # no key_id would be verifiable with public data alone
+                        # (plain SHA-256), so accepting one in this chain would
+                        # let a writer downgrade keying and rewrite history.
+                        key_id = record.get("key_id")
+                        if not isinstance(key_id, str) or not key_id:
+                            return self._fail(
+                                strict,
+                                count,
+                                f"missing chain key id at line {line_num}",
+                            )
+                        if key_id not in self._chain_keys:
+                            return self._fail(
+                                strict,
+                                count,
+                                f"unknown chain key id {key_id!r} at line {line_num}",
+                            )
+                        calculated = self._chain_checksum(
+                            expected_prev, _canonical(entry), key_id
+                        )
+                        stored = record.get("checksum")
+                        # Constant-time: a short-circuiting ``!=`` leaks a byte-
+                        # by-byte oracle for a forged checksum to a verifier
+                        # with repeated access. The isinstance guard keeps a
+                        # missing/non-string checksum from raising out of here.
+                        if not (
+                            isinstance(stored, str)
+                            and hmac.compare_digest(calculated, stored)
+                        ):
                             return self._fail(
                                 strict, count, f"checksum mismatch at line {line_num}"
                             )
-                        expected_prev = str(record["checksum"])
+                        expected_prev = stored
                         count += 1
 
                 if count != head["count"]:
