@@ -22,6 +22,66 @@ from typing import Any, Dict, FrozenSet, Iterable, Iterator, Set, Tuple
 # Placeholder written wherever a third party's personal data was removed.
 REDACTED = "[redacted]"
 
+
+# Internal-only column names that have no business in an artifact handed to a
+# data subject. Several collectors project ``SELECT *`` into the export
+# (applications, suite, ...): that copied secret/token hashes and server-side
+# storage paths straight into the JSON/ZIP. The per-collector redaction is
+# patchy — e.g. ApplicationsCollector deletes ``bot_token_encrypted`` and
+# ``public_key_encrypted``, columns that do not exist in the live schema, while
+# the real ``client_secret_hash`` was exported — so this denylist is the final,
+# fail-closed gate applied to the whole payload at the single choke point every
+# collector passes through (DataCollector.collect_all). A future collector that
+# projects a secret/path by accident cannot leak it past here.
+INTERNAL_EXPORT_FIELDS: FrozenSet[str] = frozenset(
+    {
+        # Authentication / secret material (password-hash class).
+        "password_hash",
+        "totp_secret_encrypted",
+        "backup_codes_hash",
+        "client_secret_hash",
+        "bot_token_encrypted",
+        "public_key_encrypted",
+        "token_hash",
+        "access_token_hash",
+        "refresh_token_hash",
+        "code_hash",
+        "ticket_hash",
+        "token_encrypted",
+        # Server filesystem / object-storage layout (internal paths).
+        "storage_path",
+        "blob_path",
+        # Deterministic ciphertext that collectors redact in some tables but
+        # not others (e.g. auth_known_ips); never ship raw ciphertext.
+        "ip_encrypted",
+        "ua_encrypted",
+        "email_encrypted",
+        "external_id_encrypted",
+        "old_content_encrypted",
+        "url_encrypted",
+    }
+)
+
+
+def redact_internal_fields(value: Any) -> Any:
+    """Recursively drop internal-only secret/path fields from an export payload.
+
+    The input is never mutated: a new structure of the same shape is returned
+    with every :data:`INTERNAL_EXPORT_FIELDS` key removed at any nesting depth.
+    """
+    if isinstance(value, dict):
+        return {
+            key: redact_internal_fields(child)
+            for key, child in value.items()
+            if key not in INTERNAL_EXPORT_FIELDS
+        }
+    if isinstance(value, list):
+        return [redact_internal_fields(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(redact_internal_fields(child) for child in value)
+    return value
+
+
 # Fields that carry a *third party's* personal data in DSAR rows. These are
 # joined in by collectors to make the subject's own relationships readable
 # (e.g. ``friend_username``), but the named person is not the data subject and
@@ -386,6 +446,8 @@ def assert_export_ready(data: Dict[str, Any], quotas: Dict[str, int]) -> None:
 __all__ = [
     "REDACTED",
     "THIRD_PARTY_PII_FIELDS",
+    "INTERNAL_EXPORT_FIELDS",
+    "redact_internal_fields",
     "ExportScopeViolation",
     "SUBJECT_ID_FIELDS",
     "verify_export_scope",

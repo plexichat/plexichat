@@ -14,7 +14,11 @@ from typing import Any, Dict
 import utils.logger as logger
 
 from .config import legally_required_pii_fields
-from .privacy import scrub_third_party_pii, verify_export_scope
+from .privacy import (
+    redact_internal_fields,
+    scrub_third_party_pii,
+    verify_export_scope,
+)
 
 from .collectors import (
     ApplicationsCollector,
@@ -149,7 +153,12 @@ class DataCollector:
             if self._config is not None
             else legally_required_pii_fields()
         )
-        return scrub_third_party_pii(result, legally_required=legally_required)
+        scrubbed = scrub_third_party_pii(result, legally_required=legally_required)
+        # Final fail-closed gate: a collector that projects ``SELECT *`` must
+        # never smuggle a secret hash, token, or server storage path into the
+        # artifact. Applies to every category (and both generation paths —
+        # manual admin and harvester — which share this orchestrator).
+        return redact_internal_fields(scrubbed)
 
     def count_records(self, user_id: int) -> Dict[str, int]:
         """

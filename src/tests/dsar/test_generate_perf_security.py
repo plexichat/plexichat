@@ -72,13 +72,20 @@ def _parallel_collect_all(db, user_id, config):
             result[futures[future]] = future.result()
     # Apply the same post-processing the production collector applies.
     from src.core.dsar.config import legally_required_pii_fields
-    from src.core.dsar.privacy import scrub_third_party_pii, verify_export_scope
+    from src.core.dsar.privacy import (
+        redact_internal_fields,
+        scrub_third_party_pii,
+        verify_export_scope,
+    )
 
     verify_export_scope(result, user_id)
-    return scrub_third_party_pii(
+    scrubbed = scrub_third_party_pii(
         result,
         legally_required=legally_required_pii_fields(config),
     )
+    # Keep the reference pipeline in sync with the production collector's
+    # final fail-closed gate for internal-only secret/path fields.
+    return redact_internal_fields(scrubbed)
 
 
 # ---------------------------------------------------------------------------
