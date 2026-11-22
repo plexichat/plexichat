@@ -35,6 +35,10 @@ _TOKEN_ID_RE = re.compile(r"^[0-9]{1,19}$")
 # Upper bound on an expiry expressed in epoch milliseconds (year 2100).
 MAX_EXPIRY_MS = 4_102_444_800_000
 _EXPIRY_RE = re.compile(r"^[0-9]{1,16}$")
+# Fixed vocabulary of token types minted with an ``<prefix>.<id>.<secret>``
+# shape. ``parse_token`` runs on every authenticated request, so keep this set
+# as a module-level immutable constant instead of rebuilding it per call.
+_PREFIXED_TOKEN_TYPES = frozenset({"bot", "email", "2fa", "wst"})
 
 
 def generate_token_secret(length: int = 32) -> str:
@@ -133,8 +137,7 @@ def parse_token(token: str) -> Optional[dict]:
 
     parts = token.split(".")
 
-    prefixed = {"bot", "email", "2fa", "wst"}
-    if len(parts) == 3 and parts[0] in prefixed:
+    if len(parts) == 3 and parts[0] in _PREFIXED_TOKEN_TYPES:
         token_id = _parse_token_id(parts[1])
         if token_id is None or not _valid_token_secret(parts[2]):
             return None
