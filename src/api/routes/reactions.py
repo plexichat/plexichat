@@ -386,30 +386,11 @@ async def add_reaction(
         # view access (``messages.read``) as a separate bit, so a server member
         # denied view by a channel override could otherwise react to a message
         # in a channel they cannot see (the reaction fan-out already hides such
-        # members from events). Resolve the channel membership-agnostically and
-        # check the live permission; DMs have no server channel row and are left
-        # to the manager's own participant gate.
-        servers_mod = api.get_servers()
-        if servers_mod and hasattr(servers_mod, "get_channel_by_conversation"):
-            conv_id = reactions.get_conversation_id_from_message(mid)
-            srv_channel = (
-                servers_mod.get_channel_by_conversation(conv_id) if conv_id else None
-            )
-            if srv_channel and not servers_mod.has_permission(
-                current_user.user_id,
-                srv_channel["server_id"],
-                "messages.read",
-                srv_channel["id"],
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "error": {
-                            "code": 403,
-                            "message": "Cannot react to this message",
-                        }
-                    },
-                )
+        # members from events). Use the canonical helper so an unwired or
+        # broken servers module denies rather than skipping the gate; the
+        # removal/clear paths already route through it. DMs have no server
+        # channel row and are left to the manager's own participant gate.
+        _require_channel_view(reactions, current_user.user_id, mid, "react to")
 
         # Check for server timeout
         servers_mod = api.get_servers()
