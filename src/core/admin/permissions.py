@@ -110,6 +110,7 @@ PERMISSION_SCOPES = {
     # Admin audit trail
     "admin.audit.read": "View and export the admin audit log",
     # Database migrations
+    "admin.migrations.read": "View migration status, metadata, and execution logs",
     "admin.migrations.execute": "Run, apply, and roll back database migrations",
     # Admin security operations
     "admin.security.ipblock": "Block and unblock IP addresses platform-wide",

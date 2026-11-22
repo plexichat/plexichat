@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+import json
+
 from fastapi import APIRouter, HTTPException, Depends, status as http_status, Request
 from pydantic import BaseModel, Field
 
@@ -217,9 +219,73 @@ def get_migration_manager() -> MigrationManager:
     return MigrationManager(db)
 
 
+def _admin_has_live_scope(admin_id) -> bool:
+    """Confirm an admin session still carries a live granted scope.
+
+    A role edit/revocation deliberately leaves the row in ``admin_sessions``
+    intact: admin routes re-read roles on every request rather than revoking
+    the session. The migration read routes used a merely-valid admin session
+    (via ``get_admin_user`` -> ``get_admin_from_token``) as sufficient
+    authority to expose migration metadata, status and logs. A demoted admin
+    whose roles were all revoked therefore kept that access until natural
+    session expiry. Require at least one still-granted scope from a live role
+    assignment; fail closed on a missing DB, malformed payload or lookup error.
+    Only a literal boolean ``true`` grants.
+    """
+    try:
+        import sys
+
+        # Resolve through sys.modules: "import x.y as z" can return a stale
+        # parent-package attribute after a test replaces the module, whereas
+        # the sys.modules lookup always sees the live binding.
+        api_module = sys.modules.get("src.api")
+        if api_module is None:
+            import src.api as api_module
+
+        db = api_module.get_db()
+        if db is None:
+            return False
+        rows = db.fetch_all(
+            "SELECT r.permissions FROM admin_roles r "
+            "JOIN admin_role_assignments a ON a.role_id = r.id "
+            "WHERE a.admin_id = ?",
+            (admin_id,),
+        )
+    except Exception:
+        return False
+    for row in rows or ():
+        raw = (
+            row.get("permissions")
+            if isinstance(row, dict)
+            else (row[0] if row else None)
+        )
+        permissions = raw
+        if isinstance(raw, str):
+            try:
+                permissions = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+        if isinstance(permissions, dict) and any(
+            v is True for v in permissions.values()
+        ):
+            return True
+    return False
+
+
 def get_admin_user(request: Request) -> int:
-    """Dependency injection for admin user with proper authentication."""
-    return get_admin_from_token(request)
+    """Dependency: authenticate an admin and re-check its live authority.
+
+    Session validity alone is not authority -- demotion leaves the session
+    row intact. These read routes expose migration metadata/status/logs, so a
+    surviving admin bearer must still carry a live granted scope.
+    """
+    admin_id = get_admin_from_token(request)
+    if not _admin_has_live_scope(admin_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return admin_id
 
 
 def validate_version(version: str) -> None:
@@ -372,9 +438,10 @@ async def list_migrations(
     Returns applied, pending, and failed migrations with metadata.
     """
     # Security gates are intentionally outside the cache: every request still
-    # passes host restriction and token authentication before a cached response
-    # can be returned.
+    # passes host restriction, token authentication and the read-scope check
+    # before a cached response can be returned.
     check_host_restriction(request)
+    require_admin_permission(request, "admin.migrations.read")
     try:
         key = _migration_list_cache_key(manager)
         response = _get_cached_list(key) if key is not None else None
@@ -404,6 +471,7 @@ async def get_migration_system_status(
     admin_user: int = Depends(get_admin_user),
 ) -> Dict[str, Any]:
     check_host_restriction(request)
+    require_admin_permission(request, "admin.migrations.read")
     try:
         status = manager.get_migration_status()
         integrity = manager.validate_migration_integrity()
@@ -443,6 +511,7 @@ async def get_migration_details(
     Includes metadata, status, logs, and execution details.
     """
     check_host_restriction(request)
+    require_admin_permission(request, "admin.migrations.read")
     validate_version(version)
     try:
         # Get migration status
