@@ -777,6 +777,15 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="e9fb77fc-private-index-audit-pin",
+        path="src/api/routes/admin/moderation.py",
+        marker='from src.core.security.hardening import HardeningViolation, parse_id',
+        why=(
+            'Private-index commit e9fb77fc pinned by a distinctive line it introduced. '
+            'Falsifiable by the guard synthetic-revert test.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
