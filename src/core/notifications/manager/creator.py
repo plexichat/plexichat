@@ -14,6 +14,7 @@ from ..models import (
 from .helpers import (
     get_blocked_user_ids,
     get_conversation_participants,
+    get_role,
     get_role_members,
     get_server_members,
     get_online_members,
@@ -141,8 +142,47 @@ class NotificationCreatorMixin(NotificationProtocol):
 
         users_to_notify = set()
         mention_types = {}
+        # SECURITY: recipients reached by an @everyone-equivalent mass ping
+        # (a literal @everyone/@here, a self-channel <#this-channel> mention,
+        # or a mention of a role held by every server member) must honour the
+        # recipient's ``suppress_everyone`` preference just like a plain
+        # @everyone. Their MentionType is CHANNEL/ROLE, which the generic
+        # preference gate does not treat as a mass mention, so track them
+        # explicitly here.
+        mass_ping_recipients = set()
 
         blocked_users = get_blocked_user_ids(self._relationships, self._db, author_id)
+
+        # Lazily resolved, memoised for this one fan-out: whether a role
+        # mention reaches every server member. An @everyone-equivalent role
+        # (the default role or any role assigned to the whole server) is a
+        # mass ping; a normal role ping is not.
+        _server_member_count = None
+
+        def _role_is_everyone_equivalent(role_id, role_members) -> bool:
+            nonlocal _server_member_count
+            if not server_id:
+                return False
+            role = None
+            try:
+                role = get_role(self._db, role_id)
+            except Exception:
+                role = None
+            if role is not None and role.get("server_id") == server_id:
+                if role.get("is_default"):
+                    return True
+            if _server_member_count is None:
+                try:
+                    _server_member_count = len(get_server_members(self._db, server_id))
+                except Exception:
+                    _server_member_count = 0
+            # A non-default role explicitly held by every member fans out to
+            # the same audience as @everyone. Fail closed on an unresolved
+            # member set by not widening this verdict.
+            return (
+                _server_member_count > 0
+                and len(set(role_members)) >= _server_member_count
+            )
 
         # ROLE-member hydration N+1: a message mentioning several roles used to
         # issue one ``SELECT ... srv_member_roles JOIN srv_members WHERE
@@ -189,11 +229,16 @@ class NotificationCreatorMixin(NotificationProtocol):
                         )
                     except (TypeError, ValueError):
                         role_members = []
+                role_is_everyone = _role_is_everyone_equivalent(
+                    mention.target_id, role_members
+                )
                 for member_id in role_members:
                     if member_id != author_id and member_id not in blocked_users:
                         if member_id not in mention_types:
                             users_to_notify.add(member_id)
                             mention_types[member_id] = MentionType.ROLE
+                        if role_is_everyone:
+                            mass_ping_recipients.add(member_id)
 
             elif mention.mention_type == MentionType.CHANNEL:
                 # Channel mentions notify members who have access to the channel
@@ -211,6 +256,9 @@ class NotificationCreatorMixin(NotificationProtocol):
                                 if member_id not in mention_types:
                                     users_to_notify.add(member_id)
                                     mention_types[member_id] = MentionType.CHANNEL
+                                # A self-channel mention pings every viewer:
+                                # an @everyone equivalent for suppression.
+                                mass_ping_recipients.add(member_id)
 
             elif mention.mention_type == MentionType.EVERYONE:
                 if server_id:
@@ -220,6 +268,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                             if member_id not in mention_types:
                                 users_to_notify.add(member_id)
                                 mention_types[member_id] = MentionType.EVERYONE
+                            mass_ping_recipients.add(member_id)
 
             elif mention.mention_type == MentionType.HERE:
                 if server_id:
@@ -231,6 +280,7 @@ class NotificationCreatorMixin(NotificationProtocol):
                             if member_id not in mention_types:
                                 users_to_notify.add(member_id)
                                 mention_types[member_id] = MentionType.HERE
+                            mass_ping_recipients.add(member_id)
 
         # SECURITY: never notify (or leak content_preview to) users who
         # cannot view the channel the message was posted in. This filters
@@ -293,6 +343,18 @@ class NotificationCreatorMixin(NotificationProtocol):
 
             settings = all_settings.get(user_id)
             override = all_overrides.get(user_id)
+
+            # A recipient reached by an @everyone-equivalent mass ping opted
+            # out via ``suppress_everyone`` must not receive the notification
+            # (or its content preview). Fail closed: an unverifiable settings
+            # row is treated as opted in by the bulk resolver's defaults, so
+            # only an explicit opt-out suppresses here.
+            if (
+                user_id in mass_ping_recipients
+                and settings
+                and settings.suppress_everyone
+            ):
+                continue
 
             if self._should_notify_user_optimized(
                 user_id,
