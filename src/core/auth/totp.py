@@ -395,6 +395,41 @@ def generate_totp_uri(secret: str, username: str, issuer: Optional[str] = None) 
     return totp.provisioning_uri(name=username, issuer_name=issuer)
 
 
+def _claim_totp_window(
+    user_id: Union[int, str],
+    purpose: Optional[str],
+    acting_user_id: Optional[Union[int, str]],
+    interval: int,
+    window: int,
+) -> bool:
+    """Atomically claim *every* code that is valid at this instant.
+
+    ``pyotp``'s ``valid_window=N`` accepts the codes of ``2*N+1`` adjacent
+    time steps. A replay key on the presented code alone leaves all the other
+    accepted codes live, so two different still-valid codes could each
+    authorize a separate step-up (two logins, a login and a 2FA disable, ...)
+    inside one validity window. Claiming the whole accepted step range closes
+    that gap: any other code valid right now must claim one of these keys, and
+    the claim is single-winner (SET NX / insert-or-ignore / bounded guard), so
+    at most one caller can own the window.
+
+    The markers are non-numeric and cannot collide with a real TOTP code, and
+    are scoped by ``(user, purpose, actor)`` exactly like the code claim, so
+    purpose isolation is preserved. A failed claim is fail-closed: the caller
+    must not accept a code it could not exclusively claim a window for.
+    """
+    step = int(time.time()) // max(1, interval)
+    for marker_step in range(step - window, step + window + 1):
+        if not _replay_cache.check_and_mark(
+            user_id,
+            f"#win:{marker_step}",
+            purpose=purpose,
+            acting_user_id=acting_user_id,
+        ):
+            return False
+    return True
+
+
 def verify_totp_code(
     secret: str,
     code: str,
@@ -448,6 +483,18 @@ def verify_totp_code(
             user_id, code, purpose=purpose, acting_user_id=acting_user_id
         ):
             return False  # Replay detected
+        # The code is single-use, but valid_window admits 2*window+1 adjacent
+        # codes. Consume the whole window atomically so a *different* code that
+        # is still valid cannot be presented for a second step-up. Fail closed
+        # if any of the window's single-winner claims cannot be made.
+        if not _claim_totp_window(
+            user_id,
+            purpose,
+            acting_user_id,
+            totp_config.get("interval", 30),
+            window,
+        ):
+            return False
 
     return True
 
