@@ -245,6 +245,29 @@ def _write_missed(cursor) -> bool:
     return isinstance(rowcount, int) and rowcount <= 0
 
 
+def _role_permission_write_guard(role_id, raw_permissions):
+    """Bind a role-assignment INSERT to the payload the actor was checked against.
+
+    ``can_grant_existing_role`` decides delegation from a single read of
+    ``admin_roles.permissions``. Without binding the subsequent INSERT to that
+    exact value, an ``admin.edit`` holder can pass the check on a benign payload
+    and, after a concurrent widening of the role's scopes, attach the escalated
+    role. This mirrors the compare-and-swap in ``admin/roles.py:assign_role``.
+
+    ``raw_permissions`` is the snapshot captured by ``can_grant_existing_role``
+    via its ``_out`` argument -- the very read that authorized the grant. When
+    no payload was captured (e.g. the check was stubbed out in a unit test) the
+    original unguarded write shape is preserved.
+    """
+    if not isinstance(raw_permissions, str):
+        return "", ()
+    return (
+        " AND EXISTS (SELECT 1 FROM admin_roles pr "
+        "WHERE pr.id = ? AND pr.permissions = ?)",
+        (role_id, raw_permissions),
+    )
+
+
 def _assert_hierarchy_at_write(db, actor_id: int, target_admin_id: int) -> None:
     """Fail closed with 409 if the actor no longer outranks the target.
 
@@ -406,7 +429,11 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             # dedicated /roles/assign route applies to the same concrete role.
             from src.core.admin.permissions import can_grant_existing_role
 
-            if not can_grant_existing_role(db, admin_id, role_id):
+            # Capture the exact permission payload the delegation check read so
+            # the INSERT below can be bound to it (compare-and-swap). A role
+            # widened after this check but before the write must not escalate.
+            _perm_snapshot = {}
+            if not can_grant_existing_role(db, admin_id, role_id, _out=_perm_snapshot):
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -448,12 +475,25 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                    VALUES (?, ?, ?, ?, ?, 1)""",
                 (user.id, user_data.username, password_hash, user_data.email, now_ms),
             )
-            db.execute(
-                """INSERT INTO admin_role_assignments
-                   (admin_id, role_id, assigned_at, assigned_by)
-                   VALUES (?, ?, ?, ?)""",
-                (user.id, role_id, now_ms, admin_id),
+            guard_sql, guard_params = _role_permission_write_guard(
+                role_id, _perm_snapshot.get("permissions")
             )
+            cursor = db.execute(
+                "INSERT INTO admin_role_assignments "
+                "(admin_id, role_id, assigned_at, assigned_by) "
+                "SELECT ?, ?, ?, ? WHERE 1=1" + guard_sql,
+                (user.id, role_id, now_ms, admin_id, *guard_params),
+            )
+            if _write_missed(cursor):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": "Role changed concurrently, retry",
+                        }
+                    },
+                )
             log_admin_action(
                 db,
                 admin_id,
@@ -586,7 +626,13 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                 # scopes the actor does not itself hold.
                 from src.core.admin.permissions import can_grant_existing_role
 
-                if not can_grant_existing_role(db, admin_id, role_id):
+                # Capture the exact permission payload the delegation check
+                # read and bind the INSERT to it, so a concurrent widening of
+                # this role's scopes cannot escalate the retargeted admin.
+                _perm_snapshot = {}
+                if not can_grant_existing_role(
+                    db, admin_id, role_id, _out=_perm_snapshot
+                ):
                     raise HTTPException(
                         status_code=403,
                         detail={
@@ -599,12 +645,25 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                 db.execute(
                     "DELETE FROM admin_role_assignments WHERE admin_id = ?", (uid,)
                 )
-                db.execute(
-                    """INSERT INTO admin_role_assignments
-                       (admin_id, role_id, assigned_at, assigned_by)
-                       VALUES (?, ?, ?, ?)""",
-                    (uid, role_id, int(time.time() * 1000), admin_id),
+                guard_sql, guard_params = _role_permission_write_guard(
+                    role_id, _perm_snapshot.get("permissions")
                 )
+                cursor = db.execute(
+                    "INSERT INTO admin_role_assignments "
+                    "(admin_id, role_id, assigned_at, assigned_by) "
+                    "SELECT ?, ?, ?, ? WHERE 1=1" + guard_sql,
+                    (uid, role_id, int(time.time() * 1000), admin_id, *guard_params),
+                )
+                if _write_missed(cursor):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": {
+                                "code": 409,
+                                "message": "Role changed concurrently, retry",
+                            }
+                        },
+                    )
                 changed["role"] = requested_role
                 # The admin's effective privileges changed via this alternate
                 # role-assignment path too; refresh cached auth context.

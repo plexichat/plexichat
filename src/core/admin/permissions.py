@@ -407,7 +407,7 @@ def can_delegate_permissions(db, admin_id: int, permissions: Dict[str, bool]) ->
     return True
 
 
-def can_grant_existing_role(db, admin_id: int, role_id: int) -> bool:
+def can_grant_existing_role(db, admin_id: int, role_id: int, *, _out=None) -> bool:
     """Object-level authorization for assigning a concrete role object.
 
     Route-level scopes and the position hierarchy answer "may this admin
@@ -418,11 +418,19 @@ def can_grant_existing_role(db, admin_id: int, role_id: int) -> bool:
 
     Returns False when the role cannot be read or its permission payload is
     malformed, so a broken row can never fail open.
+
+    ``_out`` is an optional dict. When supplied, the exact stored permission
+    payload read here is written to ``_out['permissions']`` *from the same read
+    that decides authorization*. Callers that go on to write a role assignment
+    bind that write to this snapshot (compare-and-swap) so a concurrent widening
+    of the role's scopes between the check and the write cannot escalate.
     """
     row = db.fetch_one("SELECT permissions FROM admin_roles WHERE id = ?", (role_id,))
     if not row:
         return False
     raw = row["permissions"] if isinstance(row, dict) else row[0]
+    if _out is not None:
+        _out["permissions"] = raw
     try:
         permissions = json.loads(raw) if isinstance(raw, str) else raw
     except (TypeError, ValueError):
