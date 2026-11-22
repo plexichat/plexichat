@@ -25,7 +25,9 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
-pytestmark = ["unit", "security"]
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.security]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _REL = "src/api/routes/reactions.py"
