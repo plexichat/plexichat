@@ -433,10 +433,13 @@ async def send_join_message(
                 str, _bounded_text(message_type, "message_type", MAX_MESSAGE_TYPE_LEN)
             )
             validate_join_payload(payload)
+            # SECURITY: measure the exact bytes ``_post_signed`` transmits
+            # (``json.dumps(payload).encode("utf-8")``, default ensure_ascii=True).
+            # A compact ``ensure_ascii=False`` measurement undercounts non-ASCII
+            # text, which is escaped to ``\uXXXX`` on the wire; keep ``default=str``
+            # only so near-JSON values stay measurable (it cannot shrink the form).
             if (
-                len(
-                    json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-                )
+                len(json.dumps(payload, default=str).encode("utf-8"))
                 > MAX_PAYLOAD_BYTES
             ):
                 raise HardeningViolation("federated payload exceeds size limit")

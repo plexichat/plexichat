@@ -72,7 +72,12 @@ class _PayloadSizeMixin:
         if value is None:
             return value
         try:
-            size = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+            # SECURITY: measure the exact representation the repository persists
+            # (``_json_dumps`` -> ``json.dumps`` default, ensure_ascii=True), not
+            # a compact ``ensure_ascii=False`` form. Non-ASCII text is escaped to
+            # ``\uXXXX`` (up to ~3x larger for astral chars) once stored, so a
+            # compact measurement would admit payloads that blow the 1 MB row cap.
+            size = len(json.dumps(value).encode("utf-8"))
         except (TypeError, ValueError) as exc:
             raise ValueError("payload must be JSON-serializable") from exc
         if size > _MAX_ARTIFACT_PAYLOAD_BYTES:

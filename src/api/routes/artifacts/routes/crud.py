@@ -443,10 +443,13 @@ async def update_artifact(
             )
         if "payload" in update_fields:
             try:
+                # SECURITY: measure the exact representation the repository
+                # persists (``_json_dumps`` -> default ``json.dumps``,
+                # ensure_ascii=True). A compact ``ensure_ascii=False`` form
+                # undercounts non-ASCII payloads, which are escaped to
+                # ``\uXXXX`` (up to ~3x) once stored, defeating the 1 MB cap.
                 merged_size = len(
-                    json.dumps(update_fields["payload"], ensure_ascii=False).encode(
-                        "utf-8"
-                    )
+                    json.dumps(update_fields["payload"]).encode("utf-8")
                 )
             except (TypeError, ValueError):
                 merged_size = -1
