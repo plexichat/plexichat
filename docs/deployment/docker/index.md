@@ -157,7 +157,7 @@ For detailed steps, see [Quick start](quick-start.md).
 - Self-signed certificates are generated in the `certs` volume on first boot (`plexichat/docker-compose.yml`). Replace them with Let's Encrypt certificates for production.
 - All services communicate over the internal `plexichat_default` network. Only `client` (80/443) and `backend` (8000/TCP, 30000–30100/UDP) publish host ports by default.
 
-See [Production setup](production-setup.md#security) for hardening steps.
+See [Production setup](production-setup.md#security-hardening) for hardening steps.
 
 ## Data persistence
 

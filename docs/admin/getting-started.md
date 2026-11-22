@@ -132,7 +132,7 @@ See [Approval workflows](approval-workflows.md) for the full configuration refer
 3. Enter the account details and assign a role.
 4. Tell the new admin to set up 2FA on first sign-in.
 
-You can also manage roles through the API. See [RBAC](rbac.md#role-assignment) for examples.
+You can also manage roles through the API. See [RBAC](rbac.md#assign-roles) for examples.
 
 ### Review system status
 
