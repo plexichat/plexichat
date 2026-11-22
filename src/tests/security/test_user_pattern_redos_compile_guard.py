@@ -637,18 +637,90 @@ def test_scan_is_not_vacuous(commit_sha):
     assert any(s.method == "fnmatch.fnmatchcase" for s in sites)
 
 
-def test_head_pins_sequential_wildcard_vetting(commit_sha):
-    """The 782335ac fix must actually be in the blobs we are scanning."""
-    blob = _read_blobs(commit_sha, ("src/core/automod/rules/regex.py",))[
-        "src/core/automod/rules/regex.py"
-    ]
-    assert "def _has_sequential_wildcard_redos_risk(" in blob
-    assert "MAX_SEQUENTIAL_WILDCARDS" in blob
-    # Wired into the single public vetting entry point, not dead code.
+# Each ReDoS vetting fix that the guard relies on must be pinned in the
+# committed blob, with a helper marker distinctive to that fix and proof that
+# it is actually CALLED by the public entry point (not dead code). Reverting
+# either commit -- or deleting just its call -- must fail the parametrized pin
+# below.
+REDOS_PINNED_FIXES = (
+    (
+        "782335ac",
+        "_has_sequential_wildcard_redos_risk",
+        ("MAX_SEQUENTIAL_WILDCARDS",),
+    ),
+    (
+        "fc2fa880",
+        "_has_flat_quantifier_chain_redos_risk",
+        ("_flat_atom_descriptor", "_atoms_overlap"),
+    ),
+)
+
+
+def _assert_pinned_redos_fix(
+    blob: str, func: str, markers: tuple[str, ...]
+) -> None:
+    """A committed ReDoS fix is present, has its markers, and is wired in."""
+    assert f"def {func}(" in blob, f"{func} definition missing from HEAD blob"
+    for marker in markers:
+        assert marker in blob, f"{func} marker {marker!r} missing from HEAD blob"
     tail = blob.split("def _has_redos_risk(", 1)
     assert len(tail) == 2, "_has_redos_risk missing from HEAD blob"
     body = tail[1].split("\ndef ", 1)[0]
-    assert "_has_sequential_wildcard_redos_risk(pattern_str)" in body
+    assert f"{func}(pattern_str)" in body, (
+        f"{func} is defined but not wired into _has_redos_risk"
+    )
+
+
+@pytest.mark.parametrize(("fix_commit", "func", "markers"), REDOS_PINNED_FIXES)
+def test_head_pins_redos_vetting_fixes(commit_sha, fix_commit, func, markers):
+    """Both 782335ac and fc2fa880 must be in the blobs we scan, and live."""
+    blob = _read_blobs(commit_sha, ("src/core/automod/rules/regex.py",))[
+        "src/core/automod/rules/regex.py"
+    ]
+    _assert_pinned_redos_fix(blob, func, markers)
+
+
+def test_self_test_redos_pin_detects_a_reverted_fix():
+    """The pin must fail when a fix's definition, marker, or wiring is gone."""
+    synthetic = "\n".join(
+        (
+            "MAX_SEQUENTIAL_WILDCARDS = 3",
+            "def _flat_atom_descriptor(pattern_str, i): return None",
+            "def _atoms_overlap(a, b): return False",
+            "def _has_sequential_wildcard_redos_risk(pattern_str): return False",
+            "def _has_flat_quantifier_chain_redos_risk(pattern_str): return False",
+            "def _has_redos_risk(pattern_str):",
+            "    if _has_sequential_wildcard_redos_risk(pattern_str): return True",
+            "    if _has_flat_quantifier_chain_redos_risk(pattern_str): return True",
+            "    return False",
+            "",
+        )
+    )
+    # Baseline: the pin accepts a blob that genuinely contains both fixes.
+    for _fix_commit, func, markers in REDOS_PINNED_FIXES:
+        _assert_pinned_redos_fix(synthetic, func, markers)
+    # Non-vacuity: deleting either fix (or just its wiring) must be caught.
+    for _fix_commit, func, markers in REDOS_PINNED_FIXES:
+        call_line = f"    if {func}(pattern_str): return True"
+        unwired = "\n".join(
+            line for line in synthetic.splitlines() if line != call_line
+        )
+        with pytest.raises(AssertionError):
+            _assert_pinned_redos_fix(unwired, func, markers)
+        no_def = "\n".join(
+            line
+            for line in unwired.splitlines()
+            if not line.startswith(f"def {func}(")
+        )
+        with pytest.raises(AssertionError):
+            _assert_pinned_redos_fix(no_def, func, markers)
+        no_marker = "\n".join(
+            line
+            for line in synthetic.splitlines()
+            if not any(m in line for m in markers)
+        )
+        with pytest.raises(AssertionError):
+            _assert_pinned_redos_fix(no_marker, func, markers)
 
 
 def test_no_undocumented_user_pattern_compile(commit_sha):
