@@ -121,11 +121,15 @@ GET /api/v1/users/@me/features
 
 The following endpoints require administrator privileges. You can authenticate
 with either a user token that has `administrator` permission or a dedicated
-admin session token.
+admin session token. Admin membership alone is not sufficient: each endpoint
+also requires a specific permission scope, and a scoped admin without it
+receives `403`.
 
 ### Get user features
 
-Returns feature flags, badges, and tier information for a specific user.
+Returns feature flags, badges, and tier information for a specific user. You
+must be an admin with the `users.read` permission; admin membership alone
+returns `403`.
 
 ```
 GET /api/v1/admin/users/{user_id}/features
@@ -167,12 +171,13 @@ value.
 | --- | --- |
 | `400` | Invalid user ID. |
 | `401` | Not authenticated or missing admin access. |
-| `403` | Admin access required. |
+| `403` | Admin access with the `users.read` permission required. |
 | `404` | User does not exist. |
 
 ### Update user features
 
-Updates tier and expiration for a specific user.
+Updates tier and expiration for a specific user. You must be an admin with the
+`users.tier` permission; admin membership alone returns `403`.
 
 ```
 PUT /api/v1/admin/users/{user_id}/features
@@ -205,12 +210,13 @@ features).
 | --- | --- |
 | `400` | Invalid tier name or user ID. |
 | `401` | Not authenticated. |
-| `403` | Admin access required. |
+| `403` | Admin access with the `users.tier` permission required. |
 | `404` | User does not exist. |
 
 ### Get available tiers
 
-Returns all configured rate limit tiers.
+Returns all configured rate limit tiers. You must be an admin with the
+`config.read` permission; admin membership alone returns `403`.
 
 ```
 GET /api/v1/admin/tiers
@@ -269,7 +275,8 @@ GET /api/v1/admin/tiers
 
 ### Get available badges
 
-Returns all badges that can be assigned.
+Returns all badges that can be assigned. You must be an admin with the
+`config.read` permission; admin membership alone returns `403`.
 
 ```
 GET /api/v1/admin/badges
