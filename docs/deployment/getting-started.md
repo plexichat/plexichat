@@ -6,7 +6,7 @@ Install, configure, and run Plexichat in production. For subsystem-specific opti
 
 - [System requirements](#system-requirements)
 - [Installation](#installation)
-- [Configuration](#configuration)
+- [Create configuration](#step-5-create-configuration)
 - [Security hardening](#security-hardening)
 - [Service management](#service-management)
 - [Verification](#verification)
