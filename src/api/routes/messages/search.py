@@ -19,6 +19,7 @@ from .helpers import (
     _message_to_response,
     batch_attachment_file_ids,
     batch_embed_suppressed_ids,
+    batch_poll_results,
 )
 
 router = APIRouter(tags=["Messages"])
@@ -131,6 +132,16 @@ async def _search_messages_cached(
             embeds_mod=api.get_embeds(),
         )
 
+        # Poll results are viewer-specific; hydrate the whole hit set for the
+        # requesting viewer in one bounded batch rather than one get_results()
+        # query storm during serialization.
+        poll_results_map = await run_in_threadpool(
+            batch_poll_results,
+            messages,
+            current_user.user_id,
+            polls_mod=api.get_polls(),
+        )
+
         result = []
         for m in messages:
             author_id = m.author_id
@@ -144,6 +155,7 @@ async def _search_messages_cached(
                     media_mod=media_mod,
                     viewer_user_id=current_user.user_id,
                     suppress_embeds=getattr(m, "id", None) in suppressed_ids,
+                    poll_results_data=poll_results_map,
                 )
             )
 

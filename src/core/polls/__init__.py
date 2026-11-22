@@ -69,6 +69,7 @@ __all__ = [
     "vote",
     "change_vote",
     "get_results",
+    "get_results_bulk",
     "close_poll",
     "delete_poll",
     "get_voters",
@@ -161,6 +162,17 @@ def change_vote(user_id: int, poll_id: int, option_ids: List[int]) -> PollResult
 def get_results(poll_id: int, user_id: int) -> PollResults:
     """Get poll results."""
     return _get_manager().get_results(poll_id, user_id)
+
+
+def get_results_bulk(poll_ids, user_id: int):
+    """Hydrate results for many polls for one viewer in bounded batches.
+
+    Returns a ``{poll_id: PollResults | None}`` map; inaccessible or unknown
+    polls map to ``None`` so their existence is not disclosed. This is the
+    prefetch used by the message-list serializers to avoid one ``get_results``
+    call (and ~8 SQL round trips) per poll-bearing message.
+    """
+    return _get_manager().get_results_bulk(poll_ids, user_id)
 
 
 def close_poll(user_id: int, poll_id: int) -> Poll:

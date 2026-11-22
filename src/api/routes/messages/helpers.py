@@ -125,6 +125,64 @@ def _set_attr(obj, name, value) -> None:
         setattr(obj, name, value)
 
 
+def batch_poll_results(messages, viewer_user_id, polls_mod=None) -> Dict[int, Any]:
+    """Prefetch results for every poll on a message page, scoped to one viewer.
+
+    ``_message_to_response`` used to hydrate poll results with one
+    ``get_results(poll_id, viewer)`` call per poll-bearing message (each call
+    paying an authz row, poll row, options, voter stats and vote aggregation).
+    Gathering the page's poll ids first and resolving them in one bounded
+    batched lookup keeps that fan-out flat as the page grows. The batched
+    manager method applies the same live authz gate and viewer-specific
+    visibility rules; inaccessible polls simply have no entry, so the
+    serializer leaves their poll fields empty. Bad ids are skipped rather than
+    handed to SQL, and a module without the bulk helper keeps the legacy
+    per-poll semantics instead of silently dropping results.
+    """
+    if polls_mod is None:
+        polls_mod = api.get_polls()
+    if not polls_mod or not messages:
+        return {}
+
+    poll_ids = []
+    seen = set()
+    for msg in messages:
+        metadata = _get_attr(msg, "metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, ValueError):
+                continue
+        if not isinstance(metadata, dict):
+            continue
+        raw_id = metadata.get("poll_id")
+        if raw_id is None or isinstance(raw_id, bool):
+            continue
+        if isinstance(raw_id, float) and not raw_id.is_integer():
+            continue
+        try:
+            poll_id = parse_id(raw_id, "poll_id")
+        except (ValueError, TypeError):
+            continue
+        if poll_id not in seen:
+            seen.add(poll_id)
+            poll_ids.append(poll_id)
+
+    if not poll_ids:
+        return {}
+    bulk = getattr(polls_mod, "get_results_bulk", None)
+    try:
+        if callable(bulk):
+            return bulk(poll_ids, viewer_user_id) or {}
+        return {
+            poll_id: polls_mod.get_results(poll_id, viewer_user_id)
+            for poll_id in poll_ids
+        }
+    except Exception as e:
+        logger.debug(f"batch poll results lookup failed: {e}")
+        return {}
+
+
 def batch_attachment_file_ids(messages, media_mod=None) -> None:
     """Resolve missing attachment file ids in ONE batched media lookup.
 
@@ -227,6 +285,7 @@ def _message_to_response(
     viewer_user_id: Optional[int] = None,
     poll_viewer_user_id: Optional[int] = None,
     suppress_embeds: Optional[bool] = None,
+    poll_results_data: Optional[Dict[int, Any]] = None,
 ) -> MessageResponse:
     # Reuse the module-level accessor instead of allocating a fresh closure on
     # every call. A list/search/pins page serializes up to 100 messages, so this
@@ -382,36 +441,54 @@ def _message_to_response(
         poll_viewer_user_id = viewer_user_id
 
     if poll_id and poll_viewer_user_id is not None:
-        polls_module = api.get_polls()
-        if polls_module:
+        results = None
+        if poll_results_data is not None:
+            # List/search/pins pages prefetch every poll for the viewer in one
+            # bounded batched lookup (see batch_poll_results). Reading that map
+            # keeps serialization at zero queries per poll; the per-message
+            # get_results() path below remains for single-message callers.
             try:
-                # get_results() already hydrates the complete poll (row +
-                # options + voter stats) through get_poll(). Derive the plain
-                # ``poll`` field from that same hydrated object instead of
-                # issuing a second get_poll() round trip: on a list/search page
-                # this used to double the poll-row/option/voter hydration and
-                # authz gates for every poll-bearing message (an N+1 hotspot).
-                results = polls_module.get_results(int(poll_id), poll_viewer_user_id)
-                if results:
-                    from src.api.routes.polls import _results_to_response
+                results = poll_results_data.get(int(poll_id))
+            except (TypeError, ValueError):
+                results = None
+        else:
+            polls_module = api.get_polls()
+            if polls_module:
+                try:
+                    # get_results() already hydrates the complete poll (row +
+                    # options + voter stats) through get_poll(). Derive the plain
+                    # ``poll`` field from that same hydrated object instead of
+                    # issuing a second get_poll() round trip: on a list/search page
+                    # this used to double the poll-row/option/voter hydration and
+                    # authz gates for every poll-bearing message (an N+1 hotspot).
+                    results = polls_module.get_results(
+                        int(poll_id), poll_viewer_user_id
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to fetch poll/results for message {msg_id}: {e}"
+                    )
+        if results:
+            try:
+                from src.api.routes.polls import _results_to_response
 
-                    poll_response = _poll_to_response(results.poll)
-                    if viewer_user_id is None:
-                        # Fan-out broadcast (message delete / AutoMod tombstone):
-                        # this single body reaches EVERY channel recipient, so it
-                        # must not carry results resolved through one viewer's
-                        # visibility window. ``poll_viewer_user_id`` is the
-                        # message author there; for AFTER_VOTE / AFTER_END polls
-                        # the author may be entitled to per-option counts, the
-                        # voter headcount and their own individual votes -- none
-                        # of which other recipients may see. Keep only the
-                        # non-sensitive poll skeleton for UI continuity and fail
-                        # closed on the viewer-specific pieces.
-                        poll_response.total_votes = None
-                    else:
-                        poll_results = _results_to_response(results)
+                poll_response = _poll_to_response(results.poll)
+                if viewer_user_id is None:
+                    # Fan-out broadcast (message delete / AutoMod tombstone):
+                    # this single body reaches EVERY channel recipient, so it
+                    # must not carry results resolved through one viewer's
+                    # visibility window. ``poll_viewer_user_id`` is the
+                    # message author there; for AFTER_VOTE / AFTER_END polls
+                    # the author may be entitled to per-option counts, the
+                    # voter headcount and their own individual votes -- none
+                    # of which other recipients may see. Keep only the
+                    # non-sensitive poll skeleton for UI continuity and fail
+                    # closed on the viewer-specific pieces.
+                    poll_response.total_votes = None
+                else:
+                    poll_results = _results_to_response(results)
             except Exception as e:
-                logger.debug(f"Failed to fetch poll/results for message {msg_id}: {e}")
+                logger.debug(f"Failed to build poll response for message {msg_id}: {e}")
 
     # SECURITY/UX parity: ``suppress_embeds`` flips the
     # ``embed_message_embeds.suppressed`` flag, but metadata-stored

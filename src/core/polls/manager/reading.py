@@ -1,12 +1,45 @@
 """Poll reads, row hydration, and visibility checks."""
 
-from typing import Optional
+from typing import Dict, List, Optional
 
 import utils.logger as logger
+from src.core.security.hardening import HardeningViolation, parse_id
 from ...base import SnowflakeID
 
-from ..models import Poll, PollOption, PollResultsVisibility
+from ..models import Poll, PollOption, PollResults, PollResultsVisibility
 from .base import PollManagerBase
+
+#: Bound a single batched hydration so a hostile id list cannot blow up the
+#: IN (...) placeholder count. Lists are chunked, never rejected wholesale.
+_POLL_BULK_CHUNK = 500
+
+
+def _coerce_poll_ids(ids) -> List[int]:
+    """Strictly parse and de-duplicate poll ids for a batched lookup.
+
+    Mirrors the reaction bulk-id validator: ``bool`` and fractional ``float``
+    are rejected before ``int()`` can silently reinterpret them as a real
+    snowflake, and every id is range-checked by ``parse_id``.
+    """
+    if isinstance(ids, (str, bytes)):
+        raise ValueError("poll_ids must be a sequence")
+    try:
+        raw = list(ids)
+    except TypeError as exc:
+        raise ValueError("poll_ids must be a sequence") from exc
+    parsed: List[int] = []
+    for value in raw:
+        if isinstance(value, bool) or (
+            isinstance(value, float) and not value.is_integer()
+        ):
+            raise ValueError("poll_id must be an integer")
+        try:
+            poll_id = parse_id(value, "poll_id")
+        except (HardeningViolation, ValueError) as exc:
+            raise ValueError(str(exc)) from exc
+        if poll_id not in parsed:
+            parsed.append(poll_id)
+    return parsed
 
 
 def _get_servers_module():
@@ -16,25 +49,14 @@ def _get_servers_module():
     return api.get_servers()
 
 
-def _can_view_poll_message(
-    messaging, message_id: SnowflakeID, user_id: SnowflakeID
-) -> bool:
-    """Single live authz gate for a poll's backing message.
+def _can_view_poll_message_obj(messaging, msg, user_id: SnowflakeID) -> bool:
+    """Channel-view half of the poll authz gate, given a fetched message.
 
-    ``messaging.get_message`` proves only conversation *participation*. For a
-    server channel that is granted to every member of the server regardless of
-    the per-channel ``channels.view`` permission. A poll read exposes the
-    question, options and (through the results path) the vote counts of that
-    message, so a member denied view on a private channel must not be able to
-    read its poll. Resolve the channel backing the message's conversation and
-    require a live view grant on it. A conversation with no backing channel is
-    a genuine DM/group and needs no further gate. Fails closed: any lookup that
-    cannot be resolved denies the read.
+    The batched results path resolves the whole page's messages with one
+    participant-gated lookup, then applies this same gate per distinct
+    conversation. Keeping it here means batching cannot widen access relative
+    to the single-message ``get_results`` path.
     """
-    msg = messaging.get_message(user_id, message_id)
-    if not msg:
-        return False
-
     if isinstance(msg, dict):
         conversation_id = msg.get("conversation_id")
     else:
@@ -101,6 +123,27 @@ def _can_view_poll_message(
         return get_channel(int(channel_id), user_id) is not None
     except Exception:
         return False
+
+
+def _can_view_poll_message(
+    messaging, message_id: SnowflakeID, user_id: SnowflakeID
+) -> bool:
+    """Single live authz gate for a poll's backing message.
+
+    ``messaging.get_message`` proves only conversation *participation*. For a
+    server channel that is granted to every member of the server regardless of
+    the per-channel ``channels.view`` permission. A poll read exposes the
+    question, options and (through the results path) the vote counts of that
+    message, so a member denied view on a private channel must not be able to
+    read its poll. Resolve the channel backing the message's conversation and
+    require a live view grant on it. A conversation with no backing channel is
+    a genuine DM/group and needs no further gate. Fails closed: any lookup that
+    cannot be resolved denies the read.
+    """
+    msg = messaging.get_message(user_id, message_id)
+    if not msg:
+        return False
+    return _can_view_poll_message_obj(messaging, msg, user_id)
 
 
 class ReadingMixin(PollManagerBase):
@@ -172,8 +215,13 @@ class ReadingMixin(PollManagerBase):
             cache.set(key, poll)
         return poll
 
-    def _row_to_poll(self, row) -> Poll:
-        """Convert database row to Poll."""
+    def _row_to_poll(self, row, options=None) -> Poll:
+        """Convert a database row to a Poll.
+
+        ``options`` is the optional pre-fetched, position-ordered option rows
+        used by the batched results path. When absent the single-poll path
+        keeps its original one-query hydration.
+        """
         poll_id = row["id"]
 
         # Decrypt question if encryption is enabled and encrypted data exists
@@ -187,11 +235,15 @@ class ReadingMixin(PollManagerBase):
                 logger.warning(f"Failed to decrypt poll question {poll_id}: {e}")
                 question = row["question"]  # Fallback to unencrypted
 
-        option_rows = self._db.fetch_all(
-            "SELECT * FROM poll_options WHERE poll_id = ? ORDER BY position", (poll_id,)
-        )
+        if options is None:
+            option_rows = self._db.fetch_all(
+                "SELECT * FROM poll_options WHERE poll_id = ? ORDER BY position",
+                (poll_id,),
+            )
+        else:
+            option_rows = options
 
-        options = []
+        options_out = []
         for opt in option_rows:
             # Decrypt option text if encryption is enabled and encrypted data exists
             option_text = opt["text"]
@@ -204,7 +256,7 @@ class ReadingMixin(PollManagerBase):
                     logger.warning(f"Failed to decrypt poll option {opt['id']}: {e}")
                     option_text = opt["text"]  # Fallback to unencrypted
 
-            options.append(
+            options_out.append(
                 PollOption(
                     id=opt["id"],
                     poll_id=opt["poll_id"],
@@ -231,7 +283,7 @@ class ReadingMixin(PollManagerBase):
             ended_at=row["ended_at"],
             allow_multiple_choice=bool(row["allow_multiple_choice"]),
             results_visibility=PollResultsVisibility(row["results_visibility"]),
-            options=options,
+            options=options_out,
             total_votes=None,
             is_ended=is_ended,
         )
@@ -289,3 +341,169 @@ class ReadingMixin(PollManagerBase):
                 poll.ends_at and self._get_timestamp() >= poll.ends_at
             )
         return True  # ALWAYS or unknown -> visible
+
+    def _results_from_poll(self, poll: Poll, vote_rows, user_id: SnowflakeID) -> PollResults:
+        """Build ``PollResults`` from one poll's pre-aggregated vote rows.
+
+        Mirrors the single-message ``get_results`` construction line for line
+        (visibility, own votes, per-option counts and voter headcount), so a
+        batched read cannot diverge from per-message hydration.
+        ``poll.total_votes`` must already be reconciled by the caller.
+        """
+        user_vote_ids = [int(row["option_id"]) for row in vote_rows if row["mine"]]
+        user_voted = bool(user_vote_ids)
+        can_see_results = self._can_view_results(poll, user_voted)
+        vote_counts = (
+            {int(row["option_id"]): int(row["count"]) for row in vote_rows}
+            if can_see_results
+            else {}
+        )
+        options_with_counts = []
+        for option in poll.options:
+            vote_count = vote_counts.get(option.id, 0) if can_see_results else None
+            options_with_counts.append(
+                PollOption(
+                    id=option.id,
+                    poll_id=option.poll_id,
+                    text=option.text,
+                    position=option.position,
+                    vote_count=vote_count,
+                )
+            )
+        total_voters = poll.total_votes if can_see_results else None
+        return PollResults(
+            poll=poll,
+            options=options_with_counts,
+            total_votes=total_voters,
+            user_voted=user_voted,
+            user_votes=user_vote_ids,
+        )
+
+    def get_results_bulk(
+        self, poll_ids, user_id: SnowflakeID
+    ) -> Dict[int, Optional[PollResults]]:
+        """Hydrate many polls' results for ONE viewer in bounded batches.
+
+        The message-list/search serializer used to call ``get_results`` once
+        per poll-bearing message: every call re-ran the authz row, poll row,
+        options, voter stats and vote aggregation (~8 round trips per poll).
+        Here those five categories are fetched once per bounded chunk of ids,
+        with the same live participant + channel-view gate and the same
+        per-viewer visibility rules. Polls the viewer cannot access (or that
+        do not exist) map to ``None`` so their existence stays concealed; any
+        lookup failure fails closed for that chunk instead of leaking a body.
+        """
+        ids = _coerce_poll_ids(poll_ids)
+        if not ids:
+            return {}
+        messaging = self._require_messaging()
+        cache = getattr(self, "_poll_read_cache", None)
+        results: Dict[int, Optional[PollResults]] = {}
+
+        for start in range(0, len(ids), _POLL_BULK_CHUNK):
+            chunk = ids[start : start + _POLL_BULK_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+
+            try:
+                rows = self._db.fetch_all(
+                    f"SELECT * FROM poll_polls WHERE id IN ({placeholders})",
+                    tuple(chunk),
+                )
+                by_id = {int(row["id"]): row for row in rows}
+
+                # One participant-gated lookup for the whole chunk. Missing /
+                # inaccessible messages are simply absent, never disclosed.
+                visible_messages = (
+                    messaging.get_messages_by_ids(
+                        user_id, [row["message_id"] for row in by_id.values()]
+                    )
+                    or {}
+                )
+                option_rows = self._db.fetch_all(
+                    f"SELECT * FROM poll_options WHERE poll_id IN ({placeholders}) "
+                    "ORDER BY poll_id, position",
+                    tuple(chunk),
+                )
+                voter_rows = self._db.fetch_all(
+                    "SELECT poll_id, COUNT(*) AS count, "
+                    "SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine "
+                    f"FROM poll_voters WHERE poll_id IN ({placeholders}) "
+                    "GROUP BY poll_id",
+                    (user_id, *chunk),
+                )
+                vote_rows = self._db.fetch_all(
+                    "SELECT poll_id, option_id, COUNT(*) AS count, "
+                    "SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine "
+                    f"FROM poll_votes WHERE poll_id IN ({placeholders}) "
+                    "GROUP BY poll_id, option_id",
+                    (user_id, *chunk),
+                )
+            except Exception as exc:
+                logger.debug(f"bulk poll results lookup failed: {exc}")
+                # Fail the whole chunk closed: an unverifiable read can never
+                # expose poll content or viewer-specific vote data.
+                for poll_id in chunk:
+                    results[poll_id] = None
+                continue
+
+            options_by_poll = {}
+            for option in option_rows:
+                options_by_poll.setdefault(int(option["poll_id"]), []).append(option)
+            voter_stats = {
+                int(row["poll_id"]): (int(row["count"] or 0), bool(row["mine"]))
+                for row in voter_rows
+            }
+            votes_by_poll = {}
+            for row in vote_rows:
+                votes_by_poll.setdefault(int(row["poll_id"]), []).append(row)
+
+            # Every message on a list page normally shares one conversation;
+            # run the channel-view gate once per distinct conversation.
+            gate_cache = {}
+            for poll_id in chunk:
+                row = by_id.get(poll_id)
+                if row is None:
+                    results[poll_id] = None
+                    continue
+                message_id = int(row["message_id"])
+                msg = visible_messages.get(message_id)
+                if msg is None:
+                    results[poll_id] = None
+                    continue
+                if isinstance(msg, dict):
+                    conversation_id = msg.get("conversation_id")
+                else:
+                    conversation_id = getattr(msg, "conversation_id", None)
+                if conversation_id not in gate_cache:
+                    try:
+                        gate_cache[conversation_id] = _can_view_poll_message_obj(
+                            messaging, msg, user_id
+                        )
+                    except Exception:
+                        gate_cache[conversation_id] = False
+                if not gate_cache[conversation_id]:
+                    results[poll_id] = None
+                    continue
+
+                key = None
+                cached = None
+                if cache is not None:
+                    key = self._poll_read_key("results", poll_id, user_id)
+                    cached = cache.get(key)
+                if cached is not None:
+                    results[poll_id] = cached
+                    continue
+
+                poll = self._row_to_poll(row, options=options_by_poll.get(poll_id, []))
+                total_voters, _viewer_voted = voter_stats.get(poll_id, (0, False))
+                poll.total_votes = (
+                    total_voters if self._can_view_results(poll, bool(_viewer_voted)) else None
+                )
+                # The single path derives ``user_voted`` from poll_votes; use
+                # the same rows here so hidden results stay hidden identically.
+                results[poll_id] = self._results_from_poll(
+                    poll, votes_by_poll.get(poll_id, []), user_id
+                )
+                if cache is not None:
+                    cache.set(key, results[poll_id])
+        return results

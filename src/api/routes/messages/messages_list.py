@@ -34,6 +34,7 @@ from .helpers import (
     _message_to_response,
     batch_attachment_file_ids,
     batch_embed_suppressed_ids,
+    batch_poll_results,
     require_snowflake,
 )
 
@@ -405,6 +406,16 @@ async def get_channel_messages(
             embeds_mod=api.get_embeds(),
         )
 
+        # Resolve every poll on the page for this viewer in ONE bounded batch
+        # instead of one get_results() call (and ~8 SQL round trips) per
+        # poll-bearing message during serialization.
+        poll_results_map = await run_in_threadpool(
+            batch_poll_results,
+            messages,
+            current_user.user_id,
+            polls_mod=api.get_polls(),
+        )
+
         result = []
         for m in messages:
             try:
@@ -424,6 +435,7 @@ async def get_channel_messages(
                         media_mod=media_mod,
                         viewer_user_id=current_user.user_id,
                         suppress_embeds=mid in suppressed_ids,
+                        poll_results_data=poll_results_map,
                     )
                 )
             except Exception as message_error:
@@ -738,6 +750,14 @@ async def get_pinned_messages(
             [m.id for m in messages if getattr(m, "id", None) is not None],
             embeds_mod=api.get_embeds(),
         )
+        # Same flat poll hydration as the channel list: one batched lookup for
+        # the whole pin page, scoped to this viewer.
+        poll_results_map = await run_in_threadpool(
+            batch_poll_results,
+            messages,
+            current_user.user_id,
+            polls_mod=api.get_polls(),
+        )
         result = []
         for m in messages:
             author_id = m.author_id
@@ -751,6 +771,7 @@ async def get_pinned_messages(
                     media_mod=api.get_media(),
                     viewer_user_id=current_user.user_id,
                     suppress_embeds=m.id in suppressed_ids,
+                    poll_results_data=poll_results_map,
                 )
             )
 

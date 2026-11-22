@@ -209,6 +209,7 @@ async def search_messages(
         from src.api.routes.messages.helpers import (
             _message_to_response,
             batch_embed_suppressed_ids,
+            batch_poll_results,
         )
 
         # Resolve embed suppression for the whole page in ONE query. Without
@@ -226,11 +227,19 @@ async def search_messages(
             embeds_mod=api.get_embeds(),
         )
 
+        # One bounded poll hydration for the whole hit set (viewer-scoped):
+        # without this, every poll-bearing hit ran its own get_results() query
+        # storm inside the serializer.
+        poll_results_map = batch_poll_results(
+            page.results, current_user.user_id, polls_mod=api.get_polls()
+        )
+
         results = [
             _message_to_response(
                 result,
                 viewer_user_id=current_user.user_id,
                 suppress_embeds=getattr(result, "id", None) in suppressed_ids,
+                poll_results_data=poll_results_map,
             )
             for result in page.results
         ]
