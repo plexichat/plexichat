@@ -1,3 +1,4 @@
+import re
 from typing import Dict, Optional, List
 
 import utils.config as _mention_config
@@ -44,6 +45,60 @@ class MentionValidationMixin(NotificationProtocol):
         # mass-mention gate and the per-mention decision below must agree, so
         # the (single) anti-join query is shared through this memo.
         all_member_roles: Dict[SnowflakeID, bool] = {}
+
+        # Per-call memo of the server-scoped ``roles.manage`` verdict. A single
+        # message can name many non-mentionable roles; every one used to
+        # re-issue the identical ``has_permission(user, server,
+        # "roles.manage")`` call. The memo lives only for THIS validation
+        # call, is keyed by the strict-int viewer id, the server scope and the
+        # current RBAC epoch, and is therefore never shared across users and
+        # never replayed after a role/membership revocation bumps the epoch.
+        manage_roles_memo: Dict[tuple, bool] = {}
+
+        def _strict_id(value) -> Optional[int]:
+            """Coerce an id for a memo key; ``None`` means 'do not memoize'.
+
+            Bools and non-decimal strings are rejected so a malformed id can
+            never collide with a real one; the authoritative gate then runs
+            on the original value with its existing strict semantics.
+            """
+            if value is None or isinstance(value, bool):
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+", value):
+                try:
+                    return int(value, 10)
+                except (TypeError, ValueError, OverflowError):
+                    return None
+            return None
+
+        def _can_manage_roles() -> bool:
+            servers = self._servers
+            if not servers:
+                # Unwired authority: keep the existing fail-closed outcome.
+                return False
+            viewer = _strict_id(user_id)
+            scope = _strict_id(server_id)
+            if viewer is None or scope is None:
+                # No safe memo key: recompute from the source of truth.
+                return bool(servers.has_permission(user_id, server_id, "roles.manage"))
+            try:
+                from src.core.servers.channel_access_cache import (
+                    get_channel_access_cache,
+                )
+
+                epoch = get_channel_access_cache().version(scope, viewer)
+            except Exception:
+                # Cannot prove the current RBAC epoch: skip the memo rather
+                # than risk replaying a verdict invalidated by a revocation.
+                return bool(servers.has_permission(user_id, server_id, "roles.manage"))
+            key = (viewer, scope, epoch)
+            if key not in manage_roles_memo:
+                manage_roles_memo[key] = bool(
+                    servers.has_permission(user_id, server_id, "roles.manage")
+                )
+            return manage_roles_memo[key]
 
         def _role_row(role_id: SnowflakeID) -> Optional[dict]:
             if role_id not in roles_by_id:
@@ -214,9 +269,7 @@ class MentionValidationMixin(NotificationProtocol):
                         # setting and mass-ping that role. Check it at server
                         # scope so only a genuine server-wide grant (or
                         # owner/administrator) authorizes the bypass.
-                        if not self._servers or not self._servers.has_permission(
-                            user_id, server_id, "roles.manage"
-                        ):
+                        if not _can_manage_roles():
                             m.valid = False
                             m.error = "Role is not mentionable"
 
