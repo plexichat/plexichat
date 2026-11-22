@@ -429,10 +429,31 @@ def _oauth_cookie_params(max_age: int) -> dict:
     }
 
 
+def _clear_oauth_state_cookie(response: Response) -> None:
+    """Clear the state-binding cookie, mirroring its issuance attributes.
+
+    The state cookie is issued with ``HttpOnly``, ``Secure``, ``SameSite=Lax``
+    and an OAuth-scoped ``Path``.  A deletion ``Set-Cookie`` must carry the
+    exact same protection attributes: a clear that omits ``Secure`` can fail
+    to remove a Secure-only cookie in browsers that keep secure and non-secure
+    variants of the same name in distinct cookie stores, and emitting an
+    auth-cookie ``Set-Cookie`` without the credential protections is itself a
+    fail-open hygiene bug.  Max-Age=0 is supplied by ``delete_cookie``.
+    """
+    params = _oauth_cookie_params(60)
+    response.delete_cookie(
+        OAUTH_STATE_COOKIE,
+        path=params["path"],
+        httponly=params["httponly"],
+        secure=params["secure"],
+        samesite=params["samesite"],
+    )
+
+
 def _oauth_state_cookie_clear_headers() -> dict:
     """Headers that clear the state-binding cookie on a failed callback."""
     clear = Response()
-    clear.delete_cookie(OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"])
+    _clear_oauth_state_cookie(clear)
     return {"set-cookie": clear.headers["set-cookie"]}
 
 
@@ -1117,9 +1138,7 @@ async def oauth_callback(
         logger.info(f"OAuth login successful for {provider}:{external_id}")
 
         # Consume the state cookie and hand out the HttpOnly session cookie.
-        response.delete_cookie(
-            OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"]
-        )
+        _clear_oauth_state_cookie(response)
         # M9 (same as login): browsers receive the session ONLY via the
         # HttpOnly cookie; the body carries a marker plus the session
         # lifetime, with the raw token echoed back solely for explicit
