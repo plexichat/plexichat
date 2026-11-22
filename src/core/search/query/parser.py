@@ -118,11 +118,15 @@ class QueryParser:
 
         remaining = self._filter_regex.sub(_collect_filter, remaining)
 
-        search_terms = [
-            term.strip()
-            for term in remaining.split()
-            if term.strip() and not term.startswith("-:")
-        ]
+        # Normalize each token once. The previous comprehension called the
+        # pure ``str.strip()`` twice on the same immutable token (once as the
+        # predicate, once as the emitted value); this runs on every search
+        # request and scaled with the token count.
+        search_terms = []
+        for term in remaining.split():
+            stripped = term.strip()
+            if stripped and not term.startswith("-:"):
+                search_terms.append(stripped)
 
         return ParsedQuery(
             raw_query=query,
