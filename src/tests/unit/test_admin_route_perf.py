@@ -103,42 +103,64 @@ class TestArtifactDeleteGate:
         monkeypatch.setattr(
             artifacts_routes, "require_admin_permission", lambda r, p: 1
         )
+
+        approval_calls = []
+
+        def _require_approved(action, **kwargs):
+            # Mirror the production call:
+            # require_approved_request("artifacts.force_delete",
+            #                          target_context=(artifact_id, admin_id)).
+            # Record the binding so the approval requirement and its exact
+            # target stay asserted instead of being mocked into vacuity.
+            approval_calls.append((action, kwargs))
+            return 9001
+
         monkeypatch.setattr(
-            artifacts_routes, "require_approved_request", lambda a: None
+            artifacts_routes, "require_approved_request", _require_approved
         )
         monkeypatch.setattr(artifacts_routes, "_get_manager", lambda: manager)
+        return approval_calls
 
     def test_success_path_skips_preflight_get(self, monkeypatch):
         manager = MagicMock()
         manager.delete.return_value = True
-        self._patch(monkeypatch, manager)
+        approval_calls = self._patch(monkeypatch, manager)
 
         result = asyncio.run(artifacts_routes.admin_delete_artifact("123", _request()))
 
         assert result == {"success": True, "id": "123"}
+        assert approval_calls == [
+            ("artifacts.force_delete", {"target_context": (123, 1)})
+        ]
         manager.get.assert_not_called()
-        manager.delete.assert_called_once_with(123)
+        manager.delete.assert_called_once_with(123, purging_user_id=1)
 
     def test_missing_artifact_still_returns_404(self, monkeypatch):
         manager = MagicMock()
         manager.delete.return_value = False
         manager.get.return_value = None
-        self._patch(monkeypatch, manager)
+        approval_calls = self._patch(monkeypatch, manager)
 
         with pytest.raises(HTTPException) as exc:
             asyncio.run(artifacts_routes.admin_delete_artifact("123", _request()))
         assert exc.value.status_code == 404
+        assert approval_calls == [
+            ("artifacts.force_delete", {"target_context": (123, 1)})
+        ]
         manager.get.assert_called_once_with(123)
 
     def test_failed_delete_of_existing_artifact_returns_500(self, monkeypatch):
         manager = MagicMock()
         manager.delete.return_value = False
         manager.get.return_value = object()
-        self._patch(monkeypatch, manager)
+        approval_calls = self._patch(monkeypatch, manager)
 
         with pytest.raises(HTTPException) as exc:
             asyncio.run(artifacts_routes.admin_delete_artifact("123", _request()))
         assert exc.value.status_code == 500
+        assert approval_calls == [
+            ("artifacts.force_delete", {"target_context": (123, 1)})
+        ]
 
 
 class TestDataExportMutationErrors:
