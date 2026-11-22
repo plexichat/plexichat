@@ -486,6 +486,6 @@ Migrate to PostgreSQL when you see frequent lock timeouts, degraded peak perform
 *   [Authentication configuration](deployment/configuration/config-authentication.md)
 *   [API and server configuration](deployment/configuration/config-api.md)
 *   [Rate limiting configuration](deployment/configuration/config-rate-limiting.md)
-*   [Access tokens](admin/index.md#access-tokens)
+*   [Access tokens](deployment/configuration/config-api.md)
 *   [Security logout](end-user/security-logout.md)
 *   [Access blocked](end-user/access-blocked.md)
