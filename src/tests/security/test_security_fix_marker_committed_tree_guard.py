@@ -735,6 +735,14 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
     CommittedFixMarker(
+        key="62d843f9-add-reaction-unwired-fail-closed",
+        path="src/api/routes/reactions.py",
+        marker='Use the canonical helper so an unwired or',
+        why=(
+            '62d843f9 is a genuine security fix landed via the private index: the add-reaction view gate now fails closed when the servers module is unwired; pinned by the distinctive comment it introduced.'
+        ),
+    ),
+    CommittedFixMarker(
         key="n448-channel-detail-cache-key",
         path="src/api/routes/channels/crud.py",
         marker="key_builder=authenticated_cache_key(",
