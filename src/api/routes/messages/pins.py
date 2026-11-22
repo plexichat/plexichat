@@ -13,6 +13,8 @@ from src.api.schemas.common import ErrorResponse, SuccessResponse
 from src.core.messaging.exceptions import (
     MessageNotFoundError,
     ConversationAccessDeniedError,
+    PinLimitError,
+    MessageNotPinnedError,
 )
 from src.core.servers.exceptions import (
     ServerNotFoundError,
@@ -299,6 +301,15 @@ async def pin_message(
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
+    except PinLimitError:
+        # Conversation pin quota is full — a client-actionable outcome, not a
+        # fault. The core message embeds the configured quota and current
+        # count; a STATIC body keeps that internal detail out of the response
+        # (mirrors the domain-error 400 mapping on the application/bot routes).
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Pin limit reached"}},
+        )
     except Exception as e:
         if isinstance(
             e, (ServerNotFoundError, ChannelNotFoundError, MessageNotFoundError)
@@ -461,6 +472,14 @@ async def unpin_message(
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
+    except MessageNotPinnedError:
+        # Unpinning an already-unpinned message is a client state conflict, not
+        # a fault. The service message is static anyway; keep the HTTP body
+        # fixed so no exception internals can leak (mirrors PinLimitError).
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Message is not pinned"}},
+        )
     except Exception as e:
         if isinstance(
             e, (ServerNotFoundError, ChannelNotFoundError, MessageNotFoundError)
