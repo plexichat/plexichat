@@ -21,8 +21,25 @@ from ...exceptions import (
     MessageEditWindowExpiredError,
 )
 from ..base import BaseService, get_encrypt_messages_default
+from .. import unread_cache
 from .protocol import MessageServiceProtocol
 from .search_helpers import search_index_message, search_remove_from_index
+
+
+def _invalidate_unread_after_delete() -> None:
+    """Drop the bounded unread aggregate after a delete changes unread counts.
+
+    The unread COUNT excludes ``deleted = 1`` rows, so a soft/hard delete
+    lowers the badge for every participant except the author. Like the send
+    path (which invalidates the same namespace on message creation), the
+    author list is not resolved here, so the whole namespace is dropped and
+    the next read recomputes from rows. Best effort: the short cache TTL is a
+    safety net, and a cache failure must never undo a committed delete.
+    """
+    try:
+        unread_cache.invalidate_all()
+    except Exception as e:
+        logger.debug(f"Failed to invalidate unread aggregate cache on delete: {e}")
 
 # A single bulk request must never be able to grow without bound. Both the
 # delete and archive paths draw from the same cap so one cannot silently
@@ -736,6 +753,8 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
 
         self._cleanup_thread_links(message_id)
 
+        _invalidate_unread_after_delete()
+
         return True
 
     def delete_messages_bulk(
@@ -863,6 +882,9 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
             except Exception as e:
                 logger.error(f"Failed to delete message {message_id}: {e}")
                 failed_ids.append(message_id)
+
+        if success_count:
+            _invalidate_unread_after_delete()
 
         return {
             "success_count": success_count,
