@@ -118,7 +118,6 @@ class VisibilityMixin(PresenceManagerBase):
         # membership test — a redundant cache/DB round trip on every bulk
         # presence read (relationship listing, DM hydration, gateway fan-out).
         blocked_ids: set[int] = set()
-        block_lookup_failed = False
         if self._relationships:
             try:
                 blocked_ids = {
@@ -126,25 +125,20 @@ class VisibilityMixin(PresenceManagerBase):
                     for uid in self._relationships.get_all_blocked_ids(viewer_id)
                 }
             except Exception as visibility_error:
-                # FAIL CLOSED: ``get_all_blocked_ids`` is the authoritative
-                # two-way block set (users the viewer blocked UNION users who
-                # blocked the viewer). Without it we cannot prove ANY target is
-                # safe to render. The old fallback to ``get_blocked_user_ids``
-                # was NOT safe: it is the one-way set, so a user who blocked the
-                # viewer (but whom the viewer did not block) was absent from it
-                # and had their real status, custom status and last_seen leaked
-                # back to the viewer they blocked. When both lookups failed the
-                # empty set silently degraded the gate to "no blocks at all".
-                # Withhold every non-self target as blank offline instead, the
-                # same fail-closed rule the event fan-out and typing filters
-                # use. Self-view is preserved below because it is never a
-                # cross-user disclosure.
-                block_lookup_failed = True
+                # Fail closed: without the union, fall back to the viewer's
+                # own block list so a failing lookup cannot expose a blocked
+                # user's real presence.
+                try:
+                    blocked_ids = {
+                        int(uid)
+                        for uid in self._relationships.get_blocked_user_ids(viewer_id)
+                    }
+                except Exception:
+                    pass
                 import utils.logger as logger
 
                 logger.debug(
-                    f"presence visibility two-way block lookup failed; "
-                    f"withholding bulk presence: {visibility_error}"
+                    f"presence visibility cache store failed: {visibility_error}"
                 )
 
         for p in presences:
@@ -155,7 +149,7 @@ class VisibilityMixin(PresenceManagerBase):
                 result[target_id_raw] = p
                 continue
 
-            is_blocked = block_lookup_failed or target_id in blocked_ids
+            is_blocked = target_id in blocked_ids
             if is_blocked:
                 result[target_id_raw] = Presence(
                     user_id=target_id_raw,

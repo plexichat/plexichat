@@ -104,7 +104,7 @@ Scans uploaded files for malware.
 *   **Image:** `clamav/clamav:1.5.4`
 *   **Services:** `clamd` on TCP 3310 and `freshclam` for signature updates. Limits: `StreamMaxLength`, `MaxScanSize`, and `MaxFileSize` are 600 MB, `MaxScanTime` is 300,000 ms.
 *   **Volume:** `clamav_db` at `/var/lib/clamav` (persists signatures).
-*   **Sidecar:** `clamav-unofficial-sigs` (`ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0`, mode `updater`, every 2 hours) shares `clamav_db`.
+*   **Sidecar:** `clamav-unofficial-sigs` (`ghcr.io/extremeshok/clamav-unofficial-sigs:latest`, mode `updater`, every 2 hours) shares `clamav_db`.
 *   **Network:** Default bridge network. Backend connects at `clamav:3310` (`SCANNER_HOST` / `SCANNER_PORT`).
 *   **Health check:** `echo PING | nc -w 2 localhost 3310 | grep PONG` every 30 seconds, timeout 10 seconds, 5 retries, start period 120 seconds.
 *   **Dependencies:** None.
