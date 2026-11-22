@@ -290,6 +290,29 @@ _ARTIFACT_UPLOAD_BOT_TOKEN_OWNER_GUARD = (
 )
 
 
+
+# N716 (5525788b) / N762 (9a6ef8df): private event emitters now fail closed
+# with an empty recipient list when the audience cannot be resolved. Passing
+# ``None`` to events.dispatch makes the EventRouter fall back to server-wide
+# scope routing, widening a private artifact/interaction payload to every
+# member of the server. Each marker pins the distinctive fail-closed comment
+# together with the ``user_ids = []`` assignment at one emitter site, so a
+# stale staged copy that restores ``user_ids = None`` (or a bare dispatch) is
+# caught by name. Non-vacuity is proven by the parametrized
+# ``test_synthetic_reverted_blob_is_flagged`` plus the live-HEAD tie below.
+_ARTIFACT_MESSAGE_AUDIENCE_FAIL_CLOSED = (
+    '                # Fail closed: None makes the router fall back to server-wide\n                # routing, leaking the artifact message content to server\n                # members who never participated in the conversation.\n                user_ids = []'
+)
+_ARTIFACT_LIFECYCLE_AUDIENCE_FAIL_CLOSED = (
+    '            # SECURITY: an unresolved participant audience must NEVER be handed\n            # to events.dispatch as ``None``. The EventRouter treats ``None``\n            # as "route by scope", and a server-scoped artifact event is then\n            # widened to every member of the server -- including users who\n            # never participated in the conversation, who receive the private\n            # artifact title in the payload. Fail closed: no verifiable\n            # audience means no recipients.\n            if user_ids is None:\n                user_ids = []'
+)
+_ARTIFACT_TRANSCRIPTION_AUDIENCE_FAIL_CLOSED = (
+    "            # Fail closed: None lets the router widen this server-scoped event\n            # to every member of the server instead of the conversation's\n            # verified participants.\n            user_ids = []"
+)
+_INTERACTION_BOT_OWNER_AUDIENCE_FAIL_CLOSED = (
+    '            # Fail closed: an unresolved bot-owner audience must NEVER be\n            # handed to events.dispatch as ``None``. The EventRouter treats\n            # ``None`` as "route by scope", and this server-scoped\n            # INTERACTION_CREATE carries the private interaction token and\n            # body -- widening it would deliver that content to every member\n            # of the server, including non-participants. No verifiable\n            # recipient means no recipients.\n            self._events.dispatch(event, user_ids=[])'
+)
+
 # 578cf7c6: the owner-scoped message-forward route rejects bot credentials
 # before parse_id/ForwardingService publishes the new message as the bot token's
 # human owner. Pin the distinctive forward_message signature + require_user_token
@@ -1558,6 +1581,54 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "forward as its owner"
         ),
     ),
+    # --- N716 (5525788b) / N762 (9a6ef8df) private-event fail-closed audiences ---
+    # Each emitter used to pass ``None`` to events.dispatch when the audience
+    # could not be resolved; the EventRouter then routed by scope and widened
+    # the private payload to the whole server. Pin the fail-closed comment +
+    # ``user_ids = []`` at every emitter site so a stale staged copy that
+    # restores the fail-open default is caught by name.
+    CommittedFixMarker(
+        key="5525788b-artifact-message-audience-fail-closed",
+        path="src/api/routes/artifacts_helpers.py",
+        marker=_ARTIFACT_MESSAGE_AUDIENCE_FAIL_CLOSED,
+        why=(
+            "N716: _emit_artifact_message fails closed with user_ids=[] when "
+            "conversation participants cannot be resolved; a stale staged copy "
+            "restores user_ids=None and the router widens the private artifact "
+            "message to every server member."
+        ),
+    ),
+    CommittedFixMarker(
+        key="5525788b-artifact-lifecycle-audience-fail-closed",
+        path="src/core/artifacts/manager.py",
+        marker=_ARTIFACT_LIFECYCLE_AUDIENCE_FAIL_CLOSED,
+        why=(
+            "N716: artifact lifecycle dispatch rejects a None audience before "
+            "events.dispatch so a stale staged copy cannot widen the private "
+            "artifact title to non-participants via scope routing."
+        ),
+    ),
+    CommittedFixMarker(
+        key="5525788b-artifact-transcription-audience-fail-closed",
+        path="src/core/artifacts/transcription/worker.py",
+        marker=_ARTIFACT_TRANSCRIPTION_AUDIENCE_FAIL_CLOSED,
+        why=(
+            "N716: _emit_artifact_update fails closed with user_ids=[] on a "
+            "participant-resolution error; a stale staged copy restores "
+            "user_ids=None and leaks the artifact update to the whole server."
+        ),
+    ),
+    CommittedFixMarker(
+        key="9a6ef8df-interaction-bot-owner-audience-fail-closed",
+        path="src/core/applications/interactions/handler.py",
+        marker=_INTERACTION_BOT_OWNER_AUDIENCE_FAIL_CLOSED,
+        why=(
+            "N762: interaction dispatch passes user_ids=[] when the bot owner "
+            "is unresolved so the private INTERACTION_CREATE token/body are not "
+            "widened; a stale staged copy restores a bare dispatch and leaks "
+            "the interaction payload to every server member."
+        ),
+    ),
 )
 
 
@@ -1711,6 +1782,20 @@ DM_PRIVACY_PIN_KEYS: frozenset[str] = frozenset(
     }
 )
 
+
+
+# N716 (5525788b) artifact-audience and N762 (9a6ef8df) interaction-audience
+# fail-closed pins. Kept explicit so dropping any emitter-site pin fails here
+# as well as in the parametrized synthetic-removal test. All are positive
+# markers; non-vacuity comes from that test plus the live-HEAD tie below.
+ARTIFACT_INTERACTION_AUDIENCE_PIN_KEYS: frozenset[str] = frozenset(
+    {
+        "5525788b-artifact-message-audience-fail-closed",
+        "5525788b-artifact-lifecycle-audience-fail-closed",
+        "5525788b-artifact-transcription-audience-fail-closed",
+        "9a6ef8df-interaction-bot-owner-audience-fail-closed",
+    }
+)
 
 # e4096376 (N722) and 9c25e861 (N681) license fail-closed pins. Kept explicit
 # so neither pin can be dropped silently; non-vacuity comes from the
@@ -2551,5 +2636,56 @@ def test_replay_scope_pins_live_at_head_and_non_vacuous(commit_sha: str) -> None
 
         present, detail = _evaluate(record, stale_replay_scope_blob)
         assert not present, f"synthetic replay-scope revert of {key} not caught"
+        assert record.key in detail and record.marker in detail
+        assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
+
+
+def test_artifact_interaction_audience_pins_live_at_head_and_non_vacuous(
+    commit_sha: str,
+) -> None:
+    """The N716/N762 fail-closed audience pins are registered, live, falsifiable.
+
+    Each key resolves to the expected committed emitter blob carrying its
+    distinctive fail-closed comment + ``user_ids = []`` assignment, and a
+    synthetic stale blob with the fix erased is rejected by the exact same
+    evaluator (never a vacuous pass). Per-entry parametrized synthetic-removal
+    coverage is already provided by ``test_synthetic_reverted_blob_is_flagged``.
+    """
+    keys = [r.key for r in COMMITTED_FIX_MARKERS]
+    assert ARTIFACT_INTERACTION_AUDIENCE_PIN_KEYS <= set(keys), (
+        "artifact/interaction audience pin set references keys missing from "
+        "COMMITTED_FIX_MARKERS: "
+        f"{sorted(ARTIFACT_INTERACTION_AUDIENCE_PIN_KEYS - set(keys))}"
+    )
+    assert len(ARTIFACT_INTERACTION_AUDIENCE_PIN_KEYS) == 4
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    expected_paths = {
+        "5525788b-artifact-message-audience-fail-closed": (
+            "src/api/routes/artifacts_helpers.py"
+        ),
+        "5525788b-artifact-lifecycle-audience-fail-closed": (
+            "src/core/artifacts/manager.py"
+        ),
+        "5525788b-artifact-transcription-audience-fail-closed": (
+            "src/core/artifacts/transcription/worker.py"
+        ),
+        "9a6ef8df-interaction-bot-owner-audience-fail-closed": (
+            "src/core/applications/interactions/handler.py"
+        ),
+    }
+    for key in sorted(ARTIFACT_INTERACTION_AUDIENCE_PIN_KEYS):
+        record = by_key[key]
+        assert record.path == expected_paths[key], (
+            f"{key} points at {record.path!r}, expected {expected_paths[key]!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"{key} is not pinned at HEAD: {detail}"
+
+        def stale_audience_blob(path: str) -> str:
+            return f"# stale staged copy of {path}\n# fail-closed audience erased\n"
+
+        present, detail = _evaluate(record, stale_audience_blob)
+        assert not present, f"synthetic audience revert of {key} was not caught"
         assert record.key in detail and record.marker in detail
         assert "COMMITTED SECURITY FIX MARKER MISSING" in detail
