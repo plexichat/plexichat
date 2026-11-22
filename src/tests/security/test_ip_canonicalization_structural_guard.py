@@ -33,7 +33,7 @@ AST ratchet (no app import/config/DB) with three halves:
 
 3. The committed-tree reader really returns HEAD blobs, and both detectors are
    proven non-vacuous: the self-tests flag a synthetic raw ``fast_blind_index``
-   key, accept canonicalized forms, and the sweep must find exactly the five
+   key, accept canonicalized forms, and the sweep must find exactly the eight
    documented raw sites when suppression is removed.
 
 Blobs are read from COMMITTED HEAD (``git show HEAD:<path>``), not the working
@@ -383,6 +383,29 @@ DOCUMENTED_RAW_EXCEPTIONS: tuple[RawIpException, ...] = (
         "bound tickets.",
     ),
     RawIpException(
+        "WS ticket binding index (LifecycleMixin mirror)",
+        "src/core/auth/managers/session/lifecycle.py",
+        "_verify_ws_ticket",
+        "Availability: peers mirrored TicketMixin._verify_ws_ticket into "
+        "LifecycleMixin so an MRO reorder or direct caller cannot bypass the "
+        "binding gate. It compares against the session's raw-minted ip_index, "
+        "so the presented address must be hashed the same raw way as "
+        "_create_session/_verify_session_token; canonicalizing only this side "
+        "would not match stored raw indexes and would wrongly reject bound "
+        "tickets.",
+    ),
+    RawIpException(
+        "refresh-session binding index",
+        "src/core/auth/managers/session/lifecycle.py",
+        "refresh_session",
+        "Availability: the N644 refresh gate compares the presented IP against "
+        "the session's raw-minted auth_sessions.ip_index before consuming the "
+        "bearer. Hashing a canonical form here while mint/verify stay raw would "
+        "reject legitimate refreshes (and break the symmetry that stops a "
+        "stolen refresh bearer from another host rotating the victim's "
+        "credential). Not a mutable-state rate/budget/blacklist key.",
+    ),
+    RawIpException(
         "2FA challenge creation binding index",
         "src/core/auth/managers/twofactor.py",
         "_create_2fa_challenge",
@@ -567,6 +590,26 @@ def test_self_test_canonicalized_forms_are_accepted():
     )
 
 
+def test_self_test_registered_exceptions_do_not_hide_a_new_raw_ip_key():
+    # Non-vacuity against the *real* allowlist: registering the relocated
+    # binding sites above must not teach the sweep to ignore a new raw key.
+    source = textwrap.dedent(
+        """
+        class C:
+            def brand_new_security_key(self, ip_address):
+                return self.crypto.fast_blind_index(ip_address, "ip_address")
+        """
+    )
+    findings = _raw_ip_key_candidates(
+        ast.parse(source),
+        path="src/core/auth/managers/session/lifecycle.py",
+        exceptions=DOCUMENTED_RAW_EXCEPTIONS,
+    )
+    assert len(findings) == 1, findings
+    assert "brand_new_security_key" == findings[0].func
+    assert "fast_blind_index" in findings[0].call
+
+
 def test_self_test_documented_exception_suppresses_only_its_own_site():
     source = textwrap.dedent(
         """
@@ -660,7 +703,7 @@ def test_documented_ip_key_sites_still_canonicalized_in_committed_tree(commit_sh
 
 
 def test_committed_tree_sweep_detector_is_non_vacuous(commit_sha):
-    # With suppression removed, the detector must fire on the five real raw
+    # With suppression removed, the detector must fire on the eight real raw
     # sites. If it fires nowhere, the "no new raw key" test below is vacuous.
     findings = _sweep(commit_sha, ())
     found = {(f.path, f.func) for f in findings}
