@@ -842,6 +842,47 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
         ),
     ),
 )
+    # N663 (4986e8a9): recipient DM privacy is re-checked at send time. Every
+    # user-facing send path (REST, forward, scheduled dispatch, reaction
+    # mentions) funnels through send_message, so a stale working-tree copy of
+    # send.py that drops this call silently reopens the leak where a party to
+    # an already-open DM keeps writing after the recipient set
+    # allow_dms_from=none (or without ever proving friendship).
+    CommittedFixMarker(
+        key="4986e8a9-dm-recipient-privacy-send-gate",
+        path="src/core/messaging/services/message/send.py",
+        marker="_enforce_dm_recipient_privacy",
+        why=(
+            "N663: send_message re-checks every single-DM recipient's "
+            "allow_dms_from setting at send time and fails closed on an "
+            "unreadable conversation/settings lookup or a friends-only "
+            "recipient with no relationships source; a stale staged copy of "
+            "send.py drops the gate and lets a party to an already-open DM "
+            "keep writing after the recipient switched dms to 'none' (or "
+            "without ever proving friendship)"
+        ),
+    ),
+    # 499bd649: the DM block gate also covers GROUP rows that are group DMs;
+    # only server-channel GROUP rows (carrying a server_id) stay exempt. A
+    # stale working-tree copy of send.py restores the early return for every
+    # non-DM type, so a pair already co-resident in a group DM can keep
+    # delivering after a block.
+    CommittedFixMarker(
+        key="499bd649-group-dm-send-block-gate",
+        path="src/core/messaging/services/message/send.py",
+        marker=(
+            "            metadata = self._conversation_repo._json_loads("
+            'conv_row.get("metadata"))\n'
+            '            if isinstance(metadata, dict) and metadata.get("server_id"):'
+        ),
+        why=(
+            "499bd649: _enforce_dm_block_rules now treats GROUP rows as group "
+            "DMs (exempting only server channels that carry a server_id); a "
+            "stale staged copy of send.py restores the early return for every "
+            "non-DM type and lets a blocked pair already co-resident in a "
+            "group DM keep delivering messages into it"
+        ),
+    ),
 
 
 def _git(*args: str, cwd: Path = _REPO_ROOT) -> subprocess.CompletedProcess[str]:
