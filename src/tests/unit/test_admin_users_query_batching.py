@@ -53,7 +53,7 @@ def _patch(monkeypatch, admin_id=1):
     monkeypatch.setattr(au, "require_admin_permission", lambda request, perm: admin_id)
     # Approval enforcement is exercised in its own test module; here we bypass
     # it so these tests stay focused on query counts.
-    monkeypatch.setattr(au, "require_approved_request", lambda action: None)
+    monkeypatch.setattr(au, "require_approved_request", lambda action, *a, **kw: None)
     monkeypatch.setattr(perm_core, "log_admin_action", lambda *a, **kw: True)
     monkeypatch.setattr(perm_core, "can_grant_existing_role", lambda *a, **kw: True)
 

@@ -683,7 +683,12 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             # documented second-admin approval. Mirror force-purge: gate after
             # the hierarchy checks (so a blocked upward/self delete cannot
             # consume a valid approval) but before any erasure side effect.
-            require_approved_request("users.delete")
+            # Pin the consumed approval to the exact admin being deleted and
+            # to this acting admin: a second-admin sign-off for target X must
+            # never authorize deleting a different target Y (or be ridden by
+            # another admin). The scope/hierarchy gates above are the
+            # privilege check at execution.
+            require_approved_request("users.delete", target_context=(uid, admin_id))
             db.execute("DELETE FROM admin_role_assignments WHERE admin_id = ?", (uid,))
             db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (uid,))
             db.execute("DELETE FROM admin_users WHERE id = ?", (uid,))

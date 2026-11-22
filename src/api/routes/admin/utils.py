@@ -447,7 +447,28 @@ def require_admin_permission(request: Request, permission: str) -> int:
     return admin_id
 
 
-def require_approved_request(action_type: str) -> Optional[int]:
+def _coerce_bound_id(value):
+    """Normalize a target/actor id used to pin an approval, or reject it.
+
+    Ids arrive as ints from the validated route path, but a caller may hand a
+    snowflake as a decimal string. Anything else (bool, junk, oversized) is
+    refused so a malformed binding can never silently degrade to "no binding"
+    and fall back to the action-only behaviour.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("boolean is not an id")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    raise ValueError("not an id")
+
+
+def require_approved_request(
+    action_type: str, target_context=None
+) -> Optional[int]:
     """
     Approval gate for destructive operations.
 
@@ -462,14 +483,43 @@ def require_approved_request(action_type: str) -> Optional[int]:
     reusable until its 48h expiry, so one approved ``migrations.run``
     request authorized unlimited runs.
 
+    An approval is also bound to the exact object and actor it was granted
+    for. ``target_context`` is an optional ``(target_id, acting_admin_id)``
+    pair; when supplied, only an approved row whose ``target_id`` and
+    ``requested_by`` match may authorize the action, and BOTH predicates are
+    part of the atomic consume below (a TOCTOU gap between selection and
+    consumption therefore cannot swap the target or the actor). The calling
+    route has already re-checked the acting admin's execution scope, so an
+    approval filed by a different admin can never be executed here — it only
+    authorizes the requester who actually holds the underlying permission.
+    Plain single-argument callers (global operations, direct tests) keep the
+    historical action-only behaviour.
+
     Returns:
         The approval id that authorized the action, or None when the
         single-admin bypass applied.
 
     Raises:
-        HTTPException 403 if no approved request exists.
+        HTTPException 403 if no matching approved request exists.
         HTTPException 503 if the database is unavailable.
     """
+    target_id = None
+    acting_admin_id = None
+    if target_context is not None:
+        if not isinstance(target_context, (tuple, list)) or len(target_context) != 2:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Invalid approval binding"}},
+            )
+        try:
+            target_id = _coerce_bound_id(target_context[0])
+            acting_admin_id = _coerce_bound_id(target_context[1])
+        except ValueError:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Invalid approval binding"}},
+            )
+
     import src.api as api_mod
 
     db = api_mod.get_db()
@@ -490,6 +540,9 @@ def require_approved_request(action_type: str) -> Optional[int]:
     # single round trip: two scalar subqueries always return exactly one row,
     # so this keeps the exact same decisions while saving a DB query on every
     # gated request (the approval consume below is still its own atomic step).
+    # The target/actor predicates use ``? IS NULL OR col = ?`` so an unbound
+    # (global) caller still matches any row while a bound caller only sees the
+    # approval that was granted for that exact object and requester.
     try:
         gate_row = db.fetch_one(
             """
@@ -497,9 +550,18 @@ def require_approved_request(action_type: str) -> Optional[int]:
               (SELECT COUNT(*) FROM admin_users) AS admin_count,
               (SELECT id FROM admin_approvals
                 WHERE action_type = ? AND status = 'approved' AND expires_at > ?
+                  AND (? IS NULL OR target_id = ?)
+                  AND (? IS NULL OR requested_by = ?)
                 ORDER BY updated_at DESC LIMIT 1) AS approval_id
             """,
-            (action_type, now_ms),
+            (
+                action_type,
+                now_ms,
+                target_id,
+                target_id,
+                acting_admin_id,
+                acting_admin_id,
+            ),
         )
     except Exception as e:
         logger.error(f"Approval gate could not read approval state: {e}")
@@ -545,14 +607,27 @@ def require_approved_request(action_type: str) -> Optional[int]:
     # SECURITY: single-use — atomically transition the approval to
     # 'consumed' so a second gated execution (even by another admin holding
     # the scope) cannot reuse it. The conditional UPDATE + rowcount check
-    # makes the claim race-free against concurrent executions.
+    # makes the claim race-free against concurrent executions. Re-stating the
+    # expiry, target and requester predicates on the authoritative write (they
+    # were already on the SELECT) means a row that changed between the two
+    # cannot authorize an operation it was never granted for.
     cursor = db.execute(
         """
         UPDATE admin_approvals
         SET status = 'consumed', updated_at = ?
-        WHERE id = ? AND status = 'approved'
+        WHERE id = ? AND status = 'approved' AND expires_at > ?
+          AND (? IS NULL OR target_id = ?)
+          AND (? IS NULL OR requested_by = ?)
         """,
-        (now_ms, approval_id),
+        (
+            now_ms,
+            approval_id,
+            now_ms,
+            target_id,
+            target_id,
+            acting_admin_id,
+            acting_admin_id,
+        ),
     )
     if getattr(cursor, "rowcount", 0) <= 0:
         logger.warning(

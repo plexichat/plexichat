@@ -77,7 +77,7 @@ def _patch(monkeypatch, db, auth, actor_id):
     monkeypatch.setattr(lc, "require_admin_permission", lambda request, perm: actor_id)
     # Approval enforcement is exercised in its own test module; here we bypass
     # it so these tests stay focused on the hierarchy gate.
-    monkeypatch.setattr(lc, "require_approved_request", lambda action: None)
+    monkeypatch.setattr(lc, "require_approved_request", lambda action, *a, **kw: None)
     monkeypatch.setattr(api, "get_db", lambda: db)
     monkeypatch.setattr(api, "get_auth", lambda: auth)
 

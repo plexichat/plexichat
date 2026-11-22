@@ -195,7 +195,14 @@ class LifecycleMixin(AdminUsersRouterProtocol):
             # force-purge route was the lone exception. Place it after the
             # hierarchy checks so a blocked upward/self purge cannot consume
             # a valid approval, but before any erasure side effect.
-            require_approved_request("users.force_purge")
+            # Bind the single-use approval to the exact account being purged
+            # and to this acting admin: approval to purge user X must not be
+            # spent purging a different user Y (or by a different admin). The
+            # scope/hierarchy checks above are the execution-time privilege
+            # check.
+            require_approved_request(
+                "users.force_purge", target_context=(uid, int(admin_id))
+            )
 
             auth.force_purge_account(uid, admin_id=int(admin_id))
             logger.warning(f"Admin {admin_id} force-purged user {uid}")
