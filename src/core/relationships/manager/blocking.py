@@ -101,6 +101,7 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             invalidate_friend_ids(self, blocker_id)
             invalidate_friend_ids(self, blocked_id)
         self._invalidate_all_relationships_cache(blocker_id, blocked_id)
+        self._invalidate_profile_read_caches(blocker_id, blocked_id)
 
         logger.debug(f"User {blocker_id} blocked user {blocked_id}")
         result = self.get_block(block_id)
@@ -131,9 +132,33 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
             invalidate_all_blocked_ids(self, blocker_id)
             invalidate_all_blocked_ids(self, blocked_id)
         self._invalidate_all_relationships_cache(blocker_id, blocked_id)
+        self._invalidate_profile_read_caches(blocker_id, blocked_id)
 
         logger.debug(f"User {blocker_id} unblocked user {blocked_id}")
         return True
+
+    @staticmethod
+    def _invalidate_profile_read_caches(*user_ids: SnowflakeID) -> None:
+        """Drop cached profile metadata for every party to a block/unblock.
+
+        Profile views resolve the raw ``user_profiles`` row through a
+        per-credential read-through cache (``user_profile_read_api:*``). A block
+        or unblock changes who may read each party's profile, so every viewer's
+        cached copy of those profiles must go after the relationship write.
+        This is defence in depth: the HTTP profile gate also re-evaluates the
+        block live on every request, but leaving a warm "allowed" entry behind
+        a write is exactly the stale-authorization window we want to close.
+
+        Best-effort: a cache outage must never fail an otherwise committed
+        relationship change.
+        """
+        try:
+            from src.core.profiles.manager import invalidate_profile_read_cache
+
+            for user_id in user_ids:
+                invalidate_profile_read_cache(int(user_id))
+        except Exception as e:
+            logger.debug(f"Profile read cache invalidation after block failed: {e}")
 
     def get_block(self, block_id: SnowflakeID) -> Optional[BlockedUser]:
         """Get a block record by ID."""

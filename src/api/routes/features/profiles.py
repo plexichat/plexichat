@@ -298,6 +298,40 @@ def _shares_server_with(viewer_id: int, owner_id: int) -> bool:
         return False
 
 
+def _is_blocked_between(viewer_id: int, owner_id: int) -> bool:
+    """Whether a block relationship exists in either direction, resolved live.
+
+    A block is a hard deny for cross-user profile reads *regardless* of the
+    owner's ``profile_visibility``. ``_profile_projection_for`` consults this on
+    every request, so a just-blocked viewer loses access immediately even while
+    the raw profile metadata is still warm in ``user_profile_read_api`` -- a
+    cached "allowed" projection can never outlive the relationship change. The
+    verdict is deliberately not cached here: an unblock must take effect on the
+    very next read too.
+    """
+    relationships = api.get_relationships()
+    if not relationships:
+        return False
+    checker = getattr(relationships, "is_blocked_by_either", None)
+    if callable(checker):
+        try:
+            return bool(checker(viewer_id, owner_id))
+        except Exception as e:
+            # Fail closed: if the authoritative block lookup is unavailable the
+            # viewer must not be granted a full profile by default.
+            logger.debug(f"Block lookup failed for {viewer_id}/{owner_id}: {e}")
+            return True
+    # Minimal/alternate relationship objects may only expose the block sets.
+    lookup = getattr(relationships, "get_all_blocked_ids", None)
+    if callable(lookup):
+        try:
+            return int(owner_id) in {int(uid) for uid in lookup(viewer_id)}
+        except Exception as e:
+            logger.debug(f"Block-set lookup failed for {viewer_id}: {e}")
+            return True
+    return False
+
+
 @cached(
     ttl=_PROFILE_READ_TTL_SECONDS,
     prefix=PROFILE_READ_CACHE_PREFIX,
@@ -342,6 +376,14 @@ def _profile_projection_for(current_user, owner_id: int):
     )
     if viewer_id is not None and owner_id == viewer_id:
         return None  # self-reads are always complete
+    # A block is a hard deny independent of the owner's visibility setting.
+    # This decision is recomputed on every request (never cached), so blocking
+    # a viewer immediately revokes their profile access even though the raw
+    # row is still warm in the per-credential profile read cache. Without this
+    # check a blocked viewer kept reading the full profile through a warm
+    # "allowed" entry until the TTL lapsed.
+    if viewer_id is not None and _is_blocked_between(viewer_id, owner_id):
+        return _PRIVATE_PROFILE_FIELDS
     visibility = _get_profile_visibility(owner_id)
     if visibility == "private":
         return _PRIVATE_PROFILE_FIELDS
