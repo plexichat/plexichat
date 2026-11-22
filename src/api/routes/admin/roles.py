@@ -19,6 +19,7 @@ from src.api.schemas.common import (
 from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.policy_types import UIText
 from src.core.auth.privilege_cache import invalidate_privilege_caches
+from src.core.security.hardening import HardeningViolation, parse_id
 from src.core.admin.read_cache import (
     ROLE_CATALOG_DEFAULT_LIMIT,
     ROLE_CATALOG_DEFAULT_OFFSET,
@@ -838,8 +839,22 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     """
     check_host_restriction(request)
     admin_id = _require_role_manager(request)
-    target_admin_id = int(assignment.admin_id)
-    target_role_id = int(assignment.role_id)
+    # A role grant is a privilege mutation: bind both caller-supplied ids
+    # through the strict ASCII snowflake gate. Bare ``int()`` laundered
+    # bool/coercible tokens (``True``->1, ``5.9``->5, ``"١٢٣"``->123,
+    # ``"1_2"``->12) into a DIFFERENT admin/role before the INSERT, even
+    # though the SnowflakeID schema rejects them on the normal HTTP path; a
+    # directly constructed body / internal call bypasses that validation.
+    # parse_id rejects every non-int-shaped token and yields a genuine int,
+    # failing closed before any assignment write.
+    try:
+        target_admin_id = parse_id(assignment.admin_id, "admin_id")
+        target_role_id = parse_id(assignment.role_id, "role_id")
+    except (HardeningViolation, TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request data"}},
+        )
 
     import src.api as api
 
