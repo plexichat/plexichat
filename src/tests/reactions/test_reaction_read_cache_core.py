@@ -52,8 +52,12 @@ def _count_queries(db):
 
 
 def _agg_queries(calls):
+    """The heavy, viewer-independent per-page aggregate (old GROUP BY or base)."""
     return [
-        q for q in calls["all"] if "COUNT(*) as count" in q and "react_reactions r" in q
+        q
+        for q in calls["all"]
+        if "react_reactions r" in q
+        and ("GROUP BY r.message_id" in q or "reaction_aggregate_base" in q)
     ]
 
 
@@ -94,19 +98,21 @@ def test_batch_warm_hit_is_parity_and_reduces_queries(
 
     assert warm == cold
     assert len(cold[msg.id]) == 2
-    # Cold path runs the expensive GROUP BY once; the warm path never does.
+    # The viewer-independent aggregate is loaded once on a cold page and never
+    # recomputed on the warm path.  Viewer-specific 'me'/block layering needs no
+    # aggregate query of its own.
     assert len(_agg_queries(cold_calls)) == 1
     assert _agg_queries(warm_calls) == []
 
-    # Cold path enforces access inline in the aggregation query.  A warm hit
-    # runs a separate, cheap LIVE gate instead of re-aggregating -- gate before
-    # cache, so a revoked viewer cannot read the memoized body.
+    # The shared base has no access predicate, so the cheap LIVE gate runs on
+    # EVERY call (cold and warm), not just on cache hits.  Gate before cache:
+    # a revoked viewer cannot read the memoized body.
     def _is_gate(q):
         return q.lstrip().startswith("SELECT m.id FROM msg_messages m")
 
     gate_cold = [q for q in cold_calls["all"] if _is_gate(q)]
     gate_warm = [q for q in warm_calls["all"] if _is_gate(q)]
-    assert gate_cold == []
+    assert len(gate_cold) == 1
     assert len(gate_warm) == 1
 
 

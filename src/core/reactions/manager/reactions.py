@@ -639,6 +639,63 @@ class ReactionOpsMixin(ReactionProtocol):
         rows = self._db.fetch_all(query, (*message_ids, user_id, user_id))
         return {row["id"] for row in rows}
 
+    def _load_reaction_aggregate_base(
+        self, message_ids: List[int]
+    ) -> Dict[int, Dict[tuple, Dict[str, Any]]]:
+        """Load the viewer-independent reaction aggregate for a message page.
+
+        One query returns every reactor row for the requested messages.  The
+        per-emoji ``count``, the per-viewer ``me`` flag and the two-way block
+        filter are all derived from these rows in :meth:`get_reactions_batch`,
+        so this result can be shared by every viewer of the same page.  The
+        access gate is deliberately NOT part of this query: it is viewer
+        specific and runs live on every call before any body is served.
+
+        Ordering mirrors the old ``GROUP BY ... ORDER BY MIN(created_at)`` so
+        the first row seen for an emoji is its first reaction, which keeps the
+        pill order (and therefore the serialized response) identical.
+        """
+        placeholders = ",".join("?" * len(message_ids))
+        query = f"""/* reaction_aggregate_base */
+                    SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
+                           r.user_id
+                    FROM react_reactions r
+                    LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
+                    WHERE r.message_id IN ({placeholders})
+                    ORDER BY r.message_id, r.created_at, r.user_id"""
+
+        base: Dict[int, Dict[tuple, Dict[str, Any]]] = {mid: {} for mid in message_ids}
+        for row in self._db.fetch_all(query, tuple(message_ids)):
+            msg_id = row["message_id"]
+            if msg_id not in base:
+                continue
+            # Same grouping key the old SQL GROUP BY used.
+            key = (
+                row["emoji"],
+                row["is_custom"],
+                row["custom_emoji_id"],
+                row.get("url"),
+            )
+            entry = base[msg_id].get(key)
+            if entry is None:
+                entry = {
+                    "emoji": row["emoji"],
+                    "is_custom": bool(row["is_custom"]),
+                    "custom_emoji_id": row["custom_emoji_id"],
+                    "url": row.get("url"),
+                    "user_ids": [],
+                }
+                base[msg_id][key] = entry
+            # Reactor ids are stored as integers; tolerate legacy string ids
+            # the same way the two-way block comparison does, but never let a
+            # non-numeric value become a viewer identity below.
+            try:
+                uid = int(row["user_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            entry["user_ids"].append(uid)
+        return base
+
     def get_reactions_batch(
         self,
         user_id: int,
@@ -649,76 +706,88 @@ class ReactionOpsMixin(ReactionProtocol):
             return {}
         message_ids = validate_bulk_message_ids(message_ids)
 
+        # Strict-int viewer id. A malformed id (bool, string, float) is denied
+        # outright instead of being laundered into a real principal; 0/None
+        # keeps the historical "no viewer" broadcast context.
+        if user_id is None:
+            viewer = 0
+        elif type(user_id) is int:
+            viewer = user_id
+        else:
+            return {mid: [] for mid in message_ids}
+
         logger.debug(f"Batch fetching reactions for {len(message_ids)} messages")
 
-        def _load_batch() -> Dict[int, List[Dict[str, Any]]]:
-            placeholders = ",".join("?" * len(message_ids))
+        # LIVE GATE on every call. The shared base has no access predicate, so
+        # authorization cannot be inferred from a warm aggregate: a revoked
+        # membership must hide its messages even while the base is cached.
+        allowed_ids = self._accessible_reaction_message_ids(viewer, message_ids)
 
-            query = f"""SELECT r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url,
-                               COUNT(*) as count,
-                               MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
-                        FROM react_reactions r
-                        LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
-                        WHERE r.message_id IN ({placeholders})
-                           AND (
-                             r.message_id IN (
-                                 SELECT m.id FROM msg_messages m
-                                 JOIN msg_participants p ON m.conversation_id = p.conversation_id
-                                 WHERE p.user_id = ?
-                             )
-                             OR r.message_id IN (
-                                 SELECT m.id FROM msg_messages m
-                                 JOIN srv_channels sc ON m.conversation_id = sc.conversation_id
-                                 JOIN srv_members sm ON sc.server_id = sm.server_id
-                                 WHERE sm.user_id = ?
-                             )
-                           )"""
-            params = [user_id] + list(message_ids) + [user_id, user_id]
-
-            clause, blocked_params = self._blocked_users_clause("r.user_id", user_id)
-            query += clause
-            params.extend(blocked_params)
-
-            query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
-
-            rows = self._db.fetch_all(query, tuple(params))
-
-            loaded: Dict[int, List[Dict[str, Any]]] = {mid: [] for mid in message_ids}
-            for row in rows:
-                msg_id = row["message_id"]
-                count = row["count"]
-
-                if count > 0:
-                    loaded[msg_id].append(
-                        {
-                            "emoji": row["emoji"],
-                            "count": count,
-                            "me": bool(row["me"]),
-                            "is_custom": bool(row["is_custom"]),
-                            "custom_emoji_id": row["custom_emoji_id"],
-                            "url": row.get("url"),
-                        }
-                    )
-            return loaded
+        # Viewer-independent tier: the reactor rows for this page are loaded
+        # once and reused by every viewer. It carries no ``me`` bit and no
+        # block filter, so it is safe to share across viewers and credentials.
+        base_key = reaction_read_key("reactions_batch_base", 0, *message_ids)
+        base = self._reaction_read_cache.get(base_key)
+        if base is _MISS:
+            base = self._load_reaction_aggregate_base(message_ids)
+            self._reaction_read_cache.set(base_key, base)
 
         key = reaction_read_key(
             "reactions_batch", user_id, *message_ids, credential=credential
         )
         cached = self._reaction_read_cache.get(key)
         if cached is _MISS:
-            # Cold path: the aggregation query enforces the viewer's channel
-            # access inline, so no separate gate query is needed here.
-            cached = _load_batch()
+            # Two-way block set for this viewer (users they blocked UNION users
+            # who blocked them) -- the same predicate the old SQL filter used.
+            # ``get_all_blocked_ids`` is the cached canonical two-way lookup;
+            # only compute it on a viewer-body miss so warm reads stay cheap.
+            blocked_ids = set()
+            blocked_ok = True
+            if viewer and self._relationships:
+                getter = getattr(self._relationships, "get_all_blocked_ids", None)
+                try:
+                    if callable(getter):
+                        values = getter(viewer) or []
+                    else:
+                        values = self._get_blocked_user_ids(viewer)
+                    for value in values:
+                        try:
+                            blocked_ids.add(int(value))
+                        except (TypeError, ValueError):
+                            continue
+                except Exception:
+                    # Fail closed: an unresolvable two-way block set means no
+                    # reactor can be proven safe to expose to this viewer.
+                    blocked_ok = False
+
+            # Layer the viewer-specific bits over the shared aggregate.
+            cached = {}
+            for mid, entries in base.items():
+                pills = []
+                for entry in entries.values():
+                    users = (
+                        [u for u in entry["user_ids"] if u not in blocked_ids]
+                        if blocked_ok
+                        else []
+                    )
+                    if not users:
+                        continue
+                    pills.append(
+                        {
+                            "emoji": entry["emoji"],
+                            "count": len(users),
+                            "me": viewer in users,
+                            "is_custom": entry["is_custom"],
+                            "custom_emoji_id": entry["custom_emoji_id"],
+                            "url": entry["url"],
+                        }
+                    )
+                cached[mid] = pills
             self._reaction_read_cache.set(key, cached)
-            allowed_ids = None
-        else:
-            # LIVE GATE before serving a warm body: a revoked membership hides
-            # its messages even though the memoized aggregation still has them.
-            allowed_ids = self._accessible_reaction_message_ids(user_id, message_ids)
 
         result: Dict[int, List[Dict[str, Any]]] = {}
         for mid in message_ids:
-            visible = allowed_ids is None or mid in allowed_ids
+            visible = mid in allowed_ids
             result[mid] = list(cached.get(mid, [])) if visible else []
         return result
 
