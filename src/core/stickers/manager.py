@@ -56,34 +56,6 @@ WHERE (SELECT COUNT(*) FROM sticker_stickers WHERE pack_id = ?) < ?
 """
 
 
-# The pack-level quotas (packs per server / packs per user) had the same
-# check-then-insert TOCTOU: ``create_pack`` read ``SELECT COUNT(*)`` and only
-# then issued a bare INSERT, so two concurrent creators could both observe a
-# below-cap count and both insert, pushing the server/user past the cap. The
-# guard subqueries see table state *before* the new row exists, so exactly the
-# callers that still fit get a row and ``rowcount == 0`` is an authoritative
-# "limit reached" signal. The two guards count disjoint buckets: a SERVER pack
-# always has a server_id and counts toward that server; a PERSONAL pack has a
-# NULL server_id and counts toward its creator (including legacy SERVER-typed
-# rows with NULL server_id). SQLite serialises these single statements with its
-# write lock; PostgreSQL needs the advisory xact locks in ``create_pack``.
-_ATOMIC_SERVER_PACK_INSERT_SQL = """
-INSERT INTO sticker_packs
-    (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at)
-SELECT ?, ?, ?, ?, ?, ?, ?, ?
-WHERE (SELECT COUNT(*) FROM sticker_packs WHERE server_id = ?) < ?
-"""
-
-_ATOMIC_PERSONAL_PACK_INSERT_SQL = """
-INSERT INTO sticker_packs
-    (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at)
-SELECT ?, ?, ?, ?, ?, ?, ?, ?
-WHERE (SELECT COUNT(*) FROM sticker_packs
-       WHERE created_by = ? AND (pack_type = ? OR
-             (pack_type = ? AND server_id IS NULL))) < ?
-"""
-
-
 class StickerManager(StickerUsageDiscoveryMixin):
     def __init__(
         self, db, messaging_module=None, servers_module=None, media_module=None
@@ -333,16 +305,6 @@ class StickerManager(StickerUsageDiscoveryMixin):
             description = description[
                 : self._config.get("max_pack_description_length", 200)
             ]
-        # The COUNT reads below are advisory feedback only (skip a wasted
-        # transaction for an obviously-full bucket). The atomic guarded INSERT
-        # at commit time is authoritative: two concurrent creators can both see
-        # a stale below-cap count, but only one can insert the last slot.
-        atomic_sql = None
-        guard_params: tuple = ()
-        lock_ns = None
-        lock_key = None
-        max_packs = None
-        over_limit_msg = None
         if pack_type == PackType.SERVER:
             if not server_id:
                 raise ServerNotFoundError("Server ID required for server packs")
@@ -361,14 +323,6 @@ class StickerManager(StickerUsageDiscoveryMixin):
                     max_packs,
                     count_row["count"],
                 )
-            atomic_sql = _ATOMIC_SERVER_PACK_INSERT_SQL
-            guard_params = (server_id, max_packs)
-            # Namespace 121 stays clear of the soundboard (120), sticker-sticker
-            # (102), reaction (103), emoji (100/101) and invite (1/2) lock
-            # namespaces; masking to 30 bits keeps the key in signed int4 range.
-            lock_ns = 121
-            lock_key = server_id
-            over_limit_msg = f"Server has reached maximum of {max_packs} sticker packs"
         elif pack_type == PackType.PERSONAL:
             # Personal packs were previously created as SERVER packs with a NULL
             # server_id and therefore bypassed the per-server limit entirely,
@@ -390,19 +344,6 @@ class StickerManager(StickerUsageDiscoveryMixin):
                     max_packs,
                     count_row["count"],
                 )
-            atomic_sql = _ATOMIC_PERSONAL_PACK_INSERT_SQL
-            guard_params = (
-                user_id,
-                PackType.PERSONAL.value,
-                PackType.SERVER.value,
-                max_packs,
-            )
-            # Namespace 122 is disjoint from every other quota lock namespace.
-            lock_ns = 122
-            lock_key = user_id
-            over_limit_msg = (
-                f"User has reached maximum of {max_packs} personal sticker packs"
-            )
         now = self._get_timestamp()
         pack_id = self._generate_id()
 
@@ -425,53 +366,19 @@ class StickerManager(StickerUsageDiscoveryMixin):
                 # description encryption.
                 description_encrypted = description
 
-        insert_params = (
-            pack_id,
-            name,
-            description_encrypted,
-            pack_type.value,
-            server_id,
-            user_id,
-            now,
-            now,
+        self._db.execute(
+            "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                pack_id,
+                name,
+                description_encrypted,
+                pack_type.value,
+                server_id,
+                user_id,
+                now,
+                now,
+            ),
         )
-        is_postgres = getattr(self._db, "type", "") == "postgres"
-        if atomic_sql is not None and is_postgres:
-            # PostgreSQL READ COMMITTED would let two concurrent guarded
-            # INSERT..SELECT statements both see a stale count. Serialise per
-            # quota bucket with an advisory xact lock inside the transaction.
-            self._db.begin_transaction()
-            try:
-                self._db.execute(
-                    "SELECT pg_advisory_xact_lock(?, ?)",
-                    (lock_ns, int(lock_key) & 0x3FFFFFFF),
-                )
-            except Exception:
-                self._db.rollback()
-                raise
-        try:
-            if atomic_sql is not None and not is_postgres:
-                self._db.begin_transaction()
-            if atomic_sql is not None:
-                cursor = self._db.execute(atomic_sql, insert_params + guard_params)
-                # rowcount 0 means the authoritative guard found the bucket
-                # already at (or over) its cap at insert time — a concurrent
-                # creator won the last slot. Fail closed with the usual quota
-                # error instead of silently creating an over-cap pack.
-                if getattr(cursor, "rowcount", 0) == 0:
-                    raise PackLimitError(over_limit_msg, max_packs, max_packs)
-            else:
-                # DEFAULT packs are not quota-bound; keep the plain insert.
-                self._db.execute(
-                    "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    insert_params,
-                )
-            if atomic_sql is not None:
-                self._db.commit()
-        except Exception:
-            if atomic_sql is not None:
-                self._db.rollback()
-            raise
         result = self.get_pack(pack_id, user_id)
         assert result is not None  # Should exist since we just created it
         return result
@@ -560,8 +467,6 @@ class StickerManager(StickerUsageDiscoveryMixin):
         )
         self._db.execute("DELETE FROM sticker_stickers WHERE pack_id = ?", (pack_id,))
         self._db.execute("DELETE FROM sticker_packs WHERE id = ?", (pack_id,))
-        # Drop the resolved pack ids of every sticker that just disappeared.
-        self._sticker_pack_id_cache().invalidate_pack(pack_id)
         for row in sticker_rows:
             self._purge_sticker_media(user_id, row["url"])
         return True
@@ -772,8 +677,6 @@ class StickerManager(StickerUsageDiscoveryMixin):
         elif not self._user_owns_pack(user_id, pack):
             raise PermissionDeniedError("Can only remove stickers from own packs")
         self._db.execute("DELETE FROM sticker_stickers WHERE id = ?", (sticker_id,))
-        # Evict the warm verdict before any caller can reuse the deleted id.
-        self._sticker_pack_id_cache().invalidate_sticker(sticker_id)
         self._db.execute(
             "UPDATE sticker_packs SET updated_at = ? WHERE id = ?",
             (self._get_timestamp(), pack.id),

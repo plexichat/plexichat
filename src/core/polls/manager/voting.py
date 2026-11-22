@@ -133,14 +133,19 @@ class VotingMixin(PollManagerBase):
                 "This poll does not allow multiple choice voting"
             )
 
-        # Validate all options exist in this poll (optimized single query)
+        # Validate all options exist in this poll. Only the count is needed,
+        # so fetch a single COUNT aggregate instead of materializing one full
+        # row per selected option (voting is a hot path). The predicate is
+        # identical to the old row fetch, so the count matches exactly.
         placeholders = ",".join("?" * len(unique_option_ids))
-        valid_options = self._db.fetch_all(
-            f"SELECT id FROM poll_options WHERE poll_id = ? AND id IN ({placeholders})",
+        count_row = self._db.fetch_one(
+            f"SELECT COUNT(*) AS count FROM poll_options "
+            f"WHERE poll_id = ? AND id IN ({placeholders})",
             (poll_id, *unique_option_ids),
         )
+        valid_count = int(count_row["count"]) if count_row else 0
 
-        if len(valid_options) != len(unique_option_ids):
+        if valid_count != len(unique_option_ids):
             raise PollOptionNotFoundError(
                 "One or more selected options are invalid for this poll"
             )
@@ -247,12 +252,17 @@ class VotingMixin(PollManagerBase):
                 "This poll does not allow multiple choice voting"
             )
 
+        # Only a count is needed: fetch a single COUNT aggregate rather than
+        # materializing one full row per selected option. Same predicate, so
+        # the validity decision is unchanged.
         placeholders = ",".join("?" * len(unique_option_ids))
-        valid_options = self._db.fetch_all(
-            f"SELECT id FROM poll_options WHERE poll_id = ? AND id IN ({placeholders})",
+        count_row = self._db.fetch_one(
+            f"SELECT COUNT(*) AS count FROM poll_options "
+            f"WHERE poll_id = ? AND id IN ({placeholders})",
             (poll_id, *unique_option_ids),
         )
-        if len(valid_options) != len(unique_option_ids):
+        valid_count = int(count_row["count"]) if count_row else 0
+        if valid_count != len(unique_option_ids):
             raise PollOptionNotFoundError(
                 "One or more selected options are invalid for this poll"
             )
