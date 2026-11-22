@@ -69,6 +69,16 @@ INTERNAL_EXPORT_FIELDS: FrozenSet[str] = frozenset(
         "text_encrypted",
         "option_encrypted",
         "content_encrypted",
+        # Reviewer/admin-only notes collected verbatim by the ``SELECT *``
+        # feedback and reports collectors. Their encrypted twin
+        # (``internal_notes_encrypted``) is dropped by the ``_encrypted``
+        # suffix below, but the plaintext fields carry no secret suffix and
+        # survived the gate, shipping internal reviewer commentary to the
+        # data subject. They are internal-only by definition and have no
+        # place in a portability artifact.
+        "internal_notes",
+        "internal_notes_format",
+        "admin_notes",
     }
 )
 
