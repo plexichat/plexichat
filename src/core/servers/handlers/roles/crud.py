@@ -495,10 +495,20 @@ class RoleCrudMixin(RoleHandlerProtocol):
         if position >= user_highest and not is_owner:
             raise RoleHierarchyError("Cannot move role above your highest role")
 
-        self.db.execute(
-            "UPDATE srv_roles SET position = ?, updated_at = ? WHERE id = ?",
-            (position, self.manager._get_timestamp(), role_id),
+        # Re-assert the position the hierarchy decision was made against at
+        # write time, mirroring update_role and delete_role. Without this CAS
+        # predicate the read-then-write window lets a concurrent promotion turn
+        # a previously-authorized move of a lower role into a move of a role
+        # that is now at/above the actor's own rank. Refuse the stale write
+        # rather than acting on an authorization decision that no longer holds.
+        cursor = self.db.execute(
+            "UPDATE srv_roles SET position = ?, updated_at = ? "
+            "WHERE id = ? AND position = ?",
+            (position, self.manager._get_timestamp(), role_id, role.position),
         )
+        rowcount = getattr(cursor, "rowcount", None)
+        if isinstance(rowcount, int) and rowcount <= 0:
+            raise RoleHierarchyError("Role changed concurrently, retry")
 
         # Position is the tie-breaker for channel overrides (a higher role's
         # deny wins an allow from a lower role) and for role hierarchy. Moving
