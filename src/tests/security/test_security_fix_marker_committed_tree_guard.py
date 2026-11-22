@@ -1001,6 +1001,34 @@ def test_private_index_reflog_enumeration_has_no_unpinned_security_fix() -> None
     )
 
 
+def test_legacy_private_index_shas_keep_their_committed_markers(
+    commit_sha: str,
+) -> None:
+    """The three early private-index repairs stay pinned to real HEAD blobs.
+
+    Those commits predate the SHA-prefixed key convention, so
+    PRIVATE_INDEX_KEY_BY_SHA is the only thing tying their empty-reflog entries
+    to a registry marker. This makes that tie non-vacuous: each mapping must
+    name a registered key whose marker is actually present in the committed
+    HEAD blob, and each SHA must be a real ancestor. Dropping or mis-pointing a
+    mapping therefore fails here -- not only in the reflog enumeration -- which
+    is exactly the "unpinned c6a111dd / d39659c3 / d6a41435" failure mode this
+    closes.
+    """
+    reader = _make_blob_reader(commit_sha)
+    by_key = {r.key: r for r in COMMITTED_FIX_MARKERS}
+    assert len(PRIVATE_INDEX_KEY_BY_SHA) == 3
+    for sha_prefix, key in sorted(PRIVATE_INDEX_KEY_BY_SHA.items()):
+        anc = _git("merge-base", "--is-ancestor", sha_prefix, commit_sha)
+        assert anc.returncode == 0, f"{sha_prefix} is not an ancestor of HEAD"
+        record = by_key.get(key)
+        assert record is not None, (
+            f"mapping for {sha_prefix} names unknown key {key!r}"
+        )
+        present, detail = _evaluate(record, reader)
+        assert present, f"mapping for {sha_prefix} no longer pins its fix: {detail}"
+
+
 def test_committed_absent_marker_scopes_resolve(commit_sha: str) -> None:
     """Negative-assertion scopes resolve in the real HEAD blob, non-vacuously."""
     reader = _make_blob_reader(commit_sha)
