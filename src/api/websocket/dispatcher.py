@@ -115,6 +115,35 @@ def _raw_dispatch_scope(data: Any) -> Optional[tuple]:
     return server_id, channel_id
 
 
+def _event_replay_scope(event: Event) -> Optional[tuple]:
+    """Authoritative ``(server_id, channel_id)`` replay scope of an ``Event``.
+
+    Prefer the routing fields on the :class:`Event` itself. Several production
+    routes, however, build a private event WITHOUT setting ``server_id`` /
+    ``channel_id`` and put the channel or conversation id only in ``d`` -- the
+    reaction fan-out (``_dispatch_reaction_event``) and both read-receipt
+    broadcasts are examples. Such a frame is just as private and must be
+    re-checked on RESUME; omitting its marker made the replay path treat it as
+    scope-less and deliver it unconditionally to a viewer who had since lost
+    access. Falling back to the id fields in ``d`` closes that gap for every
+    producer, existing and future. Returns ``None`` only for genuinely
+    scope-less frames (READY, status, user-scoped alerts, ...) which carry no
+    channel/conversation id at all.
+    """
+    server_id = event.server_id
+    channel_id = event.channel_id
+    if channel_id is None and isinstance(event.data, dict):
+        server_id = _coerce_envelope_scope_id(event.data.get("server_id"))
+        if server_id is None:
+            server_id = _coerce_envelope_scope_id(event.data.get("guild_id"))
+        channel_id = _coerce_envelope_scope_id(event.data.get("channel_id"))
+        if channel_id is None:
+            channel_id = _coerce_envelope_scope_id(event.data.get("conversation_id"))
+    if channel_id is None:
+        return None
+    return server_id, channel_id
+
+
 class GatewayDispatcher:
     """Dispatches events to connected WebSocket clients."""
 
@@ -641,11 +670,10 @@ class GatewayDispatcher:
         except Exception:
             return False
 
+        servers = api.get_servers()
+        get_channel = getattr(servers, "get_channel", None) if servers else None
+
         if server_id is not None:
-            servers = api.get_servers()
-            if servers is None:
-                return False
-            get_channel = getattr(servers, "get_channel", None)
             if not callable(get_channel):
                 return False
             try:
@@ -654,17 +682,31 @@ class GatewayDispatcher:
                 logger.debug(f"Replay channel re-auth failed for user {user_id}: {e}")
                 return False
 
+        # No explicit server scope: either a genuine DM conversation, or a
+        # scope derived from ``d`` for a producer that omitted Event.server_id
+        # (a server channel id can be present in ``d`` without a server id).
+        # Re-check BOTH authoritative views so a removed DM participant *and*
+        # a revoked channel viewer are both withheld. Fail closed when neither
+        # source is wired or every lookup fails.
         messaging = api.get_messaging()
-        if messaging is None:
+        is_participant = (
+            getattr(messaging, "is_participant", None) if messaging else None
+        )
+        if not callable(get_channel) and not callable(is_participant):
             return False
-        is_participant = getattr(messaging, "is_participant", None)
-        if not callable(is_participant):
-            return False
-        try:
-            return bool(is_participant(channel_id, user_id))
-        except Exception as e:
-            logger.debug(f"Replay DM re-auth failed for user {user_id}: {e}")
-            return False
+        if callable(is_participant):
+            try:
+                if is_participant(channel_id, user_id):
+                    return True
+            except Exception as e:
+                logger.debug(f"Replay DM re-auth failed for user {user_id}: {e}")
+        if callable(get_channel):
+            try:
+                if get_channel(channel_id, user_id):
+                    return True
+            except Exception as e:
+                logger.debug(f"Replay channel re-auth failed for user {user_id}: {e}")
+        return False
 
     def _build_dispatch_payload(
         self,
@@ -698,13 +740,14 @@ class GatewayDispatcher:
             # RESUME can re-check the viewer's *current* channel/DM visibility
             # before replaying this private event. Without it a user who lost
             # access while disconnected would still receive the queued frame.
-            scope = (
-                (event.server_id, event.channel_id)
-                if event.channel_id is not None
-                else None
-            )
+            # Deriving the scope from ``d`` when the producer omitted the
+            # Event routing fields is essential: the reaction and read-receipt
+            # routes do exactly that, and their private frames were previously
+            # recorded unscoped (so RESUME replayed them without any re-check).
             self._session_manager.record_event(
-                connection.session_id, payload, authz_scope=scope
+                connection.session_id,
+                payload,
+                authz_scope=_event_replay_scope(event),
             )
 
         return payload
