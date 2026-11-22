@@ -12,6 +12,7 @@ Command-line parsing and subcommand dispatch. This package is the entry point in
 | `create-config` | Generate `config/config.yaml` with defaults and exit |
 | `version` | Print the version string and exit |
 | `rotate-secrets` | Regenerate `applications.webhook_signature_secret` |
+| `reset-admin-password` | Regenerate the admin user password and exit: delete and recreate `admin` with a fresh random password, print it once, and write it to `~/.plexichat/admin_credentials.txt` (mode `0600`) |
 | `migrate-db` | Run pending database migrations and exit |
 | `migrate-kek` | Manage Key Encryption Key (KEK) migration: validate, migrate, or rollback keyrings |
 
@@ -59,6 +60,9 @@ python main.py create-config
 
 # Rotate the webhook signature secret
 python main.py rotate-secrets
+
+# Reset a lost admin password
+python main.py reset-admin-password
 
 # Run database migrations
 python main.py migrate-db

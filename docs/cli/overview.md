@@ -107,6 +107,8 @@ Start the server on `127.0.0.1`, run the automated API self-test suite, then shu
 python main.py self-test
 python main.py self-test --unlicensed
 python main.py self-test --purge-residue
+python main.py self-test --status
+python main.py self-test --status --base-url https://example.com
 ```
 
 The suite starts uvicorn in a background thread, runs every test in the self-test runner, and exits with `0` on success or `1` on failure.
@@ -115,6 +117,8 @@ The suite starts uvicorn in a background thread, runs every test in the self-tes
 |---|---|
 | `--unlicensed` | Run in unlicensed mode: exclude license-gated endpoints (for example, `/api/v1/admin/plexijoin/*`) that return `403` without a valid license. The flag is opt-in and the server never infers it from local license state (`src/cli/main.py`). Without it those routes stay in the run; on a free-tier install a `403` from a license-gated route is recorded as an **expected denial** (the feature gate working, not a failure), while a licensed install must still answer `2xx`. |
 | `--purge-residue` | Run only the account-purge residue check and exit: purge a throwaway account through the admin endpoint, then read the database and storage back to prove its server, channel, conversation, rows and stored upload went with it. Opt-in and never part of the default suite, because the check deletes an account. See [Account-purge residue check](../admin/purge-residue-check.md). |
+| `--status` | Read-only status mode: run four unauthenticated liveness checks (health, API status and limiter headers, OpenAPI, version) and exit. Creates nothing, mutates nothing and bypasses nothing; safe to run against a live deployment on a schedule. Exits `0` when all pass (`src/cli/main.py`). |
+| `--base-url URL` | Status-mode target, for example `https://example.com`. Valid only with `--status`: no local server is started and the checks run remotely. Without it, `--status` targets a freshly booted local server (`src/cli/main.py`). |
 
 ### `create-config`
 
@@ -150,6 +154,16 @@ python main.py rotate-secrets --config config/production.yaml
 ```
 
 The command updates the file in place. Back up the file before you run this in production. The new value is `secrets.token_hex(32)` (`src/cli/main.py`).
+
+### `reset-admin-password`
+
+Regenerate the admin user password and exit. Use this when the bootstrap password has been lost.
+
+```bash
+python main.py reset-admin-password
+```
+
+The command deletes the existing `admin` user (if any), creates a new one with a fresh random password, prints it to stdout once, and writes it to `~/.plexichat/admin_credentials.txt` (mode `0600`). OTP setup is required on first login with the new password (`src/cli/main.py`).
 
 ### `migrate-db`
 
