@@ -177,8 +177,8 @@ class _FailingStashManager:
         self.calls.append("resolve_share_link")
         raise StashPermissionError(self.reason)
 
-    def resolve_download_ticket(self, user_id, ticket):
-        self.calls.append("resolve_download_ticket")
+    def redeem_download_ticket(self, user_id, ticket):
+        self.calls.append("redeem_download_ticket")
         raise StashPermissionError(self.reason)
 
 
@@ -226,7 +226,7 @@ def test_share_link_resolve_never_reveals_the_link_state(reason):
 @pytest.mark.parametrize("reason", _STASH_REASONS)
 def test_download_ticket_redeem_never_reveals_the_ticket_state(reason):
     err, mgr = _ticket_redeem_failure(reason)
-    assert mgr.calls == ["resolve_download_ticket"]  # reached the manager
+    assert mgr.calls == ["redeem_download_ticket"]  # reached the manager
     assert err.status_code == 403
     assert err.detail == _UNIFORM_STASH_BODY
     assert reason not in str(err.detail)
