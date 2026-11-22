@@ -141,6 +141,19 @@ async def test_get_server_stickers_hydrates_packs_from_one_query(monkeypatch):
     stickers = _FakeStickers(db=db, packs=packs, to_sticker=lambda row: Sticker(**row))
     monkeypatch.setattr(api, "get_stickers", lambda: stickers)
 
+    # get_server_stickers runs a fail-closed live membership gate before the
+    # cached loader. Wire a servers module that admits user 7 so the route
+    # reaches the batching path under test (and prove the gate was consulted).
+    member_checks = []
+
+    def _get_member(server_id, user_id):
+        member_checks.append((server_id, user_id))
+        return SimpleNamespace(user_id=user_id, server_id=server_id)
+
+    monkeypatch.setattr(
+        api, "get_servers", lambda: SimpleNamespace(get_member=_get_member)
+    )
+
     result = await get_server_stickers("555", current_user=SimpleNamespace(user_id=7))  # pyright: ignore[reportArgumentType]
 
     assert [p.id for p in result] == ["1", "2"]
@@ -148,6 +161,7 @@ async def test_get_server_stickers_hydrates_packs_from_one_query(monkeypatch):
     assert [s.name for s in result[1].stickers] == ["sticker b"]
     assert len(db.calls) == 1
     assert stickers.per_pack_calls == []
+    assert member_checks == [(555, 7)]
 
 
 @pytest.mark.unit
