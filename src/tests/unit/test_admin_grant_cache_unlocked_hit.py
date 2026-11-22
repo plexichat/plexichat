@@ -28,7 +28,7 @@ pytestmark = pytest.mark.unit
 
 _GRANT = frozenset({"admin.roles", "users.read"})
 _READERS = 8
-_LOOKUP_COST = 0.03  # simulated non-trivial lookup cost while the lock is held
+_LOOKUP_COST = 0.08  # simulated non-trivial lookup cost while a lock is held
 
 
 class _SlowEntries(dict):
@@ -69,6 +69,21 @@ def _prime(db, credential, subject, loader=lambda: _GRANT, ttl=60.0):
     return result
 
 
+def _run_readers(lookup):
+    """Run ``lookup`` in ``_READERS`` threads released together; return (t, results)."""
+    barrier = threading.Barrier(_READERS)
+    results = [None] * _READERS
+
+    def worker(i):
+        barrier.wait()
+        results[i] = lookup()
+
+    start = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=_READERS) as pool:
+        list(pool.map(worker, range(_READERS)))
+    return time.perf_counter() - start, results
+
+
 def test_warm_hits_do_not_acquire_the_global_lock(monkeypatch):
     """Deterministic: a warm hit must never touch the module-global lock."""
     db, credential, subject = object(), "cred", 42
@@ -92,37 +107,45 @@ def test_warm_hits_do_not_acquire_the_global_lock(monkeypatch):
 
 
 def test_concurrent_warm_hits_are_not_serialized(monkeypatch):
-    """Timing: N concurrent readers overlap instead of queueing on the lock."""
+    """Timing: concurrent readers overlap instead of queueing on the lock.
+
+    The comparison is made against a serialized reference measured in the same
+    run (same machine load, same lookup cost), so the assertion is robust on a
+    busy shared CI box: with the old code ``real ~= reference`` (~N * cost),
+    with the fast unlocked read ``real ~= cost``.
+    """
     db, credential, subject = object(), "cred", 42
     _prime(db, credential, subject)
 
-    # Equivalent store whose lookup sleeps: while ``_LOCK`` is held across the
-    # lookup this serializes readers to ~N * cost; with a fast unlocked read the
-    # sleeps overlap and total time approaches a single lookup cost.
+    key = next(iter(grant_cache._ENTRIES))
     slow = _SlowEntries(grant_cache._ENTRIES)
     monkeypatch.setattr(grant_cache, "_ENTRIES", slow)
 
-    barrier = threading.Barrier(_READERS)
-    results = [None] * _READERS
+    # Reference: old behavior -- a single lock held around every slow lookup.
+    serial_lock = threading.Lock()
 
-    def worker(i):
-        barrier.wait()
-        results[i] = grant_cache.get_cached_grants(
+    def serial_lookup():
+        with serial_lock:
+            return slow.get(key)
+
+    t_serial, _ = _run_readers(serial_lookup)
+    assert t_serial > _READERS * _LOOKUP_COST * 0.5, (
+        "serialized reference did not actually serialize (bad probe)"
+    )
+
+    # Real code path: warm hits should overlap on the fast unlocked read.
+    t_real, results = _run_readers(
+        lambda: grant_cache.get_cached_grants(
             db, credential, subject, lambda: frozenset(), ttl=60.0
         )
-
-    start = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=_READERS) as pool:
-        list(pool.map(worker, range(_READERS)))
-    elapsed = time.perf_counter() - start
+    )
 
     # Identical results under concurrency.
     assert all(result == _GRANT for result in results)
 
-    serialized_floor = _READERS * _LOOKUP_COST * 0.65
-    assert elapsed < serialized_floor, (
-        f"warm lookups appear serialized: {elapsed:.3f}s for {_READERS} readers "
-        f"(expected < {serialized_floor:.3f}s if the hit path is unlocked)"
+    assert t_real < t_serial * 0.5, (
+        f"warm lookups appear serialized: {t_real:.3f}s vs serialized "
+        f"reference {t_serial:.3f}s ({_READERS} readers)"
     )
 
 
@@ -133,9 +156,12 @@ def test_invalidation_is_visible_to_the_fast_path():
 
     grant_cache.invalidate_grant_cache()
 
-    assert grant_cache.get_cached_grants(
-        db, credential, subject, lambda: frozenset(), ttl=60.0
-    ) == frozenset()
+    assert (
+        grant_cache.get_cached_grants(
+            db, credential, subject, lambda: frozenset(), ttl=60.0
+        )
+        == frozenset()
+    )
 
 
 def test_expired_entry_is_not_served_by_the_fast_path():
@@ -145,6 +171,9 @@ def test_expired_entry_is_not_served_by_the_fast_path():
 
     time.sleep(0.02)
 
-    assert grant_cache.get_cached_grants(
-        db, credential, subject, lambda: frozenset(), ttl=60.0
-    ) == frozenset()
+    assert (
+        grant_cache.get_cached_grants(
+            db, credential, subject, lambda: frozenset(), ttl=60.0
+        )
+        == frozenset()
+    )
