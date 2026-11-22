@@ -295,6 +295,20 @@ _ARTIFACT_UPLOAD_BOT_TOKEN_OWNER_GUARD = (
 )
 
 
+# 578cf7c6: the owner-scoped message-forward route rejects bot credentials
+# before parse_id/ForwardingService publishes the new message as the bot token's
+# human owner. Pin the distinctive forward_message signature + require_user_token
+# + first parse_id lines so a stale staged copy of this contested (MM) file that
+# drops the gate is caught by name.
+_FEATURE_FORWARD_BOT_TOKEN_OWNER_GUARD = (
+    "async def forward_message(\n"
+    "    body: ForwardMessageRequest, current_user: TokenInfo = Depends(get_current_user)\n"
+    "):\n"
+    "    require_user_token(current_user)\n"
+    '    message_id = parse_id(body.message_id, "message ID")'
+)
+
+
 # be19f4ca (N644 follow-up): logout re-checks the presented session bearer's
 # IP/UA against the session's blind indexes before the revoking write. The
 # `return False` fail-closed arms and the ip_index/ua_index SELECT distinguish
@@ -1511,6 +1525,24 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
             "that keeps only one view (or returns early) replays private "
             "frames to a viewer whose DM participation or channel view was "
             "revoked while the socket was gone"
+        ),
+    ),
+    # 578cf7c6: feature-route bot-token owner guard. User-scoped feature routes
+    # treat a bot token's user_id as its human owner, so a narrow bot credential
+    # could otherwise forward messages with the owner's authority. forwarding.py
+    # is contested/stale (MM): a peer staging the whole file can silently drop
+    # the gate. Pin the require_user_token block in forward_message so that
+    # revert is caught by name.
+    CommittedFixMarker(
+        key="578cf7c6-feature-forward-bot-token-owner-guard",
+        path="src/api/routes/features/forwarding.py",
+        marker=_FEATURE_FORWARD_BOT_TOKEN_OWNER_GUARD,
+        why=(
+            "578cf7c6: forward_message rejects bot credentials before "
+            "parse_id/ForwardingService publishes the forwarded message as the "
+            "bot token's human owner; a stale staged copy of this contested MM "
+            "file drops the require_user_token gate and lets a narrow bot token "
+            "forward as its owner"
         ),
     ),
 )
