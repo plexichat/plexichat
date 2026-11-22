@@ -33,11 +33,17 @@ class _RaisingDB:
         return None
 
 
+class _InsertCursor:
+    """Minimal cursor: the atomic guarded INSERT reports one inserted row."""
+
+    rowcount = 1
+
+
 class _WorkingDB(_RaisingDB):
     def execute(self, sql, params=None):
         if "INSERT INTO media_upload_sessions" in sql:
             self.insert_called = True
-            return None
+            return _InsertCursor()
         return None
 
 

@@ -39,6 +39,35 @@ MAX_USER_SESSIONS = 200
 # bind parameters so no driver's variable limit can be hit.
 _SWEEP_BATCH_SIZE = 500
 
+#: PostgreSQL advisory-lock namespace for the per-user active-session cap.
+#: Dedicated to this quota so it never over-serialises (or is confused with) the
+#: storage-quota reservation lock or any of the other quota namespaces.
+_CHUNKED_SESSION_LOCK_NAMESPACE = 160
+
+# One statement re-checks the per-user active-session cap at the instant of the
+# insert. The old flow ran a ``SELECT COUNT(*)`` quota check and only then
+# issued a separate bare INSERT; two concurrent callers could both read a
+# below-cap count and both insert, pushing a user past
+# ``max_active_sessions_per_user`` and letting them hoard sparse temp files (a
+# TOCTOU cap bypass of the same class already fixed for emoji/sticker/role/app).
+# The guard subquery sees the table state *before* the new row exists, so exactly
+# the callers that still fit get a row and ``rowcount == 0`` is an authoritative
+# "limit reached" signal. SQLite serialises this single statement with its write
+# lock; PostgreSQL needs the advisory xact lock in ``create_session`` because
+# READ COMMITTED would let two statements both see a stale count.
+_ATOMIC_SESSION_INSERT_SQL = """
+INSERT INTO media_upload_sessions
+    (id, user_id, filename, content_type, total_size, chunk_size,
+     total_chunks, uploaded_chunks, uploaded_bytes, status,
+     created_at, updated_at, expires_at, temp_path)
+SELECT ?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?, ?, ?
+WHERE (
+    SELECT COUNT(*) FROM media_upload_sessions
+    WHERE user_id = ? AND expires_at > ?
+      AND status NOT IN ('completed', 'expired')
+) < ?
+"""
+
 
 class UploadSessionStatus(Enum):
     """Status of an upload session."""
@@ -316,13 +345,24 @@ class ChunkedUploadManager:
             logger.error(f"Failed to create temp file: {e}")
             return None
 
+        # PostgreSQL READ COMMITTED would let two concurrent guarded INSERTs
+        # both see a stale below-cap count. Serialise per user with an advisory
+        # xact lock inside a transaction. Namespace 160 is dedicated to this
+        # cap; masking to 30 bits keeps the key inside signed int4 range.
+        is_postgres = getattr(self._db, "type", "") == "postgres"
+        if is_postgres:
+            self._db.begin_transaction()
+            try:
+                self._db.execute(
+                    "SELECT pg_advisory_xact_lock(?, ?)",
+                    (_CHUNKED_SESSION_LOCK_NAMESPACE, int(user_id) & 0x3FFFFFFF),
+                )
+            except Exception:
+                self._db.rollback()
+                raise
         try:
-            self._db.execute(
-                """INSERT INTO media_upload_sessions 
-                   (id, user_id, filename, content_type, total_size, chunk_size, 
-                    total_chunks, uploaded_chunks, uploaded_bytes, status, 
-                    created_at, updated_at, expires_at, temp_path)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?, ?, ?)""",
+            cursor = self._db.execute(
+                _ATOMIC_SESSION_INSERT_SQL,
                 (
                     session_id,
                     user_id,
@@ -335,9 +375,34 @@ class ChunkedUploadManager:
                     now,
                     expires_at,
                     temp_path,
+                    user_id,
+                    now,
+                    max_active_sessions,
                 ),
             )
+            # rowcount 0 means the count guard found this user already at (or
+            # over) the cap at insert time -- a concurrent caller committed
+            # after the advisory read. Fail closed: no session row and no
+            # orphaned pre-allocated temp file.
+            if getattr(cursor, "rowcount", 0) != 1:
+                if is_postgres:
+                    self._db.rollback()
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+                logger.warning(
+                    f"User {user_id} has too many active chunked upload sessions"
+                )
+                return None
+            if is_postgres:
+                self._db.commit()
         except Exception:
+            if is_postgres:
+                try:
+                    self._db.rollback()
+                except Exception:
+                    pass
             # The sparse file was pre-allocated before the session row existed,
             # so cleanup_expired() (which walks session rows) can never reap
             # it. Unlink it on the failed-insert path or every failed create

@@ -66,6 +66,9 @@ _QUOTA_LOCKS = {
     "scheduled-event": ("core/servers/manager/scheduled_event_ops.py", {140}),
     "role": ("core/servers/handlers/roles/crud.py", {141}),
     "application": ("core/applications/manager/application_crud.py", {150}),
+    # Per-user chunked-upload active-session cap. Namespace 160 is exclusive to
+    # this quota and disjoint from every other quota and shared guard.
+    "chunked-session": ("core/media/chunked.py", {160}),
     "bookmark": ("core/messaging/services/bookmarks.py", {0x424F4B4D}),
 }
 
