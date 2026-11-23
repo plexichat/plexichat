@@ -18,6 +18,23 @@ from src.utils.encryption import generate_snowflake_id
 # advisory-lock holders.
 _BOOKMARK_QUOTA_LOCK_NAMESPACE = 0x424F4B4D  # 'BOKM'
 
+_INT4_MAX = 0x7FFFFFFF
+_INT4_SPAN = 1 << 32
+
+
+def _as_signed_int4(value: int) -> int:
+    """Reinterpret an unsigned 32-bit hash as PostgreSQL's signed ``int4``.
+
+    ``pg_advisory_xact_lock(int4, int4)`` only accepts -2**31..2**31-1, while
+    ``zlib.crc32`` returns 0..2**32-1. Passing the raw value raises ``value
+    "2895358464" is out of range for type integer`` -- a 500 on bookmark
+    creation for roughly half of all user ids, depending only on the hash.
+    Folding the same 32 bits into the signed range is a bijection, so two
+    distinct crc values never start colliding, and it is deterministic across
+    processes and restarts (the lock must be the same key on every worker).
+    """
+    return value - _INT4_SPAN if value > _INT4_MAX else value
+
 
 class BookmarkService:
     """Service for managing per-user message bookmarks."""
@@ -44,12 +61,14 @@ class BookmarkService:
         """Two-int PostgreSQL advisory key: (fresh namespace, hashed user id).
 
         The 32-bit CRC keeps the key inside pg_advisory_xact_lock(int4, int4)'s
-        two-argument keyspace. A collision between two user ids would only
-        cause harmless extra serialization, never a quota bypass.
+        two-argument keyspace, reinterpreted as a signed int4 because the
+        two-int signature rejects the unsigned half of the crc32 range. A
+        collision between two user ids would only cause harmless extra
+        serialization, never a quota bypass.
         """
         return (
             _BOOKMARK_QUOTA_LOCK_NAMESPACE,
-            zlib.crc32(str(user_id).encode("utf-8")),
+            _as_signed_int4(zlib.crc32(str(user_id).encode("utf-8"))),
         )
 
     def _insert_within_quota(self, sql: str, params: tuple, user_id: int) -> int:
