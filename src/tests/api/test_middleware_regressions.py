@@ -197,6 +197,7 @@ class TestAuthPrefixScoping:
 
     def _run(self, path, api_prefix="/custom"):
         from src.api.middleware.authentication import AuthenticationMiddleware
+        from src.api.middleware.policy_cache import clear_static_policy_cache
 
         async def receive():
             return {"type": "http.request", "body": b"", "more_body": False}
@@ -223,6 +224,9 @@ class TestAuthPrefixScoping:
         config_obj = SimpleNamespace(api_prefix=api_prefix)
         auth_mock = MagicMock()
         auth_mock.is_api_access_token_required.return_value = False
+        # The policy snapshot throttles its version check, so a prefix patched
+        # by a previous test would otherwise be served from cache here.
+        clear_static_policy_cache()
         with (
             patch("src.api.is_self_test_request", return_value=False),
             patch("src.api.config.get_api_config", return_value=config_obj),
@@ -232,6 +236,9 @@ class TestAuthPrefixScoping:
             import asyncio
 
             asyncio.run(AuthenticationMiddleware(inner)(scope, receive, send))
+        # Leave no policy built under the patched prefix behind: the snapshot's
+        # staleness ceiling would otherwise serve /custom to the next test.
+        clear_static_policy_cache()
         return scope, messages, auth_mock
 
     def test_public_login_on_custom_prefix_is_not_auth_gated(self):

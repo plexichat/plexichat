@@ -69,6 +69,7 @@ __all__ = [
     "remove_all_reactions",
     "remove_all_reactions_for_emoji",
     "resolve_message_channel",
+    "get_conversation_id_from_message",
     "get_reaction",
     "get_reactions",
     "can_access_message",
@@ -147,6 +148,18 @@ def resolve_message_channel(message_id: int) -> Optional[Dict]:
     write path.)
     """
     return _get_manager().resolve_message_channel(message_id)
+
+
+def get_conversation_id_from_message(message_id: int) -> Optional[int]:
+    """Resolve the conversation a message belongs to, or ``None``.
+
+    The reaction write/removal gates map a message back to its server
+    channel through this lookup before checking ``messages.read``.
+    (Module-level wrapper: the route calls it on the module, and its absence
+    500'd every add/remove reaction on a live deployment while the route
+    tests passed against manager stubs that defined the method.)
+    """
+    return _get_manager().get_conversation_id_from_message(message_id)
 
 
 def remove_all_reactions(user_id: int, message_id: int) -> int:

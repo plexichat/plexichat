@@ -28,6 +28,23 @@ def _view_ok_servers():
     return SimpleNamespace(get_channel_by_conversation=lambda conversation_id: None)
 
 
+def test_module_exposes_message_conversation_lookup(monkeypatch):
+    """The reaction routes resolve a message's conversation on the module.
+
+    Manager stubs in the route tests define the method themselves, so a
+    missing module-level wrapper only surfaced as a live 500 on every
+    add/remove reaction.
+    """
+    from src.core import reactions
+
+    manager = SimpleNamespace(get_conversation_id_from_message=lambda mid: 99)
+    monkeypatch.setattr(reactions, "_manager", manager)
+    monkeypatch.setattr(reactions, "_setup_complete", True)
+
+    assert callable(reactions.get_conversation_id_from_message)
+    assert reactions.get_conversation_id_from_message(123) == 99
+
+
 class TestEmojiTableMigration:
     """M2: the custom-emoji schema migration must actually run."""
 
