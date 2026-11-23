@@ -238,12 +238,13 @@ class DeletionLog:
             # silently mint a new key, which would orphan (and effectively
             # reset verification of) every existing row. Defer the failure to
             # verification/append so ``verify_chain`` keeps its return
-            # contract.
+            # contract. The one exception is a chain written before the keyed
+            # chain existed: no key can authenticate those rows, so it is
+            # preserved aside once instead of blocking every append forever.
             if self._chain_has_data():
-                self._key_error = (
-                    "deletion log chain key sidecar is missing for a non-empty chain"
-                )
-                return "", ""
+                if not (self._chain_is_prekeying() and self._adopt_prekeying_chain()):
+                    self._key_error = "deletion log chain key sidecar is missing for a non-empty chain"
+                    return "", ""
             key = secrets.token_hex(32)
             try:
                 fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -257,6 +258,55 @@ class DeletionLog:
                 except OSError:
                     pass
             return _LOCAL_KEY_ID, key
+
+    def _chain_is_prekeying(self) -> bool:
+        """True when every existing row predates per-record chain keys.
+
+        The keyed HMAC chain landed after deployments already held a plain
+        SHA-256 chain. Those legacy rows carry no ``key_id``, so no key can
+        authenticate them: leaving them in place would make every future
+        append fail closed forever, and deletions would keep succeeding while
+        their audit rows were dropped. A row that names a key, or a file we
+        cannot parse, is never legacy -- that is a real missing-key or tamper
+        signal and must stay fail-closed.
+        """
+        seen = False
+        try:
+            with open(self.file_path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    entry = json.loads(line)
+                    if not isinstance(entry, dict):
+                        return False
+                    if entry.get("key_id"):
+                        return False
+                    seen = True
+        except (OSError, ValueError):
+            return False
+        return seen
+
+    def _adopt_prekeying_chain(self) -> bool:
+        """Preserve a pre-keying chain aside so a keyed chain can start.
+
+        The file is renamed, never rewritten or truncated: an operator keeps
+        the old rows, and the new keyed chain records every deletion from here
+        on. Returns ``False`` (so the caller stays fail-closed) when the file
+        cannot be moved.
+        """
+        preserved = f"{self.file_path}.pre-key-{int(time.time())}"
+        try:
+            os.rename(self.file_path, preserved)
+        except FileNotFoundError:
+            return True  # another worker migrated it first
+        except OSError as e:
+            logger.error(f"deletion_log: could not preserve pre-keying chain: {e}")
+            return False
+        logger.critical(
+            f"deletion_log: pre-keying chain preserved at {preserved}; "
+            "starting a keyed chain so deletion events are audited again"
+        )
+        return True
 
     def _resolve_keys(
         self,

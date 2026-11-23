@@ -37,7 +37,7 @@ The Compose file fails fast if any required password is empty (`plexichat/docker
 From the `plexichat/` directory, set pinned release tags and run:
 
 ```bash
-export BACKEND_VERSION=1.0.0a237 CLIENT_VERSION=1.0.0a147
+export BACKEND_VERSION=1.0.0a238 CLIENT_VERSION=1.0.0a147
 docker compose up -d
 ```
 
