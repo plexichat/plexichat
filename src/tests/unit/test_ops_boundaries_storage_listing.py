@@ -50,14 +50,26 @@ def test_listing_rejects_unbounded_or_unsafe_filters(kwargs):
 
 def _constraint(func, name, kind):
     import inspect
+    import typing
 
     from fastapi.params import Query as QueryParam
 
-    default = inspect.signature(func).parameters[name].default
-    assert isinstance(default, QueryParam)
-    for meta in getattr(default, "metadata", ()):
-        if type(meta).__name__ == kind:
-            return meta
+    # A bound may be declared either as a ``Query(...)`` default or in an
+    # ``Annotated[..., Query(...)]`` annotation; FastAPI enforces both, so the
+    # probe accepts both instead of pinning one spelling of the declaration.
+    param = inspect.signature(func).parameters[name]
+    annotation = typing.get_type_hints(func, include_extras=True).get(
+        name, param.annotation
+    )
+    candidates = [param.default]
+    if typing.get_origin(annotation) is typing.Annotated:
+        candidates.extend(annotation.__metadata__)
+    for candidate in candidates:
+        if not isinstance(candidate, QueryParam):
+            continue
+        for meta in candidate.metadata:
+            if type(meta).__name__ == kind:
+                return meta
     raise AssertionError(f"{name} has no {kind} constraint")
 
 

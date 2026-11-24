@@ -174,7 +174,11 @@ class TestBroadcastChannelsViewFanout:
         p1, p2 = Mock(), Mock()
         p1.user_id, p2.user_id = 11, 22
         messaging.get_participants.return_value = [p1, p2]
-        ids, server_id = _resolve_recipients(None, messaging, 55, 55, actor_id=11)
+        # No relationship module wired: the block filter's documented fallback
+        # keeps the audience. (With one wired and its lookup failing, the
+        # audience is dropped -- covered by the fail-closed suite.)
+        with patch("src.api.get_relationships", return_value=None):
+            ids, server_id = _resolve_recipients(None, messaging, 55, 55, actor_id=11)
         assert ids == [11, 22]
         assert server_id is None
 

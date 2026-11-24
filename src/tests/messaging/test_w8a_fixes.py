@@ -212,6 +212,19 @@ class TestAttachmentUrlAllowlist:
             service._normalize_url(url)
 
 
+class _DMServers:
+    """Servers stub proving a conversation has no backing server channel.
+
+    ``ForwardingService`` now fails closed when the backing-channel lookup
+    cannot be evaluated (an unwired store could still hide a private-channel
+    alias), so a DM-only fixture has to supply a store whose reverse lookup
+    answers "no channel" rather than omitting the module entirely.
+    """
+
+    def get_channel_by_conversation(self, conversation_id):
+        return None
+
+
 class TestForwardingEncrypted:
     def test_forward_decrypts_and_reencrypts_for_destination(
         self, db, messaging_manager, two_users
@@ -227,6 +240,7 @@ class TestForwardingEncrypted:
             db,
             messaging_manager,
             getattr(messaging_manager, "_participant_svc", None),
+            servers_mod=_DMServers(),
         )
         result = svc.forward_message(user1.id, original.id, target_dm.id)
 
@@ -275,6 +289,7 @@ class TestForwardingEncrypted:
             db,
             messaging_manager,
             getattr(messaging_manager, "_participant_svc", None),
+            servers_mod=_DMServers(),
         )
         with pytest.raises(PermissionError):
             svc.get_forward_history(msg.id, requester_id=outsider.id)
@@ -290,6 +305,7 @@ class TestForwardingEncrypted:
             db,
             messaging_manager,
             getattr(messaging_manager, "_participant_svc", None),
+            servers_mod=_DMServers(),
         )
         history = svc.get_forward_history(msg.id, requester_id=user2.id)
         assert history == []

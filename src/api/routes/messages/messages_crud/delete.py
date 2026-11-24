@@ -267,11 +267,6 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
                     detail={"error": {"code": 400, "message": "Invalid channel ID"}},
                 )
 
-            # Bulk delete must not be a bypass of the single-delete view gate:
-            # being a participant in a server channel's conversation proves
-            # only server membership, not channels.view on a private channel.
-            _require_channel_view(cid, current_user.user_id, api.get_servers())
-
             raw_ids = list(body.message_ids or [])
             if len(raw_ids) > 100:
                 raise HTTPException(
@@ -292,6 +287,13 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
             ]
             if not message_ids:
                 return SuccessResponse(success=True, message=None)
+
+            # Bulk delete must not be a bypass of the single-delete view gate:
+            # being a participant in a server channel's conversation proves
+            # only server membership, not channels.view on a private channel.
+            # The id range check above runs first so a malformed id is a 400
+            # instead of a 404 that discloses whether the channel exists.
+            _require_channel_view(cid, current_user.user_id, api.get_servers())
 
             deleted = messaging.delete_messages_bulk(
                 current_user.user_id, cid, message_ids

@@ -146,13 +146,15 @@ async def test_kick_invalidates_cached_member_access():
     assert result.success is True
     prefixes = {call.args[0] for call in invalidate.call_args_list}
     # Kicking changes the member list and the channel list; the cached
-    # sticker/sound listings of the server are scoped to its members too.
+    # sticker/sound/emoji listings of the server are scoped to its members too.
     assert prefixes == {
         "server_members_api:*",
         "user_servers_api:*",
         "server_channels_api:*",
         "server_stickers_api:*",
         "server_sounds_api:*",
+        "emoji_list_api:*",
+        "emoji_detail_api:*",
     }
 
 

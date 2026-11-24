@@ -56,7 +56,14 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.security, pytest.mark.unit]
+# Committed-tree sweep: ~5.5k HEAD blobs per test (20-30s here), so the
+# suite-wide per-test timeout is too tight on a loaded runner. Assertions are
+# unchanged; only the wall-clock budget.
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.unit,
+    pytest.mark.timeout(180),
+]
 
 ROOT = Path(__file__).resolve().parents[3]
 

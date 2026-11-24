@@ -63,7 +63,15 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.security, pytest.mark.unit]
+# The sweeps in this module re-read the whole committed tree from HEAD
+# (~5.5k blobs, 20-30s per sweep here); the suite-wide per-test timeout is too
+# tight for that on a loaded runner. The assertions are unchanged -- only the
+# wall-clock budget.
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.unit,
+    pytest.mark.timeout(180),
+]
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -407,10 +415,13 @@ GATE_REGISTRY: tuple[GateEntry, ...] = (
     GateEntry(
         "poll read gate",
         "src/core/polls/manager/reading.py",
-        "_can_view_poll_message",
+        "_can_view_poll_message_obj",
         "paired",
-        ("channel_exists", "get_channel_conversation_id"),
-        "Same dual-lookup handling as the poll post gate for the channel-id spelling.",
+        ("get_channel_by_conversation", "channel_exists"),
+        "Same dual-lookup handling as the poll post gate for the channel-id "
+        "spelling; the reverse lookup lives in _can_view_poll_message_obj and "
+        "the single-poll wrapper delegates to it, so the bulk hydration path "
+        "cannot widen access.",
     ),
     # --- N735 gates, fixed centrally. Each still has the miss-as-allow shape
     #     (so the detector enumerates it), but the resolver they all delegate

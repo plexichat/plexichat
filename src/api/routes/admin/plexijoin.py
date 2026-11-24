@@ -262,10 +262,14 @@ async def list_connections(
         raise
     except HardeningViolation as e:
         # The manager validates the cursor before touching the DB; a bad one is
-        # caller input, not an internal failure.
+        # caller input, not an internal failure. The client-visible text stays
+        # static: ``str(e)`` echoes the caller's raw cursor (and whatever the
+        # validator embedded in it) back in the response body (CWE-209), so the
+        # detail is logged server-side only.
+        logger.info("PlexiJoin list connections rejected cursor: %s", e)
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid pagination cursor"}},
         ) from e
     except Exception as e:
         logger.error(f"PlexiJoin list connections error: {e}", exc_info=True)

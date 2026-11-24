@@ -321,6 +321,19 @@ async def acknowledge_messages(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
+        # ``message_id`` is a client-supplied optional cursor. Reuse the
+        # shared range check so negatives and oversized snowflakes are
+        # rejected with this route's 400 "Invalid message ID" contract. This
+        # runs before the channel-view gate: a malformed id is caller input,
+        # and gating first turned it into a 404 that disclosed whether the
+        # channel exists.
+        if message_id:
+            up_to_id: Optional[int] = require_snowflake(
+                message_id, "message_id", "Invalid message ID"
+            )
+        else:
+            up_to_id = None
+
         # A linked conversation id is accepted as an alias for its server
         # channel. Gate both spellings before mark_read, which only checks
         # participation (every server member, regardless of channels.view).
@@ -356,17 +369,6 @@ async def acknowledge_messages(
                 logger.debug(
                     f"read receipt voice channel check failed: {channel_error}"
                 )
-
-        # ``message_id`` is a client-supplied optional cursor. Reuse the
-        # shared range check so negatives and oversized snowflakes are
-        # rejected with this route's 400 "Invalid message ID" contract before
-        # they reach ``mark_read``.
-        if message_id:
-            up_to_id: Optional[int] = require_snowflake(
-                message_id, "message_id", "Invalid message ID"
-            )
-        else:
-            up_to_id = None
 
         try:
             from starlette.concurrency import run_in_threadpool

@@ -39,6 +39,31 @@ class TestChannelSnowflakeBounds:
         assert ratchet_routes._parse_channel_id("123456789") == 123456789
 
 
+def _applies_channel_id_bound(func, seen=None):
+    """True when ``func`` range-checks the channel id, directly or via a helper.
+
+    The CRUD handlers apply the bound through the shared module-level
+    ``_require_channel_access`` gate (which calls ``require_channel_snowflake``)
+    rather than inline, so the pin follows one level of same-module helpers
+    instead of demanding the name in ``co_names``. A handler that reaches the
+    bound through neither path still fails.
+    """
+    names = func.__code__.co_names
+    if "require_channel_snowflake" in names:
+        return True
+    seen = set() if seen is None else seen
+    module = inspect.getmodule(func)
+    if module is None:
+        return False
+    for name in names:
+        candidate = getattr(module, name, None)
+        if inspect.isfunction(candidate) and candidate not in seen:
+            seen.add(candidate)
+            if _applies_channel_id_bound(candidate, seen):
+                return True
+    return False
+
+
 class TestChannelMixinIdBounds:
     @pytest.mark.parametrize("bad", ["0", "-1", "99000000000000000000", "junk"])
     def test_crud_invites_and_webhooks_share_the_guard(self, bad):
@@ -55,7 +80,9 @@ class TestChannelMixinIdBounds:
         ):
             unwrapped = inspect.unwrap(handler)
             assert unwrapped.__module__.startswith("src.api.routes.channels")
-            assert "require_channel_snowflake" in unwrapped.__code__.co_names
+            assert _applies_channel_id_bound(unwrapped), (
+                f"{unwrapped.__qualname__} applies no channel-id range bound"
+            )
 
     def test_shared_helper_rejects_oversized_and_negative_ids(self):
         for bad in ("-9", "9223372036854775808", "0"):
