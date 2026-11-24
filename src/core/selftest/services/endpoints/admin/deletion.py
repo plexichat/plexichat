@@ -335,6 +335,38 @@ class DeletionMixin(AdminMixinBase):
             )
 
             # 3. The purge itself, through the endpoint an operator would use.
+            #    ``users.force_purge`` is approval-required and binds the
+            #    approval to this exact target *and* this acting admin, so run
+            #    the real multi-admin ceremony first instead of bypassing the
+            #    gate (same shape as the artifact force-delete path).
+            try:
+                from src.core.selftest.services.approval_ceremony import (
+                    run_ceremony,
+                )
+
+                purge_approved = run_ceremony(
+                    self.ctx,
+                    "users.force_purge",
+                    target_id=user_id,
+                    requester_is_executor=True,
+                )
+            except Exception as ceremony_error:
+                logger.warning(
+                    "Purge-residue approval ceremony failed: %s", ceremony_error
+                )
+                purge_approved = False
+            if not purge_approved:
+                self._purge_residue_result(
+                    "purge_residue_force_purge",
+                    "POST",
+                    purge_path,
+                    False,
+                    0,
+                    0.0,
+                    "the users.force_purge approval ceremony did not complete",
+                )
+                return
+
             purge_start = time.time()
             purge_resp = admin_session.post(
                 f"{base}{purge_path.format(user_id=user_id)}", timeout=60

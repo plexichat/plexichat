@@ -551,7 +551,14 @@ class DeletionLog:
             rotate = False
 
         valid, count, err = self._verify_chain_impl()
-        if not valid and rotate and err is not None:
+        # Rotation is for a genuinely broken chain, never for a key failure.
+        # A row with no key_id (or one naming a key we do not hold) is a
+        # keying downgrade: rotating the file aside would discard the only
+        # evidence of it and hand the writer a fresh, verifiable chain. The
+        # docstring above promises exactly this; the rotation branch used to
+        # swallow it because both paths return through the same call.
+        key_failure = err is not None and "key" in err.lower()
+        if not valid and rotate and err is not None and not key_failure:
             sidecar = self._rotate_broken_log(err)
             if sidecar is not None:
                 return True, 0, None

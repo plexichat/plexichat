@@ -638,6 +638,25 @@ class SelfTestRunner:
             ):
                 self._stabilize_thread(test_path)
             self.endpoints.test_endpoint(method, test_path, route, use_other)
+            # Rotating the acting admin's own password revokes its sessions, so
+            # every later admin request in this run would answer 401 (the loop
+            # keeps using the same bearer). The self-test rotates to the value
+            # it already holds (see data/bodies.py), so a single re-login
+            # restores a live token instead of poisoning the rest of the suite.
+            if test_path.endswith("/admin/auth/change-password"):
+                from src.core.selftest.services.approval_ceremony import (
+                    ensure_user_session as _ensure_session,
+                )
+
+                _main_username = self.ctx.config.get("test_user", {}).get(
+                    "username", "selftest_admin"
+                )
+                if not _ensure_session(self.ctx, self.ctx.session, _main_username):
+                    logger.warning(
+                        "Session not re-established after %s; later admin "
+                        "requests will report 401",
+                        test_path,
+                    )
 
         parallel_gets = [item for item in work_items if item[0] == "GET"]
         if parallel_gets:

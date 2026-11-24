@@ -70,6 +70,19 @@ class _Messaging:
         return self.marked
 
 
+class _DMServers:
+    """A conversation-id store with no backing server channel (a genuine DM)."""
+
+    def get_channel(self, cid, user_id):
+        return None
+
+    def channel_exists(self, cid):
+        return False
+
+    def get_channel_by_conversation(self, cid):
+        return None
+
+
 class _Recorder:
     def __init__(self):
         self.dispatched = []
@@ -93,7 +106,7 @@ async def _drain_tasks():
 def _wire(monkeypatch, rel, messaging, recorder):
     """Install the fake modules the ACK routes and the block helper consult."""
     monkeypatch.setattr(api_module, "get_messaging", lambda: messaging)
-    monkeypatch.setattr(api_module, "get_servers", lambda: None)
+    monkeypatch.setattr(api_module, "get_servers", lambda: _DMServers())
     monkeypatch.setattr(api_module, "get_notifications", lambda: None)
     monkeypatch.setattr(api_module, "get_db", lambda: None)
 

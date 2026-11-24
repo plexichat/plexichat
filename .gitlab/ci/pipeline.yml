@@ -154,6 +154,15 @@ cache:
     name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
   interruptible: true
+  variables:
+    # The committed-tree guards pin security *fix commits* by sha and assert
+    # `git merge-base --is-ancestor <sha> HEAD`. Those pins sit up to ~600
+    # commits back, while the runner clones shallow (project setting: 10).
+    # In a truncated clone the commit object is absent, `--is-ancestor` exits
+    # non-zero, and the guard reports "<sha> is not an ancestor of HEAD" for a
+    # commit that is one. A full clone makes that check report real drift
+    # instead of clone depth, so every Python job fetches all of it.
+    GIT_DEPTH: "0"
   before_script:
     - . ci-tooling/apt-cache.sh
     - apt_install git libatomic1
@@ -204,14 +213,6 @@ lint:pre-commit:
     PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
     NODE_OPTIONS: "--max-old-space-size=2048"
     UV_THREADPOOL_SIZE: "4"
-    # The committed-tree guards pin security *fix commits* by sha and assert
-    # `git merge-base --is-ancestor <sha> HEAD`. Those pins sit up to ~600
-    # commits back, while the runner clones shallow (GitLab's default is 20).
-    # In a truncated clone the commit object is absent, `--is-ancestor` exits
-    # non-zero, and the guard reports "<sha> is not an ancestor of HEAD" for a
-    # commit that is one. Full history makes that check report real drift
-    # instead of clone depth, so every Python job fetches all of it.
-    GIT_DEPTH: "0"
   cache:
     - key:
         files:

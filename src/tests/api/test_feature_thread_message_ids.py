@@ -124,10 +124,16 @@ async def test_forward_message_stringifies_ids(monkeypatch):
                 "created_at": 1700000000002,
             }
 
+    class _DMServers:
+        """No backing server channel: the target is a genuine DM/group."""
+
+        def get_channel_by_conversation(self, conversation_id):
+            return None
+
     monkeypatch.setattr(forwarding_module, "ForwardingService", _ForwardingSvc)
     monkeypatch.setattr(forwarding_module.api, "get_db", lambda: object())
     monkeypatch.setattr(forwarding_module.api, "get_messaging", lambda: None)
-    monkeypatch.setattr(forwarding_module.api, "get_servers", lambda: None)
+    monkeypatch.setattr(forwarding_module.api, "get_servers", lambda: _DMServers())
 
     body = forwarding_module.ForwardMessageRequest(
         message_id=str(BIG), target_conversation_id=str(BIG)

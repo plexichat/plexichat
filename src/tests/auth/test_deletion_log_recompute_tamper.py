@@ -212,7 +212,19 @@ def test_unkeyed_row_appended_after_keyed_row_is_rejected(tmp_path):
     assert "key" in (error or "").lower()
 
 
-def test_legacy_unkeyed_chain_fails_closed(tmp_path):
+def test_legacy_unkeyed_chain_is_preserved_never_trusted(tmp_path):
+    """A pre-keying chain is moved aside, never accepted as verified history.
+
+    The keyed HMAC chain landed after deployments already held a plain SHA-256
+    chain, so those rows carry no ``key_id`` and no key can authenticate them.
+    ``DeletionLog`` adopts such a file by renaming it to
+    ``deletion.jsonl.pre-key-*`` and starting a keyed chain (see
+    ``_chain_is_prekeying``), which keeps deletion events audited instead of
+    failing every append forever. What must never happen is the unkeyed rows
+    counting as verified history: the live chain starts empty and every new row
+    names a key. A keyed or unparseable file is still refused rather than
+    adopted, which ``test_deletion_log_prekeying_chain`` pins separately.
+    """
     path = tmp_path / "deletion.jsonl"
     rows = []
     prev = GENESIS
@@ -234,10 +246,17 @@ def test_legacy_unkeyed_chain_fails_closed(tmp_path):
 
     assert _old_verify(rows) is True  # it is a valid *legacy* chain
     log = dl.DeletionLog(str(path))
-    valid, _count, error = log.verify_chain()
-    assert valid is False
-    assert error is not None
-    assert "key" in error.lower()
+
+    preserved = sorted(tmp_path.glob("deletion.jsonl.pre-key-*"))
+    assert len(preserved) == 1, (
+        "the legacy rows must survive as an operator-readable sidecar"
+    )
+    assert _rows(preserved[0]) == rows, "the preserved chain must be unchanged"
+
+    valid, count, error = log.verify_chain()
+    assert valid is True
+    assert count == 0, "no unkeyed row may count as verified history"
+    assert error is None
 
 
 def test_rotate_chain_key_rejects_empty_values(tmp_path):

@@ -26,6 +26,20 @@ from src.api.routes.features.reports import (
 ADMIN_ID = 4242
 
 
+@pytest.fixture(autouse=True)
+def _grant_report_action(monkeypatch):
+    """Grant the route's role scope; this adapter carries no role tables.
+
+    ``reports.action`` is exercised by the admin-permission suites. These tests
+    pin the status-transition semantics (reopen clears, others keep), so the
+    role lookup is stubbed rather than modelling the RLS tables in sqlite.
+    """
+    monkeypatch.setattr(
+        "src.core.admin.permissions.check_admin_permission",
+        lambda *args, **kwargs: True,
+    )
+
+
 class _DB:
     """Minimal sqlite adapter exposing the route's fetch_one/execute surface."""
 
@@ -41,6 +55,9 @@ class _DB:
     def fetch_one(self, sql, params=()):
         row = self.conn.execute(sql, params).fetchone()
         return dict(row) if row else None
+
+    def fetch_all(self, sql, params=()):
+        return [dict(row) for row in self.conn.execute(sql, params).fetchall()]
 
 
 def _make_db() -> _DB:

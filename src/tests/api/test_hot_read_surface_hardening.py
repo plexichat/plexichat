@@ -177,14 +177,21 @@ async def test_sticker_page_drops_cross_server_packs(monkeypatch):
 
 async def test_non_member_denial_is_never_cached(monkeypatch):
     """A 403 must stay live; no memoized response may survive a denial."""
-    calls = {"n": 0}
+    gate = {"n": 0}
+    manager = {"n": 0}
 
     class _Denied:
         def get_server_packs(self, user_id, server_id):
-            calls["n"] += 1
+            manager["n"] += 1
             raise PermissionDeniedError("not a member")
 
+    class _Servers:
+        def get_member(self, server_id, user_id):
+            gate["n"] += 1
+            return None  # not a member: the live gate denies
+
     monkeypatch.setattr(api, "get_stickers", lambda: _Denied())
+    monkeypatch.setattr(api, "get_servers", lambda: _Servers())
     user = SimpleNamespace(user_id=_USER_ID)
 
     for _ in range(2):
@@ -192,7 +199,10 @@ async def test_non_member_denial_is_never_cached(monkeypatch):
             await get_server_stickers(str(_SERVER_ID), current_user=user)
         assert exc.value.status_code == 403
 
-    assert calls["n"] == 2
+    # The membership gate re-runs on every request -- a denial is never cached
+    # -- and the cold library path is never entered for a non-member.
+    assert gate["n"] == 2
+    assert manager["n"] == 0
 
 
 # --- soundboard -------------------------------------------------------------
@@ -253,17 +263,24 @@ async def test_soundboard_page_drops_cross_server_sounds(monkeypatch):
 
 
 async def test_soundboard_non_member_denial_is_never_cached(monkeypatch):
-    calls = {"n": 0}
+    gate = {"n": 0}
+    manager = {"n": 0}
 
     class _Denied:
         def _get_manager(self):
             return SimpleNamespace()
 
         def get_server_sounds(self, user_id, server_id):
-            calls["n"] += 1
+            manager["n"] += 1
             raise SoundPermissionDeniedError("not a member")
 
+    class _Servers:
+        def get_member(self, server_id, user_id):
+            gate["n"] += 1
+            return None  # not a member: the live gate denies
+
     monkeypatch.setattr(api, "get_soundboard", lambda: _Denied())
+    monkeypatch.setattr(api, "get_servers", lambda: _Servers())
     user = SimpleNamespace(user_id=_USER_ID)
 
     for _ in range(2):
@@ -271,7 +288,8 @@ async def test_soundboard_non_member_denial_is_never_cached(monkeypatch):
             await list_server_sounds(str(_SERVER_ID), current_user=user)
         assert exc.value.status_code == 403
 
-    assert calls["n"] == 2
+    assert gate["n"] == 2
+    assert manager["n"] == 0
 
 
 # --- artifact capability scope --------------------------------------------
