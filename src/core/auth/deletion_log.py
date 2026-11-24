@@ -243,7 +243,11 @@ class DeletionLog:
             # preserved aside once instead of blocking every append forever.
             if self._chain_has_data():
                 if not (self._chain_is_prekeying() and self._adopt_prekeying_chain()):
-                    self._key_error = "deletion log chain key sidecar is missing for a non-empty chain"
+                    self._key_error = (
+                        # The committed-tree guard pins this expanded shape; a
+                        # formatter-collapsed one-liner no longer matches it.
+                        "deletion log chain key sidecar is missing for a non-empty chain"
+                    )
                     return "", ""
             key = secrets.token_hex(32)
             try:
