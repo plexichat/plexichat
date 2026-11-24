@@ -73,6 +73,20 @@ class CoreMixin(EndpointTesterBase):
         if "/artifacts/" in path and path.endswith("/export"):
             query_params["export_format"] = "html"
 
+        # PlexiJoin's keyset cursor is "<created_at>:<id>"; the generic loop's
+        # placeholder is not one, so the manager rejects it with the (correct)
+        # 400 for caller-supplied input. Exercise the endpoint's default page
+        # instead: paging is covered by the admin route's own tests.
+        if "/plexijoin/connections" in path and method == "GET":
+            query_params.pop("before", None)
+
+        # The storage listing accepts either an OFFSET page or a keyset
+        # ``before_id`` cursor, never both, and the generic loop supplies a
+        # placeholder for every documented query parameter. Keep the offset
+        # page so the endpoint is exercised instead of rejected with 400.
+        if path.endswith("/storage/files") and method == "GET":
+            query_params.pop("before_id", None)
+
         # Relationship POST (send friend request) should use OTHER session
         # since setup sends the request from other_user -> admin user
         if (

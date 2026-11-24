@@ -41,6 +41,62 @@ class TwoFAMixin(EndpointTesterBase):
     def _get_current_totp_code(self, secret: str) -> str:
         return self._get_totp_code(secret, 0)
 
+    def _relogin_after_2fa(self, totp_secret: str) -> bool:
+        """Re-authenticate after a 2FA transition rotated the session.
+
+        ``/2fa/confirm`` and ``/2fa/disable`` rotate the caller's session id and
+        hand the replacement back only as an HttpOnly cookie, so a bearer client
+        keeps a token the server has just revoked. Log in again through the
+        normal challenge flow and install the new bearer; without this every
+        later request in the run answers 401.
+        """
+        user_config = self.ctx.config.get("test_user", {})
+        username = user_config.get("username", "selftest_admin")
+        headers = {"X-Plexichat-Token-Mode": "bearer"}
+        try:
+            login = self.ctx.session.post(
+                f"{self.ctx.base_url}/api/v1/auth/login",
+                json={"username": username, "password": self.ctx._test_password},
+                headers=headers,
+                timeout=10,
+            )
+            if login.status_code != 200:
+                logger.warning(
+                    f"2FA re-login -> {login.status_code}: {login.text[:200]}"
+                )
+                return False
+            data = login.json()
+            token = data.get("token") or data.get("access_token")
+            challenge = data.get("challenge_token")
+            if challenge:
+                verify = self.ctx.session.post(
+                    f"{self.ctx.base_url}/api/v1/auth/2fa",
+                    json={
+                        "challenge_token": challenge,
+                        "code": self._get_current_totp_code(totp_secret),
+                    },
+                    headers=headers,
+                    timeout=10,
+                )
+                if verify.status_code != 200:
+                    logger.warning(
+                        f"2FA challenge verification -> {verify.status_code}: "
+                        f"{verify.text[:200]}"
+                    )
+                    return False
+                payload = verify.json()
+                token = payload.get("token") or payload.get("access_token")
+            if not token:
+                logger.warning("2FA re-login returned no token")
+                return False
+            self.ctx.session.headers.update({"Authorization": f"Bearer {token}"})
+            self.ctx.token = token
+            logger.info("Re-authenticated after the 2FA transition")
+            return True
+        except Exception as e:
+            logger.warning(f"2FA re-login exception: {e}")
+            return False
+
     def test_user_2fa_flow(self) -> None:
         """Test user 2FA: enable -> confirm -> status -> disable."""
         if not self.ctx.standalone_mode:
@@ -120,6 +176,11 @@ class TwoFAMixin(EndpointTesterBase):
             logger.warning(f"2FA confirm -> {resp.status_code}: {resp.text[:200]}")
             return
 
+        # Confirming 2FA rotated this session, so the bearer we hold is now
+        # revoked. Log back in (challenge -> verify) before the status/disable
+        # steps, or the rest of the run -- admin surface included -- 401s.
+        self._relogin_after_2fa(totp_secret)
+
         # Step 3: Check 2FA status
         logger.info("Testing GET /api/v1/auth/2fa/status...")
         status_start = time.time()
@@ -176,6 +237,16 @@ class TwoFAMixin(EndpointTesterBase):
         )
         if success:
             logger.info(f"2FA disable PASSED -> {resp.status_code}")
+            # Disabling rotates the session id too; 2FA is off again, so a plain
+            # re-login restores a live bearer for the remaining steps.
+            from src.core.selftest.services.approval_ceremony import (
+                ensure_user_session,
+            )
+
+            main_username = self.ctx.config.get("test_user", {}).get(
+                "username", "selftest_admin"
+            )
+            ensure_user_session(self.ctx, self.ctx.session, main_username)
         else:
             logger.warning(f"2FA disable -> {resp.status_code}: {resp.text[:200]}")
 
