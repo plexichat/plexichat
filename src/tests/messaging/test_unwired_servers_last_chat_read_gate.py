@@ -86,7 +86,13 @@ def _fake_api(monkeypatch):
     fake = ModuleType("src.api")
     holder = {"servers": None}
     fake.get_servers = lambda: holder["servers"]
+    # ``import src.api as api`` binds the parent package attribute first, so
+    # replacing ``sys.modules`` alone is not enough once another test module in
+    # the same process has imported the real API: the stub must own the
+    # ``src.api`` attribute or the service silently talks to the real module
+    # and the stubbed servers store is ignored.
     monkeypatch.setitem(sys.modules, "src.api", fake)
+    monkeypatch.setattr(sys.modules["src"], "api", fake, raising=False)
     return holder
 
 

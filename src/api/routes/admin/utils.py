@@ -543,7 +543,11 @@ def require_approved_request(action_type: str, target_context=None) -> Optional[
     # gated request (the approval consume below is still its own atomic step).
     # The target/actor predicates use ``? IS NULL OR col = ?`` so an unbound
     # (global) caller still matches any row while a bound caller only sees the
-    # approval that was granted for that exact object and requester.
+    # approval that was granted for that exact object and requester. The bound
+    # parameters are cast explicitly: a bare ``?`` compared against a column
+    # only through ``IS NULL`` leaves PostgreSQL unable to infer its type
+    # (42P18, "could not determine data type of parameter") and the whole
+    # gate read failed closed on Postgres while working on SQLite.
     try:
         gate_row = db.fetch_one(
             """
@@ -551,8 +555,9 @@ def require_approved_request(action_type: str, target_context=None) -> Optional[
               (SELECT COUNT(*) FROM admin_users) AS admin_count,
               (SELECT id FROM admin_approvals
                 WHERE action_type = ? AND status = 'approved' AND expires_at > ?
-                  AND (? IS NULL OR target_id = ?)
-                  AND (? IS NULL OR requested_by = ?)
+                  AND (CAST(? AS BIGINT) IS NULL OR target_id = CAST(? AS BIGINT))
+                  AND (CAST(? AS BIGINT) IS NULL
+                       OR requested_by = CAST(? AS BIGINT))
                 ORDER BY updated_at DESC LIMIT 1) AS approval_id
             """,
             (
@@ -617,8 +622,8 @@ def require_approved_request(action_type: str, target_context=None) -> Optional[
         UPDATE admin_approvals
         SET status = 'consumed', updated_at = ?
         WHERE id = ? AND status = 'approved' AND expires_at > ?
-          AND (? IS NULL OR target_id = ?)
-          AND (? IS NULL OR requested_by = ?)
+          AND (CAST(? AS BIGINT) IS NULL OR target_id = CAST(? AS BIGINT))
+          AND (CAST(? AS BIGINT) IS NULL OR requested_by = CAST(? AS BIGINT))
         """,
         (
             now_ms,
