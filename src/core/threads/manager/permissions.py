@@ -141,6 +141,20 @@ class ThreadPermissionMixin(ThreadProtocol):
         if not thread:
             return False
 
+        # A server moderator's channel-scoped ``threads.manage`` grant is
+        # administration authority over a PRIVATE thread even though the
+        # moderator is not in that thread's audience: private-thread audiences
+        # are membership-only, so requiring thread membership here made the
+        # grant unusable. The audience itself stays protected by
+        # ``add_member``/``remove_member``, which require caller membership
+        # before touching a private thread's member list.
+        if thread.thread_type == ThreadType.PRIVATE and not self._is_member(
+            user_id, thread.id
+        ):
+            return self._check_permission(
+                user_id, thread.server_id, "threads.manage", thread.channel_id
+            )
+
         # Managing a thread (archive/lock/rename/delete, membership changes)
         # must never reach a thread the caller cannot even see. Ownership and
         # a server-scoped ``threads.manage`` grant both survive a later channel

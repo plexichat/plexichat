@@ -167,6 +167,10 @@ class TestAdminTicketResponseIds:
             admin_core, "get_feedback_tickets", lambda *a, **k: [ticket]
         )
         monkeypatch.setattr(admin_core, "get_ticket", lambda tid: ticket)
+        # The notes listing gates on a ``SELECT 1`` existence probe (pinned by
+        # test_ticket_notes_list_existence_probe); this test is about id
+        # serialization, so it stubs the probe instead of standing up a DB.
+        monkeypatch.setattr(tickets_module, "_ticket_exists", lambda tid: True)
         return tickets_module
 
     def test_ticket_list_stringifies_ids(self, monkeypatch):

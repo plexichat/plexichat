@@ -33,6 +33,19 @@ CID = 55
 PINNER = 7
 
 
+class _DmOnlyServers:
+    """Wired servers store where this conversation has no backing channel."""
+
+    def channel_exists(self, channel_id):
+        return False
+
+    def get_channel(self, channel_id, user_id):
+        return None
+
+    def get_channel_by_conversation(self, conversation_id):
+        return None
+
+
 class RecordingDispatcher:
     def __init__(self):
         self.dispatched = []
@@ -137,7 +150,11 @@ def env(monkeypatch):
         status="read",
     )
     monkeypatch.setattr(api, "get_messaging", lambda: _FakeMessaging(msg))
-    monkeypatch.setattr(api, "get_servers", lambda: None)
+    # A WIRED store with no backing channel for this conversation (a DM/group).
+    # ``None`` models an unwired module, which the pin gate deliberately denies
+    # fail-closed; that path has its own guards and is not what this test is
+    # about (the fan-out body must not carry the pinner's viewer fields).
+    monkeypatch.setattr(api, "get_servers", lambda: _DmOnlyServers())
     monkeypatch.setattr(api, "get_polls", lambda: _AuthorResultsPolls())
     monkeypatch.setattr(api, "get_embeds", lambda: None, raising=False)
 

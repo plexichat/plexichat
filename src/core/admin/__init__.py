@@ -86,10 +86,20 @@ def logout(token: str) -> bool:
 
 
 def get_feedback_tickets(
-    status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    include_internal_notes: bool = True,
 ) -> List[FeedbackTicket]:
     """Retrieve a list of feedback tickets."""
-    return tickets.get_feedback_tickets(_get_db(), status_filter, limit, offset)
+    return tickets.get_feedback_tickets(
+        _get_db(),
+        status_filter,
+        limit,
+        offset,
+        include_internal_notes=include_internal_notes,
+    )
 
 
 def get_ticket(ticket_id: int) -> Optional[FeedbackTicket]:

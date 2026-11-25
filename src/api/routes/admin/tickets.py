@@ -69,8 +69,7 @@ async def get_tickets(
         # note in the core loader is pure waste on this listing path. Call the
         # core loader directly to pass the opt-out without changing the shared
         # admin wrapper; DB resolution is identical to that wrapper's.
-        tickets = admin.tickets.get_feedback_tickets(
-            admin._get_db(),
+        tickets = admin.get_feedback_tickets(
             status_filter,
             limit,
             offset,

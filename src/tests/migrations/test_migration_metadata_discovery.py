@@ -85,6 +85,10 @@ def test_list_endpoint_exposes_discovered_metadata(named_migration_tracker):
         ),
         patch.object(migrations_route, "check_host_restriction"),
         patch.object(migrations_route, "get_admin_from_token", return_value=1),
+        # The handler re-checks the read scope in its body (the dependency
+        # authenticates, the body authorizes); this unit test already supplies
+        # the authenticated admin id, so stub the scope gate it does not test.
+        patch.object(migrations_route, "require_admin_permission", return_value=1),
     ):
         response = asyncio.run(
             migrations_route.list_migrations(MagicMock(), manager=manager, admin_user=1)
@@ -113,6 +117,7 @@ def test_detail_endpoint_exposes_discovered_metadata(named_migration_tracker):
         ),
         patch.object(migrations_route, "check_host_restriction"),
         patch.object(migrations_route, "get_admin_from_token", return_value=1),
+        patch.object(migrations_route, "require_admin_permission", return_value=1),
     ):
         response = asyncio.run(
             migrations_route.get_migration_details(
