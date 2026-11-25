@@ -390,6 +390,13 @@ class ActionMixin(AutoModProtocol):
             # unconditionally so a caller cannot smuggle in a False value.
             context["__automod_manual__"] = True
             context.setdefault("__system_context__", True)
+            # The executors pass ``bot_user_id`` to the permission-checked
+            # servers layer (ban_member / kick_member / delete_message), which
+            # records it in the ban row and the server audit log. Bind it to
+            # the id that was permission- and hierarchy-checked above, never
+            # the caller's value: otherwise the servers audit names one
+            # principal while the AutoMod audit row names another.
+            context["bot_user_id"] = user_id
             success = self._execute_action(action, violation, context)
 
         if success:
