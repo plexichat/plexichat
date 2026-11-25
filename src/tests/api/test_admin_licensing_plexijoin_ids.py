@@ -58,8 +58,10 @@ class TestPlexiJoinIdContract:
                 self.decrypt_keys = None
 
             def list_connections(
-                self, status=None, page=1, per_page=50, decrypt_keys=True
+                self, status=None, page=1, per_page=50, decrypt_keys=True, before=None
             ):
+                # ``before`` is the route's optional keyset cursor; the stub
+                # accepts it so the call shape matches the real manager.
                 # Admin reads never need the shared key, so the route must ask
                 # for the undecrypted rows and skip the AEAD work.
                 self.decrypt_keys = decrypt_keys
