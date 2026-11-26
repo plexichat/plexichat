@@ -268,6 +268,19 @@ class TestUploadHardening:
             content_type="image/png",
         )
         mgr = media_manager
+        # The upload dispatches its own background scan to the manager's
+        # executor. With scanning disabled it writes SKIPPED; if that writer is
+        # still in flight it can land *after* the manual scan below and turn a
+        # correctly recorded ERROR back into SKIPPED. Wait for the upload's
+        # scan to reach its terminal state before driving the fail-closed path.
+        from src.tests._conftest.waiting import wait_until
+
+        wait_until(
+            lambda: (
+                (mgr.get_file(result.file_id) or Mock()).scan_status.value != "pending"
+            ),
+            timeout=5.0,
+        )
         mgr._config["scanner_enabled"] = True
         old = mgr._scanner
         try:

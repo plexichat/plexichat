@@ -66,14 +66,21 @@ def test_spoofed_channel_and_server_are_not_persisted(monkeypatch):
     assert created["server_id"] == 888
 
 
-def test_unresolvable_server_does_not_fall_back_to_body(monkeypatch):
-    """A caller-supplied server_id is never used, even when lookup fails."""
+def test_unresolvable_context_is_not_taken_from_the_body(monkeypatch):
+    """Neither half falls back to the caller's values when resolution fails.
+
+    ``dc215e2cc`` gave both message-report paths the same fail-closed contract
+    as the enhanced path: the conversation id is not persisted as a channel id
+    either, because without the servers module the route cannot prove the id
+    is not a private-channel alias. The report still names the message; only
+    the moderation-queue context stays NULL.
+    """
     msg = SimpleNamespace(id=5, author_id=9, content="bad", conversation_id=777)
     created = _patch(monkeypatch, msg, servers=None)
 
     asyncio.run(report_message(_body(999, 666), cast(Any, _User(2))))
 
-    assert created["channel_id"] == 777
+    assert created["channel_id"] is None
     assert created["server_id"] is None
 
 

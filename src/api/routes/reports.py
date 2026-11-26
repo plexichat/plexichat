@@ -161,30 +161,21 @@ def _report_context_for_conversation(conversation_id) -> tuple[int | None, int |
     """
     if conversation_id is None:
         return None, None
-    # The conversation itself is authoritative and already resolved from the
-    # message, so it is the channel of record even when the servers module
-    # cannot be consulted (a DM, or an unwired store). Only the *server* half
-    # needs the channel row, and it stays None when that row is unavailable —
-    # the caller-supplied ids are never a fallback.
-    try:
-        channel_id = _parse_report_id(conversation_id, "report context ID")
-    except HTTPException:
-        channel_id = None
     try:
         servers = api.get_servers()
     except Exception:
         servers = None
     if servers is None:
-        return channel_id, None
+        return None, None
     lookup = getattr(servers, "get_channel_by_conversation", None)
     if lookup is None:
-        return channel_id, None
+        return None, None
     try:
         info = lookup(conversation_id)
     except Exception:
-        return channel_id, None
+        return None, None
     if not isinstance(info, dict):
-        return channel_id, None
+        return None, None
 
     def _valid_id(value) -> int | None:
         if value is None:

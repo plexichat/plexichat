@@ -312,6 +312,13 @@ def _dm_participants_without_blocks(participants, actor_id: Optional[int]) -> Li
         relationships = api.get_relationships()
     except Exception:
         relationships = None
+    # ``api.get_relationships()`` falls back to importing the core module,
+    # which imports cleanly before ``setup()`` but raises on every lookup. That
+    # is "not configured", not "wired and failing": treating it as wired would
+    # silence every DM event in such a process, which the fail-closed rule
+    # below is deliberately reserved for real lookup failures.
+    if not _module_is_live(relationships):
+        relationships = None
     if relationships is None:
         return list(participants)
 

@@ -232,6 +232,16 @@ class SelfTestRunner:
             if not self.setup.login_main_user():
                 logger.error("Purge-residue check: admin login failed")
                 return False
+            # ``users.force_purge`` is approval-gated and needs two distinct
+            # approvers besides the executing admin. The endpoint sweep is
+            # skipped in this mode, so seed the co-approver admins here -- the
+            # ceremony must run for real, not fall back to a bypass.
+            self.setup.create_other_user()
+            if self.ctx.test_other_user_id:
+                self.setup.setup_other_admin_user()
+            self.setup.create_third_user()
+            if self.ctx.test_third_user_id:
+                self.setup.promote_third_to_support_admin()
             self.endpoints.test_purge_residue()
             self.cleanup.cleanup_test_data()
             return self.report.report_summary()
@@ -774,6 +784,13 @@ class SelfTestRunner:
         if deferred_destructive:
             logger.info(
                 "Executing deferred destructive endpoints (targeting other user)..."
+            )
+            # ``users.force_purge`` destroys its target, so any later route that
+            # addresses the same account would 404. Run it after every other
+            # deferred destructive endpoint; the sort is stable, so the
+            # remaining order (lock -> unlock -> force-logout, ...) is kept.
+            deferred_destructive.sort(
+                key=lambda route: route["path"] in _APPROVAL_GATED_DESTRUCTIVE
             )
             for route in deferred_destructive:
                 method = route["method"]
