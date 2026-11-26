@@ -73,14 +73,17 @@ def _call(db, server_id=SERVER, exclude_user_id=None):
 
 def test_burst_reuses_member_list():
     db = _FakeDB({SERVER: [1, 2, 3]})
+    # Hit/miss counters are process-wide and survive invalidate(); assert the
+    # burst's own delta so earlier test files in the worker cannot skew it.
+    before = midc.member_id_cache_stats()
 
     for _ in range(50):
         assert _call(db) == [1, 2, 3]
 
     assert db.calls == 1
     stats = midc.member_id_cache_stats()
-    assert stats["hits"] == 49
-    assert stats["misses"] == 1
+    assert stats["hits"] - before["hits"] == 49
+    assert stats["misses"] - before["misses"] == 1
 
 
 def test_perf_before_and_after_call_counts():
