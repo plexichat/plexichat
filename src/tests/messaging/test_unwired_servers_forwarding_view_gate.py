@@ -62,6 +62,9 @@ class _NoBackingChannel:
     def get_channel_by_conversation(self, conversation_id):
         return None
 
+    def channel_exists(self, channel_id):
+        return False
+
 
 class _WiredAliasNoGrant:
     def get_channel_by_conversation(self, conversation_id):

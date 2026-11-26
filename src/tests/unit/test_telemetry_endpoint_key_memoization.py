@@ -51,6 +51,7 @@ def test_repeated_endpoint_key_computation_is_memoized(monkeypatch):
     )
 
     raw = "/api/v1/users/550e8400-e29b-41d4-a716-446655440000/messages"
+    before = telemetry.get_endpoint_cache_stats()
     for _ in range(50):
         normalized = telemetry._normalize_endpoint(raw)
         assert telemetry._matches_registered_template(normalized)
@@ -60,11 +61,13 @@ def test_repeated_endpoint_key_computation_is_memoized(monkeypatch):
     # The expensive pure work ran once, not once per submission.
     assert calls == {"normalize": 1, "match": 1}
 
-    stats = telemetry.get_endpoint_cache_stats()
-    assert stats["normalized"]["hits"] == 49
-    assert stats["normalized"]["misses"] == 1
-    assert stats["template"]["hits"] == 49
-    assert stats["template"]["misses"] == 1
+    # The cache counters are process-wide observability, so assert this test's
+    # own contribution: a warm cache elsewhere in the worker must not skew it.
+    after = telemetry.get_endpoint_cache_stats()
+    assert after["normalized"]["hits"] - before["normalized"]["hits"] == 49
+    assert after["normalized"]["misses"] - before["normalized"]["misses"] == 1
+    assert after["template"]["hits"] - before["template"]["hits"] == 49
+    assert after["template"]["misses"] - before["template"]["misses"] == 1
 
 
 def test_template_verdict_cannot_survive_route_reload():

@@ -79,6 +79,9 @@ class _DMServers:
     def get_channel_by_conversation(self, conversation_id):
         return None
 
+    def channel_exists(self, channel_id):
+        return False
+
 
 def _make_service(db):
     from src.core.messaging.services.forwarding import ForwardingService

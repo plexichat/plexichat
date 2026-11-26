@@ -224,6 +224,9 @@ class _DMServers:
     def get_channel_by_conversation(self, conversation_id):
         return None
 
+    def channel_exists(self, channel_id):
+        return False
+
 
 class TestForwardingEncrypted:
     def test_forward_decrypts_and_reencrypts_for_destination(

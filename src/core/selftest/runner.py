@@ -39,6 +39,14 @@ from .services.report import ReportGenerator
 from .services.memory import RamMonitor
 from .config_guard import sanitize_selftest_config
 
+# Deferred destructive routes whose action is approval-gated (see
+# ``APPROVAL_REQUIRED_ACTIONS``). Those gates bind the approval to the exact
+# target and to the acting admin, so the runner runs the real ceremony before
+# exercising the route rather than reporting the gate's 403 preamble.
+_APPROVAL_GATED_DESTRUCTIVE = {
+    "/api/v1/admin/users/{user_id}/force-purge": "users.force_purge",
+}
+
 
 class SelfTestRunner:
     """Automated API test runner."""
@@ -771,10 +779,33 @@ class SelfTestRunner:
                 method = route["method"]
                 path = route["path"]
                 test_path = path
+                target_user_id = None
                 for p_name in re.findall(r"\{([a-zA-Z0-9_]+)\}", path):
-                    test_path = test_path.replace(
-                        f"{{{p_name}}}", self.data.get_param_value(p_name, path)
-                    )
+                    value = self.data.get_param_value(p_name, path)
+                    if p_name == "user_id":
+                        target_user_id = value
+                    test_path = test_path.replace(f"{{{p_name}}}", value)
+                # ``users.force_purge`` is approval-gated and binds the approval
+                # to this exact target and acting admin, so run the real
+                # multi-admin ceremony first (as the purge-residue flow does)
+                # instead of reporting the gate's 403 preamble as a failure.
+                action_type = _APPROVAL_GATED_DESTRUCTIVE.get(path)
+                if action_type and target_user_id:
+                    try:
+                        from src.core.selftest.services.approval_ceremony import (
+                            run_ceremony,
+                        )
+
+                        run_ceremony(
+                            self.ctx,
+                            action_type,
+                            target_id=int(target_user_id),
+                            requester_is_executor=True,
+                        )
+                    except Exception as ceremony_error:
+                        logger.warning(
+                            f"Approval ceremony for {path} failed: {ceremony_error}"
+                        )
                 self.endpoints.test_endpoint(method, test_path, route)
 
         # 8. Explicit bot server flow (standalone already ran it before

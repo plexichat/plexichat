@@ -81,6 +81,14 @@ class _Servers:
     def get_channel_by_conversation(self, conversation_id):
         return self.channels.get(conversation_id)
 
+    def channel_exists(self, channel_id):
+        # Membership-agnostic probe used to tell a dangling conversation link
+        # (channel id stored as the conversation id) from a genuine DM.
+        return any(
+            isinstance(info, dict) and info.get("id") == channel_id
+            for info in self.channels.values()
+        )
+
     def get_channel(self, channel_id, user_id):
         self.channel_gets.append((channel_id, user_id))
         return object() if channel_id in self.viewable else None

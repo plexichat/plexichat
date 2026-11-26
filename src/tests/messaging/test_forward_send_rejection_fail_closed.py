@@ -63,6 +63,21 @@ class _Participants:
         return True
 
 
+class _DMServers:
+    """Wired store whose reverse lookup finds no backing channel.
+
+    The gate fails closed when the servers module is unwired, so the service is
+    built with a store that reports "no channel": both source and target are
+    genuine DMs here and participation is what gates them.
+    """
+
+    def get_channel_by_conversation(self, conversation_id):
+        return None
+
+    def channel_exists(self, channel_id):
+        return False
+
+
 class _Messaging:
     def __init__(self, error=None):
         self.error = error
@@ -78,7 +93,11 @@ class _Messaging:
 def _service(error=None):
     db = _DB()
     messaging = _Messaging(error)
-    return db, ForwardingService(db, messaging, _Participants(), None), messaging
+    return (
+        db,
+        ForwardingService(db, messaging, _Participants(), _DMServers()),
+        messaging,
+    )
 
 
 def _forward_inserts(db):

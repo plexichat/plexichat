@@ -199,16 +199,22 @@ def test_scan_is_not_vacuous():
     modules = [rel for rel, _, _, _ in _SCAN]
     assert len(modules) >= 30, f"only {len(modules)} URL-bearing modules found"
     calls = [call for _, _, module_calls, _ in _SCAN for call in module_calls]
-    assert len(calls) >= 10, f"only {len(calls)} HTTP sink calls found"
+    # A bare count is a poor ratchet: outbound HTTP is consolidated onto the
+    # vetted transport, so the live inventory is small (7 calls in 4 modules)
+    # and the floor only exists to catch a broken detector. The sink modules
+    # that must stay visible are pinned by name instead.
+    assert len(calls) >= 5, f"only {len(calls)} HTTP sink calls found"
     assert any(call[2] for call in calls), "no vetted urlopen call discovered"
     assert any(not call[2] and call[3] for call in calls), (
         "no direct call with an explicit timeout discovered"
     )
-    assert any(
-        "transcription/provider.py" in rel
-        for rel, _, module_calls, _ in _SCAN
-        if module_calls
-    ), "known direct-requests sink dropped out of the scan"
+    sink_modules = {rel for rel, _, module_calls, _ in _SCAN if module_calls}
+    assert sink_modules >= {
+        "src/cli/selftest.py",
+        "src/core/artifacts/transcription/provider.py",
+        "src/core/automod/ai/perspective.py",
+        "src/core/selftest/services/fake_remote.py",
+    }, f"known sink modules dropped out of the scan: {sorted(sink_modules)}"
 
 
 def test_every_url_bearing_module_uses_vetted_transport_or_timeout():

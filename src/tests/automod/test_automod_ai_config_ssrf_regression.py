@@ -13,20 +13,43 @@ positive case patches the shared validator's resolution step.
 
 import sys
 import types
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-# Import the schema module without pulling in the FastAPI app. ``src/api/__init__``
-# builds the whole app (and unrelated in-flight route edits) on import; the
-# schema itself only needs the normal package __path__ for its relative imports.
-if "src.api" not in sys.modules:
-    _api_pkg = types.ModuleType("src.api")
-    _api_pkg.__path__ = [str(Path(__file__).resolve().parents[2] / "api")]
-    sys.modules["src.api"] = _api_pkg
 
-from src.api.schemas.admin.automod import AutomodConfigUpdateRequest
+@contextmanager
+def _schema_without_app():
+    """Import the schema without building the app, leaving no residue behind.
+
+    ``src/api/__init__`` constructs the whole FastAPI app (and every route) on
+    import; the schema only needs the package ``__path__`` for its relative
+    imports. The stub is unregistered again as soon as the schema is imported:
+    leaving it in ``sys.modules`` replaced the real ``src.api`` for every test
+    module imported afterwards in the same worker, so unrelated route tests
+    failed with ``ImportError``/``PermissionError`` depending on collection
+    order.
+    """
+    if "src.api" in sys.modules:
+        yield
+        return
+    stub = types.ModuleType("src.api")
+    stub.__path__ = [str(Path(__file__).resolve().parents[2] / "api")]
+    sys.modules["src.api"] = stub
+    try:
+        yield
+    finally:
+        if sys.modules.get("src.api") is stub:
+            del sys.modules["src.api"]
+        parent = sys.modules.get("src")
+        if parent is not None and getattr(parent, "api", None) is stub:
+            delattr(parent, "api")
+
+
+with _schema_without_app():
+    from src.api.schemas.admin.automod import AutomodConfigUpdateRequest
 
 
 pytestmark = [pytest.mark.security, pytest.mark.unit]
