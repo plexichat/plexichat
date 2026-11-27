@@ -12,7 +12,7 @@ same atomic, shared replay claim as the code itself, so exactly one code from a
 validity window can ever be accepted for a given (user, purpose, actor).
 """
 
-import time
+from datetime import timedelta
 from unittest.mock import patch
 
 import pyotp
@@ -30,11 +30,18 @@ def _isolated_cache(monkeypatch):
 
 
 def _adjacent_codes(secret):
-    """Two distinct, cryptographically valid codes in the current window."""
-    now_ts = int(time.time())
+    """Two distinct, cryptographically valid codes in the current window.
+
+    Both are derived from pyotp's own clock, not the wall clock: the auth
+    conftest pins pyotp's ``datetime`` for the whole test
+    (``_deterministic_totp_clock``), so a code computed from ``time.time()``
+    stops matching what ``verify()`` reads once the worker stalls for a step
+    -- which is exactly how this failed under xdist on a loaded runner.
+    """
+    now = pyotp.totp.datetime.datetime.now()
     totp = pyotp.TOTP(secret)
-    current = totp.at(now_ts)
-    adjacent = totp.at(now_ts + totp.interval)
+    current = totp.at(now)
+    adjacent = totp.at(now + timedelta(seconds=totp.interval))
     assert current != adjacent
     # Sanity: pyotp really admits both at once (valid_window=1 admits three).
     assert totp.verify(current, valid_window=1) is True
