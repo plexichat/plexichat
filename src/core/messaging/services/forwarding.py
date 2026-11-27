@@ -115,10 +115,26 @@ class ForwardingService:
         except Exception:
             raise PermissionError("Cannot verify channel view access")
         if info is None:
-            return  # DM/group conversation: participation already gated it
-        channel_id = info.get("id") if isinstance(info, dict) else None
-        if channel_id is None:
-            raise PermissionError("Cannot verify channel view access")
+            # A channel whose conversation link is missing/dangling stores the
+            # channel id itself as the message's ``conversation_id``, and
+            # ``is_participant`` grants every server member participation in
+            # that id. The reverse lookup only matches
+            # ``srv_channels.conversation_id``, so a null result does not by
+            # itself mean "DM": probe the id membership-agnostically first.
+            exists = getattr(servers, "channel_exists", None)
+            if not callable(exists):
+                raise PermissionError("Cannot verify channel view access")
+            try:
+                is_channel = bool(exists(int(conversation_id)))
+            except Exception:
+                raise PermissionError("Cannot verify channel view access")
+            if not is_channel:
+                return  # genuine DM/group: participation already gated it
+            channel_id = conversation_id
+        else:
+            channel_id = info.get("id") if isinstance(info, dict) else None
+            if channel_id is None:
+                raise PermissionError("Cannot verify channel view access")
         get_channel = getattr(servers, "get_channel", None)
         if not callable(get_channel):
             raise PermissionError("Cannot verify channel view access")

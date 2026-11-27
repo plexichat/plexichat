@@ -7,6 +7,9 @@ def test_bookmark_access_reads_tuple_message_rows():
     from src.core.messaging.services.bookmarks import BookmarkService
 
     db = MagicMock()
+    # ``execute`` must model the DB cursor contract: the quota-guarded INSERT
+    # reads ``rowcount`` to tell a denied insert from an accepted one.
+    db.execute.return_value.rowcount = 1
     db.fetch_one.side_effect = [(77,), (1,), {"count": 0}, None, {"id": 5}]
     service = BookmarkService(db)
     service._generate_id = lambda: 5

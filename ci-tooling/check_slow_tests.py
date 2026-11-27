@@ -313,6 +313,165 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         "hint: 0.26s of assertion and 3.5s of teardown, 5.20s on the runner in "
         "#2314 while the same commit passed in #2313",
     ),
+    # The full-tree sweeps below all cost the repository, not the code under
+    # test: each walks src/ (about 1,200 modules) and parses every file with
+    # ``ast``. They were priced at the 5s default when the tree was smaller;
+    # after the a23x backlog (which added several hundred modules and their
+    # guard tests) pipeline #2813 measured them at 22-65s on a runner whose own
+    # load samples were at the 4x cap, so the flat default gated the tree's
+    # size rather than a regression. The budgets are the measured cost with
+    # headroom; a sweep that doubles at rest still trips them.
+    "src.tests.security.test_config_yaml_parse_structural_guard::test_scan_is_not_vacuous": (
+        100.0,
+        "YAML-parse sweep of the committed tree: 65.31s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_config_yaml_parse_structural_guard::test_yaml_imports_are_exactly_the_documented_modules": (
+        60.0,
+        "second committed-tree sweep in the same module: 37.60s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_plain_getlogger_sanitization_guard::test_detector_finds_exactly_the_documented_safe_sites": (
+        90.0,
+        "logger-interpolation sweep of src: 59.87s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_plain_getlogger_sanitization_guard::test_registry_covers_every_committed_plain_module_logger": (
+        80.0,
+        "registry sweep of every module logger: 52.27s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_plain_getlogger_sanitization_guard::test_no_unfiltered_user_controlled_log_interpolation": (
+        75.0,
+        "interpolation audit of the committed tree: 47.01s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_validator_anchor_control_char_structural_guard::test_committed_tree_sweep_detector_is_non_vacuous": (
+        90.0,
+        "control-char validator sweep of src: 57.22s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_validator_anchor_control_char_structural_guard::test_documented_loose_exceptions_are_exactly_the_sweep_findings": (
+        65.0,
+        "second validator sweep in the same module: 40.30s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_validator_anchor_control_char_structural_guard::test_no_new_loose_or_control_permissive_validator_in_committed_tree": (
+        55.0,
+        "third validator sweep in the same module: 34.38s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_controlled_fetch_site_structural_guard::test_registry_enumerates_every_controlled_fetch_site": (
+        85.0,
+        "controlled-fetch sweep of src: 54.45s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_controlled_fetch_site_structural_guard::test_sweep_detector_fires_on_the_real_documented_sites": (
+        65.0,
+        "second fetch sweep in the same module: 41.63s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_controlled_fetch_site_structural_guard::test_allowlist_is_exactly_the_sweep_findings": (
+        50.0,
+        "third fetch sweep in the same module: 33.73s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_controlled_fetch_site_structural_guard::test_no_new_unguarded_controlled_fetch_in_committed_tree": (
+        50.0,
+        "fourth fetch sweep in the same module: 31.34s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_ip_canonicalization_structural_guard::test_no_new_raw_ip_blind_index_key_in_committed_tree": (
+        80.0,
+        "IP canonicalisation sweep of src: 52.19s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_ip_canonicalization_structural_guard::test_committed_tree_sweep_detector_is_non_vacuous": (
+        70.0,
+        "second IP sweep in the same module: 45.19s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_ip_canonicalization_structural_guard::test_documented_raw_exceptions_are_exactly_the_sweep_findings": (
+        60.0,
+        "third IP sweep in the same module: 39.47s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_secret_literal_entropy_guard::test_tracked_src_tree_has_no_unallowlisted_secret_literals": (
+        80.0,
+        "entropy sweep of every tracked file under src: 50.60s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_decompression_site_bounds_static_guard::test_every_decompression_site_is_registered": (
+        75.0,
+        "decompression-site sweep of src: 49.28s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_channel_alias_authz_gate_structural_guard::test_enumerated_gates_match_registry_exactly": (
+        75.0,
+        "channel-gate sweep of every route module: 46.84s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_security_verdict_cache_single_flight_guard::test_enumeration_is_non_vacuous": (
+        70.0,
+        "verdict-cache sweep of the tree: 44.74s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_regex_anchor_security_guard::test_no_undocumented_end_anchored_validator": (
+        60.0,
+        "regex-anchor sweep of src: 39.59s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_serialization_size_representation_guard::test_scan_is_not_vacuous": (
+        60.0,
+        "serialization-size sweep of src: 38.34s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_no_bare_print_in_production_src_guard::test_no_bare_print_in_committed_production_src": (
+        60.0,
+        "bare-print sweep of the production tree: 37.35s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_cookie_clear_attributes_structural_guard::test_every_cookie_clear_carries_issuance_attributes": (
+        60.0,
+        "cookie-clear sweep of src: 37.11s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_broad_swallow_gate_fail_closed_static_guard::test_no_unregistered_broad_swallow_grants": (
+        55.0,
+        "broad-swallow sweep of src: 35.77s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_unwired_gate_fail_closed_static_guard::test_sweep_is_not_vacuous": (
+        50.0,
+        "unwired-gate sweep of src: 31.77s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_permission_scope_mismatch_static_guard::test_alias_resolution_is_active_on_real_tree": (
+        45.0,
+        "permission-scope sweep of src: 30.51s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_permission_scope_mismatch_static_guard::test_every_documented_exception_currently_matches_a_finding": (
+        40.0,
+        "second permission-scope sweep in the same module: 27.01s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_permission_scope_mismatch_static_guard::test_permission_scope_guard_has_no_unexpected_mismatch": (
+        40.0,
+        "third permission-scope sweep in the same module: 26.73s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_permission_scope_mismatch_static_guard::test_dict_gate_scan_is_active_on_real_tree": (
+        40.0,
+        "fourth permission-scope sweep in the same module: 26.67s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_bulk_destructive_op_authorization_guard::test_no_new_ungated_bulk_destructive_op_in_committed_tree": (
+        40.0,
+        "bulk-destructive sweep of src: 26.09s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_shared_config_cache_copy_isolation_guard::test_structural_sweep_has_no_unclassified_byref_cache_returns": (
+        40.0,
+        "shared-config-cache sweep of src: 25.40s at 4x load (#2813)",
+    ),
+    "src.tests.security.test_credential_strength_final_guard::test_all_shared_key_setting_sites_are_classified": (
+        35.0,
+        "shared-key-setting sweep of src: 22.12s at 4x load (#2813)",
+    ),
+    "src.tests.messaging.test_group_dm_insertion_surface_completeness::test_sql_write_surface_is_only_the_participant_repository": (
+        65.0,
+        "SQL write-surface sweep of src: 41.22s at 4x load (#2813)",
+    ),
+    "src.tests.messaging.test_group_dm_insertion_surface_completeness::test_repo_inserts_are_only_called_by_the_service_insertors": (
+        45.0,
+        "second insertion-surface sweep in the same module: 29.91s at 4x load (#2813)",
+    ),
+    "src.tests.messaging.test_group_dm_insertion_surface_completeness::test_every_insertor_caller_is_a_registered_gated_site": (
+        35.0,
+        "third insertion-surface sweep in the same module: 23.50s at 4x load (#2813)",
+    ),
+    # The chunked import builds a 1,000,000-cell workbook and pushes it through
+    # the real CSV import path: 62.46s of call on an idle box (measured), 99.84s
+    # on the #2813 runner. Its cost is the fixture, not an assertion.
+    "src.tests.suite.test_sum_import_workbook_size_cap::test_chunked_import_cannot_publish_unreadable_workbook": (
+        140.0,
+        "builds and imports a 1M-cell workbook: 62.46s idle, 99.84s at 4x load (#2813)",
+    ),
+    "src.tests.suite.test_sum_import_workbook_size_cap::test_ordinary_import_still_lands_after_the_guard": (
+        20.0,
+        "imports a normal workbook behind the same guard: 8.42s idle",
+    ),
 }
 
 

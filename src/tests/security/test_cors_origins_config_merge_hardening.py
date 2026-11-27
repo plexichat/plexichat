@@ -28,10 +28,16 @@ BROAD_DEFAULTS = [
 def config_sandbox(monkeypatch):
     """Let a test call config.setup() and restore the process-wide instance."""
     import utils.config as cfg
+    from src.api.config import clear_api_config_cache
 
     monkeypatch.setattr(cfg, "_config_instance", cfg._config_instance)
     monkeypatch.setattr(cfg, "_setup_called", cfg._setup_called)
-    return cfg
+    # ``APIConfig`` is a process-wide, version-keyed snapshot: without dropping
+    # it the first test to build one pins its values for every later test in
+    # this worker, which made the end-to-end assertions order-dependent.
+    clear_api_config_cache()
+    yield cfg
+    clear_api_config_cache()
 
 
 def _setup_operator_config(cfg, tmp_path, api_block):

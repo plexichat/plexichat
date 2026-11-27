@@ -228,4 +228,8 @@ class TestRosterInvalidationOnEveryMutation:
             "server_channels_api:*",
             "server_stickers_api:*",
             "server_sounds_api:*",
+            # Emoji list/detail pages embed per-member data as well, so a kick
+            # clears them too; the set must not shrink silently.
+            "emoji_list_api:*",
+            "emoji_detail_api:*",
         }

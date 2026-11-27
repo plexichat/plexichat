@@ -76,6 +76,10 @@ async def test_update_emoji_failure_does_not_echo_exception_text(monkeypatch) ->
 
     canary = "CANARY_SQLSTATE_575f3c_password=postgres://internal"
     reactions = MagicMock()
+    # The route binds the emoji to the URL's server before mutating it, so the
+    # lookup has to resolve to an emoji owned by that server; otherwise the
+    # 404 binding check short-circuits the mutation this test is exercising.
+    reactions.get_custom_emoji.return_value = SimpleNamespace(server_id="123456789")
     reactions.update_custom_emoji.side_effect = RuntimeError(
         f"sqlite3.OperationalError: {canary}"
     )

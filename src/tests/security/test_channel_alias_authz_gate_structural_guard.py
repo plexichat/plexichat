@@ -63,7 +63,15 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.security, pytest.mark.unit]
+# The sweeps in this module re-read the whole committed tree from HEAD
+# (~5.5k blobs, 20-30s per sweep here); the suite-wide per-test timeout is too
+# tight for that on a loaded runner. The assertions are unchanged -- only the
+# wall-clock budget.
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.unit,
+    pytest.mark.timeout(180),
+]
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -287,6 +295,11 @@ def _sweep(commit: str) -> tuple[Gate, ...]:
 #                    resolves ``conversation_id`` OR ``id`` and prefers the
 #                    authoritative link, so the miss-as-allow branch can no
 #                    longer be reached with a channel-id alias.
+#   * "fail-closed" -- the miss-as-allow branch was removed outright: a null
+#                    reverse lookup is probed with ``channel_exists`` and
+#                    denied unless the id is provably not a channel. The
+#                    detector no longer enumerates it, so the entry must stay
+#                    absent from the sweep and keep its deny evidence.
 #   * "finding"    -- KNOWN unfixed bypass: caller-supplied id, miss-as-allow,
 #                    no id-form probe. These are reported, not declared safe.
 # ``evidence`` markers must remain in the module for non-finding entries; for
@@ -407,10 +420,13 @@ GATE_REGISTRY: tuple[GateEntry, ...] = (
     GateEntry(
         "poll read gate",
         "src/core/polls/manager/reading.py",
-        "_can_view_poll_message",
+        "_can_view_poll_message_obj",
         "paired",
-        ("channel_exists", "get_channel_conversation_id"),
-        "Same dual-lookup handling as the poll post gate for the channel-id spelling.",
+        ("get_channel_by_conversation", "channel_exists"),
+        "Same dual-lookup handling as the poll post gate for the channel-id "
+        "spelling; the reverse lookup lives in _can_view_poll_message_obj and "
+        "the single-poll wrapper delegates to it, so the bulk hydration path "
+        "cannot widen access.",
     ),
     # --- N735 gates, fixed centrally. Each still has the miss-as-allow shape
     #     (so the detector enumerates it), but the resolver they all delegate
@@ -428,14 +444,15 @@ GATE_REGISTRY: tuple[GateEntry, ...] = (
         "no longer miss and skip the messages.send gate.",
     ),
     GateEntry(
-        "forwarding service view gate (central-resolver fixed)",
+        "forwarding service view gate (fail-closed)",
         "src/core/messaging/services/forwarding.py",
         "_require_channel_view",
-        "central",
-        ("get_channel_by_conversation",),
-        "Called with the caller-supplied target_conversation_id; the central "
-        "dual-form resolver now catches the channel-id spelling before the "
-        "miss-as-allow branch can skip the channels.view gate.",
+        "fail-closed",
+        ("get_channel_by_conversation", "channel_exists", "raise PermissionError("),
+        "Called with the caller-supplied target_conversation_id. The old "
+        "miss-as-allow branch treated a null reverse lookup as 'DM'; it now "
+        "probes channel_exists for the channel-id spelling and denies when the "
+        "id is a channel or the probe cannot be evaluated.",
     ),
     GateEntry(
         "voice send gate (central-resolver fixed)",
@@ -615,6 +632,29 @@ def _assert_entry_evidence(entry: GateEntry, source: str) -> None:
             f"{entry.label}: central-fixed gate no longer delegates to "
             "get_channel_by_conversation"
         )
+        return
+    if entry.resolution == "fail-closed":
+        # The gate must have dropped the miss-as-allow branch entirely and
+        # deny on an unprovable alias; if the branch comes back the sweep sees
+        # the gate again and the enumeration test reports the entry as stale.
+        for marker in entry.evidence:
+            assert marker in body, (
+                f"{entry.label}: fail-closed evidence marker {marker!r} missing "
+                f"from {entry.path}"
+            )
+        tree = ast.parse(body)
+        matching = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == entry.func
+        ]
+        assert matching, f"{entry.label}: {entry.func}() not found in {entry.path}"
+        for fn in matching:
+            assert not _reverse_lookup_gates(fn, entry.path), (
+                f"{entry.label}: gate is registered as fail-closed but still "
+                "skips on a null reverse lookup"
+            )
         return
     assert entry.resolution in {
         "dual-sql",
@@ -810,6 +850,7 @@ def test_registry_entries_require_resolution_and_reason():
             "paired",
             "authoritative",
             "central",
+            "fail-closed",
             "finding",
         }
         assert entry.why.strip(), f"{entry.label}: empty reason"
@@ -850,10 +891,20 @@ def test_scan_is_not_vacuous(commit_sha):
 def test_enumerated_gates_match_registry_exactly(commit_sha):
     found = {g.key() for g in _sweep(commit_sha)}
     expected = _registry_keys()
-    assert found == expected, (
+    # A fail-closed gate no longer has the miss-as-allow shape, so it is absent
+    # from the sweep by construction. It must stay absent: the evidence check
+    # in test_registered_gates_keep_dual_form_or_documented_finding rejects a
+    # reintroduced skip-on-miss branch.
+    fail_closed = {e.key() for e in GATE_REGISTRY if e.resolution == "fail-closed"}
+    assert not (found & fail_closed), (
+        "fail-closed gate(s) reverted to skipping on a null reverse lookup: "
+        f"{sorted(found & fail_closed)}"
+    )
+    assert found == expected - fail_closed, (
         "channel-id-alias gate enumeration drifted from the registry.\n"
-        f"  undocumented (NEW) gates: {sorted(found - expected)}\n"
-        f"  stale registry entries:   {sorted(expected - found)}"
+        f"  undocumented (NEW) gates: {sorted(found - (expected - fail_closed))}\n"
+        f"  stale registry entries:   "
+        f"{sorted((expected - fail_closed) - found)}"
     )
 
 
@@ -914,13 +965,21 @@ def test_prior_findings_are_now_central_fixed(commit_sha):
     central = [e for e in GATE_REGISTRY if e.resolution == "central"]
     required_central = {
         ("src/api/routes/features/forwarding.py", "_require_target_send_access"),
-        ("src/core/messaging/services/forwarding.py", "_require_channel_view"),
         ("src/api/routes/features/voice.py", "_require_voice_send_access"),
         ("src/api/routes/artifacts_helpers.py", "_can_emit_artifact_message"),
     }
     assert required_central <= {e.key() for e in central}, (
-        "the four centrally-fixed N735 gates were lost"
+        "the central-resolver-fixed N735 gates were lost"
     )
+    # The forwarding service gate went further than the resolver: it dropped
+    # the miss-as-allow branch instead of relying on the dual-form lookup.
+    forwarding_gate = (
+        "src/core/messaging/services/forwarding.py",
+        "_require_channel_view",
+    )
+    assert forwarding_gate in {
+        e.key() for e in GATE_REGISTRY if e.resolution == "fail-closed"
+    }, "the forwarding view gate lost its fail-closed resolution"
     # No finding may remain disguised as fixed: every remaining finding must
     # still be a real, documented miss-as-allow bypass in committed HEAD.
     reader = _make_blob_reader(commit_sha)

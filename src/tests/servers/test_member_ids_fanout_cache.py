@@ -35,7 +35,13 @@ EXCLUDED = 42
 
 
 @pytest.fixture(autouse=True)
-def _clean_cache():
+def _clean_cache(monkeypatch):
+    # The burst assertions count authoritative reads, not elapsed time. Pin the
+    # entry TTL for the duration so a heavily loaded worker cannot let an entry
+    # expire mid-burst and turn a caching regression test into a wall-clock
+    # one; the TTL bound itself is covered by test_expired_entry_is_not_served,
+    # which rewrites the entry's own expiry.
+    monkeypatch.setattr(midc._member_id_cache, "_ttl", 3600.0)
     midc.invalidate_member_id_cache()
     yield
     midc.invalidate_member_id_cache()
@@ -67,14 +73,17 @@ def _call(db, server_id=SERVER, exclude_user_id=None):
 
 def test_burst_reuses_member_list():
     db = _FakeDB({SERVER: [1, 2, 3]})
+    # Hit/miss counters are process-wide and survive invalidate(); assert the
+    # burst's own delta so earlier test files in the worker cannot skew it.
+    before = midc.member_id_cache_stats()
 
     for _ in range(50):
         assert _call(db) == [1, 2, 3]
 
     assert db.calls == 1
     stats = midc.member_id_cache_stats()
-    assert stats["hits"] == 49
-    assert stats["misses"] == 1
+    assert stats["hits"] - before["hits"] == 49
+    assert stats["misses"] - before["misses"] == 1
 
 
 def test_perf_before_and_after_call_counts():

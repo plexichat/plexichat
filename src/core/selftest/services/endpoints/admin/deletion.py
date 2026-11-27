@@ -35,61 +35,105 @@ class DeletionMixin(AdminMixinBase):
     """Delay-deletion and purge-residue coverage."""
 
     def test_delay_deletion(self) -> None:
-        """Test delay-deletion using the API-created other_user."""
+        """Test delay-deletion on a throwaway account of its own.
+
+        This used to consume ``other_user``: the account was deleted through
+        ``DELETE /users/@me`` and then scheduled for deletion, so its sessions
+        were revoked and logins were refused as a frozen account for the rest
+        of the run. ``other_user`` is shared fixture state -- the deferred
+        destructive endpoints and the approval ceremonies that guard them
+        (``users.force_purge`` needs two live, distinct approvers) depend on
+        it. The delay-deletion flow is about the account's own state, so it
+        registers a disposable account instead of destroying a shared one.
+        """
         if not self.ctx.standalone_mode:
             return
-        if not self.ctx.test_other_user_id:
-            logger.debug("Skipping delay-deletion (no other_user_id)")
+        password = self.ctx._test_password
+        auth_mod = api.get_auth()
+        if not password or auth_mod is None:
+            logger.debug("Skipping delay-deletion (no auth module/password)")
             return
 
         session = self.ctx.session
-        other_id = self.ctx.test_other_user_id
+        base = self.ctx.base_url
+        tag = secrets.token_hex(4)
+        username = f"selftest_delay_{tag}"
+        doomed = self.ctx.make_session()
+        try:
+            try:
+                user = auth_mod.register_selftest(
+                    username, f"{username}@selftest.plexichat.com", password
+                )
+                other_id = int(user.id)
+            except Exception as register_error:
+                logger.warning(
+                    f"Delay deletion could not seed its account: {register_error}"
+                )
+                return
 
-        # Delete the user via API first
-        logger.info("Testing DELETE /api/v1/users/@me (other_user)...")
-        other_session = self.ctx.other_session
-        if other_session and other_session.headers.get("Authorization"):
-            resp = other_session.delete(
-                f"{self.ctx.base_url}/api/v1/users/@me",
-                json={"password": self.ctx._test_password},
+            login_resp = doomed.post(
+                f"{base}/api/v1/auth/login",
+                json={"username": username, "password": password},
+                headers={"X-Plexichat-Token-Mode": "bearer"},
+                timeout=10,
+            )
+            login_data = _response_object(login_resp)
+            token = login_data.get("token") or login_data.get("access_token")
+            if token:
+                doomed.headers.update({"Authorization": f"Bearer {token}"})
+
+            # Delete the account through its own session first.
+            logger.info("Testing DELETE /api/v1/users/@me (delay-deletion account)...")
+            resp = doomed.delete(
+                f"{base}/api/v1/users/@me",
+                json={"password": password},
                 timeout=30,
             )
-            success = resp.status_code in (200, 204)
             self.ctx.results.append(
                 {
                     "method": "DELETE",
                     "path": "/api/v1/users/@me",
                     "status_code": resp.status_code,
                     "duration_ms": 0,
-                    "success": success,
+                    "success": resp.status_code in (200, 204),
                     "label": "other_user_self_delete",
                 }
             )
-        # --- Delay deletion ---
-        future_deletion_at = int(time.time()) + 86400
-        logger.info(f"Testing POST /api/v1/admin/users/{other_id}/delay-deletion...")
-        delay_start = time.time()
-        resp = session.post(
-            f"{self.ctx.base_url}/api/v1/admin/users/{other_id}/delay-deletion",
-            params={"deletion_at": str(future_deletion_at)},
-            timeout=5,
-        )
-        duration = (time.time() - delay_start) * 1000
-        success = 200 <= resp.status_code < 300
-        self.ctx.results.append(
-            {
-                "method": "POST",
-                "path": f"/api/v1/admin/users/{other_id}/delay-deletion",
-                "status_code": resp.status_code,
-                "duration_ms": duration,
-                "success": success,
-                "label": "delay_deletion",
-            }
-        )
-        if success:
-            logger.info(f"Delay deletion PASSED -> {resp.status_code}")
-        else:
-            logger.warning(f"Delay deletion -> {resp.status_code}: {resp.text[:200]}")
+
+            # --- Delay deletion ---
+            future_deletion_at = int(time.time()) + 86400
+            logger.info(
+                f"Testing POST /api/v1/admin/users/{other_id}/delay-deletion..."
+            )
+            delay_start = time.time()
+            resp = session.post(
+                f"{base}/api/v1/admin/users/{other_id}/delay-deletion",
+                params={"deletion_at": str(future_deletion_at)},
+                timeout=5,
+            )
+            duration = (time.time() - delay_start) * 1000
+            success = 200 <= resp.status_code < 300
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": f"/api/v1/admin/users/{other_id}/delay-deletion",
+                    "status_code": resp.status_code,
+                    "duration_ms": duration,
+                    "success": success,
+                    "label": "delay_deletion",
+                }
+            )
+            if success:
+                logger.info(f"Delay deletion PASSED -> {resp.status_code}")
+            else:
+                logger.warning(
+                    f"Delay deletion -> {resp.status_code}: {resp.text[:200]}"
+                )
+        finally:
+            try:
+                doomed.close()
+            except Exception as close_error:
+                logger.debug(f"delay-deletion session close failed: {close_error}")
 
     def _purge_residue_result(
         self,
@@ -335,6 +379,38 @@ class DeletionMixin(AdminMixinBase):
             )
 
             # 3. The purge itself, through the endpoint an operator would use.
+            #    ``users.force_purge`` is approval-required and binds the
+            #    approval to this exact target *and* this acting admin, so run
+            #    the real multi-admin ceremony first instead of bypassing the
+            #    gate (same shape as the artifact force-delete path).
+            try:
+                from src.core.selftest.services.approval_ceremony import (
+                    run_ceremony,
+                )
+
+                purge_approved = run_ceremony(
+                    self.ctx,
+                    "users.force_purge",
+                    target_id=user_id,
+                    requester_is_executor=True,
+                )
+            except Exception as ceremony_error:
+                logger.warning(
+                    "Purge-residue approval ceremony failed: %s", ceremony_error
+                )
+                purge_approved = False
+            if not purge_approved:
+                # A single-admin deployment satisfies the gate through
+                # ``single_admin_bypass``, and the ceremony cannot produce a
+                # second vote there. Attempt the purge anyway and let the
+                # route's approval gate decide: a 403 is reported honestly
+                # below, and a 2xx proves the bypass applied.
+                logger.warning(
+                    "Purge-residue: no approval ceremony available for %s; "
+                    "attempting the purge so the gate itself reports",
+                    purge_path,
+                )
+
             purge_start = time.time()
             purge_resp = admin_session.post(
                 f"{base}{purge_path.format(user_id=user_id)}", timeout=60

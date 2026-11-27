@@ -51,12 +51,36 @@ class RecordingDispatcher:
         self.dispatched.append((event, [str(u) for u in user_ids]))
 
 
+class _DmServers:
+    """A live servers module whose store has no channels at all.
+
+    A DM is addressed by a conversation id, but the message routes fail closed
+    when they cannot prove an addressed id is not a private-channel alias. An
+    absent/uninitialised module cannot answer that, so the fixture provides a
+    live module that positively reports "not a channel" for every id.
+    """
+
+    _setup_complete = True
+
+    def get_channel(self, channel_id, user_id):
+        return None
+
+    def channel_exists(self, channel_id):
+        return False
+
+    def get_channel_by_conversation(self, conversation_id):
+        return None
+
+    def get_channel_conversation_id(self, channel_id):
+        return None
+
+
 @pytest.fixture
-def wired(messaging_manager, server_manager, auth_manager, monkeypatch):
+def wired(messaging_manager, auth_manager, monkeypatch):
     """Wire src.api module getters to the real per-test managers."""
     monkeypatch.setattr(api_module, "_messaging", messaging_manager)
     # DM scenario: no server scope, recipients come from participants.
-    monkeypatch.setattr(api_module, "_servers", None)
+    monkeypatch.setattr(api_module, "_servers", _DmServers())
     monkeypatch.setattr(api_module, "_auth", auth_manager)
 
 

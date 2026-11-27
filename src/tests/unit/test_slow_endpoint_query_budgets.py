@@ -138,6 +138,10 @@ class _Messaging:
         self.search_calls = 0
         self.pin_calls = 0
 
+    def is_participant(self, conversation_id, user_id):
+        # The live gate on the search path; the fakes model an allowed viewer.
+        return True
+
     def search_messages(self, **kwargs):
         self.search_calls += 1
         return list(self.messages)
@@ -151,6 +155,20 @@ class _Servers:
     def get_channel(self, channel_id, user_id):
         return SimpleNamespace(conversation_id=777, id=channel_id, server_id=555)
 
+    def has_permission(self, user_id, server_id, permission, channel_id=None):
+        # The live messages.read gate on the search path; allowed viewer.
+        return True
+
+
+def _cold(func):
+    """The handler with its cache decorator peeled off, when there is one.
+
+    These tests count the cold-path query fan-out, so a warm response cache
+    must not hide it. The read routes no longer install a cache decorator, in
+    which case the handler itself is the cold path.
+    """
+    return getattr(func, "__wrapped__", func)
+
 
 async def _run_search(messages):
     """Call the undecorated handler so cache hits cannot hide cold queries."""
@@ -163,7 +181,7 @@ async def _run_search(messages):
         patch.object(api, "get_servers", return_value=_Servers()),
         patch.object(api, "get_db", return_value=None),
     ):
-        result = await search_messages.__wrapped__(  # pyright: ignore[reportFunctionMemberAccess]
+        result = await _cold(search_messages)(
             "12345", content="content", limit=100, current_user=_user()
         )
     return result, auth, media, embeds, messaging
@@ -194,7 +212,7 @@ async def test_search_preserves_channel_validation_and_not_found():
         patch.object(api, "get_servers", return_value=None),
     ):
         with pytest.raises(HTTPException) as exc:
-            await search_messages.__wrapped__(  # pyright: ignore[reportFunctionMemberAccess]
+            await _cold(search_messages)(
                 "not-a-snowflake", content="x", limit=10, current_user=_user()
             )
     assert exc.value.status_code == 400
@@ -210,7 +228,7 @@ async def _run_pins(messages):
         patch.object(api, "get_servers", return_value=_Servers()),
         patch.object(api, "get_db", return_value=None),
     ):
-        result = await get_pinned_messages.__wrapped__(  # pyright: ignore[reportFunctionMemberAccess]
+        result = await _cold(get_pinned_messages)(
             "12345", limit=100, current_user=_user()
         )
     return result, auth, media, embeds, messaging
@@ -238,7 +256,7 @@ async def test_pins_keep_empty_channel_empty_and_validate_id():
         patch.object(api, "get_servers", return_value=None),
     ):
         with pytest.raises(HTTPException) as exc:
-            await get_pinned_messages.__wrapped__("-1", limit=10, current_user=_user())  # pyright: ignore[reportFunctionMemberAccess]
+            await _cold(get_pinned_messages)("-1", limit=10, current_user=_user())
     assert exc.value.status_code == 400
 
 

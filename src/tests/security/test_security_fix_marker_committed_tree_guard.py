@@ -1433,7 +1433,10 @@ COMMITTED_FIX_MARKERS: tuple[CommittedFixMarker, ...] = (
     CommittedFixMarker(
         key="70cd4627-presence-audience-eviction-on-relationship-change",
         path="src/core/relationships/manager/helpers.py",
-        marker="from src.core.events.router import clear_presence_audience_cache",
+        # Pinned on the evict *call*, not the import: the two-name import is
+        # long enough that ruff-format wraps it in parentheses, which broke the
+        # old single-line import literal without touching the security fix.
+        marker="clear_presence_audience_cache()",
         why=(
             "70cd4627: relationship changes eagerly evict the EventRouter "
             "presence-audience cache; a stale staged copy drops the evict so a "
@@ -2787,6 +2790,10 @@ PRIVATE_INDEX_NON_SECURITY_SHAS: frozenset[str] = frozenset(
         "e53e9526",
         "db7a4143",
         "35430e0f",  # empty/docs-only, no security behavior
+        # Export of the reaction conversation lookup plus the 1.0.0a237 version
+        # bump: README/docker-compose/docs version strings only, no security
+        # behavior (``git show --stat 6a6f8297c`` touches no src/ file).
+        "6a6f8297",
         "47b03e2a",  # empty/docs-only, no security behavior
         "e7562b9b",  # empty/docs-only, no security behavior
     }

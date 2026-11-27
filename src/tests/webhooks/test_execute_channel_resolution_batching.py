@@ -13,6 +13,8 @@ resolution query shape (srv_channels selecting both ``server_id`` and
 """
 
 import uuid
+from contextlib import contextmanager
+from unittest import mock
 
 import pytest
 
@@ -22,8 +24,17 @@ from src.core.webhooks.exceptions import InvalidWebhookContentError
 _RESOLUTION_MARKERS = ("srv_channels", "server_id", "conversation_id")
 
 
+@contextmanager
 def _spying_db(db, counter):
-    """Wrap fetch_one/fetch_all to count channel-resolution queries."""
+    """Count channel-resolution queries for the duration of the block.
+
+    ``mock.patch.object`` is what puts the methods back: assigning the bound
+    originals over them left *instance* attributes on the shared database, and
+    those shadow the class for the rest of the process. A later test that
+    patches ``type(db).fetch_one`` (see ``test_signature_hardening_regressions``)
+    then never saw its patch, so its verifier read the real row instead of
+    pausing on the gated one.
+    """
     original_one = db.fetch_one
     original_all = db.fetch_all
 
@@ -40,9 +51,11 @@ def _spying_db(db, counter):
         count(sql, params)
         return original_all(sql, params)
 
-    db.fetch_one = counting_fetch_one
-    db.fetch_all = counting_fetch_all
-    return original_one, original_all
+    with (
+        mock.patch.object(db, "fetch_one", counting_fetch_one),
+        mock.patch.object(db, "fetch_all", counting_fetch_all),
+    ):
+        yield
 
 
 def test_execute_thread_batches_channel_resolution_into_one_query(webhook_with_token):
@@ -56,8 +69,7 @@ def test_execute_thread_batches_channel_resolution_into_one_query(webhook_with_t
     )["channel_id"]
 
     counter = {"resolution_queries": 0}
-    original_one, original_all = _spying_db(db, counter)
-    try:
+    with _spying_db(db, counter):
         result = setup["webhooks"].execute_webhook(
             webhook_id=wh.id,
             token=setup["token"],
@@ -65,9 +77,6 @@ def test_execute_thread_batches_channel_resolution_into_one_query(webhook_with_t
             thread_id=thread_id,
             wait=True,
         )
-    finally:
-        db.fetch_one = original_one
-        db.fetch_all = original_all
 
     assert result is not None
     assert result.content == "batched resolution"
@@ -81,17 +90,13 @@ def test_execute_without_thread_uses_one_resolution_query(webhook_with_token):
     wh = setup["webhook"]
 
     counter = {"resolution_queries": 0}
-    original_one, original_all = _spying_db(db, counter)
-    try:
+    with _spying_db(db, counter):
         result = setup["webhooks"].execute_webhook(
             webhook_id=wh.id,
             token=setup["token"],
             content="no thread",
             wait=True,
         )
-    finally:
-        db.fetch_one = original_one
-        db.fetch_all = original_all
 
     assert result is not None
     assert counter["resolution_queries"] == 1

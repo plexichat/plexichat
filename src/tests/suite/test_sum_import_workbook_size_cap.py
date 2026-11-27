@@ -53,6 +53,10 @@ def test_encode_container_refuses_a_payload_it_could_not_decode():
     assert meta["uncompressed_size"] == MAX_DECOMPRESSED_SIZE
 
 
+# This test builds and imports a 1,000,000-cell workbook (~15s on an idle box,
+# several times that when four suite workers share the CPU). The default 60s
+# budget measured the machine's queue, not the guard under test.
+@pytest.mark.timeout(300)
 def test_chunked_import_cannot_publish_unreadable_workbook(
     db, two_users, server_manager
 ):

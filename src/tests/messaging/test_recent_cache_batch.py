@@ -42,11 +42,11 @@ def test_recent_cache_page_uses_one_mget_for_payloads(
         """Fake client for payload GETs; counts GET vs MGET commands."""
 
         def __init__(self):
-            self.get_calls = 0
+            self.get_keys = []
             self.mget_calls = 0
 
         def get_json(self, key):
-            self.get_calls += 1
+            self.get_keys.append(key)
             return payloads.get(key)
 
         def mget_json(self, keys):
@@ -68,9 +68,14 @@ def test_recent_cache_page_uses_one_mget_for_payloads(
     assert [m.id for m in messages] == [m.id for m in sent]
     assert [m.content for m in messages] == [f"msg {i}" for i in range(len(sent))]
 
-    # Command count: N sequential GETs -> one batched MGET.
+    # Command count: N sequential payload GETs -> one batched MGET. Only the
+    # payload keys are judged: the listing legitimately reads unrelated cache
+    # entries (participation, settings, ...) and one such GET must not be
+    # mistaken for a regressed per-message fetch.
     assert cache.mget_calls == 1, (
-        f"expected one MGET for {len(sent)} payloads, got "
-        f"{cache.mget_calls} MGET / {cache.get_calls} GET"
+        f"expected one MGET for {len(sent)} payloads, got {cache.mget_calls}"
     )
-    assert cache.get_calls == 0, f"expected zero per-key GETs, got {cache.get_calls}"
+    payload_gets = [key for key in cache.get_keys if key.startswith("msg:obj:")]
+    assert payload_gets == [], (
+        f"expected zero per-message GETs, got {len(payload_gets)}: {payload_gets[:3]}"
+    )

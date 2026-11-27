@@ -305,6 +305,11 @@ def test_admin_capabilities_route_stays_raw_for_diagnostics(monkeypatch):
     monkeypatch.setattr(
         admin_caps_routes, "require_admin_permission", lambda request, perm: 1
     )
+    # The admin catalog is memoised for a short TTL, so a payload built by an
+    # earlier test (without these monkeypatches) would be served here and the
+    # provider would read as absent. Drop it before and after, exactly as a
+    # config/license hot-swap does in production.
+    admin_caps_routes.clear_admin_capabilities_payload_cache()
     try:
         client_result = asyncio.run(
             caps_routes.get_capabilities(current_user=types.SimpleNamespace(user_id=42))
@@ -317,6 +322,7 @@ def test_admin_capabilities_route_stays_raw_for_diagnostics(monkeypatch):
         caps_mod._has_feature = real_has_feature
         caps_mod._load_config = orig_load
         provider_mod.get_transcription_provider = orig_provider
+        admin_caps_routes.clear_admin_capabilities_payload_cache()
     # The licensed+available voice evaluator emits the backend name; admins
     # see it, clients do not.
     assert (

@@ -33,7 +33,7 @@ def send_channel_message(
 
 
 def check_channel_slowmode(
-    user_id: SnowflakeID, channel_id: SnowflakeID
+    user_id: SnowflakeID, channel_id: SnowflakeID, channel=None
 ) -> Optional[float]:
     """Return the seconds *user_id* must wait before posting, or None.
 
@@ -41,8 +41,17 @@ def check_channel_slowmode(
     the gate has to be proxied here as well as defined on the manager. When
     only the manager had it, the route's ``getattr`` probe found nothing and
     a member could post as fast as they liked in a slow channel.
+
+    ``channel`` is forwarded unchanged so a send path that already resolved
+    the channel does not make the gate resolve it again.
     """
-    return _get_manager().check_channel_slowmode(user_id, channel_id)
+    gate = _get_manager().check_channel_slowmode
+    # Only forward the pre-resolved channel when there is one, so manager
+    # implementations (and test doubles) that predate the optional argument
+    # keep working through this proxy.
+    if channel is None:
+        return gate(user_id, channel_id)
+    return gate(user_id, channel_id, channel=channel)
 
 
 def get_channel_messages(

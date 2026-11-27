@@ -531,7 +531,14 @@ class ExtendedCoverageMixin(EndpointTesterBase):
 
         _pkce_challenge = _secrets_mod.token_urlsafe(32)
         _oauth_cases = [
-            ("github", "https://github.com/login/oauth/authorize", {}),
+            (
+                "github",
+                "https://github.com/login/oauth/authorize",
+                {
+                    "code_challenge": _pkce_challenge,
+                    "code_challenge_method": "S256",
+                },
+            ),
             (
                 "google",
                 "https://accounts.google.com/o/oauth2/v2/auth",

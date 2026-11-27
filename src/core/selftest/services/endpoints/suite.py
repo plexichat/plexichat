@@ -240,7 +240,9 @@ class SuiteMixin(EndpointTesterBase):
             json={
                 "content_type": "text/plain",
                 "size_bytes": 22,
-                "checksum": "selftest-checksum",
+                # A checksum is a hex digest (``StashVersionCreateRequest``
+                # validates it), not free text.
+                "checksum": "0" * 64,
             },
         )
         self._request_suite(

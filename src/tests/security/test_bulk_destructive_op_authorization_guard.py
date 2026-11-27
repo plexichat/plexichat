@@ -279,6 +279,18 @@ BULK_OPS: tuple[BulkOp, ...] = (
     ),
     # -- self-scoped operations ---------------------------------------------
     BulkOp(
+        "poll results bulk read",
+        "src/core/polls/manager/reading.py",
+        "get_results_bulk",
+        "self_scoped",
+        ("_coerce_poll_ids", "get_messages_by_ids"),
+        "Read-only hydration of many polls for one viewer: the requested ids "
+        "are coerced and de-duplicated, chunked, and every poll is filtered "
+        "through the participant-gated get_messages_by_ids lookup plus the "
+        "channel-view gate; inaccessible polls map to None rather than "
+        "disclosing existence, and no state is written.",
+    ),
+    BulkOp(
         "logout all sessions",
         "src/core/auth/managers/session/lifecycle.py",
         "logout_all",

@@ -18,6 +18,23 @@ from src.utils.encryption import generate_snowflake_id
 # advisory-lock holders.
 _BOOKMARK_QUOTA_LOCK_NAMESPACE = 0x424F4B4D  # 'BOKM'
 
+_INT4_MAX = 0x7FFFFFFF
+_INT4_SPAN = 1 << 32
+
+
+def _as_signed_int4(value: int) -> int:
+    """Reinterpret an unsigned 32-bit hash as PostgreSQL's signed ``int4``.
+
+    ``pg_advisory_xact_lock(int4, int4)`` only accepts -2**31..2**31-1, while
+    ``zlib.crc32`` returns 0..2**32-1. Passing the raw value raises ``value
+    "2895358464" is out of range for type integer`` -- a 500 on bookmark
+    creation for roughly half of all user ids, depending only on the hash.
+    Folding the same 32 bits into the signed range is a bijection, so two
+    distinct crc values never start colliding, and it is deterministic across
+    processes and restarts (the lock must be the same key on every worker).
+    """
+    return value - _INT4_SPAN if value > _INT4_MAX else value
+
 
 class BookmarkService:
     """Service for managing per-user message bookmarks."""
@@ -44,12 +61,14 @@ class BookmarkService:
         """Two-int PostgreSQL advisory key: (fresh namespace, hashed user id).
 
         The 32-bit CRC keeps the key inside pg_advisory_xact_lock(int4, int4)'s
-        two-argument keyspace. A collision between two user ids would only
-        cause harmless extra serialization, never a quota bypass.
+        two-argument keyspace, reinterpreted as a signed int4 because the
+        two-int signature rejects the unsigned half of the crc32 range. A
+        collision between two user ids would only cause harmless extra
+        serialization, never a quota bypass.
         """
         return (
             _BOOKMARK_QUOTA_LOCK_NAMESPACE,
-            zlib.crc32(str(user_id).encode("utf-8")),
+            _as_signed_int4(zlib.crc32(str(user_id).encode("utf-8"))),
         )
 
     def _insert_within_quota(self, sql: str, params: tuple, user_id: int) -> int:
@@ -284,6 +303,52 @@ class BookmarkService:
         except Exception:
             return False
 
+    @staticmethod
+    def _strict_conversation_key(raw: Any) -> Optional[int]:
+        """Normalize a stored ``conversation_id`` to a snowflake, or ``None``.
+
+        Only a strict integer (or its decimal string form) may be used to look
+        up a read verdict: ``True``/``False`` are ints, and an arbitrary string
+        is not a conversation id. A value that cannot be normalized never
+        reaches the permission store and never wins a verdict.
+        """
+        if isinstance(raw, bool):
+            return None
+        if isinstance(raw, int):
+            return raw
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text.isdigit():
+                try:
+                    return int(text)
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def _read_verdicts(
+        self, user_id: int, conversation_ids: List[Any]
+    ) -> Dict[int, bool]:
+        """Resolve the ``messages.read`` verdict once per distinct conversation.
+
+        The page hydration gates every returned row, but the verdict only
+        depends on ``(user_id, conversation_id)``. Resolving it per row meant a
+        page of N bookmarks in one channel paid N identical permission
+        lookups; a page spanning M conversations pays M, each proven once.
+        A verdict that cannot be resolved is stored as ``False`` so the row
+        fails closed instead of being retried or trusted.
+        """
+        verdicts: Dict[int, bool] = {}
+        for raw in conversation_ids:
+            key = self._strict_conversation_key(raw)
+            if key is None or key in verdicts:
+                continue
+            try:
+                verdicts[key] = bool(self._conversation_read_allowed(user_id, key))
+            except Exception as verdict_error:
+                logger.debug(f"bookmark read verdict failed: {verdict_error}")
+                verdicts[key] = False
+        return verdicts
+
     def _ensure_list_access(self, user_id: int, conversation_id: Optional[int]) -> None:
         """Gate conversation-scoped bookmark listing on participation.
 
@@ -513,6 +578,10 @@ class BookmarkService:
             except Exception as enrich_error:
                 logger.debug(f"bookmark bulk enrichment failed: {enrich_error}")
 
+        read_verdicts = self._read_verdicts(
+            user_id, [data["conversation_id"] for data in normalized]
+        )
+
         results = []
         for data in normalized:
             try:
@@ -535,9 +604,12 @@ class BookmarkService:
                 # The bulk resolver's gate is participation-only; a server
                 # member denied messages.read on the backing channel must not
                 # receive this row's content from an unfiltered listing either.
-                if not self._conversation_read_allowed(
-                    user_id, data["conversation_id"]
-                ):
+                # The verdict is looked up, not recomputed: it was resolved
+                # once per distinct conversation for this page above, and a
+                # conversation id that could not be normalized has no verdict
+                # (and therefore stays denied).
+                conv_key = self._strict_conversation_key(data["conversation_id"])
+                if conv_key is None or not read_verdicts.get(conv_key, False):
                     continue
                 data["content_preview"] = (msg.content or "")[:200]
                 data["author_id"] = msg.author_id

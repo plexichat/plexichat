@@ -28,7 +28,15 @@ ROOT = Path(__file__).resolve().parents[2]
 # gate intentionally runs only on a cache HIT (the cold path enforces access
 # inline); a naive "gate always first" rule does not apply there.
 SITES = [
-    ("src/core/polls/manager/reading.py", "get_poll", {"get_message"}, {"get"}),
+    # ``get_poll`` gates through ``_can_view_poll_message`` (participation plus a
+    # live channels.view grant); the name ``get_message`` is kept for sites that
+    # call the messaging layer directly.
+    (
+        "src/core/polls/manager/reading.py",
+        "get_poll",
+        {"get_message", "_can_view_poll_message"},
+        {"get"},
+    ),
     ("src/core/polls/manager/voting.py", "get_results", {"can_access_poll"}, {"get"}),
     (
         "src/core/reactions/manager/reactions.py",

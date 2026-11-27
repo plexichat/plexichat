@@ -114,14 +114,21 @@ class TestBoundedConcurrency:
 
     def test_parallel_batch_is_faster_than_serial(self, retry_queue):
         _enqueue(retry_queue, 8)
-        serial = _BlockingDeliverer(delay=0.03)
+        # The per-delivery delay has to dominate the fixed cost of the queue
+        # updates, or the ratio measures the database rather than the pool: at
+        # 0.03s the batch is 0.24s of sleeps behind ~0.06s of updates, and
+        # test:timing_under_load -- which runs two busy-loop burners per CPU on
+        # purpose -- measured 2.7x against the 3x asserted here. At 0.25s the
+        # sleeps are decisive (2s serial against ~0.3s parallel) and the same
+        # 3x assertion holds.
+        serial = _BlockingDeliverer(delay=0.25)
         t0 = time.perf_counter()
         process_due_retries(retry_queue, serial)
         serial_s = time.perf_counter() - t0
 
         retry_queue2 = WebhookRetryQueue(retry_queue._db)
         _enqueue(retry_queue2, 8)
-        parallel = _BlockingDeliverer(delay=0.03)
+        parallel = _BlockingDeliverer(delay=0.25)
         t0 = time.perf_counter()
         process_due_retries(retry_queue2, parallel, max_concurrency=8)
         parallel_s = time.perf_counter() - t0

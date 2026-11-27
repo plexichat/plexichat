@@ -68,10 +68,27 @@ class _Participants:
         return True
 
 
+class _DMServers:
+    """Reverse lookup that finds no backing channel: a genuine DM/group.
+
+    ``ForwardingService`` now fails closed when the servers module is missing,
+    so the DM path has to be spelled out with a wired store rather than by
+    omitting the module.
+    """
+
+    def get_channel_by_conversation(self, conversation_id):
+        return None
+
+    def channel_exists(self, channel_id):
+        return False
+
+
 def _make_service(db):
     from src.core.messaging.services.forwarding import ForwardingService
 
-    return ForwardingService(db, participant_svc=_Participants())
+    return ForwardingService(
+        db, participant_svc=_Participants(), servers_mod=_DMServers()
+    )
 
 
 @pytest.mark.messaging

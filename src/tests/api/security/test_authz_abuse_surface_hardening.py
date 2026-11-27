@@ -174,7 +174,11 @@ class TestBroadcastChannelsViewFanout:
         p1, p2 = Mock(), Mock()
         p1.user_id, p2.user_id = 11, 22
         messaging.get_participants.return_value = [p1, p2]
-        ids, server_id = _resolve_recipients(None, messaging, 55, 55, actor_id=11)
+        # No relationship module wired: the block filter's documented fallback
+        # keeps the audience. (With one wired and its lookup failing, the
+        # audience is dropped -- covered by the fail-closed suite.)
+        with patch("src.api.get_relationships", return_value=None):
+            ids, server_id = _resolve_recipients(None, messaging, 55, 55, actor_id=11)
         assert ids == [11, 22]
         assert server_id is None
 
@@ -264,6 +268,19 @@ class TestUploadHardening:
             content_type="image/png",
         )
         mgr = media_manager
+        # The upload dispatches its own background scan to the manager's
+        # executor. With scanning disabled it writes SKIPPED; if that writer is
+        # still in flight it can land *after* the manual scan below and turn a
+        # correctly recorded ERROR back into SKIPPED. Wait for the upload's
+        # scan to reach its terminal state before driving the fail-closed path.
+        from src.tests._conftest.waiting import wait_until
+
+        wait_until(
+            lambda: (
+                (mgr.get_file(result.file_id) or Mock()).scan_status.value != "pending"
+            ),
+            timeout=5.0,
+        )
         mgr._config["scanner_enabled"] = True
         old = mgr._scanner
         try:

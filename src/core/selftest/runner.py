@@ -39,6 +39,14 @@ from .services.report import ReportGenerator
 from .services.memory import RamMonitor
 from .config_guard import sanitize_selftest_config
 
+# Deferred destructive routes whose action is approval-gated (see
+# ``APPROVAL_REQUIRED_ACTIONS``). Those gates bind the approval to the exact
+# target and to the acting admin, so the runner runs the real ceremony before
+# exercising the route rather than reporting the gate's 403 preamble.
+_APPROVAL_GATED_DESTRUCTIVE = {
+    "/api/v1/admin/users/{user_id}/force-purge": "users.force_purge",
+}
+
 
 class SelfTestRunner:
     """Automated API test runner."""
@@ -224,6 +232,16 @@ class SelfTestRunner:
             if not self.setup.login_main_user():
                 logger.error("Purge-residue check: admin login failed")
                 return False
+            # ``users.force_purge`` is approval-gated and needs two distinct
+            # approvers besides the executing admin. The endpoint sweep is
+            # skipped in this mode, so seed the co-approver admins here -- the
+            # ceremony must run for real, not fall back to a bypass.
+            self.setup.create_other_user()
+            if self.ctx.test_other_user_id:
+                self.setup.setup_other_admin_user()
+            self.setup.create_third_user()
+            if self.ctx.test_third_user_id:
+                self.setup.promote_third_to_support_admin()
             self.endpoints.test_purge_residue()
             self.cleanup.cleanup_test_data()
             return self.report.report_summary()
@@ -638,6 +656,25 @@ class SelfTestRunner:
             ):
                 self._stabilize_thread(test_path)
             self.endpoints.test_endpoint(method, test_path, route, use_other)
+            # Rotating the acting admin's own password revokes its sessions, so
+            # every later admin request in this run would answer 401 (the loop
+            # keeps using the same bearer). The self-test rotates to the value
+            # it already holds (see data/bodies.py), so a single re-login
+            # restores a live token instead of poisoning the rest of the suite.
+            if test_path.endswith("/admin/auth/change-password"):
+                from src.core.selftest.services.approval_ceremony import (
+                    ensure_user_session as _ensure_session,
+                )
+
+                _main_username = self.ctx.config.get("test_user", {}).get(
+                    "username", "selftest_admin"
+                )
+                if not _ensure_session(self.ctx, self.ctx.session, _main_username):
+                    logger.warning(
+                        "Session not re-established after %s; later admin "
+                        "requests will report 401",
+                        test_path,
+                    )
 
         parallel_gets = [item for item in work_items if item[0] == "GET"]
         if parallel_gets:
@@ -748,14 +785,44 @@ class SelfTestRunner:
             logger.info(
                 "Executing deferred destructive endpoints (targeting other user)..."
             )
+            # ``users.force_purge`` destroys its target, so any later route that
+            # addresses the same account would 404. Run it after every other
+            # deferred destructive endpoint; the sort is stable, so the
+            # remaining order (lock -> unlock -> force-logout, ...) is kept.
+            deferred_destructive.sort(
+                key=lambda route: route["path"] in _APPROVAL_GATED_DESTRUCTIVE
+            )
             for route in deferred_destructive:
                 method = route["method"]
                 path = route["path"]
                 test_path = path
+                target_user_id = None
                 for p_name in re.findall(r"\{([a-zA-Z0-9_]+)\}", path):
-                    test_path = test_path.replace(
-                        f"{{{p_name}}}", self.data.get_param_value(p_name, path)
-                    )
+                    value = self.data.get_param_value(p_name, path)
+                    if p_name == "user_id":
+                        target_user_id = value
+                    test_path = test_path.replace(f"{{{p_name}}}", value)
+                # ``users.force_purge`` is approval-gated and binds the approval
+                # to this exact target and acting admin, so run the real
+                # multi-admin ceremony first (as the purge-residue flow does)
+                # instead of reporting the gate's 403 preamble as a failure.
+                action_type = _APPROVAL_GATED_DESTRUCTIVE.get(path)
+                if action_type and target_user_id:
+                    try:
+                        from src.core.selftest.services.approval_ceremony import (
+                            run_ceremony,
+                        )
+
+                        run_ceremony(
+                            self.ctx,
+                            action_type,
+                            target_id=int(target_user_id),
+                            requester_is_executor=True,
+                        )
+                    except Exception as ceremony_error:
+                        logger.warning(
+                            f"Approval ceremony for {path} failed: {ceremony_error}"
+                        )
                 self.endpoints.test_endpoint(method, test_path, route)
 
         # 8. Explicit bot server flow (standalone already ran it before

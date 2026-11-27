@@ -144,9 +144,19 @@ def run_ceremony(
         logger.warning(f"Approval ceremony skipped ({action_type}): other dead")
         return False
     requester = main if requester_is_executor else other
+    # The approval row records what the target is; keep it truthful for the
+    # target-bearing actions the suite runs (artifacts and user accounts).
+    if target_id is None:
+        target_type = "system"
+    elif action_type.startswith("users."):
+        target_type = "user"
+    elif action_type.startswith("artifacts."):
+        target_type = "artifact"
+    else:
+        target_type = "object"
     body = {
         "action_type": action_type,
-        "target_type": "artifact" if target_id is not None else "system",
+        "target_type": target_type,
         "action_details": f"self-test ceremony for {action_type}",
     }
     if target_id is not None:

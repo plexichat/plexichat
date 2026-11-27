@@ -11,12 +11,19 @@ dispatcher applies it again at the wire boundary as a backstop so a
 hand-built ``Event`` cannot leak a numeric id.
 """
 
+from functools import lru_cache
 from typing import Any, Dict
 
 # Explicit id keys that do not match the suffix rules below.
 _ID_FIELDS = frozenset({"id"})
 
 
+# The classifier is a pure function of a short string drawn from a tiny,
+# repeating vocabulary, and it runs once per key of every outbound payload.
+# Memoizing it turns four ``str.endswith`` probes per key into one dict lookup
+# on the hot fan-out path; unbounded growth is impossible because the key
+# vocabulary is finite, but the cap keeps a hostile payload bounded anyway.
+@lru_cache(maxsize=1024)
 def is_id_field(key: str) -> bool:
     """Return True when a payload key carries a snowflake id value.
 

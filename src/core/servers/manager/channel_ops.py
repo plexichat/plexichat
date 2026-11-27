@@ -171,7 +171,7 @@ class ChannelOpsMixin(ServerProtocol):
         )
 
     def check_channel_slowmode(
-        self, user_id: SnowflakeID, channel_id: SnowflakeID
+        self, user_id: SnowflakeID, channel_id: SnowflakeID, channel=None
     ) -> Optional[float]:
         """Return the seconds a user must wait before posting, or None.
 
@@ -179,12 +179,35 @@ class ChannelOpsMixin(ServerProtocol):
         the same interval with the same moderator exemptions.  Returns None
         when the channel has no slowmode, the user may bypass it, or the
         channel cannot be resolved (fails open, never blocks a send).
+
+        ``channel`` is the channel the send path already resolved. ``get_channel``
+        issues an uncached membership probe plus a view-permission check, so
+        resolving it a second time here is a duplicate round trip on every
+        send. Only the caller's object is reused, and only when its id is
+        provably the channel being posted to: a mismatched object is ignored
+        and the channel is resolved authoritatively, so a caller cannot hand in
+        a slowmode-free channel to dodge the interval or the authz probe.
         """
-        try:
-            channel = self.get_channel(channel_id, user_id)
-        except Exception as e:
-            logger.debug(f"Slowmode channel lookup failed for {channel_id}: {e}")
-            return None
+        resolved = None
+        if channel is not None:
+            raw_id = (
+                channel.get("id")
+                if isinstance(channel, dict)
+                else getattr(channel, "id", None)
+            )
+            if raw_id is not None and not isinstance(raw_id, bool):
+                try:
+                    if int(raw_id) == int(channel_id):
+                        resolved = channel
+                except (TypeError, ValueError):
+                    resolved = None
+        if resolved is None:
+            try:
+                resolved = self.get_channel(channel_id, user_id)
+            except Exception as e:
+                logger.debug(f"Slowmode channel lookup failed for {channel_id}: {e}")
+                return None
+        channel = resolved
 
         slowmode_seconds = getattr(channel, "slowmode_seconds", 0) or 0
         if slowmode_seconds <= 0:

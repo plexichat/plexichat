@@ -188,11 +188,27 @@ def live():
 
 
 def test_raw_member_lookup_scan_is_not_vacuous():
+    """The scan must see real code, and no raw member lookup may remain.
+
+    Every message-route event broadcast now resolves recipients through the
+    scoped resolver, so the raw-lookup set is expected to be empty. Prove the
+    walker is still auditing live code (rather than silently matching nothing)
+    by requiring the scoped resolver in the ACK dispatchers, then require the
+    raw lookup to be gone entirely.
+    """
     uses = [(p.name, fn.name) for p, fn in _member_lookup_functions()]
-    assert uses, (
-        "expected at least one permission-filtered member lookup in the "
-        "message-event broadcast helper; if all call sites were removed the "
-        "filter invariant below would pass vacuously"
+    resolvers = [
+        (path.name, fn.name)
+        for path, fn in _functions()
+        if any(_call_name(c) == SCOPED_RESOLVER for c in _own_body_calls(fn))
+    ]
+    assert len(resolvers) >= 2, (
+        "expected the single-channel and bulk ACK dispatchers to scope their "
+        f"recipients through {SCOPED_RESOLVER}; the scan found {resolvers}"
+    )
+    assert uses == [], (
+        "message routes must not resolve recipients from the raw member list "
+        f"any more; found {uses}"
     )
 
 

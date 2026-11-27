@@ -93,7 +93,7 @@ DOCUMENTED_SITES: dict[tuple[str, str, str, str], str] = {
     ),
     (
         "src/core/antispam/detector.py",
-        "_linear_glob_match",
+        "_glob_segment_tokens",
         "re.compile",
         "translated",
     ): (
@@ -102,7 +102,10 @@ DOCUMENTED_SITES: dict[tuple[str, str, str, str], str] = {
         "`?` and `[seq]` single-character classes -- no `.*` quantifier -- so "
         "the compiled segment match is linear-time. Segments are aligned by a "
         "greedy two-pointer scan over fixed-width matches, never as a "
-        "backtracking quantifier chain."
+        "backtracking quantifier chain. The compile moved out of "
+        "_linear_glob_match into _glob_segment_tokens (the per-pattern "
+        "lru_cache(maxsize=256) holder) without adding a quantifier, which is "
+        "why the site is documented against that helper."
     ),
     (
         "src/core/auth/blacklist.py",

@@ -30,7 +30,15 @@ class TestTargetedAggregateInvalidation:
             cast(Any, None), 1, 2, 1
         )
 
-        assert deleted == ["all_relationships:int:1", "all_relationships:int:2"]
+        # Both derived caches are evicted per affected user, and the duplicates
+        # in the argument list collapse: the aggregate graph and the presence
+        # fan-out audience are equally stale after a block/friend change.
+        assert deleted == [
+            "all_relationships:int:1",
+            "presence_targets:int:1",
+            "all_relationships:int:2",
+            "presence_targets:int:2",
+        ]
         assert patterns == []
 
     def test_deletes_the_exact_cached_key(self):

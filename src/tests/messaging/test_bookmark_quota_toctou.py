@@ -16,6 +16,7 @@ Run with: pytest src/tests/messaging/test_bookmark_quota_toctou.py -q -n 0
 """
 
 import pytest
+import zlib
 
 from src.core.messaging.services.bookmarks import BookmarkService
 
@@ -154,3 +155,33 @@ class TestBookmarkQuotaAtomicity:
 
         # Transaction-scoped: wrapped by begin/commit with no rollback.
         assert (db.begun, db.committed, db.rollbacks) == (1, 1, 0)
+
+    def test_lock_key_fits_postgres_signed_int4(self):
+        """Every derived key must be a valid ``pg_advisory_xact_lock(int4, int4)`` key.
+
+        ``zlib.crc32`` is unsigned (0..2**32-1) but the two-int signature only
+        accepts -2**31..2**31-1, so passing the raw hash made PostgreSQL raise
+        ``value "..." is out of range for type integer`` and bookmark creation
+        return 500 for roughly half of all user ids. The probe walks a wide
+        sample so a regression cannot hide behind one lucky id, and asserts the
+        mapping stays a bijection (folding via ``& 0x7FFFFFFF`` would silently
+        double the collision rate).
+        """
+        seen = {}
+        for user_id in range(1, 5000):
+            namespace, key = BookmarkService._quota_lock_key(user_id)
+            assert -(2**31) <= namespace <= 2**31 - 1
+            assert -(2**31) <= key <= 2**31 - 1
+            assert isinstance(key, int) and not isinstance(key, bool)
+            # Same id always maps to the same key (lock identity across workers).
+            assert BookmarkService._quota_lock_key(user_id) == (namespace, key)
+            crc = zlib.crc32(str(user_id).encode("utf-8"))
+            assert key == (crc - 2**32 if crc > 2**31 - 1 else crc)
+            seen[key] = user_id  # bijection is checked below, not here
+
+        # The sample covers both halves of the crc range: if the fold were
+        # missing, at least one of these ids would produce an out-of-range key.
+        assert any(key < 0 for key in seen)
+        assert any(key >= 0 for key in seen)
+        keys = [BookmarkService._quota_lock_key(uid)[1] for uid in range(1, 5000)]
+        assert len(set(keys)) == len(keys), "int4 fold must not merge distinct hashes"

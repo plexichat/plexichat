@@ -180,9 +180,17 @@ _REVERTS: tuple[tuple[str, str, str], ...] = (
         "",
     ),
     (
+        # The committed funnel imports both router helpers in a parenthesized
+        # form (the two-name line exceeds the formatter's line length), so the
+        # revert drops the DM name from that block rather than from a one-liner.
         "no-dm-participant-import",
-        "from src.core.events.router import clear_presence_audience_cache, clear_dm_participant_cache",
-        "from src.core.events.router import clear_presence_audience_cache",
+        "        from src.core.events.router import (\n"
+        "            clear_presence_audience_cache,\n"
+        "            clear_dm_participant_cache,\n"
+        "        )",
+        "        from src.core.events.router import (\n"
+        "            clear_presence_audience_cache,\n"
+        "        )",
     ),
     (
         "no-channel-recipient-import",

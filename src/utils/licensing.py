@@ -41,4 +41,5 @@ from .common_utils.utils.licensing import (
     _setup_called as _setup_called,
     _free_tier_mode as _free_tier_mode,
     _license_manager as _license_manager,
+    _public_key_configured as _public_key_configured,
 )

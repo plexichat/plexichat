@@ -43,7 +43,13 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.unit, pytest.mark.security]
+# Committed-tree sweep: ~5.5k HEAD blobs per test (20-30s here, and slower on
+# a shared runner), so the suite-wide per-test timeout is too tight.
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.security,
+    pytest.mark.timeout(180),
+]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SOURCE_ROOT = "src"
